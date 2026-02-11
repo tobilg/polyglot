@@ -1,0 +1,125 @@
+{
+  "tests": [
+    {
+      "line": 1,
+      "input": "SET x TO 1;",
+      "expected": "SET x = 1;"
+    },
+    {
+      "line": 3,
+      "input": "SELECT * FROM test;",
+      "expected": "SELECT\n  *\nFROM test;"
+    },
+    {
+      "line": 7,
+      "input": "WITH a AS ((SELECT 1 AS b) UNION ALL (SELECT 2 AS b)) SELECT * FROM a;",
+      "expected": "WITH a AS (\n  (\n    SELECT\n      1 AS b\n  )\n  UNION ALL\n  (\n    SELECT\n      2 AS b\n  )\n)\nSELECT\n  *\nFROM a;"
+    },
+    {
+      "line": 22,
+      "input": "WITH cte1 AS (\n    SELECT a, z and e AS b\n    FROM cte\n    WHERE x IN (1, 2, 3) AND z < -1 OR z > 1 AND w = 'AND'\n), cte2 AS (\n    SELECT RANK() OVER (PARTITION BY a, b ORDER BY x DESC) a, b\n    FROM cte\n    CROSS JOIN (\n        SELECT 1\n        UNION ALL\n        SELECT 2\n        UNION ALL\n        SELECT CASE x AND 1 + 1 = 2\n        WHEN TRUE THEN 1 AND 4 + 3 AND Z\n        WHEN x and y THEN 2\n        ELSE 3 AND 4 AND g END\n        UNION ALL\n        SELECT 1\n        FROM (SELECT 1) AS x, y, (SELECT 2) z\n        UNION ALL\n        SELECT MAX(COALESCE(x AND y, a and b and c, d and e)), FOO(CASE WHEN a and b THEN c and d ELSE 3 END)\n        GROUP BY x, GROUPING SETS (a, (b, c)), CUBE(y, z)\n    ) x\n)\nSELECT a, b c FROM (\n    SELECT a w, 1 + 1 AS c\n    FROM foo\n    WHERE w IN (SELECT z FROM q)\n    GROUP BY a, b\n) x\nLEFT JOIN (\n    SELECT a, b\n    FROM (SELECT * FROM bar WHERE (c > 1 AND d > 1) OR e > 1 GROUP BY a HAVING a > 1 LIMIT 10) z\n) y ON x.a = y.b AND x.a > 1 OR (x.c = y.d OR x.c = y.e);",
+      "expected": "WITH cte1 AS (\n  SELECT\n    a,\n    z AND e AS b\n  FROM cte\n  WHERE\n    x IN (1, 2, 3) AND z < -1 OR z > 1 AND w = 'AND'\n), cte2 AS (\n  SELECT\n    RANK() OVER (PARTITION BY a, b ORDER BY x DESC) AS a,\n    b\n  FROM cte\n  CROSS JOIN (\n    SELECT\n      1\n    UNION ALL\n    SELECT\n      2\n    UNION ALL\n    SELECT\n      CASE x AND 1 + 1 = 2\n        WHEN TRUE\n        THEN 1 AND 4 + 3 AND Z\n        WHEN x AND y\n        THEN 2\n        ELSE 3 AND 4 AND g\n      END\n    UNION ALL\n    SELECT\n      1\n    FROM (\n      SELECT\n        1\n    ) AS x, y, (\n      SELECT\n        2\n    ) AS z\n    UNION ALL\n    SELECT\n      MAX(COALESCE(x AND y, a AND b AND c, d AND e)),\n      FOO(CASE WHEN a AND b THEN c AND d ELSE 3 END)\n    GROUP BY\n      x,\n      GROUPING SETS (\n        a,\n        (b, c)\n      ),\n      CUBE (\n        y,\n        z\n      )\n  ) AS x\n)\nSELECT\n  a,\n  b AS c\nFROM (\n  SELECT\n    a AS w,\n    1 + 1 AS c\n  FROM foo\n  WHERE\n    w IN (\n      SELECT\n        z\n      FROM q\n    )\n  GROUP BY\n    a,\n    b\n) AS x\nLEFT JOIN (\n  SELECT\n    a,\n    b\n  FROM (\n    SELECT\n      *\n    FROM bar\n    WHERE\n      (\n        c > 1 AND d > 1\n      ) OR e > 1\n    GROUP BY\n      a\n    HAVING\n      a > 1\n    LIMIT 10\n  ) AS z\n) AS y\n  ON x.a = y.b AND x.a > 1 OR (\n    x.c = y.d OR x.c = y.e\n  );"
+    },
+    {
+      "line": 149,
+      "input": "SELECT myCol1, myCol2 FROM baseTable LATERAL VIEW OUTER explode(col1) myTable1 AS myCol1 LATERAL VIEW explode(col2) myTable2 AS myCol2",
+      "expected": "where a > 1 and b > 2 or c > 3;"
+    },
+    {
+      "line": 151,
+      "input": "SELECT",
+      "expected": "myCol1,\n  myCol2\nFROM baseTable\nLATERAL VIEW OUTER\nEXPLODE(col1) myTable1 AS myCol1\nLATERAL VIEW\nEXPLODE(col2) myTable2 AS myCol2\nWHERE\n  a > 1 AND b > 2 OR c > 3;"
+    },
+    {
+      "line": 161,
+      "input": "SELECT * FROM (WITH y AS ( SELECT 1 AS z) SELECT z from y) x;",
+      "expected": "SELECT\n  *\nFROM (\n  WITH y AS (\n    SELECT\n      1 AS z\n  )\n  SELECT\n    z\n  FROM y\n) AS x;"
+    },
+    {
+      "line": 173,
+      "input": "INSERT OVERWRITE TABLE x VALUES (1, 2.0, '3.0'), (4, 5.0, '6.0');",
+      "expected": "INSERT OVERWRITE TABLE x\nVALUES\n  (1, 2.0, '3.0'),\n  (4, 5.0, '6.0');"
+    },
+    {
+      "line": 178,
+      "input": "INSERT INTO TABLE foo REPLACE WHERE cond SELECT * FROM bar;",
+      "expected": "INSERT INTO foo\nREPLACE WHERE cond\nSELECT\n  *\nFROM bar;"
+    },
+    {
+      "line": 184,
+      "input": "INSERT OVERWRITE TABLE zipcodes PARTITION(state = '0') VALUES (896, 'US', 'TAMPA', 33607);",
+      "expected": "INSERT OVERWRITE TABLE zipcodes PARTITION(state = '0')\nVALUES\n  (896, 'US', 'TAMPA', 33607);"
+    },
+    {
+      "line": 188,
+      "input": "WITH regional_sales AS (\n    SELECT region, SUM(amount) AS total_sales\n    FROM orders\n    GROUP BY region\n    ), top_regions AS (\n    SELECT region\n    FROM regional_sales\n    WHERE total_sales > (SELECT SUM(total_sales)/10 FROM regional_sales)\n)\nSELECT region,\nproduct,\nSUM(quantity) AS product_units,\nSUM(amount) AS product_sales\nFROM orders\nWHERE region IN (SELECT region FROM top_regions)\nGROUP BY region, product;",
+      "expected": "WITH regional_sales AS (\n  SELECT\n    region,\n    SUM(amount) AS total_sales\n  FROM orders\n  GROUP BY\n    region\n), top_regions AS (\n  SELECT\n    region\n  FROM regional_sales\n  WHERE\n    total_sales > (\n      SELECT\n        SUM(total_sales) / 10\n      FROM regional_sales\n    )\n)\nSELECT\n  region,\n  product,\n  SUM(quantity) AS product_units,\n  SUM(amount) AS product_sales\nFROM orders\nWHERE\n  region IN (\n    SELECT\n      region\n    FROM top_regions\n  )\nGROUP BY\n  region,\n  product;"
+    },
+    {
+      "line": 237,
+      "input": "CREATE TABLE \"t_customer_account\" ( \"id\" int, \"customer_id\" int, \"bank\" varchar(100), \"account_no\" varchar(100));",
+      "expected": "CREATE TABLE \"t_customer_account\" (\n  \"id\" INT,\n  \"customer_id\" INT,\n  \"bank\" VARCHAR(100),\n  \"account_no\" VARCHAR(100)\n);"
+    },
+    {
+      "line": 244,
+      "input": "SELECT\nx(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\"),\narray(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\"),\narray(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\", array(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\")),\narray(array(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\")),\n;",
+      "expected": "SELECT\n  X(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\",\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  ),\n  ARRAY(\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  );\n/*\n  multi\n  line\n  comment\n*/\nSELECT * FROM foo;\n/*\n  multi\n  line\n  comment\n*/\nSELECT\n  *\nFROM foo;\nSELECT x FROM a.b.c /*x*/, e.f.g /*x*/;\nSELECT\n  x\nFROM a.b.c /* x */, e.f.g /* x */;\nSELECT x FROM (SELECT * FROM bla /*x*/WHERE id = 1) /*x*/;\nSELECT\n  x\nFROM (\n  SELECT\n    *\n  FROM bla /* x */\n  WHERE\n    id = 1\n) /* x */;\nSELECT * /* multi\n   line\n   comment */;\nSELECT\n  * /* multi\n   line\n   comment */;\nWITH table_data AS (\n    SELECT 'bob' AS name, ARRAY['banana', 'apple', 'orange'] AS fruit_basket\n)\nSELECT\n    name,\n    fruit,\n    basket_index\nFROM table_data\nCROSS JOIN UNNEST(fruit_basket) WITH ORDINALITY AS fruit(basket_index);\nWITH table_data AS (\n  SELECT\n    'bob' AS name,\n    ARRAY('banana', 'apple', 'orange') AS fruit_basket\n)\nSELECT\n  name,\n  fruit,\n  basket_index\nFROM table_data\nCROSS JOIN UNNEST(fruit_basket) WITH ORDINALITY AS fruit(basket_index);\nSELECT A.* EXCEPT A.COL_1, A.COL_2 FROM TABLE_1 A;\nSELECT\n  A.*\n  EXCEPT (A.COL_1),\n  A.COL_2\nFROM TABLE_1 AS A;"
+    },
+    {
+      "line": 355,
+      "input": "SELECT *\nFROM a\nJOIN b\n  JOIN c\n    ON b.id = c.id\n  ON a.id = b.id\nCROSS JOIN d\nJOIN e\n  ON d.id = e.id;",
+      "expected": "SELECT\n  *\nFROM a\nJOIN b\n  JOIN c\n    ON b.id = c.id\n  ON a.id = b.id\nCROSS JOIN d\nJOIN e\n  ON d.id = e.id;"
+    },
+    {
+      "line": 374,
+      "input": "SELECT * FROM a JOIN b JOIN c USING (e) JOIN d USING (f) USING (g);",
+      "expected": "SELECT\n  *\nFROM a\nJOIN b\n  JOIN c\n    USING (e)\n  JOIN d\n    USING (f)\n  USING (g);"
+    },
+    {
+      "line": 384,
+      "input": "('aaaaaaaaaaa', 'bbbbbbbbbbbbbbbb', 'ccccccccccccc', 'ddddddddddd', 'eeeeeeeeeeeeeeeeeeeee');",
+      "expected": "(\n  'aaaaaaaaaaa',\n  'bbbbbbbbbbbbbbbb',\n  'ccccccccccccc',\n  'ddddddddddd',\n  'eeeeeeeeeeeeeeeeeeeee'\n);"
+    },
+    {
+      "line": 392,
+      "input": "/* COMMENT */\nINSERT FIRST WHEN salary > 4000 THEN INTO emp2\n             WHEN salary > 5000 THEN INTO emp3\n             WHEN salary > 6000 THEN INTO emp4\nSELECT salary FROM employees;",
+      "expected": "/* COMMENT */\nINSERT FIRST\n  WHEN salary > 4000 THEN INTO emp2\n  WHEN salary > 5000 THEN INTO emp3\n  WHEN salary > 6000 THEN INTO emp4\nSELECT\n  salary\nFROM employees;"
+    },
+    {
+      "line": 405,
+      "input": "SELECT *\nFROM foo\nwHERE 1=1\n    AND\n        -- my comment\n        EXISTS (\n            SELECT 1\n            FROM bar\n        );",
+      "expected": "SELECT\n  *\nFROM foo\nWHERE\n  1 = 1 AND EXISTS(\n    SELECT\n      1\n    FROM bar\n  ) /* my comment */;"
+    },
+    {
+      "line": 423,
+      "input": "SELECT 1\nFROM foo\nWHERE 1=1\nAND -- first comment\n    -- second comment\n    foo.a = 1;",
+      "expected": "SELECT\n  1\nFROM foo\nWHERE\n  1 = 1 AND /* first comment */ foo.a /* second comment */ = 1;"
+    },
+    {
+      "line": 434,
+      "input": "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET status = s.status, amount = s.amount;",
+      "expected": "MERGE INTO t\nUSING s\nON t.id = s.id\nWHEN MATCHED THEN UPDATE SET\n  status = s.status,\n  amount = s.amount;"
+    },
+    {
+      "line": 441,
+      "input": "SELECT\n    id,\n    -- SUM(total) as all_that,\n    ARRAY_AGG(foo)[0][0] AS first_foo,\nFROM facts\nGROUP BY all;",
+      "expected": "SELECT\n  id,\n  ARRAY_AGG(foo)[0][0] AS first_foo /* SUM(total) as all_that, */\nFROM facts\nGROUP BY ALL;"
+    },
+    {
+      "line": 452,
+      "input": "ALTER TABLE ct ADD CONSTRAINT ct_id_fk FOREIGN KEY (id) REFERENCES et (fid) DEFERRABLE INITIALLY DEFERRED;",
+      "expected": "ALTER TABLE ct\n  ADD CONSTRAINT ct_id_fk FOREIGN KEY (id) REFERENCES et (\n    fid\n  ) DEFERRABLE INITIALLY DEFERRED;"
+    },
+    {
+      "line": 457,
+      "input": "SELECT\n    *\nFROM\n    a\nWHERE\n    /*111*/\n    b = 1\n    /*222*/\nORDER BY\n    c;",
+      "expected": "SELECT\n  *\nFROM a\nWHERE\n  b /* 111 */ = 1\n/* 222 */\nORDER BY\n  c;"
+    },
+    {
+      "line": 475,
+      "input": "SELECT\n    COUNT(*)\nFROM\n    table_a\n/* join comment */\nJOIN\n    table_b\nON\n    table_a.id = table_b.id\n/* group by comment */\nGROUP BY\n    table_a.id\n/* having comment */\nHAVING\n    table_a.id = 1;",
+      "expected": "SELECT\n  COUNT(*)\nFROM table_a\n/* join comment */\nJOIN table_b\n  ON table_a.id = table_b.id\n/* group by comment */\nGROUP BY\n  table_a.id\n/* having comment */\nHAVING\n  table_a.id = 1;"
+    }
+  ],
+  "count": 24
+}

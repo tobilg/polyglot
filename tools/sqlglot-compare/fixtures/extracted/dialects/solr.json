@@ -1,0 +1,18 @@
+{
+  "dialect": "solr",
+  "identity": [
+    {
+      "sql": "SELECT `default`.column FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT column FROM t WHERE column = 'val'",
+      "expected": null
+    },
+    {
+      "sql": "a || b",
+      "expected": "a OR b"
+    }
+  ],
+  "transpilation": []
+}

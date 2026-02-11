@@ -1,0 +1,2396 @@
+{
+  "dialect": "tsql",
+  "identity": [
+    {
+      "sql": "SELECT * FROM a..b",
+      "expected": null
+    },
+    {
+      "sql": "SELECT EXP(1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SYSDATETIMEOFFSET()",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COMPRESS('Hello World')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE view a.b.c",
+      "expected": "CREATE VIEW b.c"
+    },
+    {
+      "sql": "DROP view a.b.c",
+      "expected": "DROP VIEW b.c"
+    },
+    {
+      "sql": "ROUND(x, 1, 0)",
+      "expected": null
+    },
+    {
+      "sql": "EXEC MyProc @id=7, @name='Lochristi'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM('     test    ') AS Result",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM('.,! ' FROM '     #     test    .') AS Result",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t TABLESAMPLE (10 PERCENT)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t TABLESAMPLE (20 ROWS)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t TABLESAMPLE (10 PERCENT) REPEATABLE (123)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CONCAT(column1, column2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TestSpecialChar.Test# FROM TestSpecialChar",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TestSpecialChar.Test@ FROM TestSpecialChar",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TestSpecialChar.Test$ FROM TestSpecialChar",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TestSpecialChar.Test_ FROM TestSpecialChar",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TOP (2 + 1) 1",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NOT c",
+      "expected": "SELECT * FROM t WHERE NOT c <> 0"
+    },
+    {
+      "sql": "1 AND true",
+      "expected": "1 <> 0 AND (1 = 1)"
+    },
+    {
+      "sql": "CAST(x AS int) OR y",
+      "expected": "CAST(x AS INTEGER) <> 0 OR y <> 0"
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 WITH (PARTITIONS(1, 2 TO 5, 10 TO 20, 84))",
+      "expected": null
+    },
+    {
+      "sql": "WITH t1 AS (SELECT 1 AS a), t2 AS (SELECT 1 AS a) SELECT TOP 10 a FROM t1 UNION ALL SELECT TOP 10 a FROM t2",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TOP 10 s.RECORDID, n.c.VALUE('(/*:FORM_ROOT/*:SOME_TAG)[1]', 'float') AS SOME_TAG_VALUE FROM source_table.dbo.source_data AS s(nolock) CROSS APPLY FormContent.nodes('/*:FORM_ROOT') AS N(C)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE CLUSTERED INDEX [IX_OfficeTagDetail_TagDetailID] ON [dbo].[OfficeTagDetail]([TagDetailID] ASC)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX [x] ON [y]([z] ASC) WITH (allow_page_locks=on) ON X([y])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX [x] ON [y]([z] ASC) WITH (allow_page_locks=on) ON PRIMARY",
+      "expected": null
+    },
+    {
+      "sql": "COPY INTO test_1 FROM 'path' WITH (FORMAT_NAME = test, FILE_TYPE = 'CSV', CREDENTIAL = (IDENTITY='Shared Access Signature', SECRET='token'), FIELDTERMINATOR = ';', ROWTERMINATOR = '0X0A', ENCODING = 'UTF8', DATEFORMAT = 'ymd', MAXERRORS = 10, ERRORFILE = 'errorsfolder', IDENTITY_INSERT = 'ON')",
+      "expected": null
+    },
+    {
+      "sql": "WITH t1 AS (SELECT 1 AS a), t2 AS (SELECT 1 AS a) SELECT TOP 10 a FROM t1 UNION ALL SELECT TOP 10 a FROM t2 ORDER BY a DESC",
+      "expected": null
+    },
+    {
+      "sql": "WITH t1 AS (SELECT 1 AS a), t2 AS (SELECT 1 AS a) SELECT COUNT(*) FROM (SELECT TOP 10 a FROM t1 UNION ALL SELECT TOP 10 a FROM t2 ORDER BY a DESC) AS t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1 AS \"[x]\"",
+      "expected": "SELECT 1 AS [[x]]]"
+    },
+    {
+      "sql": "INSERT INTO foo.bar WITH cte AS (SELECT 1 AS one) SELECT * FROM cte",
+      "expected": "WITH cte AS (SELECT 1 AS one) INSERT INTO foo.bar SELECT * FROM cte"
+    },
+    {
+      "sql": "CREATE TABLE x (CONSTRAINT \"pk_mytable\" UNIQUE NONCLUSTERED (a DESC)) ON b (c)",
+      "expected": "CREATE TABLE x (CONSTRAINT [pk_mytable] UNIQUE NONCLUSTERED (a DESC)) ON b (c)"
+    },
+    {
+      "sql": "CREATE TABLE x (A INTEGER NOT NULL, B INTEGER NULL)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE tbl (a AS (x + 1) PERSISTED, b AS (y + 2), c AS (y / 3) PERSISTED NOT NULL)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE [db].[tbl]([a] [int])",
+      "expected": "CREATE TABLE [db].[tbl] ([a] INTEGER)"
+    },
+    {
+      "sql": "MERGE INTO mytable WITH (HOLDLOCK) AS T USING mytable_merge AS S ON (T.user_id = S.user_id) WHEN NOT MATCHED THEN INSERT (c1, c2) VALUES (S.c1, S.c2)",
+      "expected": null
+    },
+    {
+      "sql": "UPDATE STATISTICS x",
+      "expected": null
+    },
+    {
+      "sql": "UPDATE x SET y = 1 OUTPUT x.a, x.b INTO @y FROM y",
+      "expected": null
+    },
+    {
+      "sql": "UPDATE x SET y = 1 OUTPUT x.a, x.b FROM y",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x (y) OUTPUT x.a, x.b INTO l SELECT * FROM z",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x (y) OUTPUT x.a, x.b SELECT * FROM z",
+      "expected": null
+    },
+    {
+      "sql": "DELETE x OUTPUT x.a FROM z",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t WITH (TABLOCK, INDEX(myindex))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t WITH (NOWAIT)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CASE WHEN a > 1 THEN b END",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM taxi ORDER BY 1 OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY",
+      "expected": null
+    },
+    {
+      "sql": "END",
+      "expected": null
+    },
+    {
+      "sql": "@x",
+      "expected": null
+    },
+    {
+      "sql": "#x",
+      "expected": null
+    },
+    {
+      "sql": "PRINT @TestVariable",
+      "expected": null
+    },
+    {
+      "sql": "SELECT Employee_ID, Department_ID FROM @MyTableVar",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO @TestTable VALUES (1, 'Value1', 12, 20)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM #foo",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM ##foo",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a = 1",
+      "expected": "SELECT 1 AS a"
+    },
+    {
+      "sql": "DECLARE @TestVariable AS VARCHAR(100) = 'Save Our Planet'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a = 1 UNION ALL SELECT a = b",
+      "expected": "SELECT 1 AS a UNION ALL SELECT b AS a"
+    },
+    {
+      "sql": "SELECT x FROM @MyTableVar AS m JOIN Employee ON m.EmployeeID = Employee.EmployeeID",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DISTINCT DepartmentName, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY BaseRate) OVER (PARTITION BY DepartmentName) AS MedianCont FROM dbo.DimEmployee",
+      "expected": null
+    },
+    {
+      "sql": "SELECT \"x\".\"y\" FROM foo",
+      "expected": "SELECT [x].[y] FROM foo"
+    },
+    {
+      "sql": "HASHBYTES('MD2', 'x')",
+      "expected": null
+    },
+    {
+      "sql": "LOG(n)",
+      "expected": null
+    },
+    {
+      "sql": "LOG(n, b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT val FROM (VALUES ((TRUE), (FALSE), (NULL))) AS t(val)",
+      "expected": "SELECT val FROM (VALUES ((1), (0), (NULL))) AS t(val)"
+    },
+    {
+      "sql": "'a' + 'b'",
+      "expected": null
+    },
+    {
+      "sql": "'a' || 'b'",
+      "expected": "'a' + 'b'"
+    },
+    {
+      "sql": "CREATE TABLE db.t1 (a INTEGER, b VARCHAR(50), CONSTRAINT c PRIMARY KEY (a DESC))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE db.t1 (a INTEGER, b INTEGER, CONSTRAINT c PRIMARY KEY (a DESC, b))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE test(@v1 INTEGER = 1, @v2 CHAR(1) = 'c')",
+      "expected": null
+    },
+    {
+      "sql": "DECLARE @v1 AS INTEGER = 1, @v2 AS CHAR(1) = 'c'",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE test(@v1 AS INTEGER = 1, @v2 AS CHAR(1) = 'c')",
+      "expected": "CREATE PROCEDURE test(@v1 INTEGER = 1, @v2 CHAR(1) = 'c')"
+    },
+    {
+      "sql": "CEILING(2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t FOR XML PATH, BINARY BASE64, ELEMENTS XSINIL",
+      "expected": "SELECT\n  *\nFROM t\nFOR XML\n  PATH,\n  BINARY BASE64,\n  ELEMENTS XSINIL"
+    },
+    {
+      "sql": "CAST(x AS XML)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS UNIQUEIDENTIFIER)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS MONEY)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS SMALLMONEY)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS IMAGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS SQL_VARIANT)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS BIT)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE SCHEMA testSchema",
+      "expected": null
+    },
+    {
+      "sql": "CREATE VIEW t AS WITH cte AS (SELECT 1 AS c) SELECT c FROM cte",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (SYSTEM_VERSIONING=OFF)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (FILESTREAM_ON = 'test')",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (DATA_DELETION=ON)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (DATA_DELETION=OFF)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 WITH CHECK ADD CONSTRAINT ctr FOREIGN KEY (c1) REFERENCES t2 (c2)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, DATA_CONSISTENCY_CHECK=OFF, HISTORY_RETENTION_PERIOD=5 DAYS))",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (SYSTEM_VERSIONING=ON(HISTORY_TABLE=db.tbl, HISTORY_RETENTION_PERIOD=INFINITE))",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl SET (DATA_DELETION=ON(FILTER_COLUMN=col, RETENTION_PERIOD=5 MONTHS))",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW v AS SELECT a, b, c, d FROM foo",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW v AS SELECT * FROM foo WHERE c > 100",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW v WITH SCHEMABINDING AS SELECT * FROM foo WHERE c > 100",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW v WITH ENCRYPTION AS SELECT * FROM foo WHERE c > 100",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW v WITH VIEW_METADATA AS SELECT * FROM foo WHERE c > 100",
+      "expected": null
+    },
+    {
+      "sql": "CREATE COLUMNSTORE INDEX index_name ON foo.bar",
+      "expected": "CREATE NONCLUSTERED COLUMNSTORE INDEX index_name ON foo.bar"
+    },
+    {
+      "sql": "CREATE PROCEDURE foo AS BEGIN DELETE FROM bla WHERE foo < CURRENT_TIMESTAMP - 7 END",
+      "expected": "CREATE PROCEDURE foo AS BEGIN DELETE FROM bla WHERE foo < GETDATE() - 7 END"
+    },
+    {
+      "sql": "INSERT INTO Production.UpdatedInventory SELECT ProductID, LocationID, NewQty, PreviousQty FROM (MERGE INTO Production.ProductInventory AS pi USING (SELECT ProductID, SUM(OrderQty) FROM Sales.SalesOrderDetail AS sod INNER JOIN Sales.SalesOrderHeader AS soh ON sod.SalesOrderID = soh.SalesOrderID AND soh.OrderDate BETWEEN '20030701' AND '20030731' GROUP BY ProductID) AS src(ProductID, OrderQty) ON pi.ProductID = src.ProductID WHEN MATCHED AND pi.Quantity - src.OrderQty >= 0 THEN UPDATE SET pi.Quantity = pi.Quantity - src.OrderQty WHEN MATCHED AND pi.Quantity - src.OrderQty <= 0 THEN DELETE OUTPUT $action, Inserted.ProductID, Inserted.LocationID, Inserted.Quantity AS NewQty, Deleted.Quantity AS PreviousQty) AS Changes(Action, ProductID, LocationID, NewQty, PreviousQty) WHERE Action = 'UPDATE'",
+      "expected": "INSERT INTO Production.UpdatedInventory\nSELECT\n  ProductID,\n  LocationID,\n  NewQty,\n  PreviousQty\nFROM (\n  MERGE INTO Production.ProductInventory AS pi\n  USING (\n    SELECT\n      ProductID,\n      SUM(OrderQty)\n    FROM Sales.SalesOrderDetail AS sod\n    INNER JOIN Sales.SalesOrderHeader AS soh\n      ON sod.SalesOrderID = soh.SalesOrderID\n      AND soh.OrderDate BETWEEN '20030701' AND '20030731'\n    GROUP BY\n      ProductID\n  ) AS src(ProductID, OrderQty)\n  ON pi.ProductID = src.ProductID\n  WHEN MATCHED AND pi.Quantity - src.OrderQty >= 0 THEN UPDATE SET\n    pi.Quantity = pi.Quantity - src.OrderQty\n  WHEN MATCHED AND pi.Quantity - src.OrderQty <= 0 THEN DELETE\n  OUTPUT $action, Inserted.ProductID, Inserted.LocationID, Inserted.Quantity AS NewQty, Deleted.Quantity AS PreviousQty\n) AS Changes(Action, ProductID, LocationID, NewQty, PreviousQty)\nWHERE\n  Action = 'UPDATE'"
+    },
+    {
+      "sql": "BEGIN TRANSACTION",
+      "expected": null
+    },
+    {
+      "sql": "BEGIN TRANSACTION transaction_name",
+      "expected": null
+    },
+    {
+      "sql": "BEGIN TRANSACTION @tran_name_variable",
+      "expected": null
+    },
+    {
+      "sql": "BEGIN TRANSACTION transaction_name WITH MARK 'description'",
+      "expected": null
+    },
+    {
+      "sql": "COMMIT TRANSACTION",
+      "expected": null
+    },
+    {
+      "sql": "COMMIT TRANSACTION transaction_name",
+      "expected": null
+    },
+    {
+      "sql": "COMMIT TRANSACTION @tran_name_variable",
+      "expected": null
+    },
+    {
+      "sql": "COMMIT TRANSACTION @tran_name_variable WITH (DELAYED_DURABILITY = ON)",
+      "expected": null
+    },
+    {
+      "sql": "COMMIT TRANSACTION transaction_name WITH (DELAYED_DURABILITY = OFF)",
+      "expected": null
+    },
+    {
+      "sql": "ROLLBACK TRANSACTION",
+      "expected": null
+    },
+    {
+      "sql": "ROLLBACK TRANSACTION transaction_name",
+      "expected": null
+    },
+    {
+      "sql": "ROLLBACK TRANSACTION @tran_name_variable",
+      "expected": null
+    },
+    {
+      "sql": "DECLARE @DWH_DateCreated AS DATETIME2 = CONVERT(DATETIME2, GETDATE(), 104)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo @a INTEGER, @b INTEGER AS SELECT @a = SUM(bla) FROM baz AS bar",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROC foo @ID INTEGER, @AGE INTEGER AS SELECT DB_NAME(@ID) AS ThatDB",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROC foo AS SELECT BAR() AS baz",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo AS SELECT BAR() AS baz",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH ENCRYPTION AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH RECOMPILE AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH SCHEMABINDING AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH NATIVE_COMPILATION AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH EXECUTE AS OWNER AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH EXECUTE AS 'username' AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE PROCEDURE foo WITH EXECUTE AS OWNER, SCHEMABINDING, NATIVE_COMPILATION AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION foo(@bar INTEGER) RETURNS TABLE AS RETURN SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION dbo.ISOweek(@DATE DATETIME2) RETURNS INTEGER",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION foo(@bar INTEGER) RETURNS @foo TABLE (x INTEGER, y NUMERIC) AS RETURN SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION foo() RETURNS @contacts TABLE (first_name VARCHAR(50), phone VARCHAR(25)) AS SELECT @fname, @phone",
+      "expected": null
+    },
+    {
+      "sql": "BEGIN",
+      "expected": null
+    },
+    {
+      "sql": "END",
+      "expected": null
+    },
+    {
+      "sql": "SET XACT_ABORT ON",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CAST(SUBSTRING('ABCD~1234', CHARINDEX('~', 'ABCD~1234') + 1, LEN('ABCD~1234')) AS BIGINT)",
+      "expected": null
+    },
+    {
+      "sql": "ISNULL(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(REPLACE(REPLACE(x , '''', '\"'), '\"\"', '\"'))",
+      "expected": "ISNULL(JSON_QUERY(REPLACE(REPLACE(x, '''', '\"'), '\"\"', '\"'), '$'), JSON_VALUE(REPLACE(REPLACE(x, '''', '\"'), '\"\"', '\"'), '$'))"
+    },
+    {
+      "sql": "SELECT DATEADD(YEAR, 1, '2017/08/25')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATEDIFF(HOUR, 1.5, '2021-01-01')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATEDIFF_BIG(HOUR, 1.5, '2021-01-01')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE schema.table AS SELECT a, id FROM (SELECT a, (SELECT id FROM tb ORDER BY t DESC LIMIT 1) as id FROM tbl) AS _subquery",
+      "expected": "SELECT * INTO schema.table FROM (SELECT a AS a, id AS id FROM (SELECT a AS a, (SELECT TOP 1 id FROM tb ORDER BY t DESC) AS id FROM tbl) AS _subquery) AS temp"
+    },
+    {
+      "sql": "SELECT TOP 10 PERCENT",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TOP 10 PERCENT WITH TIES",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT(foo, 'dddd', 'de-CH')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT(EndOfDayRate, 'N', 'en-us')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT('01-01-1991', 'd.mm.yyyy')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT(12345, '###.###.###')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT(1234567, 'f')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (\"data\" CHAR(7), \"valid_from\" DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, \"valid_to\" DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME (\"valid_from\", \"valid_to\")) WITH(SYSTEM_VERSIONING=ON)",
+      "expected": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON)"
+    },
+    {
+      "sql": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START HIDDEN NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END HIDDEN NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON(HISTORY_TABLE=[dbo].[benchmark_history], DATA_CONSISTENCY_CHECK=ON))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON(HISTORY_TABLE=[dbo].[benchmark_history], DATA_CONSISTENCY_CHECK=ON))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON(HISTORY_TABLE=[dbo].[benchmark_history], DATA_CONSISTENCY_CHECK=OFF))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON(HISTORY_TABLE=[dbo].[benchmark_history]))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ([data] CHAR(7), [valid_from] DATETIME2(2) GENERATED ALWAYS AS ROW START NOT NULL, [valid_to] DATETIME2(2) GENERATED ALWAYS AS ROW END NOT NULL, PERIOD FOR SYSTEM_TIME ([valid_from], [valid_to])) WITH(SYSTEM_VERSIONING=ON(HISTORY_TABLE=[dbo].[benchmark_history]))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME AS OF 'foo'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME AS OF 'foo' AS alias",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME FROM c TO d",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME BETWEEN c AND d",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME CONTAINED IN (c, d)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT [x] FROM [a].[b] FOR SYSTEM_TIME ALL AS alias",
+      "expected": null
+    },
+    {
+      "sql": "SELECT x FROM a INNER LOOP JOIN b ON b.id = a.id",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM OPENJSON(@json)",
+      "expected": null
+    },
+    {
+      "sql": "WITH t AS (SELECT 1) SELECT * FROM t",
+      "expected": "WITH t AS (SELECT 1 AS [1]) SELECT * FROM t"
+    },
+    {
+      "sql": "WITH t AS (SELECT \"c\") SELECT * FROM t",
+      "expected": "WITH t AS (SELECT [c] AS [c]) SELECT * FROM t"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT 1) AS subq",
+      "expected": "SELECT * FROM (SELECT 1 AS [1]) AS subq"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT \"c\") AS subq",
+      "expected": "SELECT * FROM (SELECT [c] AS [c]) AS subq"
+    },
+    {
+      "sql": "DECLARE @X INT",
+      "expected": "DECLARE @X AS INTEGER"
+    },
+    {
+      "sql": "DECLARE @X INT = 1",
+      "expected": "DECLARE @X AS INTEGER = 1"
+    },
+    {
+      "sql": "DECLARE @X INT, @Y VARCHAR(10)",
+      "expected": "DECLARE @X AS INTEGER, @Y AS VARCHAR(10)"
+    },
+    {
+      "sql": "declare @X int = (select col from table where id = 1)",
+      "expected": "DECLARE @X AS INTEGER = (SELECT col FROM table WHERE id = 1)"
+    },
+    {
+      "sql": "declare @X TABLE (Id INT NOT NULL, Name VARCHAR(100) NOT NULL)",
+      "expected": "DECLARE @X AS TABLE (Id INTEGER NOT NULL, Name VARCHAR(100) NOT NULL)"
+    },
+    {
+      "sql": "declare @X TABLE (Id INT NOT NULL, constraint PK_Id primary key (Id))",
+      "expected": "DECLARE @X AS TABLE (Id INTEGER NOT NULL, CONSTRAINT PK_Id PRIMARY KEY (Id))"
+    },
+    {
+      "sql": "declare @X UserDefinedTableType",
+      "expected": "DECLARE @X AS UserDefinedTableType"
+    },
+    {
+      "sql": "DECLARE @MyTableVar TABLE (EmpID INT NOT NULL, PRIMARY KEY CLUSTERED (EmpID), UNIQUE NONCLUSTERED (EmpID), INDEX CustomNonClusteredIndex NONCLUSTERED (EmpID))",
+      "expected": null
+    },
+    {
+      "sql": "DECLARE vendor_cursor CURSOR FOR SELECT VendorID, Name FROM Purchasing.Vendor WHERE PreferredVendorStatus = 1 ORDER BY VendorID",
+      "expected": null
+    },
+    {
+      "sql": "x::int",
+      "expected": "CAST(x AS INTEGER)"
+    },
+    {
+      "sql": "x::varchar",
+      "expected": "CAST(x AS VARCHAR)"
+    },
+    {
+      "sql": "x::varchar(MAX)",
+      "expected": "CAST(x AS VARCHAR(MAX))"
+    },
+    {
+      "sql": "GRANT EXECUTE ON TestProc TO User2",
+      "expected": null
+    },
+    {
+      "sql": "GRANT EXECUTE ON TestProc TO TesterRole WITH GRANT OPTION",
+      "expected": null
+    },
+    {
+      "sql": "GRANT EXECUTE ON TestProc TO User2 AS TesterRole",
+      "expected": null
+    },
+    {
+      "sql": "REVOKE EXECUTE ON TestProc FROM User2",
+      "expected": null
+    },
+    {
+      "sql": "REVOKE EXECUTE ON TestProc FROM TesterRole",
+      "expected": null
+    },
+    {
+      "sql": "SELECT NEXT VALUE FOR db.schema.sequence_name OVER (ORDER BY foo), col",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COUNT(1) FROM x",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COUNT_BIG(1) FROM x",
+      "expected": null
+    },
+    {
+      "sql": "GO",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tbl ADD CONSTRAINT cnstr PRIMARY KEY CLUSTERED (ID), CONSTRAINT cnstr2 UNIQUE CLUSTERED (ID)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT go",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1 WHERE EXISTS(SELECT 1)",
+      "expected": null
+    },
+    {
+      "sql": "@x",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE dbo.DocExe DROP CONSTRAINT FK_Column_B",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a = 1",
+      "expected": "SELECT 1 AS a"
+    },
+    {
+      "sql": "#x",
+      "expected": null
+    },
+    {
+      "sql": "##x",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM @x",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE a ALTER COLUMN b CHAR(10) COLLATE abc",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "CREATE TABLE test_table([ID] [BIGINT] NOT NULL,[EffectiveFrom] [DATETIME2] (3) NOT NULL)",
+      "read": {},
+      "write": {
+        "spark": "CREATE TABLE test_table (`ID` BIGINT NOT NULL, `EffectiveFrom` TIMESTAMP NOT NULL)",
+        "tsql": "CREATE TABLE test_table ([ID] BIGINT NOT NULL, [EffectiveFrom] DATETIME2(3) NOT NULL)"
+      }
+    },
+    {
+      "sql": "SELECT CONVERT(DATETIME, '2006-04-25T15:50:59.997', 126)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT STRPTIME('2006-04-25T15:50:59.997', '%Y-%m-%dT%H:%M:%S.%f')",
+        "tsql": "SELECT CONVERT(DATETIME, '2006-04-25T15:50:59.997', 126)"
+      }
+    },
+    {
+      "sql": "WITH A AS (SELECT 2 AS value), C AS (SELECT * FROM A) SELECT * INTO TEMP_NESTED_WITH FROM (SELECT * FROM C) AS temp",
+      "read": {
+        "snowflake": "CREATE TABLE TEMP_NESTED_WITH AS WITH C AS (WITH A AS (SELECT 2 AS value) SELECT * FROM A) SELECT * FROM C",
+        "tsql": "WITH A AS (SELECT 2 AS value), C AS (SELECT * FROM A) SELECT * INTO TEMP_NESTED_WITH FROM (SELECT * FROM C) AS temp"
+      },
+      "write": {
+        "snowflake": "CREATE TABLE TEMP_NESTED_WITH AS WITH A AS (SELECT 2 AS value), C AS (SELECT * FROM A) SELECT * FROM (SELECT * FROM C) AS temp"
+      }
+    },
+    {
+      "sql": "SELECT IIF(cond <> 0, 'True', 'False')",
+      "read": {
+        "spark": "SELECT IF(cond, 'True', 'False')",
+        "sqlite": "SELECT IIF(cond, 'True', 'False')",
+        "tsql": "SELECT IIF(cond <> 0, 'True', 'False')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT TRIM(BOTH 'a' FROM a)",
+      "read": {
+        "mysql": "SELECT TRIM(BOTH 'a' FROM a)"
+      },
+      "write": {
+        "mysql": "SELECT TRIM(BOTH 'a' FROM a)",
+        "tsql": "SELECT TRIM(BOTH 'a' FROM a)"
+      }
+    },
+    {
+      "sql": "SELECT TIMEFROMPARTS(23, 59, 59, 0, 0)",
+      "read": {
+        "duckdb": "SELECT MAKE_TIME(23, 59, 59)",
+        "mysql": "SELECT MAKETIME(23, 59, 59)",
+        "postgres": "SELECT MAKE_TIME(23, 59, 59)",
+        "snowflake": "SELECT TIME_FROM_PARTS(23, 59, 59)"
+      },
+      "write": {
+        "tsql": "SELECT TIMEFROMPARTS(23, 59, 59, 0, 0)"
+      }
+    },
+    {
+      "sql": "SELECT DATETIMEFROMPARTS(2013, 4, 5, 12, 00, 00, 0)",
+      "read": {
+        "snowflake": "SELECT TIMESTAMP_FROM_PARTS(2013, 4, 5, 12, 00, 00, 987654321)"
+      },
+      "write": {
+        "duckdb": "SELECT MAKE_TIMESTAMP(2013, 4, 5, 12, 00, 00 + (0 / 1000.0))",
+        "snowflake": "SELECT TIMESTAMP_FROM_PARTS(2013, 4, 5, 12, 00, 00, 0 * 1000000)",
+        "tsql": "SELECT DATETIMEFROMPARTS(2013, 4, 5, 12, 00, 00, 0)"
+      }
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO foo FROM (SELECT c AS c FROM t) AS temp",
+      "read": {
+        "duckdb": "CREATE TABLE foo AS WITH t(c) AS (SELECT 1) SELECT c FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO foo FROM (SELECT c AS c FROM t) AS temp",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE foo AS WITH t(c) AS (SELECT 1) SELECT * FROM (SELECT c AS c FROM t) AS temp",
+        "postgres": "WITH t(c) AS (SELECT 1) SELECT * INTO foo FROM (SELECT c AS c FROM t) AS temp",
+        "oracle": "WITH t(c) AS (SELECT 1) SELECT * INTO foo FROM (SELECT c AS c FROM t) temp"
+      }
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO UNLOGGED #foo FROM (SELECT c AS c FROM t) AS temp",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TEMPORARY TABLE foo AS WITH t(c) AS (SELECT 1) SELECT * FROM (SELECT c AS c FROM t) AS temp",
+        "postgres": "WITH t(c) AS (SELECT 1) SELECT * INTO TEMPORARY foo FROM (SELECT c AS c FROM t) AS temp"
+      }
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT c INTO #foo FROM t",
+      "read": {
+        "tsql": "WITH t(c) AS (SELECT 1) SELECT c INTO #foo FROM t",
+        "postgres": "WITH t(c) AS (SELECT 1) SELECT c INTO TEMPORARY foo FROM t"
+      },
+      "write": {
+        "tsql": "WITH t(c) AS (SELECT 1) SELECT c INTO #foo FROM t",
+        "postgres": "WITH t(c) AS (SELECT 1) SELECT c INTO TEMPORARY foo FROM t",
+        "duckdb": "CREATE TEMPORARY TABLE foo AS WITH t(c) AS (SELECT 1) SELECT c FROM t",
+        "snowflake": "CREATE TEMPORARY TABLE foo AS WITH t(c) AS (SELECT 1) SELECT c FROM t"
+      }
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO UNLOGGED foo FROM (SELECT c AS c FROM t) AS temp",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE foo AS WITH t(c) AS (SELECT 1) SELECT * FROM (SELECT c AS c FROM t) AS temp"
+      }
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO UNLOGGED foo FROM (SELECT c AS c FROM t) AS temp",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE foo AS WITH t(c) AS (SELECT 1) SELECT * FROM (SELECT c AS c FROM t) AS temp"
+      }
+    },
+    {
+      "sql": "WITH y AS (SELECT 2 AS c) INSERT INTO #t SELECT * FROM y",
+      "read": {},
+      "write": {
+        "duckdb": "WITH y AS (SELECT 2 AS c) INSERT INTO t SELECT * FROM y",
+        "postgres": "WITH y AS (SELECT 2 AS c) INSERT INTO t SELECT * FROM y"
+      }
+    },
+    {
+      "sql": "WITH y AS (SELECT 2 AS c) INSERT INTO t SELECT * FROM y",
+      "read": {
+        "duckdb": "WITH y AS (SELECT 2 AS c) INSERT INTO t SELECT * FROM y"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT 1 AS c UNION (SELECT c FROM t)",
+      "read": {
+        "duckdb": "SELECT 1 AS c UNION (WITH t(c) AS (SELECT 1) SELECT c FROM t)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) MERGE INTO x AS z USING (SELECT c AS c FROM t) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b",
+      "read": {
+        "postgres": "MERGE INTO x AS z USING (WITH t(c) AS (SELECT 1) SELECT c FROM t) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH t(n) AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM t WHERE n < 4) SELECT * FROM (SELECT SUM(n) AS s4 FROM t) AS subq",
+      "read": {
+        "duckdb": "SELECT * FROM (WITH RECURSIVE t(n) AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM t WHERE n < 4) SELECT SUM(n) AS s4 FROM t) AS subq"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE #mytemptable (a INTEGER)",
+      "read": {
+        "duckdb": "CREATE TEMPORARY TABLE mytemptable (a INT)"
+      },
+      "write": {
+        "tsql": "CREATE TABLE #mytemptable (a INTEGER)",
+        "snowflake": "CREATE TEMPORARY TABLE mytemptable (a INT)",
+        "duckdb": "CREATE TEMPORARY TABLE mytemptable (a INT)",
+        "oracle": "CREATE GLOBAL TEMPORARY TABLE mytemptable (a INT)",
+        "hive": "CREATE TEMPORARY TABLE mytemptable (a INT)",
+        "spark2": "CREATE TEMPORARY TABLE mytemptable (a INT) USING PARQUET",
+        "spark": "CREATE TEMPORARY TABLE mytemptable (a INT) USING PARQUET",
+        "databricks": "CREATE TEMPORARY TABLE mytemptable (a INT) USING PARQUET"
+      }
+    },
+    {
+      "sql": "CREATE TABLE #mytemp (a INTEGER, b CHAR(2), c TIME(4), d FLOAT(24))",
+      "read": {},
+      "write": {
+        "spark": "CREATE TEMPORARY TABLE mytemp (a INT, b CHAR(2), c TIMESTAMP, d FLOAT) USING PARQUET",
+        "tsql": "CREATE TABLE #mytemp (a INTEGER, b CHAR(2), c TIME(4), d FLOAT(24))"
+      }
+    },
+    {
+      "sql": "CREATE TABLE [dbo].[mytable](\n                [email] [varchar](255) NOT NULL,\n                CONSTRAINT [UN_t_mytable] UNIQUE NONCLUSTERED\n                (\n                    [email] ASC\n                )\n                )",
+      "read": {},
+      "write": {
+        "hive": "CREATE TABLE `dbo`.`mytable` (`email` VARCHAR(255) NOT NULL)",
+        "spark2": "CREATE TABLE `dbo`.`mytable` (`email` VARCHAR(255) NOT NULL)",
+        "spark": "CREATE TABLE `dbo`.`mytable` (`email` VARCHAR(255) NOT NULL)",
+        "databricks": "CREATE TABLE `dbo`.`mytable` (`email` VARCHAR(255) NOT NULL)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x ( A INTEGER NOT NULL, B INTEGER NULL )",
+      "read": {},
+      "write": {
+        "tsql": "CREATE TABLE x (A INTEGER NOT NULL, B INTEGER NULL)",
+        "hive": "CREATE TABLE x (A INT NOT NULL, B INT)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x ([zip_cd] VARCHAR(5) NULL NOT FOR REPLICATION, [zip_cd_mkey] VARCHAR(5) NOT NULL, CONSTRAINT [pk_mytable] PRIMARY KEY CLUSTERED ([zip_cd_mkey] ASC) WITH (PAD_INDEX=ON, STATISTICS_NORECOMPUTE=OFF) ON [INDEX]) ON [SECONDARY]",
+      "read": {},
+      "write": {
+        "tsql": "CREATE TABLE x ([zip_cd] VARCHAR(5) NULL NOT FOR REPLICATION, [zip_cd_mkey] VARCHAR(5) NOT NULL, CONSTRAINT [pk_mytable] PRIMARY KEY CLUSTERED ([zip_cd_mkey] ASC) WITH (PAD_INDEX=ON, STATISTICS_NORECOMPUTE=OFF) ON [INDEX]) ON [SECONDARY]",
+        "spark2": "CREATE TABLE x (`zip_cd` VARCHAR(5), `zip_cd_mkey` VARCHAR(5) NOT NULL, CONSTRAINT `pk_mytable` PRIMARY KEY (`zip_cd_mkey`))"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x ( A INTEGER NOT NULL, B INTEGER NULL )",
+      "read": {},
+      "write": {
+        "hive": "CREATE TABLE x (A INT NOT NULL, B INT)"
+      }
+    },
+    {
+      "sql": "IF OBJECT_ID('tempdb.dbo.#TempTableName', 'U') IS NOT NULL DROP TABLE #TempTableName",
+      "read": {},
+      "write": {
+        "tsql": "DROP TABLE IF EXISTS #TempTableName",
+        "spark": "DROP TABLE IF EXISTS TempTableName"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 2 ROWS",
+      "read": {
+        "postgres": "SELECT * FROM t OFFSET 2"
+      },
+      "write": {
+        "postgres": "SELECT * FROM t ORDER BY (SELECT NULL) NULLS FIRST OFFSET 2",
+        "tsql": "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 2 ROWS"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH FIRST 10 ROWS ONLY",
+      "read": {
+        "duckdb": "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "sqlite": "SELECT * FROM t LIMIT 5, 10",
+        "tsql": "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH FIRST 10 ROWS ONLY"
+      },
+      "write": {
+        "duckdb": "SELECT * FROM t ORDER BY (SELECT NULL) NULLS FIRST LIMIT 10 OFFSET 5",
+        "sqlite": "SELECT * FROM t ORDER BY (SELECT NULL) LIMIT 10 OFFSET 5"
+      }
+    },
+    {
+      "sql": "SELECT CAST([a].[b] AS SMALLINT) FROM foo",
+      "read": {},
+      "write": {
+        "tsql": "SELECT CAST([a].[b] AS SMALLINT) FROM foo",
+        "spark": "SELECT CAST(`a`.`b` AS SMALLINT) FROM foo"
+      }
+    },
+    {
+      "sql": "CONVERT(INT, CONVERT(NUMERIC, '444.75'))",
+      "read": {},
+      "write": {
+        "mysql": "CAST(CAST('444.75' AS DECIMAL) AS SIGNED)",
+        "tsql": "CONVERT(INTEGER, CONVERT(NUMERIC, '444.75'))"
+      }
+    },
+    {
+      "sql": "STRING_AGG(x, y) WITHIN GROUP (ORDER BY z DESC)",
+      "read": {},
+      "write": {
+        "tsql": "STRING_AGG(x, y) WITHIN GROUP (ORDER BY z DESC)",
+        "mysql": "GROUP_CONCAT(x ORDER BY z DESC SEPARATOR y)",
+        "sqlite": "GROUP_CONCAT(x, y)",
+        "postgres": "STRING_AGG(x, y ORDER BY z DESC NULLS LAST)"
+      }
+    },
+    {
+      "sql": "STRING_AGG(x, '|') WITHIN GROUP (ORDER BY z ASC)",
+      "read": {},
+      "write": {
+        "tsql": "STRING_AGG(x, '|') WITHIN GROUP (ORDER BY z ASC)",
+        "mysql": "GROUP_CONCAT(x ORDER BY z ASC SEPARATOR '|')",
+        "sqlite": "GROUP_CONCAT(x, '|')",
+        "postgres": "STRING_AGG(x, '|' ORDER BY z ASC NULLS FIRST)"
+      }
+    },
+    {
+      "sql": "STRING_AGG(x, '|')",
+      "read": {},
+      "write": {
+        "tsql": "STRING_AGG(x, '|')",
+        "mysql": "GROUP_CONCAT(x SEPARATOR '|')",
+        "sqlite": "GROUP_CONCAT(x, '|')",
+        "postgres": "STRING_AGG(x, '|')"
+      }
+    },
+    {
+      "sql": "HASHBYTES('SHA1', x)",
+      "read": {
+        "snowflake": "SHA1(x)",
+        "spark": "SHA(x)"
+      },
+      "write": {
+        "snowflake": "SHA1(x)",
+        "spark": "SHA(x)",
+        "tsql": "HASHBYTES('SHA1', x)"
+      }
+    },
+    {
+      "sql": "HASHBYTES('SHA2_256', x)",
+      "read": {
+        "spark": "SHA2(x, 256)"
+      },
+      "write": {
+        "tsql": "HASHBYTES('SHA2_256', x)",
+        "spark": "SHA2(x, 256)"
+      }
+    },
+    {
+      "sql": "HASHBYTES('SHA2_512', x)",
+      "read": {
+        "spark": "SHA2(x, 512)"
+      },
+      "write": {
+        "tsql": "HASHBYTES('SHA2_512', x)",
+        "spark": "SHA2(x, 512)"
+      }
+    },
+    {
+      "sql": "HASHBYTES('MD5', 'x')",
+      "read": {
+        "spark": "MD5('x')"
+      },
+      "write": {
+        "tsql": "HASHBYTES('MD5', 'x')",
+        "spark": "MD5('x')"
+      }
+    },
+    {
+      "sql": "STDEV(x)",
+      "read": {},
+      "write": {
+        "tsql": "STDEV(x)"
+      }
+    },
+    {
+      "sql": "SCHEMA_NAME(id)",
+      "read": {},
+      "write": {
+        "sqlite": "'main'",
+        "mysql": "SCHEMA()",
+        "postgres": "CURRENT_SCHEMA",
+        "tsql": "SCHEMA_NAME(id)"
+      }
+    },
+    {
+      "sql": "JSON_ARRAYAGG(c1 ORDER BY c1)",
+      "read": {},
+      "write": {
+        "tsql": "JSON_ARRAYAGG(c1 ORDER BY c1)",
+        "postgres": "JSON_AGG(c1 ORDER BY c1 NULLS FIRST)"
+      }
+    },
+    {
+      "sql": "SELECT col FROM t OPTION(LABEL = 'foo')",
+      "read": {},
+      "write": {
+        "tsql": "SELECT col FROM t OPTION(LABEL = 'foo')"
+      }
+    },
+    {
+      "sql": "CAST(x AS DATETIME2(6))",
+      "read": {},
+      "write": {
+        "hive": "CAST(x AS TIMESTAMP)"
+      }
+    },
+    {
+      "sql": "CAST(x AS ROWVERSION)",
+      "read": {
+        "tsql": "CAST(x AS TIMESTAMP)"
+      },
+      "write": {
+        "tsql": "CAST(x AS ROWVERSION)",
+        "hive": "CAST(x AS BINARY)"
+      }
+    },
+    {
+      "sql": "CAST(X AS INT)",
+      "read": {},
+      "write": {
+        "hive": "CAST(X AS INT)",
+        "spark2": "CAST(X AS INT)",
+        "spark": "CAST(X AS INT)",
+        "tsql": "CAST(X AS INTEGER)"
+      }
+    },
+    {
+      "sql": "CAST(X AS BIGINT)",
+      "read": {},
+      "write": {
+        "hive": "CAST(X AS BIGINT)",
+        "spark2": "CAST(X AS BIGINT)",
+        "spark": "CAST(X AS BIGINT)",
+        "tsql": "CAST(X AS BIGINT)"
+      }
+    },
+    {
+      "sql": "CAST(X AS SMALLINT)",
+      "read": {},
+      "write": {
+        "hive": "CAST(X AS SMALLINT)",
+        "spark2": "CAST(X AS SMALLINT)",
+        "spark": "CAST(X AS SMALLINT)",
+        "tsql": "CAST(X AS SMALLINT)"
+      }
+    },
+    {
+      "sql": "CAST(X AS TINYINT)",
+      "read": {
+        "duckdb": "CAST(X AS UTINYINT)"
+      },
+      "write": {
+        "duckdb": "CAST(X AS UTINYINT)",
+        "hive": "CAST(X AS SMALLINT)",
+        "spark2": "CAST(X AS SMALLINT)",
+        "spark": "CAST(X AS SMALLINT)",
+        "tsql": "CAST(X AS TINYINT)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS FLOAT)",
+        "tsql": "CAST(x AS FLOAT)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT(32))",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS FLOAT(32))",
+        "hive": "CAST(x AS FLOAT)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT(64))",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS FLOAT(64))",
+        "spark": "CAST(x AS DOUBLE)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT(6))",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS FLOAT(6))",
+        "hive": "CAST(x AS FLOAT)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT(36))",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS FLOAT(36))",
+        "hive": "CAST(x AS DOUBLE)"
+      }
+    },
+    {
+      "sql": "CAST(x as FLOAT(99))",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS FLOAT(99))",
+        "hive": "CAST(x AS DOUBLE)"
+      }
+    },
+    {
+      "sql": "CAST(x as DOUBLE)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DOUBLE)",
+        "tsql": "CAST(x AS FLOAT)"
+      }
+    },
+    {
+      "sql": "CAST(x as DECIMAL(15, 4))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DECIMAL(15, 4))",
+        "tsql": "CAST(x AS NUMERIC(15, 4))"
+      }
+    },
+    {
+      "sql": "CAST(x as NUMERIC(13,3))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DECIMAL(13, 3))",
+        "tsql": "CAST(x AS NUMERIC(13, 3))"
+      }
+    },
+    {
+      "sql": "CAST(x as MONEY)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DECIMAL(15, 4))",
+        "tsql": "CAST(x AS MONEY)"
+      }
+    },
+    {
+      "sql": "CAST(x as SMALLMONEY)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DECIMAL(6, 4))",
+        "tsql": "CAST(x AS SMALLMONEY)"
+      }
+    },
+    {
+      "sql": "CAST(x as REAL)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS FLOAT)",
+        "tsql": "CAST(x AS FLOAT)"
+      }
+    },
+    {
+      "sql": "CAST(x as CHAR(1))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(1))",
+        "tsql": "CAST(x AS CHAR(1))"
+      }
+    },
+    {
+      "sql": "CAST(x as VARCHAR(2))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(2))",
+        "tsql": "CAST(x AS VARCHAR(2))"
+      }
+    },
+    {
+      "sql": "CAST(x as NCHAR(1))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(1))",
+        "tsql": "CAST(x AS NCHAR(1))"
+      }
+    },
+    {
+      "sql": "CAST(x as NVARCHAR(2))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(2))",
+        "tsql": "CAST(x AS NVARCHAR(2))"
+      }
+    },
+    {
+      "sql": "CAST(x as UNIQUEIDENTIFIER)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS STRING)",
+        "tsql": "CAST(x AS UNIQUEIDENTIFIER)"
+      }
+    },
+    {
+      "sql": "CAST(x as DATE)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DATE)",
+        "tsql": "CAST(x AS DATE)"
+      }
+    },
+    {
+      "sql": "CAST(x as DATE)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS DATE)",
+        "tsql": "CAST(x AS DATE)"
+      }
+    },
+    {
+      "sql": "CAST(x as TIME(4))",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS TIMESTAMP)",
+        "tsql": "CAST(x AS TIME(4))"
+      }
+    },
+    {
+      "sql": "CAST(x as DATETIME2)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS TIMESTAMP)",
+        "tsql": "CAST(x AS DATETIME2)"
+      }
+    },
+    {
+      "sql": "CAST(x as DATETIMEOFFSET)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS TIMESTAMP)",
+        "tsql": "CAST(x AS DATETIMEOFFSET)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE t (col1 DATETIME2(2))",
+      "read": {
+        "snowflake": "CREATE TABLE t (col1 TIMESTAMP_NTZ(2))"
+      },
+      "write": {
+        "tsql": "CREATE TABLE t (col1 DATETIME2(2))"
+      }
+    },
+    {
+      "sql": "CAST(x as BIT)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS BOOLEAN)",
+        "tsql": "CAST(x AS BIT)"
+      }
+    },
+    {
+      "sql": "CAST(x as VARBINARY)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS BINARY)",
+        "tsql": "CAST(x AS VARBINARY)"
+      }
+    },
+    {
+      "sql": "CAST(x AS BOOLEAN)",
+      "read": {},
+      "write": {
+        "tsql": "CAST(x AS BIT)"
+      }
+    },
+    {
+      "sql": "a = TRUE",
+      "read": {},
+      "write": {
+        "tsql": "a = 1"
+      }
+    },
+    {
+      "sql": "a != FALSE",
+      "read": {},
+      "write": {
+        "tsql": "a <> 0"
+      }
+    },
+    {
+      "sql": "a IS TRUE",
+      "read": {},
+      "write": {
+        "tsql": "a = 1"
+      }
+    },
+    {
+      "sql": "a IS NOT FALSE",
+      "read": {},
+      "write": {
+        "tsql": "NOT a = 0"
+      }
+    },
+    {
+      "sql": "CASE WHEN a IN (TRUE) THEN 'y' ELSE 'n' END",
+      "read": {},
+      "write": {
+        "tsql": "CASE WHEN a IN (1) THEN 'y' ELSE 'n' END"
+      }
+    },
+    {
+      "sql": "CASE WHEN a NOT IN (FALSE) THEN 'y' ELSE 'n' END",
+      "read": {},
+      "write": {
+        "tsql": "CASE WHEN NOT a IN (0) THEN 'y' ELSE 'n' END"
+      }
+    },
+    {
+      "sql": "SELECT TRUE, FALSE",
+      "read": {},
+      "write": {
+        "tsql": "SELECT 1, 0"
+      }
+    },
+    {
+      "sql": "SELECT TRUE AS a, FALSE AS b",
+      "read": {},
+      "write": {
+        "tsql": "SELECT 1 AS a, 0 AS b"
+      }
+    },
+    {
+      "sql": "SELECT 1 FROM a WHERE TRUE",
+      "read": {},
+      "write": {
+        "tsql": "SELECT 1 FROM a WHERE (1 = 1)"
+      }
+    },
+    {
+      "sql": "CASE WHEN TRUE THEN 'y' WHEN FALSE THEN 'n' ELSE NULL END",
+      "read": {},
+      "write": {
+        "tsql": "CASE WHEN (1 = 1) THEN 'y' WHEN (1 = 0) THEN 'n' ELSE NULL END"
+      }
+    },
+    {
+      "sql": "CREATE TABLE [#temptest] (name INTEGER)",
+      "read": {
+        "duckdb": "CREATE TEMPORARY TABLE 'temptest' (name INTEGER)",
+        "tsql": "CREATE TABLE [#temptest] (name INTEGER)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE tbl (id INTEGER IDENTITY PRIMARY KEY)",
+      "read": {
+        "mysql": "CREATE TABLE tbl (id INT AUTO_INCREMENT PRIMARY KEY)",
+        "tsql": "CREATE TABLE tbl (id INTEGER IDENTITY PRIMARY KEY)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE tbl (id INTEGER NOT NULL IDENTITY(10, 1) PRIMARY KEY)",
+      "read": {
+        "postgres": "CREATE TABLE tbl (id INT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 10) PRIMARY KEY)",
+        "tsql": "CREATE TABLE tbl (id INTEGER NOT NULL IDENTITY(10, 1) PRIMARY KEY)"
+      },
+      "write": {
+        "databricks": "CREATE TABLE tbl (id BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY (START WITH 10 INCREMENT BY 1) PRIMARY KEY)",
+        "postgres": "CREATE TABLE tbl (id INT NOT NULL GENERATED BY DEFAULT AS IDENTITY (START WITH 10 INCREMENT BY 1) PRIMARY KEY)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x (a UNIQUEIDENTIFIER, b VARBINARY)",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE x (a UUID, b BLOB)",
+        "presto": "CREATE TABLE x (a UUID, b VARBINARY)",
+        "spark": "CREATE TABLE x (a STRING, b BINARY)",
+        "postgres": "CREATE TABLE x (a UUID, b BYTEA)"
+      }
+    },
+    {
+      "sql": "SELECT * INTO foo.bar.baz FROM (SELECT * FROM a.b.c) AS temp",
+      "read": {
+        "duckdb": "CREATE TABLE foo.bar.baz AS (SELECT * FROM a.b.c)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE OR ALTER VIEW a.b AS SELECT 1",
+      "read": {},
+      "write": {
+        "tsql": "CREATE OR ALTER VIEW a.b AS SELECT 1"
+      }
+    },
+    {
+      "sql": "ALTER TABLE a ADD b INTEGER, c INTEGER",
+      "read": {},
+      "write": {
+        "tsql": "ALTER TABLE a ADD b INTEGER, c INTEGER"
+      }
+    },
+    {
+      "sql": "ALTER TABLE a ALTER COLUMN b INTEGER",
+      "read": {},
+      "write": {
+        "tsql": "ALTER TABLE a ALTER COLUMN b INTEGER"
+      }
+    },
+    {
+      "sql": "CREATE TABLE #mytemp (a INTEGER, b CHAR(2), c TIME(4), d FLOAT(24))",
+      "read": {},
+      "write": {
+        "spark": "CREATE TEMPORARY TABLE mytemp (a INT, b CHAR(2), c TIMESTAMP, d FLOAT) USING PARQUET",
+        "tsql": "CREATE TABLE #mytemp (a INTEGER, b CHAR(2), c TIME(4), d FLOAT(24))"
+      }
+    },
+    {
+      "sql": "BEGIN TRAN",
+      "read": {},
+      "write": {
+        "tsql": "BEGIN TRANSACTION"
+      }
+    },
+    {
+      "sql": "COMMIT",
+      "read": {},
+      "write": {
+        "tsql": "COMMIT TRANSACTION"
+      }
+    },
+    {
+      "sql": "COMMIT TRAN",
+      "read": {},
+      "write": {
+        "tsql": "COMMIT TRANSACTION"
+      }
+    },
+    {
+      "sql": "ROLLBACK",
+      "read": {},
+      "write": {
+        "tsql": "ROLLBACK TRANSACTION"
+      }
+    },
+    {
+      "sql": "ROLLBACK TRAN",
+      "read": {},
+      "write": {
+        "tsql": "ROLLBACK TRANSACTION"
+      }
+    },
+    {
+      "sql": "\n            CREATE FUNCTION udfProductInYear (\n                @model_year INT\n            )\n            RETURNS TABLE\n            AS\n            RETURN\n                SELECT\n                    product_name,\n                    model_year,\n                    list_price\n                FROM\n                    production.products\n                WHERE\n                    model_year = @model_year\n            ",
+      "read": {},
+      "write": {
+        "tsql": "CREATE FUNCTION udfProductInYear(\n    @model_year INTEGER\n)\nRETURNS TABLE AS\nRETURN SELECT\n  product_name,\n  model_year,\n  list_price\nFROM production.products\nWHERE\n  model_year = @model_year"
+      }
+    },
+    {
+      "sql": "CHARINDEX(x, y, 9)",
+      "read": {
+        "spark": "LOCATE(x, y, 9)"
+      },
+      "write": {
+        "spark": "LOCATE(x, y, 9)",
+        "tsql": "CHARINDEX(x, y, 9)"
+      }
+    },
+    {
+      "sql": "CHARINDEX(x, y)",
+      "read": {
+        "spark": "LOCATE(x, y)"
+      },
+      "write": {
+        "spark": "LOCATE(x, y)",
+        "tsql": "CHARINDEX(x, y)"
+      }
+    },
+    {
+      "sql": "CHARINDEX('sub', 'testsubstring', 3)",
+      "read": {
+        "spark": "LOCATE('sub', 'testsubstring', 3)"
+      },
+      "write": {
+        "spark": "LOCATE('sub', 'testsubstring', 3)",
+        "tsql": "CHARINDEX('sub', 'testsubstring', 3)"
+      }
+    },
+    {
+      "sql": "CHARINDEX('sub', 'testsubstring')",
+      "read": {
+        "spark": "LOCATE('sub', 'testsubstring')"
+      },
+      "write": {
+        "spark": "LOCATE('sub', 'testsubstring')",
+        "tsql": "CHARINDEX('sub', 'testsubstring')"
+      }
+    },
+    {
+      "sql": "LEN(x)",
+      "read": {},
+      "write": {
+        "spark": "LENGTH(CAST(x AS STRING))"
+      }
+    },
+    {
+      "sql": "RIGHT(x, 1)",
+      "read": {},
+      "write": {
+        "spark": "RIGHT(CAST(x AS STRING), 1)"
+      }
+    },
+    {
+      "sql": "LEFT(x, 1)",
+      "read": {},
+      "write": {
+        "spark": "LEFT(CAST(x AS STRING), 1)"
+      }
+    },
+    {
+      "sql": "LEN(1)",
+      "read": {},
+      "write": {
+        "tsql": "LEN(1)",
+        "spark": "LENGTH(CAST(1 AS STRING))"
+      }
+    },
+    {
+      "sql": "LEN('x')",
+      "read": {},
+      "write": {
+        "tsql": "LEN('x')",
+        "spark": "LENGTH('x')"
+      }
+    },
+    {
+      "sql": "REPLICATE('x', 2)",
+      "read": {},
+      "write": {
+        "spark": "REPEAT('x', 2)",
+        "tsql": "REPLICATE('x', 2)"
+      }
+    },
+    {
+      "sql": "ISNULL(x, y)",
+      "read": {},
+      "write": {
+        "spark": "COALESCE(x, y)"
+      }
+    },
+    {
+      "sql": "JSON_QUERY(r.JSON, '$.Attr_INT')",
+      "read": {},
+      "write": {
+        "spark": "GET_JSON_OBJECT(r.JSON, '$.Attr_INT')",
+        "tsql": "ISNULL(JSON_QUERY(r.JSON, '$.Attr_INT'), JSON_VALUE(r.JSON, '$.Attr_INT'))"
+      }
+    },
+    {
+      "sql": "JSON_VALUE(r.JSON, '$.Attr_INT')",
+      "read": {},
+      "write": {
+        "spark": "GET_JSON_OBJECT(r.JSON, '$.Attr_INT')",
+        "tsql": "ISNULL(JSON_QUERY(r.JSON, '$.Attr_INT'), JSON_VALUE(r.JSON, '$.Attr_INT'))"
+      }
+    },
+    {
+      "sql": "SELECT DATEFROMPARTS('2020', 10, 01)",
+      "read": {},
+      "write": {
+        "spark": "SELECT MAKE_DATE('2020', 10, 01)",
+        "tsql": "SELECT DATEFROMPARTS('2020', 10, 01)"
+      }
+    },
+    {
+      "sql": "SELECT DATENAME(mm, '1970-01-01')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_FORMAT(CAST('1970-01-01' AS TIMESTAMP), 'MMMM')",
+        "tsql": "SELECT FORMAT(CAST('1970-01-01' AS DATETIME2), 'MMMM')"
+      }
+    },
+    {
+      "sql": "SELECT DATENAME(dw, '1970-01-01')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_FORMAT(CAST('1970-01-01' AS TIMESTAMP), 'EEEE')",
+        "tsql": "SELECT FORMAT(CAST('1970-01-01' AS DATETIME2), 'dddd')"
+      }
+    },
+    {
+      "sql": "SELECT DATEPART(month,'1970-01-01')",
+      "read": {},
+      "write": {
+        "spark": "SELECT EXTRACT(month FROM '1970-01-01')",
+        "tsql": "SELECT DATEPART(month, '1970-01-01')"
+      }
+    },
+    {
+      "sql": "SELECT DATEPART(YEAR, CAST('2017-01-01' AS DATE))",
+      "read": {
+        "postgres": "SELECT DATE_PART('YEAR', '2017-01-01'::DATE)"
+      },
+      "write": {
+        "postgres": "SELECT EXTRACT(YEAR FROM CAST('2017-01-01' AS DATE))",
+        "spark": "SELECT EXTRACT(YEAR FROM CAST('2017-01-01' AS DATE))",
+        "tsql": "SELECT DATEPART(YEAR, CAST('2017-01-01' AS DATE))"
+      }
+    },
+    {
+      "sql": "SELECT DATEPART(month, CAST('2017-03-01' AS DATE))",
+      "read": {
+        "postgres": "SELECT DATE_PART('month', '2017-03-01'::DATE)"
+      },
+      "write": {
+        "postgres": "SELECT EXTRACT(month FROM CAST('2017-03-01' AS DATE))",
+        "spark": "SELECT EXTRACT(month FROM CAST('2017-03-01' AS DATE))",
+        "tsql": "SELECT DATEPART(month, CAST('2017-03-01' AS DATE))"
+      }
+    },
+    {
+      "sql": "SELECT DATEPART(day, CAST('2017-01-02' AS DATE))",
+      "read": {
+        "postgres": "SELECT DATE_PART('day', '2017-01-02'::DATE)"
+      },
+      "write": {
+        "postgres": "SELECT EXTRACT(day FROM CAST('2017-01-02' AS DATE))",
+        "spark": "SELECT EXTRACT(day FROM CAST('2017-01-02' AS DATE))",
+        "tsql": "SELECT DATEPART(day, CAST('2017-01-02' AS DATE))"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR(200), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(200))",
+        "tsql": "CONVERT(NVARCHAR(200), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR, x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(30))",
+        "tsql": "CONVERT(NVARCHAR, x)"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR(MAX), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS STRING)",
+        "tsql": "CONVERT(NVARCHAR(MAX), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR(200), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(200))",
+        "tsql": "CONVERT(VARCHAR(200), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR, x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS VARCHAR(30))",
+        "tsql": "CONVERT(VARCHAR, x)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR(MAX), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS STRING)",
+        "tsql": "CONVERT(VARCHAR(MAX), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(CHAR(40), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(40))",
+        "tsql": "CONVERT(CHAR(40), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(CHAR, x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(30))",
+        "tsql": "CONVERT(CHAR, x)"
+      }
+    },
+    {
+      "sql": "CONVERT(NCHAR(40), x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(40))",
+        "tsql": "CONVERT(NCHAR(40), x)"
+      }
+    },
+    {
+      "sql": "CONVERT(NCHAR, x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS CHAR(30))",
+        "tsql": "CONVERT(NCHAR, x)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS VARCHAR(30))",
+        "tsql": "CONVERT(VARCHAR, x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR(40), x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS VARCHAR(40))",
+        "tsql": "CONVERT(VARCHAR(40), x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(VARCHAR(MAX), x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS STRING)",
+        "tsql": "CONVERT(VARCHAR(MAX), x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS VARCHAR(30))",
+        "tsql": "CONVERT(NVARCHAR, x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR(40), x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS VARCHAR(40))",
+        "tsql": "CONVERT(NVARCHAR(40), x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(NVARCHAR(MAX), x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS STRING)",
+        "tsql": "CONVERT(NVARCHAR(MAX), x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(DATE, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "TO_DATE(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS')",
+        "tsql": "CONVERT(DATE, x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(DATETIME, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "TO_TIMESTAMP(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS')",
+        "tsql": "CONVERT(DATETIME, x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(DATETIME2, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "TO_TIMESTAMP(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS')",
+        "tsql": "CONVERT(DATETIME2, x, 121)"
+      }
+    },
+    {
+      "sql": "CONVERT(INT, x)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS INT)",
+        "tsql": "CONVERT(INTEGER, x)"
+      }
+    },
+    {
+      "sql": "CONVERT(INT, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "CAST(x AS INT)",
+        "tsql": "CONVERT(INTEGER, x, 121)"
+      }
+    },
+    {
+      "sql": "TRY_CONVERT(NVARCHAR, x, 121)",
+      "read": {},
+      "write": {
+        "spark": "TRY_CAST(DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss.SSSSSS') AS VARCHAR(30))",
+        "tsql": "TRY_CONVERT(NVARCHAR, x, 121)"
+      }
+    },
+    {
+      "sql": "TRY_CONVERT(INT, x)",
+      "read": {},
+      "write": {
+        "spark": "TRY_CAST(x AS INT)",
+        "tsql": "TRY_CONVERT(INTEGER, x)"
+      }
+    },
+    {
+      "sql": "TRY_CAST(x AS INT)",
+      "read": {},
+      "write": {
+        "spark": "TRY_CAST(x AS INT)",
+        "tsql": "TRY_CAST(x AS INTEGER)"
+      }
+    },
+    {
+      "sql": "SELECT CONVERT(VARCHAR(10), testdb.dbo.test.x, 120) y FROM testdb.dbo.test",
+      "read": {},
+      "write": {
+        "mysql": "SELECT CAST(DATE_FORMAT(testdb.dbo.test.x, '%Y-%m-%d %T') AS CHAR(10)) AS y FROM testdb.dbo.test",
+        "spark": "SELECT CAST(DATE_FORMAT(testdb.dbo.test.x, 'yyyy-MM-dd HH:mm:ss') AS VARCHAR(10)) AS y FROM testdb.dbo.test",
+        "tsql": "SELECT CONVERT(VARCHAR(10), testdb.dbo.test.x, 120) AS y FROM testdb.dbo.test"
+      }
+    },
+    {
+      "sql": "SELECT CONVERT(VARCHAR(10), y.x) z FROM testdb.dbo.test y",
+      "read": {},
+      "write": {
+        "mysql": "SELECT CAST(y.x AS CHAR(10)) AS z FROM testdb.dbo.test AS y",
+        "spark": "SELECT CAST(y.x AS VARCHAR(10)) AS z FROM testdb.dbo.test AS y",
+        "tsql": "SELECT CONVERT(VARCHAR(10), y.x) AS z FROM testdb.dbo.test AS y"
+      }
+    },
+    {
+      "sql": "SELECT CAST((SELECT x FROM y) AS VARCHAR) AS test",
+      "read": {},
+      "write": {
+        "spark": "SELECT CAST((SELECT x FROM y) AS STRING) AS test",
+        "tsql": "SELECT CAST((SELECT x FROM y) AS VARCHAR) AS test"
+      }
+    },
+    {
+      "sql": "DATEADD(year, 50, '2006-07-31')",
+      "read": {},
+      "write": {
+        "bigquery": "DATE_ADD('2006-07-31', INTERVAL 50 YEAR)"
+      }
+    },
+    {
+      "sql": "SELECT DATEADD(year, 1, '2017/08/25')",
+      "read": {},
+      "write": {
+        "spark": "SELECT ADD_MONTHS('2017/08/25', 12)"
+      }
+    },
+    {
+      "sql": "SELECT DATEADD(qq, 1, '2017/08/25')",
+      "read": {},
+      "write": {
+        "spark": "SELECT ADD_MONTHS('2017/08/25', 3)"
+      }
+    },
+    {
+      "sql": "SELECT DATEADD(wk, 1, '2017/08/25')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_ADD('2017/08/25', 7)",
+        "databricks": "SELECT DATEADD(WEEK, 1, '2017/08/25')"
+      }
+    },
+    {
+      "sql": "SELECT x.a, x.b, t.v, t.y FROM x CROSS APPLY (SELECT v, y FROM t) t(v, y)",
+      "read": {},
+      "write": {
+        "spark": "SELECT x.a, x.b, t.v, t.y FROM x INNER JOIN LATERAL (SELECT v, y FROM t) AS t(v, y)",
+        "tsql": "SELECT x.a, x.b, t.v, t.y FROM x CROSS APPLY (SELECT v, y FROM t) AS t(v, y)"
+      }
+    },
+    {
+      "sql": "SELECT x.a, x.b, t.v, t.y FROM x OUTER APPLY (SELECT v, y FROM t) t(v, y)",
+      "read": {},
+      "write": {
+        "spark": "SELECT x.a, x.b, t.v, t.y FROM x LEFT JOIN LATERAL (SELECT v, y FROM t) AS t(v, y)",
+        "tsql": "SELECT x.a, x.b, t.v, t.y FROM x OUTER APPLY (SELECT v, y FROM t) AS t(v, y)"
+      }
+    },
+    {
+      "sql": "SELECT x.a, x.b, t.v, t.y, s.v, s.y FROM x OUTER APPLY (SELECT v, y FROM t) t(v, y) OUTER APPLY (SELECT v, y FROM t) s(v, y) LEFT JOIN z ON z.id = s.id",
+      "read": {},
+      "write": {
+        "spark": "SELECT x.a, x.b, t.v, t.y, s.v, s.y FROM x LEFT JOIN LATERAL (SELECT v, y FROM t) AS t(v, y) LEFT JOIN LATERAL (SELECT v, y FROM t) AS s(v, y) LEFT JOIN z ON z.id = s.id",
+        "tsql": "SELECT x.a, x.b, t.v, t.y, s.v, s.y FROM x OUTER APPLY (SELECT v, y FROM t) AS t(v, y) OUTER APPLY (SELECT v, y FROM t) AS s(v, y) LEFT JOIN z ON z.id = s.id"
+      }
+    },
+    {
+      "sql": "SELECT t.x, y.z FROM x CROSS APPLY tvfTest(t.x) y(z)",
+      "read": {},
+      "write": {
+        "spark": "SELECT t.x, y.z FROM x INNER JOIN LATERAL TVFTEST(t.x) AS y(z)",
+        "tsql": "SELECT t.x, y.z FROM x CROSS APPLY TVFTEST(t.x) AS y(z)"
+      }
+    },
+    {
+      "sql": "SELECT t.x, y.z FROM x OUTER APPLY tvfTest(t.x)y(z)",
+      "read": {},
+      "write": {
+        "spark": "SELECT t.x, y.z FROM x LEFT JOIN LATERAL TVFTEST(t.x) AS y(z)",
+        "tsql": "SELECT t.x, y.z FROM x OUTER APPLY TVFTEST(t.x) AS y(z)"
+      }
+    },
+    {
+      "sql": "SELECT t.x, y.z FROM x OUTER APPLY a.b.tvfTest(t.x)y(z)",
+      "read": {},
+      "write": {
+        "spark": "SELECT t.x, y.z FROM x LEFT JOIN LATERAL a.b.tvfTest(t.x) AS y(z)",
+        "tsql": "SELECT t.x, y.z FROM x OUTER APPLY a.b.tvfTest(t.x) AS y(z)"
+      }
+    },
+    {
+      "sql": "SELECT DISTINCT TOP 3 * FROM A",
+      "read": {
+        "spark": "SELECT DISTINCT * FROM A LIMIT 3"
+      },
+      "write": {
+        "spark": "SELECT DISTINCT * FROM A LIMIT 3",
+        "teradata": "SELECT DISTINCT TOP 3 * FROM A",
+        "tsql": "SELECT DISTINCT TOP 3 * FROM A"
+      }
+    },
+    {
+      "sql": "SELECT TOP (3) * FROM A",
+      "read": {},
+      "write": {
+        "spark": "SELECT * FROM A LIMIT 3"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT(1000000.01,'###,###.###')",
+      "read": {},
+      "write": {
+        "spark": "SELECT FORMAT_NUMBER(1000000.01, '###,###.###')",
+        "tsql": "SELECT FORMAT(1000000.01, '###,###.###')"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT(1234567, 'f')",
+      "read": {},
+      "write": {
+        "spark": "SELECT FORMAT_NUMBER(1234567, 'f')",
+        "tsql": "SELECT FORMAT(1234567, 'f')"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT('01-01-1991', 'dd.mm.yyyy')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_FORMAT('01-01-1991', 'dd.mm.yyyy')",
+        "tsql": "SELECT FORMAT('01-01-1991', 'dd.mm.yyyy')"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT(date_col, 'dd.mm.yyyy')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_FORMAT(date_col, 'dd.mm.yyyy')",
+        "tsql": "SELECT FORMAT(date_col, 'dd.mm.yyyy')"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT(date_col, 'm')",
+      "read": {},
+      "write": {
+        "spark": "SELECT DATE_FORMAT(date_col, 'MMMM d')",
+        "tsql": "SELECT FORMAT(date_col, 'MMMM d')"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT(num_col, 'c')",
+      "read": {},
+      "write": {
+        "spark": "SELECT FORMAT_NUMBER(num_col, 'c')",
+        "tsql": "SELECT FORMAT(num_col, 'c')"
+      }
+    },
+    {
+      "sql": "SELECT N'test'",
+      "read": {},
+      "write": {
+        "spark": "SELECT 'test'"
+      }
+    },
+    {
+      "sql": "SELECT n'test'",
+      "read": {},
+      "write": {
+        "spark": "SELECT 'test'"
+      }
+    },
+    {
+      "sql": "SELECT '''test'''",
+      "read": {},
+      "write": {
+        "spark": "SELECT '\\'test\\''"
+      }
+    },
+    {
+      "sql": "EOMONTH(GETDATE())",
+      "read": {
+        "spark": "LAST_DAY(CURRENT_TIMESTAMP())"
+      },
+      "write": {
+        "bigquery": "LAST_DAY(CAST(CURRENT_TIMESTAMP() AS DATE))",
+        "clickhouse": "LAST_DAY(CAST(CURRENT_TIMESTAMP() AS Nullable(DATE)))",
+        "duckdb": "LAST_DAY(CAST(CURRENT_TIMESTAMP AS DATE))",
+        "mysql": "LAST_DAY(DATE(CURRENT_TIMESTAMP()))",
+        "postgres": "CAST(DATE_TRUNC('MONTH', CAST(CURRENT_TIMESTAMP AS DATE)) + INTERVAL '1 MONTH' - INTERVAL '1 DAY' AS DATE)",
+        "presto": "LAST_DAY_OF_MONTH(CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) AS DATE))",
+        "redshift": "LAST_DAY(CAST(GETDATE() AS DATE))",
+        "snowflake": "LAST_DAY(TO_DATE(CURRENT_TIMESTAMP()))",
+        "spark": "LAST_DAY(TO_DATE(CURRENT_TIMESTAMP()))",
+        "tsql": "EOMONTH(CAST(GETDATE() AS DATE))"
+      }
+    },
+    {
+      "sql": "EOMONTH(GETDATE(), -1)",
+      "read": {},
+      "write": {
+        "bigquery": "LAST_DAY(DATE_ADD(CAST(CURRENT_TIMESTAMP() AS DATE), INTERVAL -1 MONTH))",
+        "clickhouse": "LAST_DAY(DATE_ADD(MONTH, -1, CAST(CURRENT_TIMESTAMP() AS Nullable(DATE))))",
+        "duckdb": "LAST_DAY(CAST(CURRENT_TIMESTAMP AS DATE) + INTERVAL (-1) MONTH)",
+        "mysql": "LAST_DAY(DATE_ADD(CURRENT_TIMESTAMP(), INTERVAL -1 MONTH))",
+        "postgres": "CAST(DATE_TRUNC('MONTH', CAST(CURRENT_TIMESTAMP AS DATE) + INTERVAL '-1 MONTH') + INTERVAL '1 MONTH' - INTERVAL '1 DAY' AS DATE)",
+        "presto": "LAST_DAY_OF_MONTH(DATE_ADD('MONTH', -1, CAST(CAST(CURRENT_TIMESTAMP AS TIMESTAMP) AS DATE)))",
+        "redshift": "LAST_DAY(DATEADD(MONTH, -1, CAST(GETDATE() AS DATE)))",
+        "snowflake": "LAST_DAY(DATEADD(MONTH, -1, TO_DATE(CURRENT_TIMESTAMP())))",
+        "spark": "LAST_DAY(ADD_MONTHS(TO_DATE(CURRENT_TIMESTAMP()), -1))",
+        "tsql": "EOMONTH(DATEADD(MONTH, -1, CAST(GETDATE() AS DATE)))"
+      }
+    },
+    {
+      "sql": "SELECT @x",
+      "read": {},
+      "write": {
+        "databricks": "SELECT ${x}",
+        "hive": "SELECT ${x}",
+        "spark": "SELECT ${x}",
+        "tsql": "SELECT @x"
+      }
+    },
+    {
+      "sql": "SELECT * FROM #mytemptable",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT * FROM mytemptable",
+        "spark": "SELECT * FROM mytemptable",
+        "tsql": "SELECT * FROM #mytemptable"
+      }
+    },
+    {
+      "sql": "SELECT * FROM ##mytemptable",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT * FROM mytemptable",
+        "spark": "SELECT * FROM mytemptable",
+        "tsql": "SELECT * FROM ##mytemptable"
+      }
+    },
+    {
+      "sql": "SUSER_NAME()",
+      "read": {},
+      "write": {
+        "spark": "CURRENT_USER()"
+      }
+    },
+    {
+      "sql": "SUSER_SNAME()",
+      "read": {},
+      "write": {
+        "spark": "CURRENT_USER()"
+      }
+    },
+    {
+      "sql": "SYSTEM_USER()",
+      "read": {},
+      "write": {
+        "spark": "CURRENT_USER()"
+      }
+    },
+    {
+      "sql": "SYSTEM_USER",
+      "read": {},
+      "write": {
+        "spark": "CURRENT_USER()"
+      }
+    },
+    {
+      "sql": "SELECT x FROM a INNER HASH JOIN b ON b.id = a.id",
+      "read": {},
+      "write": {
+        "spark": "SELECT x FROM a INNER JOIN b ON b.id = a.id"
+      }
+    },
+    {
+      "sql": "SELECT x FROM a INNER LOOP JOIN b ON b.id = a.id",
+      "read": {},
+      "write": {
+        "spark": "SELECT x FROM a INNER JOIN b ON b.id = a.id"
+      }
+    },
+    {
+      "sql": "SELECT x FROM a INNER REMOTE JOIN b ON b.id = a.id",
+      "read": {},
+      "write": {
+        "spark": "SELECT x FROM a INNER JOIN b ON b.id = a.id"
+      }
+    },
+    {
+      "sql": "SELECT x FROM a INNER MERGE JOIN b ON b.id = a.id",
+      "read": {},
+      "write": {
+        "spark": "SELECT x FROM a INNER JOIN b ON b.id = a.id"
+      }
+    },
+    {
+      "sql": "SELECT x FROM a WITH (NOLOCK)",
+      "read": {},
+      "write": {
+        "spark": "SELECT x FROM a",
+        "tsql": "SELECT x FROM a WITH (NOLOCK)"
+      }
+    },
+    {
+      "sql": "SELECT [key], value FROM OPENJSON(@json,'$.path.to.\"sub-object\"')",
+      "read": {},
+      "write": {
+        "tsql": "SELECT [key], value FROM OPENJSON(@json, '$.path.to.\"sub-object\"')"
+      }
+    },
+    {
+      "sql": "SELECT * FROM OPENJSON(@array) WITH (month VARCHAR(3), temp int, month_id tinyint '$.sql:identity()') as months",
+      "read": {},
+      "write": {
+        "tsql": "SELECT * FROM OPENJSON(@array) WITH (month VARCHAR(3), temp INTEGER, month_id TINYINT '$.sql:identity()') AS months"
+      }
+    },
+    {
+      "sql": "\n            SELECT *\n            FROM OPENJSON ( @json )\n            WITH (\n                          Number   VARCHAR(200)   '$.Order.Number',\n                          Date     DATETIME       '$.Order.Date',\n                          Customer VARCHAR(200)   '$.AccountNumber',\n                          Quantity INT            '$.Item.Quantity',\n                          [Order]  NVARCHAR(MAX)  AS JSON\n             )\n            ",
+      "read": {},
+      "write": {
+        "tsql": "SELECT\n  *\nFROM OPENJSON(@json) WITH (\n    Number VARCHAR(200) '$.Order.Number',\n    Date DATETIME '$.Order.Date',\n    Customer VARCHAR(200) '$.AccountNumber',\n    Quantity INTEGER '$.Item.Quantity',\n    [Order] NVARCHAR(MAX) AS JSON\n)"
+      }
+    },
+    {
+      "sql": "SET KEY VALUE",
+      "read": {},
+      "write": {
+        "tsql": "SET KEY VALUE",
+        "duckdb": "SET KEY = VALUE",
+        "spark": "SET KEY = VALUE"
+      }
+    },
+    {
+      "sql": "SET @count = (SELECT COUNT(1) FROM x)",
+      "read": {},
+      "write": {
+        "databricks": "SET count = (SELECT COUNT(1) FROM x)",
+        "tsql": "SET @count = (SELECT COUNT(1) FROM x)",
+        "spark": "SET count = (SELECT COUNT(1) FROM x)"
+      }
+    },
+    {
+      "sql": "WITH t1(c) AS (SELECT 1), t2 AS (SELECT CAST(c AS INTEGER) AS c FROM t1) SELECT * FROM t2",
+      "read": {
+        "duckdb": "WITH t1(c) AS (SELECT 1), t2 AS (SELECT CAST(c AS INTEGER) FROM t1) SELECT * FROM t2"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT COUNT_BIG(1) FROM x",
+      "read": {
+        "duckdb": "SELECT COUNT(1) FROM x",
+        "spark": "SELECT COUNT(1) FROM x"
+      },
+      "write": {
+        "duckdb": "SELECT COUNT(1) FROM x",
+        "spark": "SELECT COUNT(1) FROM x",
+        "tsql": "SELECT COUNT_BIG(1) FROM x"
+      }
+    },
+    {
+      "sql": "SELECT COUNT(1) FROM x",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT COUNT(1) FROM x",
+        "spark": "SELECT COUNT(1) FROM x",
+        "tsql": "SELECT COUNT(1) FROM x"
+      }
+    },
+    {
+      "sql": "SELECT SPLIT_PART('1,2,3', ',', 1)",
+      "read": {},
+      "write": {
+        "spark": "SELECT SPLIT_PART('1,2,3', ',', 1)",
+        "databricks": "SELECT SPLIT_PART('1,2,3', ',', 1)"
+      }
+    },
+    {
+      "sql": "WITH t AS (SELECT 'a.b.c' AS value, 1 AS idx) SELECT SPLIT_PART(value, '.', idx) FROM t",
+      "read": {},
+      "write": {
+        "spark": "WITH t AS (SELECT 'a.b.c' AS value, 1 AS idx) SELECT SPLIT_PART(value, '.', idx) FROM t",
+        "databricks": "WITH t AS (SELECT 'a.b.c' AS value, 1 AS idx) SELECT SPLIT_PART(value, '.', idx) FROM t"
+      }
+    },
+    {
+      "sql": "SELECT NEXT VALUE FOR db.schema.sequence_name",
+      "read": {
+        "oracle": "SELECT NEXT VALUE FOR db.schema.sequence_name",
+        "tsql": "SELECT NEXT VALUE FOR db.schema.sequence_name"
+      },
+      "write": {
+        "oracle": "SELECT NEXT VALUE FOR db.schema.sequence_name"
+      }
+    },
+    {
+      "sql": "SELECT DATETRUNC(month, 'foo')",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT DATE_TRUNC('MONTH', CAST('foo' AS TIMESTAMP))",
+        "tsql": "SELECT DATETRUNC(MONTH, CAST('foo' AS DATETIME2))"
+      }
+    },
+    {
+      "sql": "SELECT DATETRUNC(month, foo)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT DATE_TRUNC('MONTH', foo)",
+        "tsql": "SELECT DATETRUNC(MONTH, foo)"
+      }
+    },
+    {
+      "sql": "SELECT DATETRUNC(year, CAST('foo1' AS date))",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT DATE_TRUNC('YEAR', CAST('foo1' AS DATE))",
+        "tsql": "SELECT DATETRUNC(YEAR, CAST('foo1' AS DATE))"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Generated documentation
+dist/
+
+# Dependencies
+node_modules/

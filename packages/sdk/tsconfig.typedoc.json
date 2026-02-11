@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "forceConsistentCasingInFileNames": false,
+    "types": ["node"]
+  },
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

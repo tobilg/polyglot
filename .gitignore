@@ -39,3 +39,28 @@
 
 # debug information files
 *.dwo
+
+# AI
+external-projects/
+
+# temporary files
+temporary-files/
+
+# Plans
+plans/
+
+target/
+
+# Generated TypeScript bindings (ts-rs)
+crates/polyglot-core/bindings/
+packages/polyglot/src/generated/
+
+packages/polyglot/dist
+packages/polyglot/node_modules
+
+tools/sqlglot-compare/dist
+tools/sqlglot-compare/node_modules
+
+# Node.js
+node_modules/
+dist/

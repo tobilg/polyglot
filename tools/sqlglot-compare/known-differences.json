@@ -1,0 +1,30 @@
+{
+  "skip": [
+    {
+      "pattern": "MATCH_RECOGNIZE",
+      "reason": "Complex Oracle/Snowflake pattern matching - low priority"
+    },
+    {
+      "pattern": "TRANSFORM\\s*\\(",
+      "reason": "Hive TRANSFORM clause - complex feature, deferred"
+    }
+  ],
+  "acceptableDifferences": [
+    {
+      "category": "keyword_case",
+      "description": "SQL keyword case may differ (SELECT vs select)",
+      "normalize": true
+    },
+    {
+      "category": "whitespace",
+      "description": "Whitespace formatting may differ",
+      "normalize": true
+    },
+    {
+      "category": "quote_style",
+      "description": "MySQL uses backticks, PostgreSQL uses double quotes",
+      "dialects": ["mysql", "bigquery"]
+    }
+  ],
+  "expectedFailures": []
+}

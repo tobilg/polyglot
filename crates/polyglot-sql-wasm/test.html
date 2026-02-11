@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Polyglot WASM Test</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+        textarea { width: 100%; height: 100px; font-family: monospace; }
+        select, button { padding: 8px 16px; margin: 5px; }
+        pre { background: #f4f4f4; padding: 15px; overflow-x: auto; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Polyglot SQL Translator</h1>
+    <p>WASM-powered SQL dialect translation in the browser</p>
+
+    <div>
+        <label for="sql">SQL Query:</label>
+        <textarea id="sql">SELECT NVL(name, 'unknown'), SUBSTR(email, 1, 5) FROM users WHERE created_at > NOW()</textarea>
+    </div>
+
+    <div>
+        <label>From:</label>
+        <select id="fromDialect"></select>
+        <label>To:</label>
+        <select id="toDialect"></select>
+        <button onclick="doTranspile()">Transpile</button>
+        <button onclick="doParse()">Parse to AST</button>
+        <button onclick="doFormat()">Format</button>
+    </div>
+
+    <h3>Result:</h3>
+    <pre id="result">Loading WASM module...</pre>
+
+    <h3>Version:</h3>
+    <pre id="version"></pre>
+
+    <script type="module">
+        import init, { transpile, parse, format_sql, get_dialects, version } from './pkg/polyglot_sql_wasm.js';
+
+        let initialized = false;
+
+        async function initWasm() {
+            await init();
+            initialized = true;
+
+            // Populate dialect dropdowns
+            const dialects = JSON.parse(get_dialects());
+            const fromSelect = document.getElementById('fromDialect');
+            const toSelect = document.getElementById('toDialect');
+
+            dialects.forEach(d => {
+                fromSelect.add(new Option(d, d));
+                toSelect.add(new Option(d, d));
+            });
+
+            // Set defaults
+            fromSelect.value = 'duckdb';
+            toSelect.value = 'postgresql';
+
+            document.getElementById('version').textContent = version();
+            document.getElementById('result').textContent = 'Ready! Enter SQL and click Transpile.';
+        }
+
+        window.doTranspile = function() {
+            if (!initialized) return;
+            const sql = document.getElementById('sql').value;
+            const from = document.getElementById('fromDialect').value;
+            const to = document.getElementById('toDialect').value;
+
+            const result = JSON.parse(transpile(sql, from, to));
+            const resultEl = document.getElementById('result');
+
+            if (result.success) {
+                resultEl.className = 'success';
+                resultEl.textContent = result.sql.join(';\n');
+            } else {
+                resultEl.className = 'error';
+                resultEl.textContent = 'Error: ' + result.error;
+            }
+        };
+
+        window.doParse = function() {
+            if (!initialized) return;
+            const sql = document.getElementById('sql').value;
+            const dialect = document.getElementById('fromDialect').value;
+
+            const result = JSON.parse(parse(sql, dialect));
+            const resultEl = document.getElementById('result');
+
+            if (result.success) {
+                resultEl.className = 'success';
+                resultEl.textContent = JSON.stringify(JSON.parse(result.ast), null, 2);
+            } else {
+                resultEl.className = 'error';
+                resultEl.textContent = 'Error: ' + result.error;
+            }
+        };
+
+        window.doFormat = function() {
+            if (!initialized) return;
+            const sql = document.getElementById('sql').value;
+            const dialect = document.getElementById('fromDialect').value;
+
+            const result = JSON.parse(format_sql(sql, dialect));
+            const resultEl = document.getElementById('result');
+
+            if (result.success) {
+                resultEl.className = 'success';
+                resultEl.textContent = result.sql.join(';\n\n');
+            } else {
+                resultEl.className = 'error';
+                resultEl.textContent = 'Error: ' + result.error;
+            }
+        };
+
+        initWasm().catch(e => {
+            document.getElementById('result').textContent = 'Failed to load WASM: ' + e;
+            document.getElementById('result').className = 'error';
+        });
+    </script>
+</body>
+</html>

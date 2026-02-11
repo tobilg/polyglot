@@ -1,0 +1,16 @@
+{
+  "name": "@polyglot-sql/documentation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "typedoc",
+    "preview": "npx serve dist",
+    "deploy": "pnpm run build && wrangler pages deploy"
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.58.0"
+  }
+}

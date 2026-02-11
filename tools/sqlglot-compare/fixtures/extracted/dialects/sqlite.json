@@ -1,0 +1,429 @@
+{
+  "dialect": "sqlite",
+  "identity": [
+    {
+      "sql": "SELECT * FROM t AS t INDEXED BY s.i",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t INDEXED BY s.i",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t INDEXED BY i",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t NOT INDEXED",
+      "expected": null
+    },
+    {
+      "sql": "SELECT match FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT rowid FROM t1 WHERE t1 MATCH 'lorem'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT RANK() OVER (RANGE CURRENT ROW) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "UNHEX(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE()",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE('now', 'start of month', '+1 month', '-1 day')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATETIME(1092941466, 'unixepoch')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATETIME(1092941466, 'auto')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATETIME(1092941466, 'unixepoch', 'localtime')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UNIXEPOCH()",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JULIANDAY('now') - JULIANDAY('1776-07-04')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UNIXEPOCH() - UNIXEPOCH('2004-01-01 02:34:56')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE('now', 'start of year', '+9 months', 'weekday 2')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT (JULIANDAY('now') - 2440587.5) * 86400.0",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UNIXEPOCH('now', 'subsec')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TIMEDIFF('now', '1809-02-12')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM GENERATE_SERIES(1, 5)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INSTR(haystack, needle)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a, SUM(b) OVER (ORDER BY a ROWS BETWEEN -1 PRECEDING AND 1 FOLLOWING) FROM t1 ORDER BY 1",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT('[10, 20, [30, 40]]', '$[2]', '$[0]', '$[1]')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT item AS \"item\", some AS \"some\" FROM data WHERE (item = 'value_1' COLLATE NOCASE) AND (some = 't' COLLATE NOCASE) ORDER BY item ASC LIMIT 1 OFFSET 0",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a FROM t1 WHERE a NOT NULL AND a NOT NULL ORDER BY a",
+      "expected": "SELECT a FROM t1 WHERE NOT a IS NULL AND NOT a IS NULL ORDER BY a"
+    },
+    {
+      "sql": "SELECT a, b FROM t1 WHERE b + a NOT NULL ORDER BY 1",
+      "expected": "SELECT a, b FROM t1 WHERE NOT b + a IS NULL ORDER BY 1"
+    },
+    {
+      "sql": "SELECT * FROM t1, t2",
+      "expected": "SELECT * FROM t1 CROSS JOIN t2"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME a TO b",
+      "expected": "ALTER TABLE t RENAME COLUMN a TO b"
+    },
+    {
+      "sql": "SELECT * FROM station WHERE city IS NOT ''",
+      "expected": "SELECT * FROM station WHERE NOT city IS ''"
+    },
+    {
+      "sql": "SELECT JSON_OBJECT('col1', 1, 'col2', '1')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE \"foo t\" (\"foo t id\" TEXT NOT NULL, PRIMARY KEY (\"foo t id\"))",
+      "expected": "CREATE TABLE \"foo t\" (\"foo t id\" TEXT NOT NULL PRIMARY KEY)"
+    },
+    {
+      "sql": "REPLACE INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "ATTACH DATABASE 'foo' AS schema_name",
+      "expected": "ATTACH 'foo' AS schema_name"
+    },
+    {
+      "sql": "ATTACH DATABASE NOT EXISTS(SELECT 1) AS schema_name",
+      "expected": "ATTACH NOT EXISTS(SELECT 1) AS schema_name"
+    },
+    {
+      "sql": "ATTACH DATABASE IIF(NOT EXISTS(SELECT 1), 'foo1', 'foo2') AS schema_name",
+      "expected": "ATTACH IIF(NOT EXISTS(SELECT 1), 'foo1', 'foo2') AS schema_name"
+    },
+    {
+      "sql": "ATTACH DATABASE 'foo' || '.foo2' AS schema_name",
+      "expected": "ATTACH 'foo' || '.foo2' AS schema_name"
+    },
+    {
+      "sql": "DETACH DATABASE schema_name",
+      "expected": "DETACH schema_name"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NULL IS y",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NULL IS NOT y",
+      "expected": "SELECT * FROM t WHERE NOT NULL IS y"
+    },
+    {
+      "sql": "SELECT STRFTIME('%Y/%m/%d', 'now')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT STRFTIME('%Y-%m-%d', '2016-10-16', 'start of month')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT STRFTIME('%s')",
+      "expected": "SELECT STRFTIME('%s', CURRENT_TIMESTAMP)"
+    },
+    {
+      "sql": "CREATE TABLE over (x, y)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT OR ABORT INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT OR FAIL INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT OR IGNORE INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT OR REPLACE INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT OR ROLLBACK INTO foo (x, y) VALUES (1, 2)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE foo (id INTEGER PRIMARY KEY ASC)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TEMPORARY TABLE foo (id INTEGER)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE store (store_id INTEGER PRIMARY KEY AUTOINCREMENT, mgr_id INTEGER NOT NULL UNIQUE REFERENCES staff ON UPDATE CASCADE)",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE tbl",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE schma.tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t AS t(c1, c2)",
+      "expected": "SELECT * FROM t AS t"
+    },
+    {
+      "sql": "CREATE TABLE a (b, c, UNIQUE (b, c) ON CONFLICT IGNORE)",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "SELECT LIKE(y, x)",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT x LIKE y"
+      }
+    },
+    {
+      "sql": "SELECT GLOB('*y*', 'xyz')",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT 'xyz' GLOB '*y*'"
+      }
+    },
+    {
+      "sql": "SELECT LIKE('%y%', 'xyz', '')",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT 'xyz' LIKE '%y%' ESCAPE ''"
+      }
+    },
+    {
+      "sql": "CURRENT_DATE",
+      "read": {
+        "snowflake": "CURRENT_DATE()"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CURRENT_TIME",
+      "read": {
+        "snowflake": "CURRENT_TIME()"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CURRENT_TIMESTAMP",
+      "read": {
+        "snowflake": "CURRENT_TIMESTAMP()"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE('2020-01-01 16:03:05')",
+      "read": {
+        "snowflake": "SELECT CAST('2020-01-01 16:03:05' AS DATE)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CAST([a].[b] AS SMALLINT) FROM foo",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT CAST(\"a\".\"b\" AS INTEGER) FROM foo",
+        "spark": "SELECT CAST(`a`.`b` AS SMALLINT) FROM foo"
+      }
+    },
+    {
+      "sql": "EDITDIST3(col1, col2)",
+      "read": {
+        "sqlite": "EDITDIST3(col1, col2)",
+        "spark": "LEVENSHTEIN(col1, col2)"
+      },
+      "write": {
+        "sqlite": "EDITDIST3(col1, col2)",
+        "spark": "LEVENSHTEIN(col1, col2)"
+      }
+    },
+    {
+      "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+      "read": {},
+      "write": {
+        "spark": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+        "sqlite": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname"
+      }
+    },
+    {
+      "sql": "x",
+      "read": {
+        "snowflake": "LEAST(x)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "MIN(x)",
+      "read": {
+        "snowflake": "MIN(x)"
+      },
+      "write": {
+        "snowflake": "MIN(x)"
+      }
+    },
+    {
+      "sql": "MIN(x, y, z)",
+      "read": {
+        "snowflake": "LEAST(x, y, z)"
+      },
+      "write": {
+        "snowflake": "LEAST(x, y, z)"
+      }
+    },
+    {
+      "sql": "UNICODE(x)",
+      "read": {},
+      "write": {
+        "mysql": "ORD(CONVERT(x USING utf32))",
+        "oracle": "ASCII(UNISTR(x))",
+        "postgres": "ASCII(x)",
+        "redshift": "ASCII(x)",
+        "spark": "ASCII(x)"
+      }
+    },
+    {
+      "sql": "SELECT STRFTIME('%Y-%m-%d', '2020-01-01 12:05:03')",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT STRFTIME(CAST('2020-01-01 12:05:03' AS TIMESTAMP), '%Y-%m-%d')",
+        "sqlite": "SELECT STRFTIME('%Y-%m-%d', '2020-01-01 12:05:03')"
+      }
+    },
+    {
+      "sql": "SELECT STRFTIME('%Y-%m-%d', CURRENT_TIMESTAMP)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT STRFTIME(CAST(CURRENT_TIMESTAMP AS TIMESTAMP), '%Y-%m-%d')",
+        "sqlite": "SELECT STRFTIME('%Y-%m-%d', CURRENT_TIMESTAMP)"
+      }
+    },
+    {
+      "sql": "DATEDIFF(a, b, 'day')",
+      "read": {},
+      "write": {
+        "sqlite": "CAST((JULIANDAY(a) - JULIANDAY(b)) AS INTEGER)"
+      }
+    },
+    {
+      "sql": "DATEDIFF(a, b, 'hour')",
+      "read": {},
+      "write": {
+        "sqlite": "CAST((JULIANDAY(a) - JULIANDAY(b)) * 24.0 AS INTEGER)"
+      }
+    },
+    {
+      "sql": "DATEDIFF(a, b, 'year')",
+      "read": {},
+      "write": {
+        "sqlite": "CAST((JULIANDAY(a) - JULIANDAY(b)) / 365.0 AS INTEGER)"
+      }
+    },
+    {
+      "sql": "SELECT 0XCC",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT x'CC'",
+        "mysql": "SELECT x'CC'"
+      }
+    },
+    {
+      "sql": "SELECT FIRST_VALUE(Name) OVER (PARTITION BY AlbumId ORDER BY Bytes DESC) AS LargestTrack FROM tracks",
+      "read": {},
+      "write": {
+        "sqlite": "SELECT FIRST_VALUE(Name) OVER (PARTITION BY AlbumId ORDER BY Bytes DESC) AS LargestTrack FROM tracks"
+      }
+    },
+    {
+      "sql": "CREATE TABLE foo (bar LONGVARCHAR)",
+      "read": {},
+      "write": {
+        "sqlite": "CREATE TABLE foo (bar TEXT)"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE \"Track\"\n            (\n                CONSTRAINT \"PK_Track\" FOREIGN KEY (\"TrackId\"),\n                FOREIGN KEY (\"AlbumId\") REFERENCES \"Album\" (\n                    \"AlbumId\"\n                ) ON DELETE NO ACTION ON UPDATE NO ACTION,\n                FOREIGN KEY (\"AlbumId\") ON DELETE CASCADE ON UPDATE RESTRICT,\n                FOREIGN KEY (\"AlbumId\") ON DELETE SET NULL ON UPDATE SET DEFAULT\n            )\n            ",
+      "read": {},
+      "write": {
+        "sqlite": "CREATE TABLE \"Track\" (\n  CONSTRAINT \"PK_Track\" FOREIGN KEY (\"TrackId\"),\n  FOREIGN KEY (\"AlbumId\") REFERENCES \"Album\" (\n    \"AlbumId\"\n  ) ON DELETE NO ACTION ON UPDATE NO ACTION,\n  FOREIGN KEY (\"AlbumId\") ON DELETE CASCADE ON UPDATE RESTRICT,\n  FOREIGN KEY (\"AlbumId\") ON DELETE SET NULL ON UPDATE SET DEFAULT\n)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE z (a INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT)",
+      "read": {
+        "mysql": "CREATE TABLE z (a INT UNIQUE PRIMARY KEY AUTO_INCREMENT)",
+        "postgres": "CREATE TABLE z (a INT GENERATED BY DEFAULT AS IDENTITY NOT NULL UNIQUE PRIMARY KEY)"
+      },
+      "write": {
+        "sqlite": "CREATE TABLE z (a INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT)",
+        "mysql": "CREATE TABLE z (a INT UNIQUE PRIMARY KEY AUTO_INCREMENT)",
+        "postgres": "CREATE TABLE z (a INT GENERATED BY DEFAULT AS IDENTITY NOT NULL UNIQUE PRIMARY KEY)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE \"x\" (\"Name\" NVARCHAR(200) NOT NULL)",
+      "read": {},
+      "write": {
+        "sqlite": "CREATE TABLE \"x\" (\"Name\" TEXT(200) NOT NULL)",
+        "mysql": "CREATE TABLE `x` (`Name` VARCHAR(200) NOT NULL)"
+      }
+    }
+  ]
+}

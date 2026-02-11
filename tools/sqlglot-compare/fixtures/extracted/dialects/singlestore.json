@@ -1,0 +1,1149 @@
+{
+  "dialect": "singlestore",
+  "identity": [
+    {
+      "sql": "SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM `users` ORDER BY ALL",
+      "expected": null
+    },
+    {
+      "sql": "SELECT ELT(2, 'foo', 'bar', 'baz')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CHARSET(CHAR(100 USING utf8))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_JSON(ROW(1, 2) :> RECORD(a INT, b INT))",
+      "expected": null
+    },
+    {
+      "sql": "JSON_KEYS(json_doc, 'a', 'b', 'c', 2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT e'text'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT E'text'",
+      "expected": "SELECT e'text'"
+    },
+    {
+      "sql": "SELECT * FROM abs",
+      "expected": "SELECT * FROM `abs`"
+    },
+    {
+      "sql": "SELECT * FROM ABS",
+      "expected": "SELECT * FROM `ABS`"
+    },
+    {
+      "sql": "SELECT * FROM security_lists_intersect",
+      "expected": "SELECT * FROM `security_lists_intersect`"
+    },
+    {
+      "sql": "SELECT * FROM vacuum",
+      "expected": "SELECT * FROM `vacuum`"
+    },
+    {
+      "sql": "SELECT STR_TO_DATE('March 3rd, 2015', '%M %D, %Y')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE_FORMAT(NOW(), '%Y-%m-%d %h:%i:%s')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_DATE('03/01/2019', 'MM/DD/YYYY') AS `result`",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP('The date and time are 01/01/2018 2:30:15.123456', 'The date and time are MM/DD/YYYY HH12:MI:SS.FF6') AS `result`",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_CHAR('2018-03-01', 'MM/DD')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TIME_FORMAT('12:05:47', '%s, %i, %h')",
+      "expected": "SELECT DATE_FORMAT('12:05:47' :> TIME(6), '%s, %i, %h')"
+    },
+    {
+      "sql": "SELECT DATE('2019-01-01 05:06')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT '{\"a\" : 1}' :> JSON",
+      "expected": null
+    },
+    {
+      "sql": "SELECT NOW() !:> TIMESTAMP(6)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT x :> GEOGRAPHYPOINT",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FROM_UNIXTIME(1234567890)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FROM_UNIXTIME(1234567890, '%M %D, %Y')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UNIX_TIMESTAMP()",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UNIX_TIMESTAMP('2009-02-13 23:31:30') AS funday",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a::b FROM t",
+      "expected": "SELECT JSON_EXTRACT_JSON(a, 'b') FROM t"
+    },
+    {
+      "sql": "SELECT a::b FROM t",
+      "expected": "SELECT JSON_EXTRACT_JSON(a, 'b') FROM t"
+    },
+    {
+      "sql": "SELECT a::$b FROM t",
+      "expected": "SELECT JSON_EXTRACT_STRING(a, 'b') FROM t"
+    },
+    {
+      "sql": "SELECT a::%b FROM t",
+      "expected": "SELECT JSON_EXTRACT_DOUBLE(a, 'b') FROM t"
+    },
+    {
+      "sql": "SELECT a::`b`::`2` FROM t",
+      "expected": "SELECT JSON_EXTRACT_JSON(JSON_EXTRACT_JSON(a, 'b'), '2') FROM t"
+    },
+    {
+      "sql": "SELECT a::2 FROM t",
+      "expected": "SELECT JSON_EXTRACT_JSON(a, '2') FROM t"
+    },
+    {
+      "sql": "SELECT JSON_ARRAY_CONTAINS_STRING('[\"a\", \"b\"]', 'b')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_ARRAY_CONTAINS_DOUBLE('[1, 2]', 1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_ARRAY_CONTAINS_JSON('[\"{\"a\": 1}\"]', '{\"a\":   1}')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_AGG(name) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_AGG(t.*) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DAYNAME('2014-04-18')",
+      "expected": "SELECT DATE_FORMAT('2014-04-18', '%W')"
+    },
+    {
+      "sql": "SELECT HOUR('2009-02-13 23:31:30')",
+      "expected": "SELECT DATE_FORMAT('2009-02-13 23:31:30' :> TIME(6), '%k') :> INT"
+    },
+    {
+      "sql": "SELECT MICROSECOND('2009-02-13 23:31:30.123456')",
+      "expected": "SELECT DATE_FORMAT('2009-02-13 23:31:30.123456' :> TIME(6), '%f') :> INT"
+    },
+    {
+      "sql": "SELECT SECOND('2009-02-13 23:31:30.123456')",
+      "expected": "SELECT DATE_FORMAT('2009-02-13 23:31:30.123456' :> TIME(6), '%s') :> INT"
+    },
+    {
+      "sql": "SELECT MONTHNAME('2014-04-18')",
+      "expected": "SELECT DATE_FORMAT('2014-04-18', '%M')"
+    },
+    {
+      "sql": "SELECT WEEKDAY('2014-04-18')",
+      "expected": "SELECT (DAYOFWEEK('2014-04-18') + 5) % 7"
+    },
+    {
+      "sql": "SELECT MINUTE('2009-02-13 23:31:30.123456')",
+      "expected": "SELECT DATE_FORMAT('2009-02-13 23:31:30.123456' :> TIME(6), '%i') :> INT"
+    },
+    {
+      "sql": "SELECT APPROX_COUNT_DISTINCT(asset_id1, asset_id2) AS approx_distinct_asset_id FROM acd_assets",
+      "expected": null
+    },
+    {
+      "sql": "SELECT `class`, student_id, test1, APPROX_PERCENTILE(test1, 0.3) OVER (PARTITION BY `class`) AS percentile FROM test_scores",
+      "expected": null
+    },
+    {
+      "sql": "SELECT `class`, student_id, test1, APPROX_PERCENTILE(test1, 0.3, 0.4) OVER (PARTITION BY `class`) AS percentile FROM test_scores",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 'a' REGEXP 'b'",
+      "expected": "SELECT 'a' RLIKE 'b'"
+    },
+    {
+      "sql": "SELECT CURRENT_TIME(6)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CURRENT_TIMESTAMP(6)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UTC_TIMESTAMP(6)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT UTC_TIME(6)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a TIMESTAMP(6))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT `t0`.`name` FROM `t0`",
+      "expected": null
+    },
+    {
+      "sql": "SELECT name :> LONGTEXT COLLATE 'utf8mb4_bin' FROM `users`",
+      "expected": "SELECT name :> LONGTEXT :> LONGTEXT COLLATE 'utf8mb4_bin' FROM `users`"
+    },
+    {
+      "sql": "SHOW AGGREGATES FROM db1",
+      "expected": null
+    },
+    {
+      "sql": "SHOW AGGREGATES LIKE 'multiply%'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW CDC EXTRACTOR POOL",
+      "expected": null
+    },
+    {
+      "sql": "SHOW CREATE AGGREGATE avg_udaf",
+      "expected": null
+    },
+    {
+      "sql": "SHOW CREATE PIPELINE mypipeline",
+      "expected": null
+    },
+    {
+      "sql": "SHOW CREATE PROJECTION lineitem_sort_shipdate FOR TABLE lineitem",
+      "expected": null
+    },
+    {
+      "sql": "SHOW DATABASE STATUS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW DISTRIBUTED_PLANCACHE STATUS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW FULLTEXT SERVICE STATUS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW FULLTEXT SERVICE METRICS LOCAL",
+      "expected": null
+    },
+    {
+      "sql": "SHOW FULLTEXT SERVICE METRICS FOR NODE 1",
+      "expected": null
+    },
+    {
+      "sql": "SHOW FUNCTIONS FROM db LIKE 'a'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW GROUPS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW GROUPS FOR ROLE 'role_name_0'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW GROUPS FOR USER 'root'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW INDEXES FROM mytbl",
+      "expected": "SHOW INDEX FROM mytbl"
+    },
+    {
+      "sql": "SHOW KEYS FROM mytbl",
+      "expected": "SHOW INDEX FROM mytbl"
+    },
+    {
+      "sql": "SHOW LINKS ON Orderdb",
+      "expected": null
+    },
+    {
+      "sql": "SHOW LOAD ERRORS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW LOAD WARNINGS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PARTITIONS ON memsql_demo",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PIPELINES",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PLAN JSON 25",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PLAN 25",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PLANCACHE",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PROCEDURES FROM dbExample",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PROCEDURES LIKE '%sp%'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PROJECTIONS ON TABLE t",
+      "expected": null
+    },
+    {
+      "sql": "SHOW PROJECTIONS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW REPLICATION STATUS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW REPRODUCTION",
+      "expected": null
+    },
+    {
+      "sql": "SHOW REPRODUCTION INTO OUTFILE 'a'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW RESOURCE POOLS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW ROLES LIKE 'xyz'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW ROLES FOR GROUP 'group_0'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW ROLES FOR USER 'root'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW STATUS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW USERS",
+      "expected": null
+    },
+    {
+      "sql": "SHOW USERS FOR GROUP 'group_name'",
+      "expected": null
+    },
+    {
+      "sql": "SHOW USERS FOR ROLE 'role_name'",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t CHANGE middle_initial middle_name",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t MODIFY COLUMN name TEXT COLLATE 'binary'",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE ComputedColumnConstraint (points INT, score AS (points * 2) PERSISTED BIGINT NOT NULL)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM employee WHERE JSON_MATCH_ANY(payroll::?names)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_BUILD_ARRAY(id, name)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_BUILD_OBJECT('name', name)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT MATCH(name) AGAINST('search term') FROM products",
+      "expected": null
+    },
+    {
+      "sql": "SELECT MATCH(name, name) AGAINST('book') FROM products",
+      "expected": null
+    },
+    {
+      "sql": "SELECT MATCH(TABLE products2) AGAINST('search term') FROM products2",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "SELECT 'text'",
+      "read": {
+        "singlestore": "SELECT 'text'"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE('2019-01-01 05:06')",
+      "read": {
+        "singlestore": "SELECT DATE('2019-01-01 05:06')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT 1 :> INT",
+      "read": {},
+      "write": {
+        "singlestore": "SELECT 1 :> INT"
+      }
+    },
+    {
+      "sql": "SELECT 1 !:> INT",
+      "read": {},
+      "write": {
+        "singlestore": "SELECT 1 !:> INT"
+      }
+    },
+    {
+      "sql": "SELECT age :> TEXT FROM `users`",
+      "read": {
+        "singlestore": "SELECT age :> TEXT FROM `users`"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UNIX_TIMESTAMP('2009-02-13 23:31:30')",
+      "read": {
+        "duckdb": "SELECT EPOCH('2009-02-13 23:31:30')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UNIX_TIMESTAMP('2009-02-13 23:31:30')",
+      "read": {
+        "duckdb": "SELECT TIME_STR_TO_UNIX('2009-02-13 23:31:30')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT FROM_UNIXTIME(1234567890, '%Y-%m-%d %T')",
+      "read": {
+        "hive": "SELECT FROM_UNIXTIME(1234567890)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_JSON(a, 'b') FROM t",
+      "read": {
+        "mysql": "SELECT JSON_EXTRACT(a, '$.b') FROM t",
+        "singlestore": "SELECT JSON_EXTRACT_JSON(a, 'b') FROM t"
+      },
+      "write": {
+        "mysql": "SELECT JSON_EXTRACT(a, '$.b') FROM t"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_JSON(a, 'b', '2') FROM t",
+      "read": {
+        "mysql": "SELECT JSON_EXTRACT(a, '$.b[2]') FROM t",
+        "singlestore": "SELECT JSON_EXTRACT_JSON(a, 'b', '2') FROM t"
+      },
+      "write": {
+        "mysql": "SELECT JSON_EXTRACT(a, '$.b[2]') FROM t"
+      }
+    },
+    {
+      "sql": "SELECT BSON_EXTRACT_BSON(a, 'b') FROM t",
+      "read": {
+        "mysql": "SELECT JSONB_EXTRACT(a, 'b') FROM t",
+        "singlestore": "SELECT BSON_EXTRACT_BSON(a, 'b') FROM t"
+      },
+      "write": {
+        "mysql": "SELECT JSONB_EXTRACT(a, '$.b') FROM t"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_STRING('{\"item\": \"shoes\", \"price\": \"49.95\"}', 'price') :> DECIMAL(4, 2)",
+      "read": {
+        "mysql": "SELECT JSON_VALUE('{\"item\": \"shoes\", \"price\": \"49.95\"}', '$.price' RETURNING DECIMAL(4, 2))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_ARRAY_CONTAINS_JSON('[\"a\"]', TO_JSON('a'))",
+      "read": {
+        "mysql": "SELECT 'a' MEMBER OF ('[\"a\"]')",
+        "singlestore": "SELECT JSON_ARRAY_CONTAINS_JSON('[\"a\"]', TO_JSON('a'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_PRETTY('[\"G\",\"alpha\",\"20\",10]')",
+      "read": {
+        "singlestore": "SELECT JSON_PRETTY('[\"G\",\"alpha\",\"20\",10]')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_AGG(name ORDER BY id ASC NULLS LAST, name DESC NULLS FIRST) FROM t",
+      "read": {
+        "singlestore": "SELECT JSON_AGG(name ORDER BY id ASC NULLS LAST, name DESC NULLS FIRST) FROM t",
+        "oracle": "SELECT JSON_ARRAYAGG(name ORDER BY id ASC, name DESC) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_BUILD_ARRAY(id, name) FROM t",
+      "read": {
+        "singlestore": "SELECT JSON_BUILD_ARRAY(id, name) FROM t",
+        "oracle": "SELECT JSON_ARRAY(id, name) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT BSON_MATCH_ANY_EXISTS('{\"x\":true}', 'x')",
+      "read": {
+        "singlestore": "SELECT BSON_MATCH_ANY_EXISTS('{\"x\":true}', 'x')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_MATCH_ANY_EXISTS('{\"a\":1}', 'a')",
+      "read": {
+        "singlestore": "SELECT JSON_MATCH_ANY_EXISTS('{\"a\":1}', 'a')",
+        "oracle": "SELECT JSON_EXISTS('{\"a\":1}', '$.a')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_BUILD_OBJECT('name', name) FROM t",
+      "read": {
+        "singlestore": "SELECT JSON_BUILD_OBJECT('name', name) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT ((DAYOFWEEK('2014-04-18') % 7) + 1)",
+      "read": {
+        "singlestore": "SELECT ((DAYOFWEEK('2014-04-18') % 7) + 1)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DAY('2014-04-18')",
+      "read": {
+        "singlestore": "SELECT DAY('2014-04-18')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT APPROX_COUNT_DISTINCT(asset_id) AS approx_distinct_asset_id FROM acd_assets",
+      "read": {
+        "singlestore": "SELECT APPROX_COUNT_DISTINCT(asset_id) AS approx_distinct_asset_id FROM acd_assets"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT APPROX_COUNT_DISTINCT(asset_id) AS approx_distinct_asset_id FROM acd_assets",
+      "read": {
+        "singlestore": "SELECT APPROX_COUNT_DISTINCT(asset_id) AS approx_distinct_asset_id FROM acd_assets"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT SUM(CASE WHEN age > 18 THEN 1 ELSE 0 END) FROM `users`",
+      "read": {
+        "singlestore": "SELECT SUM(CASE WHEN age > 18 THEN 1 ELSE 0 END) FROM `users`"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT MAX(ABS(age > 18)) FROM `users`",
+      "read": {
+        "singlestore": "SELECT MAX(ABS(age > 18)) FROM `users`"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT MIN(ABS(age > 18)) FROM `users`",
+      "read": {
+        "singlestore": "SELECT MIN(ABS(age > 18)) FROM `users`"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT APPROX_PERCENTILE(test1, 0.3) FROM test_scores",
+      "read": {
+        "singlestore": "SELECT APPROX_PERCENTILE(test1, 0.3) FROM test_scores"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT VAR_SAMP(yearly_total) FROM player_scores",
+      "read": {
+        "singlestore": "SELECT VAR_SAMP(yearly_total) FROM player_scores"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT VAR_POP(yearly_total) FROM player_scores",
+      "read": {
+        "singlestore": "SELECT VARIANCE(yearly_total) FROM player_scores"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT POWER(id, 1 / 3) FROM orders",
+      "read": {
+        "singlestore": "SELECT POWER(id, 1 / 3) FROM orders"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT (TRUE AND (NOT FALSE)) OR ((NOT TRUE) AND FALSE)",
+      "read": {
+        "mysql": "SELECT TRUE XOR FALSE",
+        "singlestore": "SELECT (TRUE AND (NOT FALSE)) OR ((NOT TRUE) AND FALSE)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT 'a' RLIKE 'b'",
+      "read": {
+        "bigquery": "SELECT REGEXP_CONTAINS('a', 'b')",
+        "singlestore": "SELECT 'a' RLIKE 'b'"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT LPAD('', LENGTH('a') * 3, 'a')",
+      "read": {
+        "singlestore": "SELECT LPAD('', LENGTH('a') * 3, 'a')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT REGEXP_SUBSTR('adog', 'O', 1, 1, 'c')",
+      "read": {
+        "singlestore": "SELECT REGEXP_SUBSTR('adog', 'O', 1, 1, 'c')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT ('a' RLIKE '^[\u0000-]*$')",
+      "read": {
+        "singlestore": "SELECT ('a' RLIKE '^[\u0000-]*$')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UNHEX(MD5('data'))",
+      "read": {
+        "singlestore": "SELECT UNHEX(MD5('data'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CHAR(101)",
+      "read": {
+        "singlestore": "SELECT CHAR(101)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT INSTR('ohai', 'i')",
+      "read": {
+        "singlestore": "SELECT INSTR('ohai', 'i')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT REGEXP_MATCH('adog', 'O', 'c')",
+      "read": {
+        "singlestore": "SELECT REGEXP_MATCH('adog', 'O', 'c')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT REGEXP_SUBSTR('adog', 'O', 1, 1, 'c')",
+      "read": {
+        "singlestore": "SELECT REGEXP_SUBSTR('adog', 'O', 1, 1, 'c')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT REGEXP_INSTR('abcd', CONCAT('^', 'ab'))",
+      "read": {
+        "singlestore": "SELECT REGEXP_INSTR('abcd', CONCAT('^', 'ab'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CONV('f', 16, 10)",
+      "read": {
+        "redshift": "SELECT STRTOL('f',16)",
+        "singlestore": "SELECT CONV('f', 16, 10)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT LOWER('ABC') RLIKE LOWER('a.*')",
+      "read": {
+        "postgres": "SELECT 'ABC' ~* 'a.*'",
+        "singlestore": "SELECT LOWER('ABC') RLIKE LOWER('a.*')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CONCAT(SUBSTRING('abcdef', 1, 2 - 1), 'xyz', SUBSTRING('abcdef', 2 + 3))",
+      "read": {
+        "singlestore": "SELECT CONCAT(SUBSTRING('abcdef', 1, 2 - 1), 'xyz', SUBSTRING('abcdef', 2 + 3))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT SHA(email) FROM t",
+      "read": {
+        "singlestore": "SELECT SHA(email) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT SHA(email) FROM t",
+      "read": {
+        "singlestore": "SELECT SHA(email) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT MD5(email) FROM t",
+      "read": {
+        "singlestore": "SELECT MD5(email) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT REDUCE(0, JSON_TO_ARRAY('[1,2,3,4]'), REDUCE_ACC() + REDUCE_VALUE()) AS `Result`",
+      "read": {
+        "singlestore": "SELECT REDUCE(0, JSON_TO_ARRAY('[1,2,3,4]'), REDUCE_ACC() + REDUCE_VALUE()) AS `Result`"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT TIME_BUCKET('1d', '2019-03-14 06:04:12', '2019-03-13 03:00:00')",
+      "read": {
+        "singlestore": "SELECT TIME_BUCKET('1d', '2019-03-14 06:04:12', '2019-03-13 03:00:00')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT '2019-03-14 06:04:12' :> DATE",
+      "read": {
+        "singlestore": "SELECT '2019-03-14 06:04:12' :> DATE"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CONVERT_TZ(NOW() :> TIMESTAMP, 'GMT', 'UTC')",
+      "read": {
+        "spark2": "SELECT TO_UTC_TIMESTAMP(NOW(), 'GMT')",
+        "singlestore": "SELECT CONVERT_TZ(NOW() :> TIMESTAMP, 'GMT', 'UTC')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT STR_TO_DATE(20190314, '%Y%m%d')",
+      "read": {
+        "singlestore": "SELECT STR_TO_DATE(20190314, '%Y%m%d')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT (DATE_FORMAT('2019-03-14 06:04:12', '%Y%m%d') :> INT)",
+      "read": {
+        "singlestore": "SELECT (DATE_FORMAT('2019-03-14 06:04:12', '%Y%m%d') :> INT)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT (DATE_FORMAT('2019-03-14 06:04:12', '%Y%m%d') :> INT)",
+      "read": {
+        "singlestore": "SELECT (DATE_FORMAT('2019-03-14 06:04:12', '%Y%m%d') :> INT)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT '2019-03-14 06:04:12' :> TIME",
+      "read": {
+        "bigquery": "SELECT TIME('2019-03-14 06:04:12', 'GMT')",
+        "singlestore": "SELECT '2019-03-14 06:04:12' :> TIME"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE_ADD(NOW(), INTERVAL '1' MONTH)",
+      "read": {
+        "bigquery": "SELECT DATETIME_ADD(NOW(), INTERVAL 1 MONTH)",
+        "singlestore": "SELECT DATE_ADD(NOW(), INTERVAL '1' MONTH)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE_TRUNC('MINUTE', '2016-08-08 12:05:31')",
+      "read": {
+        "bigquery": "SELECT DATETIME_TRUNC('2016-08-08 12:05:31', MINUTE)",
+        "singlestore": "SELECT DATE_TRUNC('MINUTE', '2016-08-08 12:05:31')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE_SUB('2010-04-02', INTERVAL '1' WEEK)",
+      "read": {
+        "bigquery": "SELECT DATETIME_SUB('2010-04-02', INTERVAL '1' WEEK)",
+        "singlestore": "SELECT DATE_SUB('2010-04-02', INTERVAL '1' WEEK)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT TIMESTAMPDIFF(QUARTER, '2009-02-13', '2013-09-01')",
+      "read": {
+        "singlestore": "SELECT TIMESTAMPDIFF(QUARTER, '2009-02-13', '2013-09-01')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT TIMESTAMPDIFF(QUARTER, '2009-02-13', '2013-09-01')",
+      "read": {
+        "singlestore": "SELECT TIMESTAMPDIFF(QUARTER, '2009-02-13', '2013-09-01')",
+        "bigquery": "SELECT DATE_DIFF('2013-09-01', '2009-02-13', QUARTER)",
+        "duckdb": "SELECT DATE_DIFF('QUARTER', '2009-02-13', '2013-09-01')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATEDIFF(DATE('2013-09-01'), DATE('2009-02-13'))",
+      "read": {
+        "hive": "SELECT DATEDIFF('2013-09-01', '2009-02-13')",
+        "singlestore": "SELECT DATEDIFF(DATE('2013-09-01'), DATE('2009-02-13'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATE_TRUNC('MINUTE', '2016-08-08 12:05:31')",
+      "read": {
+        "singlestore": "SELECT DATE_TRUNC('MINUTE', '2016-08-08 12:05:31')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT TIMESTAMPDIFF(WEEK, '2009-01-01', '2009-12-31') AS numweeks",
+      "read": {
+        "redshift": "SELECT datediff(week,'2009-01-01','2009-12-31') AS numweeks",
+        "singlestore": "SELECT TIMESTAMPDIFF(WEEK, '2009-01-01', '2009-12-31') AS numweeks"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT DATEDIFF('2009-12-31', '2009-01-01') AS numweeks",
+      "read": {
+        "singlestore": "SELECT DATEDIFF('2009-12-31', '2009-01-01') AS numweeks"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CURRENT_DATE()",
+      "read": {
+        "singlestore": "SELECT CURRENT_DATE"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UTC_DATE()",
+      "read": {
+        "singlestore": "SELECT UTC_DATE"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CURRENT_TIME()",
+      "read": {
+        "singlestore": "SELECT CURRENT_TIME"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UTC_TIME()",
+      "read": {
+        "singlestore": "SELECT UTC_TIME"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CURRENT_TIMESTAMP()",
+      "read": {
+        "singlestore": "SELECT CURRENT_TIMESTAMP"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT UTC_TIMESTAMP()",
+      "read": {
+        "singlestore": "SELECT UTC_TIMESTAMP"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CURRENT_TIMESTAMP(6) :> DATETIME(6)",
+      "read": {
+        "bigquery": "SELECT CURRENT_DATETIME()",
+        "singlestore": "SELECT CURRENT_TIMESTAMP(6) :> DATETIME(6)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DECIMAL(10, 20))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DECIMAL(10, 20))",
+        "bigquery": "CREATE TABLE testTypes (a BIGDECIMAL(10, 20))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a BOOLEAN)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a BOOLEAN)",
+        "tsql": "CREATE TABLE testTypes (a BIT)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DATE)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DATE)",
+        "clickhouse": "CREATE TABLE testTypes (a DATE32)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DATETIME)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DATETIME)",
+        "clickhouse": "CREATE TABLE testTypes (a DATETIME64)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DECIMAL(9, 3))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DECIMAL(9, 3))",
+        "clickhouse": "CREATE TABLE testTypes (a DECIMAL32(3))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DECIMAL(18, 3))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DECIMAL(18, 3))",
+        "clickhouse": "CREATE TABLE testTypes (a DECIMAL64(3))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DECIMAL(38, 3))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DECIMAL(38, 3))",
+        "clickhouse": "CREATE TABLE testTypes (a DECIMAL128(3))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a DECIMAL(65, 3))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a DECIMAL(65, 3))",
+        "clickhouse": "CREATE TABLE testTypes (a DECIMAL256(3))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a ENUM('a'))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a ENUM('a'))",
+        "clickhouse": "CREATE TABLE testTypes (a ENUM8('a'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a ENUM('a'))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a ENUM('a'))",
+        "clickhouse": "CREATE TABLE testTypes (a ENUM16('a'))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a TEXT(2))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a TEXT(2))",
+        "clickhouse": "CREATE TABLE testTypes (a FIXEDSTRING(2))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHY)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHY)",
+        "snowflake": "CREATE TABLE testTypes (a GEOMETRY)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHYPOINT)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHYPOINT)",
+        "clickhouse": "CREATE TABLE testTypes (a POINT)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHY)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHY)",
+        "clickhouse": "CREATE TABLE testTypes (a RING)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHY)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHY)",
+        "clickhouse": "CREATE TABLE testTypes (a LINESTRING)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHY)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHY)",
+        "clickhouse": "CREATE TABLE testTypes (a POLYGON)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a GEOGRAPHY)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a GEOGRAPHY)",
+        "clickhouse": "CREATE TABLE testTypes (a MULTIPOLYGON)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a BSON)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a BSON)",
+        "postgres": "CREATE TABLE testTypes (a JSONB)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a TIMESTAMP)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a TIMESTAMP)",
+        "duckdb": "CREATE TABLE testTypes (a TIMESTAMP_S)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a TIMESTAMP(6))",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a TIMESTAMP(6))",
+        "duckdb": "CREATE TABLE testTypes (a TIMESTAMP_MS)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE testTypes (a BLOB)",
+      "read": {
+        "singlestore": "CREATE TABLE testTypes (a BLOB)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT 'data'",
+      "read": {
+        "presto": "SELECT U&'d\\0061t\\0061'",
+        "singlestore": "SELECT 'data'"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE t (a VECTOR(10, I32))",
+      "read": {
+        "snowflake": "CREATE TABLE t (a VECTOR(INT, 10))",
+        "singlestore": "CREATE TABLE t (a VECTOR(10, I32))"
+      },
+      "write": {
+        "snowflake": "CREATE TABLE t (a VECTOR(INT, 10))"
+      }
+    },
+    {
+      "sql": "CREATE TABLE t (a VECTOR(10))",
+      "read": {
+        "snowflake": "CREATE TABLE t (a VECTOR(10))",
+        "singlestore": "CREATE TABLE t (a VECTOR(10))"
+      },
+      "write": {
+        "snowflake": "CREATE TABLE t (a VECTOR(10))"
+      }
+    },
+    {
+      "sql": "CREATE TABLE ComputedColumnConstraint (points INT, score AS (points * 2) PERSISTED AUTO NOT NULL)",
+      "read": {
+        "singlestore": "CREATE TABLE ComputedColumnConstraint (points INT, score AS (points * 2) AUTO NOT NULL)"
+      },
+      "write": {}
+    }
+  ]
+}

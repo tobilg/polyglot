@@ -1,0 +1,1453 @@
+{
+  "dialect": "presto",
+  "identity": [
+    {
+      "sql": "DEALLOCATE PREPARE my_query",
+      "expected": null
+    },
+    {
+      "sql": "DESCRIBE INPUT x",
+      "expected": null
+    },
+    {
+      "sql": "DESCRIBE OUTPUT x",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x qualify",
+      "expected": "SELECT * FROM x AS qualify"
+    },
+    {
+      "sql": "CAST(x AS IPADDRESS)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS IPPREFIX)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(TDIGEST_AGG(1) AS TDIGEST)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS HYPERLOGLOG)",
+      "expected": null
+    },
+    {
+      "sql": "RESET SESSION hive.optimized_reader_enabled",
+      "expected": null
+    },
+    {
+      "sql": "TIMESTAMP '2025-06-20 11:22:29 Europe/Prague'",
+      "expected": "CAST('2025-06-20 11:22:29 Europe/Prague' AS TIMESTAMP WITH TIME ZONE)"
+    },
+    {
+      "sql": "FROM_UNIXTIME(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "FROM_UNIXTIME(a, b, c)",
+      "expected": null
+    },
+    {
+      "sql": "TRIM(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "VAR_POP(a)",
+      "expected": null
+    },
+    {
+      "sql": "DATE_ADD('DAY', 1, y)",
+      "expected": null
+    },
+    {
+      "sql": "DATE_ADD('DAY', FLOOR(5), y)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE_ADD('DAY', MOD(5, 2.5), y), DATE_ADD('DAY', CEIL(5.5), y)",
+      "expected": "SELECT DATE_ADD('DAY', CAST(5 % 2.5 AS BIGINT), y), DATE_ADD('DAY', CAST(CEIL(5.5) AS BIGINT), y)"
+    },
+    {
+      "sql": "CREATE OR REPLACE VIEW v SECURITY DEFINER AS SELECT id FROM t",
+      "expected": null
+    },
+    {
+      "sql": "CREATE OR REPLACE VIEW v SECURITY INVOKER AS SELECT id FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a FROM t GROUP BY a, ROLLUP (b), ROLLUP (c), ROLLUP (d)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a FROM test TABLESAMPLE BERNOULLI (50)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a FROM test TABLESAMPLE SYSTEM (75)",
+      "expected": null
+    },
+    {
+      "sql": "string_agg(x, ',')",
+      "expected": "ARRAY_JOIN(ARRAY_AGG(x), ',')"
+    },
+    {
+      "sql": "SELECT * FROM x OFFSET 1 LIMIT 1",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x OFFSET 1 FETCH FIRST 1 ROWS ONLY",
+      "expected": null
+    },
+    {
+      "sql": "SELECT BOOL_OR(a > 10) FROM asd AS T(a)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM (VALUES (1))",
+      "expected": null
+    },
+    {
+      "sql": "START TRANSACTION READ WRITE, ISOLATION LEVEL SERIALIZABLE",
+      "expected": null
+    },
+    {
+      "sql": "START TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+      "expected": null
+    },
+    {
+      "sql": "APPROX_PERCENTILE(a, b, c, d)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SPLIT_TO_MAP('a:1;b:2;a:3', ';', ':', (k, v1, v2) -> CONCAT(v1, v2))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM example.testdb.customer_orders FOR VERSION AS OF 8954597067493422955",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM example.testdb.customer_orders FOR TIMESTAMP AS OF CAST('2022-03-23 09:59:29.803 Europe/Vienna' AS TIMESTAMP)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT origin_state, destination_state, origin_zip, SUM(package_weight) FROM shipping GROUP BY ALL CUBE (origin_state, destination_state), ROLLUP (origin_state, origin_zip)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT origin_state, destination_state, origin_zip, SUM(package_weight) FROM shipping GROUP BY DISTINCT CUBE (origin_state, destination_state), ROLLUP (origin_state, origin_zip)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_SCALAR(CAST(extra AS JSON), '$.value_b'), COUNT(*) FROM table_a GROUP BY DISTINCT (JSON_EXTRACT_SCALAR(CAST(extra AS JSON), '$.value_b'))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT id, FIRST_VALUE(is_deleted) OVER (PARTITION BY id) AS first_is_deleted, NTH_VALUE(is_deleted, 2) OVER (PARTITION BY id) AS nth_is_deleted, LAST_VALUE(is_deleted) OVER (PARTITION BY id) AS last_is_deleted FROM my_table",
+      "expected": null
+    },
+    {
+      "sql": "FROM_UTF8(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT\n  *\nFROM orders\nMATCH_RECOGNIZE (\n  PARTITION BY custkey\n  ORDER BY\n    orderdate\n  MEASURES\n    A.totalprice AS starting_price,\n    LAST(B.totalprice) AS bottom_price,\n    LAST(C.totalprice) AS top_price\n  ONE ROW PER MATCH\n  AFTER MATCH SKIP PAST LAST ROW\n  PATTERN (A B+ C+ D+)\n  DEFINE\n    B AS totalprice < PREV(totalprice),\n    C AS totalprice > PREV(totalprice) AND totalprice <= A.totalprice,\n    D AS totalprice > PREV(totalprice),\n    E AS MAX(foo) >= NEXT(bar)\n)",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE tbl",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE tbl WITH (prop1=val1, prop2=val2)",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "CAST(x AS BOOLEAN)",
+      "read": {
+        "tsql": "CAST(x AS BIT)"
+      },
+      "write": {
+        "presto": "CAST(x AS BOOLEAN)",
+        "tsql": "CAST(x AS BIT)"
+      }
+    },
+    {
+      "sql": "SELECT FROM_ISO8601_TIMESTAMP('2020-05-11T11:15:05')",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CAST('2020-05-11T11:15:05' AS TIMESTAMPTZ)",
+        "presto": "SELECT FROM_ISO8601_TIMESTAMP('2020-05-11T11:15:05')"
+      }
+    },
+    {
+      "sql": "CAST(x AS INTERVAL YEAR TO MONTH)",
+      "read": {},
+      "write": {
+        "oracle": "CAST(x AS INTERVAL YEAR TO MONTH)",
+        "presto": "CAST(x AS INTERVAL YEAR TO MONTH)"
+      }
+    },
+    {
+      "sql": "CAST(x AS INTERVAL DAY TO SECOND)",
+      "read": {},
+      "write": {
+        "oracle": "CAST(x AS INTERVAL DAY TO SECOND)",
+        "presto": "CAST(x AS INTERVAL DAY TO SECOND)"
+      }
+    },
+    {
+      "sql": "SELECT CAST('10C' AS INTEGER)",
+      "read": {
+        "postgres": "SELECT CAST('10C' AS INTEGER)",
+        "presto": "SELECT CAST('10C' AS INTEGER)",
+        "redshift": "SELECT CAST('10C' AS INTEGER)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CAST('1970-01-01 00:00:00' AS TIMESTAMP)",
+      "read": {
+        "postgres": "SELECT 'epoch'::TIMESTAMP"
+      },
+      "write": {}
+    },
+    {
+      "sql": "FROM_BASE64(x)",
+      "read": {
+        "hive": "UNBASE64(x)"
+      },
+      "write": {
+        "hive": "UNBASE64(x)",
+        "presto": "FROM_BASE64(x)"
+      }
+    },
+    {
+      "sql": "TO_BASE64(x)",
+      "read": {
+        "hive": "BASE64(x)"
+      },
+      "write": {
+        "hive": "BASE64(x)",
+        "presto": "TO_BASE64(x)"
+      }
+    },
+    {
+      "sql": "CAST(a AS ARRAY(INT))",
+      "read": {},
+      "write": {
+        "bigquery": "CAST(a AS ARRAY<INT64>)",
+        "duckdb": "CAST(a AS INT[])",
+        "presto": "CAST(a AS ARRAY(INTEGER))",
+        "spark": "CAST(a AS ARRAY<INT>)",
+        "snowflake": "CAST(a AS ARRAY(INT))"
+      }
+    },
+    {
+      "sql": "CAST(a AS VARCHAR)",
+      "read": {},
+      "write": {
+        "bigquery": "CAST(a AS STRING)",
+        "duckdb": "CAST(a AS TEXT)",
+        "presto": "CAST(a AS VARCHAR)",
+        "spark": "CAST(a AS STRING)"
+      }
+    },
+    {
+      "sql": "CAST(ARRAY[1, 2] AS ARRAY(BIGINT))",
+      "read": {},
+      "write": {
+        "bigquery": "ARRAY<INT64>[1, 2]",
+        "duckdb": "CAST([1, 2] AS BIGINT[])",
+        "presto": "CAST(ARRAY[1, 2] AS ARRAY(BIGINT))",
+        "spark": "CAST(ARRAY(1, 2) AS ARRAY<BIGINT>)",
+        "snowflake": "CAST([1, 2] AS ARRAY(BIGINT))"
+      }
+    },
+    {
+      "sql": "CAST(MAP(ARRAY['key'], ARRAY[1]) AS MAP(VARCHAR, INT))",
+      "read": {},
+      "write": {
+        "duckdb": "CAST(MAP(['key'], [1]) AS MAP(TEXT, INT))",
+        "presto": "CAST(MAP(ARRAY['key'], ARRAY[1]) AS MAP(VARCHAR, INTEGER))",
+        "hive": "CAST(MAP('key', 1) AS MAP<STRING, INT>)",
+        "snowflake": "CAST(OBJECT_CONSTRUCT('key', 1) AS MAP(VARCHAR, INT))",
+        "spark": "CAST(MAP_FROM_ARRAYS(ARRAY('key'), ARRAY(1)) AS MAP<STRING, INT>)"
+      }
+    },
+    {
+      "sql": "CAST(MAP(ARRAY['a','b','c'], ARRAY[ARRAY[1], ARRAY[2], ARRAY[3]]) AS MAP(VARCHAR, ARRAY(INT)))",
+      "read": {},
+      "write": {
+        "bigquery": "CAST(MAP(['a', 'b', 'c'], [[1], [2], [3]]) AS MAP<STRING, ARRAY<INT64>>)",
+        "duckdb": "CAST(MAP(['a', 'b', 'c'], [[1], [2], [3]]) AS MAP(TEXT, INT[]))",
+        "presto": "CAST(MAP(ARRAY['a', 'b', 'c'], ARRAY[ARRAY[1], ARRAY[2], ARRAY[3]]) AS MAP(VARCHAR, ARRAY(INTEGER)))",
+        "hive": "CAST(MAP('a', ARRAY(1), 'b', ARRAY(2), 'c', ARRAY(3)) AS MAP<STRING, ARRAY<INT>>)",
+        "spark": "CAST(MAP_FROM_ARRAYS(ARRAY('a', 'b', 'c'), ARRAY(ARRAY(1), ARRAY(2), ARRAY(3))) AS MAP<STRING, ARRAY<INT>>)",
+        "snowflake": "CAST(OBJECT_CONSTRUCT('a', [1], 'b', [2], 'c', [3]) AS MAP(VARCHAR, ARRAY(INT)))"
+      }
+    },
+    {
+      "sql": "CAST(x AS TIME(5) WITH TIME ZONE)",
+      "read": {},
+      "write": {
+        "duckdb": "CAST(x AS TIMETZ)",
+        "postgres": "CAST(x AS TIMETZ(5))",
+        "presto": "CAST(x AS TIME(5) WITH TIME ZONE)",
+        "redshift": "CAST(x AS TIME(5) WITH TIME ZONE)"
+      }
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMP(9) WITH TIME ZONE)",
+      "read": {},
+      "write": {
+        "bigquery": "CAST(x AS TIMESTAMP)",
+        "duckdb": "CAST(x AS TIMESTAMPTZ)",
+        "presto": "CAST(x AS TIMESTAMP(9) WITH TIME ZONE)",
+        "hive": "CAST(x AS TIMESTAMP)",
+        "spark": "CAST(x AS TIMESTAMP)"
+      }
+    },
+    {
+      "sql": "REPLACE(subject, pattern)",
+      "read": {},
+      "write": {
+        "bigquery": "REPLACE(subject, pattern, '')",
+        "duckdb": "REPLACE(subject, pattern, '')",
+        "hive": "REPLACE(subject, pattern, '')",
+        "snowflake": "REPLACE(subject, pattern, '')",
+        "spark": "REPLACE(subject, pattern, '')",
+        "presto": "REPLACE(subject, pattern, '')"
+      }
+    },
+    {
+      "sql": "REPLACE(subject, pattern, replacement)",
+      "read": {
+        "bigquery": "REPLACE(subject, pattern, replacement)",
+        "duckdb": "REPLACE(subject, pattern, replacement)",
+        "hive": "REPLACE(subject, pattern, replacement)",
+        "spark": "REPLACE(subject, pattern, replacement)",
+        "presto": "REPLACE(subject, pattern, replacement)"
+      },
+      "write": {
+        "bigquery": "REPLACE(subject, pattern, replacement)",
+        "duckdb": "REPLACE(subject, pattern, replacement)",
+        "hive": "REPLACE(subject, pattern, replacement)",
+        "snowflake": "REPLACE(subject, pattern, replacement)",
+        "spark": "REPLACE(subject, pattern, replacement)",
+        "presto": "REPLACE(subject, pattern, replacement)"
+      }
+    },
+    {
+      "sql": "REGEXP_REPLACE('abcd', '[ab]')",
+      "read": {},
+      "write": {
+        "presto": "REGEXP_REPLACE('abcd', '[ab]', '')",
+        "spark": "REGEXP_REPLACE('abcd', '[ab]', '')"
+      }
+    },
+    {
+      "sql": "REGEXP_LIKE(a, 'x')",
+      "read": {},
+      "write": {
+        "duckdb": "REGEXP_MATCHES(a, 'x')",
+        "presto": "REGEXP_LIKE(a, 'x')",
+        "hive": "a RLIKE 'x'",
+        "spark": "a RLIKE 'x'"
+      }
+    },
+    {
+      "sql": "SPLIT(x, 'a.')",
+      "read": {},
+      "write": {
+        "duckdb": "STR_SPLIT(x, 'a.')",
+        "presto": "SPLIT(x, 'a.')",
+        "hive": "SPLIT(x, CONCAT('\\\\Q', 'a.', '\\\\E'))",
+        "spark": "SPLIT(x, CONCAT('\\\\Q', 'a.', '\\\\E'))"
+      }
+    },
+    {
+      "sql": "REGEXP_SPLIT(x, 'a.')",
+      "read": {},
+      "write": {
+        "duckdb": "STR_SPLIT_REGEX(x, 'a.')",
+        "presto": "REGEXP_SPLIT(x, 'a.')",
+        "hive": "SPLIT(x, 'a.')",
+        "spark": "SPLIT(x, 'a.')"
+      }
+    },
+    {
+      "sql": "CARDINALITY(x)",
+      "read": {},
+      "write": {
+        "duckdb": "ARRAY_LENGTH(x)",
+        "presto": "CARDINALITY(x)",
+        "hive": "SIZE(x)",
+        "spark": "SIZE(x)"
+      }
+    },
+    {
+      "sql": "ARRAY_JOIN(x, '-', 'a')",
+      "read": {},
+      "write": {
+        "hive": "CONCAT_WS('-', x)",
+        "spark": "ARRAY_JOIN(x, '-', 'a')"
+      }
+    },
+    {
+      "sql": "STRPOS(haystack, needle, occurrence)",
+      "read": {},
+      "write": {
+        "bigquery": "INSTR(haystack, needle, 1, occurrence)",
+        "oracle": "INSTR(haystack, needle, 1, occurrence)",
+        "presto": "STRPOS(haystack, needle, occurrence)",
+        "tableau": "FINDNTH(haystack, needle, occurrence)",
+        "trino": "STRPOS(haystack, needle, occurrence)",
+        "teradata": "INSTR(haystack, needle, 1, occurrence)"
+      }
+    },
+    {
+      "sql": "SELECT FROM_UNIXTIME(col) FROM tbl",
+      "read": {},
+      "write": {
+        "presto": "SELECT FROM_UNIXTIME(col) FROM tbl",
+        "spark": "SELECT CAST(FROM_UNIXTIME(col) AS TIMESTAMP) FROM tbl",
+        "trino": "SELECT FROM_UNIXTIME(col) FROM tbl"
+      }
+    },
+    {
+      "sql": "DATE_FORMAT(x, '%Y-%m-%d %H:%i:%S')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%F %T', x)",
+        "duckdb": "STRFTIME(x, '%Y-%m-%d %H:%M:%S')",
+        "presto": "DATE_FORMAT(x, '%Y-%m-%d %T')",
+        "hive": "DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss')",
+        "spark": "DATE_FORMAT(x, 'yyyy-MM-dd HH:mm:ss')"
+      }
+    },
+    {
+      "sql": "DATE_PARSE(x, '%Y-%m-%d %H:%i:%S')",
+      "read": {},
+      "write": {
+        "duckdb": "STRPTIME(x, '%Y-%m-%d %H:%M:%S')",
+        "presto": "DATE_PARSE(x, '%Y-%m-%d %T')",
+        "hive": "CAST(x AS TIMESTAMP)",
+        "spark": "TO_TIMESTAMP(x, 'yyyy-MM-dd HH:mm:ss')"
+      }
+    },
+    {
+      "sql": "DATE_PARSE(x, '%Y-%m-%d')",
+      "read": {},
+      "write": {
+        "duckdb": "STRPTIME(x, '%Y-%m-%d')",
+        "presto": "DATE_PARSE(x, '%Y-%m-%d')",
+        "hive": "CAST(x AS TIMESTAMP)",
+        "spark": "TO_TIMESTAMP(x, 'yyyy-MM-dd')"
+      }
+    },
+    {
+      "sql": "DATE_FORMAT(x, '%T')",
+      "read": {},
+      "write": {
+        "hive": "DATE_FORMAT(x, 'HH:mm:ss')"
+      }
+    },
+    {
+      "sql": "DATE_PARSE(SUBSTR(x, 1, 10), '%Y-%m-%d')",
+      "read": {},
+      "write": {
+        "duckdb": "STRPTIME(SUBSTRING(x, 1, 10), '%Y-%m-%d')",
+        "presto": "DATE_PARSE(SUBSTRING(x, 1, 10), '%Y-%m-%d')",
+        "hive": "CAST(SUBSTRING(x, 1, 10) AS TIMESTAMP)",
+        "spark": "TO_TIMESTAMP(SUBSTRING(x, 1, 10), 'yyyy-MM-dd')"
+      }
+    },
+    {
+      "sql": "DATE_PARSE(SUBSTRING(x, 1, 10), '%Y-%m-%d')",
+      "read": {},
+      "write": {
+        "duckdb": "STRPTIME(SUBSTRING(x, 1, 10), '%Y-%m-%d')",
+        "presto": "DATE_PARSE(SUBSTRING(x, 1, 10), '%Y-%m-%d')",
+        "hive": "CAST(SUBSTRING(x, 1, 10) AS TIMESTAMP)",
+        "spark": "TO_TIMESTAMP(SUBSTRING(x, 1, 10), 'yyyy-MM-dd')"
+      }
+    },
+    {
+      "sql": "FROM_UNIXTIME(x)",
+      "read": {},
+      "write": {
+        "duckdb": "TO_TIMESTAMP(x)",
+        "presto": "FROM_UNIXTIME(x)",
+        "hive": "FROM_UNIXTIME(x)",
+        "spark": "CAST(FROM_UNIXTIME(x) AS TIMESTAMP)"
+      }
+    },
+    {
+      "sql": "TO_UNIXTIME(x)",
+      "read": {},
+      "write": {
+        "duckdb": "EPOCH(x)",
+        "presto": "TO_UNIXTIME(x)",
+        "hive": "UNIX_TIMESTAMP(x)",
+        "spark": "UNIX_TIMESTAMP(x)"
+      }
+    },
+    {
+      "sql": "DATE_ADD('DAY', 1, x)",
+      "read": {},
+      "write": {
+        "duckdb": "x + INTERVAL 1 DAY",
+        "presto": "DATE_ADD('DAY', 1, x)",
+        "hive": "DATE_ADD(x, 1)",
+        "spark": "DATE_ADD(x, 1)"
+      }
+    },
+    {
+      "sql": "DATE_ADD('DAY', 1 * -1, x)",
+      "read": {},
+      "write": {
+        "presto": "DATE_ADD('DAY', 1 * -1, x)"
+      }
+    },
+    {
+      "sql": "NOW()",
+      "read": {},
+      "write": {
+        "presto": "CURRENT_TIMESTAMP",
+        "hive": "CURRENT_TIMESTAMP()"
+      }
+    },
+    {
+      "sql": "SELECT DATE_ADD('DAY', 1, CAST(CURRENT_DATE AS TIMESTAMP))",
+      "read": {
+        "redshift": "SELECT DATEADD(DAY, 1, CURRENT_DATE)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "((DAY_OF_WEEK(CAST(CAST(TRY_CAST('2012-08-08 01:00:00' AS TIMESTAMP WITH TIME ZONE) AS TIMESTAMP) AS DATE)) % 7) + 1)",
+      "read": {
+        "spark": "DAYOFWEEK(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "DAY_OF_WEEK(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+      "read": {
+        "duckdb": "ISODOW(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      },
+      "write": {
+        "spark": "((DAYOFWEEK(CAST('2012-08-08 01:00:00' AS TIMESTAMP)) % 7) + 1)",
+        "presto": "DAY_OF_WEEK(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "duckdb": "ISODOW(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      }
+    },
+    {
+      "sql": "DAY_OF_MONTH(timestamp '2012-08-08 01:00:00')",
+      "read": {},
+      "write": {
+        "spark": "DAYOFMONTH(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "presto": "DAY_OF_MONTH(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "duckdb": "DAYOFMONTH(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      }
+    },
+    {
+      "sql": "DAY_OF_YEAR(timestamp '2012-08-08 01:00:00')",
+      "read": {},
+      "write": {
+        "spark": "DAYOFYEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "presto": "DAY_OF_YEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "duckdb": "DAYOFYEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      }
+    },
+    {
+      "sql": "WEEK_OF_YEAR(timestamp '2012-08-08 01:00:00')",
+      "read": {},
+      "write": {
+        "spark": "WEEKOFYEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "presto": "WEEK_OF_YEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))",
+        "duckdb": "WEEKOFYEAR(CAST('2012-08-08 01:00:00' AS TIMESTAMP))"
+      }
+    },
+    {
+      "sql": "SELECT CAST('2012-10-31 00:00' AS TIMESTAMP) AT TIME ZONE 'America/Sao_Paulo'",
+      "read": {},
+      "write": {
+        "spark": "SELECT FROM_UTC_TIMESTAMP(CAST('2012-10-31 00:00' AS TIMESTAMP), 'America/Sao_Paulo')",
+        "presto": "SELECT AT_TIMEZONE(CAST('2012-10-31 00:00' AS TIMESTAMP), 'America/Sao_Paulo')"
+      }
+    },
+    {
+      "sql": "SELECT AT_TIMEZONE(CAST('2012-10-31 00:00' AS TIMESTAMP WITH TIME ZONE), 'America/Sao_Paulo')",
+      "read": {
+        "spark": "SELECT FROM_UTC_TIMESTAMP(TIMESTAMP '2012-10-31 00:00', 'America/Sao_Paulo')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMP)",
+      "read": {
+        "mysql": "CAST(x AS DATETIME)",
+        "clickhouse": "CAST(x AS DATETIME64)"
+      },
+      "write": {
+        "presto": "CAST(x AS TIMESTAMP)"
+      }
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMP)",
+      "read": {
+        "mysql": "TIMESTAMP(x)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "TIMESTAMP(x, '12:00:00')",
+      "read": {},
+      "write": {
+        "duckdb": "TIMESTAMP(x, '12:00:00')",
+        "presto": "TIMESTAMP(x, '12:00:00')"
+      }
+    },
+    {
+      "sql": "DATE_ADD('DAY', CAST(x AS BIGINT), y)",
+      "read": {
+        "presto": "DATE_ADD('DAY', x, y)"
+      },
+      "write": {
+        "presto": "DATE_ADD('DAY', CAST(x AS BIGINT), y)"
+      }
+    },
+    {
+      "sql": "SELECT DATE_ADD('MINUTE', 30, col)",
+      "read": {},
+      "write": {
+        "presto": "SELECT DATE_ADD('MINUTE', 30, col)",
+        "trino": "SELECT DATE_ADD('MINUTE', 30, col)"
+      }
+    },
+    {
+      "sql": "DATE_ADD('MINUTE', CAST(FLOOR(CAST(EXTRACT(MINUTE FROM CURRENT_TIMESTAMP) AS DOUBLE) / NULLIF(30, 0)) * 30 AS BIGINT), col)",
+      "read": {
+        "spark": "TIMESTAMPADD(MINUTE, FLOOR(EXTRACT(MINUTE FROM CURRENT_TIMESTAMP)/30)*30, col)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT WEEK_OF_YEAR(y)",
+      "read": {
+        "presto": "SELECT WEEK(y)"
+      },
+      "write": {
+        "spark": "SELECT WEEKOFYEAR(y)",
+        "presto": "SELECT WEEK_OF_YEAR(y)",
+        "trino": "SELECT WEEK_OF_YEAR(y)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE test WITH (FORMAT = 'PARQUET') AS SELECT 1",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE test AS SELECT 1",
+        "presto": "CREATE TABLE test WITH (format='PARQUET') AS SELECT 1",
+        "hive": "CREATE TABLE test STORED AS PARQUET AS SELECT 1",
+        "spark": "CREATE TABLE test USING PARQUET AS SELECT 1"
+      }
+    },
+    {
+      "sql": "CREATE TABLE test STORED AS 'PARQUET' AS SELECT 1",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE test AS SELECT 1",
+        "presto": "CREATE TABLE test WITH (format='PARQUET') AS SELECT 1",
+        "hive": "CREATE TABLE test STORED AS PARQUET AS SELECT 1",
+        "spark": "CREATE TABLE test STORED AS PARQUET AS SELECT 1"
+      }
+    },
+    {
+      "sql": "CREATE TABLE test WITH (FORMAT = 'PARQUET', X = '1', Z = '2') AS SELECT 1",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE test AS SELECT 1",
+        "presto": "CREATE TABLE test WITH (format='PARQUET', X='1', Z='2') AS SELECT 1",
+        "hive": "CREATE TABLE test STORED AS PARQUET TBLPROPERTIES ('X'='1', 'Z'='2') AS SELECT 1",
+        "spark": "CREATE TABLE test USING PARQUET TBLPROPERTIES ('X'='1', 'Z'='2') AS SELECT 1"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x (w VARCHAR, y INTEGER, z INTEGER) WITH (PARTITIONED_BY=ARRAY['y', 'z'])",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE x (w TEXT, y INT, z INT)",
+        "presto": "CREATE TABLE x (w VARCHAR, y INTEGER, z INTEGER) WITH (PARTITIONED_BY=ARRAY['y', 'z'])",
+        "hive": "CREATE TABLE x (w STRING) PARTITIONED BY (y INT, z INT)",
+        "spark": "CREATE TABLE x (w STRING, y INT, z INT) PARTITIONED BY (y, z)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x WITH (bucket_by = ARRAY['y'], bucket_count = 64) AS SELECT 1 AS y",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE x AS SELECT 1 AS y",
+        "presto": "CREATE TABLE x WITH (bucket_by=ARRAY['y'], bucket_count=64) AS SELECT 1 AS y",
+        "hive": "CREATE TABLE x TBLPROPERTIES ('bucket_by'=ARRAY('y'), 'bucket_count'=64) AS SELECT 1 AS y",
+        "spark": "CREATE TABLE x TBLPROPERTIES ('bucket_by'=ARRAY('y'), 'bucket_count'=64) AS SELECT 1 AS y"
+      }
+    },
+    {
+      "sql": "CREATE TABLE db.example_table (col_a ROW(struct_col_a INTEGER, struct_col_b VARCHAR))",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE db.example_table (col_a STRUCT(struct_col_a INT, struct_col_b TEXT))",
+        "presto": "CREATE TABLE db.example_table (col_a ROW(struct_col_a INTEGER, struct_col_b VARCHAR))",
+        "hive": "CREATE TABLE db.example_table (col_a STRUCT<struct_col_a: INT, struct_col_b: STRING>)",
+        "spark": "CREATE TABLE db.example_table (col_a STRUCT<struct_col_a: INT, struct_col_b: STRING>)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE db.example_table (col_a ROW(struct_col_a INTEGER, struct_col_b ROW(nested_col_a VARCHAR, nested_col_b VARCHAR)))",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE db.example_table (col_a STRUCT(struct_col_a INT, struct_col_b STRUCT(nested_col_a TEXT, nested_col_b TEXT)))",
+        "presto": "CREATE TABLE db.example_table (col_a ROW(struct_col_a INTEGER, struct_col_b ROW(nested_col_a VARCHAR, nested_col_b VARCHAR)))",
+        "hive": "CREATE TABLE db.example_table (col_a STRUCT<struct_col_a: INT, struct_col_b: STRUCT<nested_col_a: STRING, nested_col_b: STRING>>)",
+        "spark": "CREATE TABLE db.example_table (col_a STRUCT<struct_col_a: INT, struct_col_b: STRUCT<nested_col_a: STRING, nested_col_b: STRING>>)"
+      }
+    },
+    {
+      "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+      "read": {},
+      "write": {
+        "presto": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname",
+        "spark": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname NULLS LAST"
+      }
+    },
+    {
+      "sql": "CREATE OR REPLACE VIEW x (cola) SELECT 1 as cola",
+      "read": {},
+      "write": {
+        "spark": "CREATE OR REPLACE VIEW x (cola) AS SELECT 1 AS cola",
+        "presto": "CREATE OR REPLACE VIEW x AS SELECT 1 AS cola"
+      }
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS x (\"cola\" INTEGER, \"ds\" TEXT) COMMENT 'comment' WITH (PARTITIONED BY=(\"ds\"))",
+      "read": {},
+      "write": {
+        "spark": "CREATE TABLE IF NOT EXISTS x (`cola` INT, `ds` STRING) COMMENT 'comment' PARTITIONED BY (`ds`)",
+        "presto": "CREATE TABLE IF NOT EXISTS x (\"cola\" INTEGER, \"ds\" VARCHAR) COMMENT 'comment' WITH (PARTITIONED_BY=ARRAY['ds'])"
+      }
+    },
+    {
+      "sql": "''''",
+      "read": {},
+      "write": {
+        "duckdb": "''''",
+        "presto": "''''",
+        "hive": "'\\''",
+        "spark": "'\\''"
+      }
+    },
+    {
+      "sql": "'x'",
+      "read": {},
+      "write": {
+        "duckdb": "'x'",
+        "presto": "'x'",
+        "hive": "'x'",
+        "spark": "'x'"
+      }
+    },
+    {
+      "sql": "'''x'''",
+      "read": {},
+      "write": {
+        "duckdb": "'''x'''",
+        "presto": "'''x'''",
+        "hive": "'\\'x\\''",
+        "spark": "'\\'x\\''"
+      }
+    },
+    {
+      "sql": "'''x'",
+      "read": {},
+      "write": {
+        "duckdb": "'''x'",
+        "presto": "'''x'",
+        "hive": "'\\'x'",
+        "spark": "'\\'x'"
+      }
+    },
+    {
+      "sql": "x IN ('a', 'a''b')",
+      "read": {},
+      "write": {
+        "duckdb": "x IN ('a', 'a''b')",
+        "presto": "x IN ('a', 'a''b')",
+        "hive": "x IN ('a', 'a\\'b')",
+        "spark": "x IN ('a', 'a\\'b')"
+      }
+    },
+    {
+      "sql": "SELECT a FROM x CROSS JOIN UNNEST(ARRAY(y)) AS t (a)",
+      "read": {},
+      "write": {
+        "presto": "SELECT a FROM x CROSS JOIN UNNEST(ARRAY[y]) AS t(a)",
+        "hive": "SELECT a FROM x LATERAL VIEW EXPLODE(ARRAY(y)) t AS a",
+        "spark": "SELECT a FROM x LATERAL VIEW EXPLODE(ARRAY(y)) t AS a"
+      }
+    },
+    {
+      "sql": "SELECT a FROM x CROSS JOIN UNNEST(ARRAY(y)) AS t (a) CROSS JOIN b",
+      "read": {},
+      "write": {
+        "presto": "SELECT a FROM x CROSS JOIN UNNEST(ARRAY[y]) AS t(a) CROSS JOIN b",
+        "hive": "SELECT a FROM x CROSS JOIN b LATERAL VIEW EXPLODE(ARRAY(y)) t AS a"
+      }
+    },
+    {
+      "sql": "SELECT LAST_DAY_OF_MONTH(CAST('2008-11-25' AS DATE))",
+      "read": {
+        "duckdb": "SELECT LAST_DAY(CAST('2008-11-25' AS DATE))"
+      },
+      "write": {
+        "duckdb": "SELECT LAST_DAY(CAST('2008-11-25' AS DATE))",
+        "presto": "SELECT LAST_DAY_OF_MONTH(CAST('2008-11-25' AS DATE))"
+      }
+    },
+    {
+      "sql": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+      "read": {
+        "bigquery": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "clickhouse": "SELECT argMax(a.id, a.timestamp) FROM a",
+        "duckdb": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "snowflake": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "spark": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "teradata": "SELECT MAX_BY(a.id, a.timestamp) FROM a"
+      },
+      "write": {
+        "bigquery": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "clickhouse": "SELECT argMax(a.id, a.timestamp) FROM a",
+        "duckdb": "SELECT ARG_MAX(a.id, a.timestamp) FROM a",
+        "presto": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "snowflake": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "spark": "SELECT MAX_BY(a.id, a.timestamp) FROM a",
+        "teradata": "SELECT MAX_BY(a.id, a.timestamp) FROM a"
+      }
+    },
+    {
+      "sql": "SELECT MIN_BY(a.id, a.timestamp, 3) FROM a",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT argMin(a.id, a.timestamp) FROM a",
+        "duckdb": "SELECT ARG_MIN(a.id, a.timestamp, 3) FROM a",
+        "presto": "SELECT MIN_BY(a.id, a.timestamp, 3) FROM a",
+        "snowflake": "SELECT MIN_BY(a.id, a.timestamp, 3) FROM a",
+        "spark": "SELECT MIN_BY(a.id, a.timestamp) FROM a",
+        "teradata": "SELECT MIN_BY(a.id, a.timestamp, 3) FROM a"
+      }
+    },
+    {
+      "sql": "JSON '\"foo\"'",
+      "read": {},
+      "write": {
+        "bigquery": "PARSE_JSON('\"foo\"')",
+        "postgres": "CAST('\"foo\"' AS JSON)",
+        "presto": "JSON_PARSE('\"foo\"')",
+        "snowflake": "PARSE_JSON('\"foo\"')"
+      }
+    },
+    {
+      "sql": "SELECT ROW(1, 2)",
+      "read": {},
+      "write": {
+        "presto": "SELECT ROW(1, 2)",
+        "spark": "SELECT STRUCT(1, 2)"
+      }
+    },
+    {
+      "sql": "ARBITRARY(x)",
+      "read": {
+        "bigquery": "ANY_VALUE(x)",
+        "clickhouse": "any(x)",
+        "databricks": "ANY_VALUE(x)",
+        "doris": "ANY_VALUE(x)",
+        "drill": "ANY_VALUE(x)",
+        "hive": "FIRST(x)",
+        "mysql": "ANY_VALUE(x)",
+        "oracle": "ANY_VALUE(x)",
+        "redshift": "ANY_VALUE(x)",
+        "snowflake": "ANY_VALUE(x)",
+        "spark": "ANY_VALUE(x)",
+        "spark2": "FIRST(x)"
+      },
+      "write": {
+        "bigquery": "ANY_VALUE(x)",
+        "clickhouse": "any(x)",
+        "databricks": "ANY_VALUE(x)",
+        "doris": "ANY_VALUE(x)",
+        "drill": "ANY_VALUE(x)",
+        "duckdb": "ANY_VALUE(x)",
+        "hive": "FIRST(x)",
+        "mysql": "ANY_VALUE(x)",
+        "oracle": "ANY_VALUE(x)",
+        "postgres": "ANY_VALUE(x)",
+        "presto": "ARBITRARY(x)",
+        "redshift": "ANY_VALUE(x)",
+        "snowflake": "ANY_VALUE(x)",
+        "spark": "ANY_VALUE(x)",
+        "spark2": "FIRST(x)",
+        "sqlite": "MAX(x)",
+        "tsql": "MAX(x)"
+      }
+    },
+    {
+      "sql": "STARTS_WITH('abc', 'a')",
+      "read": {
+        "spark": "STARTSWITH('abc', 'a')"
+      },
+      "write": {
+        "presto": "STARTS_WITH('abc', 'a')",
+        "snowflake": "STARTSWITH('abc', 'a')",
+        "spark": "STARTSWITH('abc', 'a')"
+      }
+    },
+    {
+      "sql": "IS_NAN(x)",
+      "read": {
+        "spark": "ISNAN(x)"
+      },
+      "write": {
+        "presto": "IS_NAN(x)",
+        "spark": "ISNAN(x)",
+        "spark2": "ISNAN(x)"
+      }
+    },
+    {
+      "sql": "VALUES 1, 2, 3",
+      "read": {},
+      "write": {
+        "presto": "VALUES (1), (2), (3)"
+      }
+    },
+    {
+      "sql": "INTERVAL '1 day'",
+      "read": {},
+      "write": {
+        "trino": "INTERVAL '1' DAY"
+      }
+    },
+    {
+      "sql": "SELECT SUBSTRING(a, 1, 3), SUBSTRING(a, LENGTH(a) - (3 - 1))",
+      "read": {
+        "redshift": "SELECT LEFT(a, 3), RIGHT(a, 3)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH RECURSIVE t(n) AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM t WHERE n < 4) SELECT SUM(n) FROM t",
+      "read": {
+        "postgres": "WITH RECURSIVE t AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM t WHERE n < 4) SELECT SUM(n) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH RECURSIVE t(n, k) AS (SELECT 1 AS n, 2 AS k) SELECT SUM(n) FROM t",
+      "read": {
+        "postgres": "WITH RECURSIVE t AS (SELECT 1 AS n, 2 as k) SELECT SUM(n) FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH RECURSIVE t1(n) AS (SELECT 1 AS n), t2(n) AS (SELECT 2 AS n) SELECT SUM(t1.n), SUM(t2.n) FROM t1, t2",
+      "read": {
+        "postgres": "WITH RECURSIVE t1 AS (SELECT 1 AS n), t2 AS (SELECT 2 AS n) SELECT SUM(t1.n), SUM(t2.n) FROM t1, t2"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH RECURSIVE t(n, _c_0) AS (SELECT 1 AS n, (1 + 2)) SELECT * FROM t",
+      "read": {
+        "postgres": "WITH RECURSIVE t AS (SELECT 1 AS n, (1 + 2)) SELECT * FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "WITH RECURSIVE t(n, \"1\") AS (SELECT n, 1 FROM tbl) SELECT * FROM t",
+      "read": {
+        "postgres": "WITH RECURSIVE t AS (SELECT n, 1 FROM tbl) SELECT * FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT JSON_OBJECT(KEY 'key1' VALUE 1, KEY 'key2' VALUE TRUE)",
+      "read": {},
+      "write": {
+        "presto": "SELECT JSON_OBJECT('key1': 1, 'key2': TRUE)"
+      }
+    },
+    {
+      "sql": "ARRAY_AGG(x ORDER BY y DESC)",
+      "read": {},
+      "write": {
+        "hive": "COLLECT_LIST(x)",
+        "presto": "ARRAY_AGG(x ORDER BY y DESC)",
+        "spark": "COLLECT_LIST(x)",
+        "trino": "ARRAY_AGG(x ORDER BY y DESC)"
+      }
+    },
+    {
+      "sql": "SELECT a.\"b\" FROM \"foo\"",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT a.\"b\" FROM \"foo\"",
+        "presto": "SELECT a.\"b\" FROM \"foo\"",
+        "spark": "SELECT a.`b` FROM `foo`"
+      }
+    },
+    {
+      "sql": "SELECT ARRAY[1, 2]",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT [1, 2]",
+        "duckdb": "SELECT [1, 2]",
+        "presto": "SELECT ARRAY[1, 2]",
+        "spark": "SELECT ARRAY(1, 2)"
+      }
+    },
+    {
+      "sql": "SELECT APPROX_DISTINCT(a) FROM foo",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT APPROX_COUNT_DISTINCT(a) FROM foo",
+        "presto": "SELECT APPROX_DISTINCT(a) FROM foo",
+        "hive": "SELECT APPROX_COUNT_DISTINCT(a) FROM foo",
+        "spark": "SELECT APPROX_COUNT_DISTINCT(a) FROM foo"
+      }
+    },
+    {
+      "sql": "SELECT APPROX_DISTINCT(a, 0.1) FROM foo",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT APPROX_COUNT_DISTINCT(a) FROM foo",
+        "presto": "SELECT APPROX_DISTINCT(a, 0.1) FROM foo",
+        "hive": "SELECT APPROX_COUNT_DISTINCT(a) FROM foo",
+        "spark": "SELECT APPROX_COUNT_DISTINCT(a, 0.1) FROM foo"
+      }
+    },
+    {
+      "sql": "SELECT APPROX_DISTINCT(a, 0.1) FROM foo",
+      "read": {},
+      "write": {
+        "presto": "SELECT APPROX_DISTINCT(a, 0.1) FROM foo",
+        "spark": "SELECT APPROX_COUNT_DISTINCT(a, 0.1) FROM foo"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT(x, '$.name')",
+      "read": {},
+      "write": {
+        "presto": "SELECT JSON_EXTRACT(x, '$.name')",
+        "hive": "SELECT GET_JSON_OBJECT(x, '$.name')",
+        "spark": "SELECT GET_JSON_OBJECT(x, '$.name')"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_SCALAR(x, '$.name')",
+      "read": {},
+      "write": {
+        "presto": "SELECT JSON_EXTRACT_SCALAR(x, '$.name')",
+        "hive": "SELECT GET_JSON_OBJECT(x, '$.name')",
+        "spark": "SELECT GET_JSON_OBJECT(x, '$.name')"
+      }
+    },
+    {
+      "sql": "'毛'",
+      "read": {},
+      "write": {
+        "presto": "'毛'",
+        "hive": "'毛'",
+        "spark": "'毛'"
+      }
+    },
+    {
+      "sql": "SELECT ARRAY_SORT(x, (left, right) -> -1)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT ARRAY_SORT(x)",
+        "presto": "SELECT ARRAY_SORT(x, (\"left\", \"right\") -> -1)",
+        "hive": "SELECT SORT_ARRAY(x)",
+        "spark": "SELECT ARRAY_SORT(x, (left, right) -> -1)"
+      }
+    },
+    {
+      "sql": "SELECT ARRAY_SORT(x)",
+      "read": {},
+      "write": {
+        "presto": "SELECT ARRAY_SORT(x)",
+        "hive": "SELECT SORT_ARRAY(x)",
+        "spark": "SELECT ARRAY_SORT(x)"
+      }
+    },
+    {
+      "sql": "MAP(a, b)",
+      "read": {},
+      "write": {
+        "spark": "MAP_FROM_ARRAYS(a, b)"
+      }
+    },
+    {
+      "sql": "MAP(ARRAY(a, b), ARRAY(c, d))",
+      "read": {},
+      "write": {
+        "hive": "MAP(a, c, b, d)",
+        "presto": "MAP(ARRAY[a, b], ARRAY[c, d])",
+        "spark": "MAP_FROM_ARRAYS(ARRAY(a, b), ARRAY(c, d))",
+        "snowflake": "OBJECT_CONSTRUCT(a, c, b, d)"
+      }
+    },
+    {
+      "sql": "MAP(ARRAY('a'), ARRAY('b'))",
+      "read": {},
+      "write": {
+        "hive": "MAP('a', 'b')",
+        "presto": "MAP(ARRAY['a'], ARRAY['b'])",
+        "spark": "MAP_FROM_ARRAYS(ARRAY('a'), ARRAY('b'))",
+        "snowflake": "OBJECT_CONSTRUCT('a', 'b')"
+      }
+    },
+    {
+      "sql": "SELECT * FROM UNNEST(ARRAY['7', '14']) AS x",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT * FROM UNNEST(['7', '14'])",
+        "presto": "SELECT * FROM UNNEST(ARRAY['7', '14']) AS x",
+        "hive": "SELECT * FROM EXPLODE(ARRAY('7', '14')) AS x",
+        "spark": "SELECT * FROM EXPLODE(ARRAY('7', '14')) AS x"
+      }
+    },
+    {
+      "sql": "SELECT * FROM UNNEST(ARRAY['7', '14']) AS x(y)",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT * FROM UNNEST(['7', '14']) AS y",
+        "presto": "SELECT * FROM UNNEST(ARRAY['7', '14']) AS x(y)",
+        "hive": "SELECT * FROM EXPLODE(ARRAY('7', '14')) AS x(y)",
+        "spark": "SELECT * FROM EXPLODE(ARRAY('7', '14')) AS x(y)"
+      }
+    },
+    {
+      "sql": "WITH RECURSIVE t(n) AS (VALUES (1) UNION ALL SELECT n+1 FROM t WHERE n < 100 ) SELECT sum(n) FROM t",
+      "read": {},
+      "write": {
+        "presto": "WITH RECURSIVE t(n) AS (VALUES (1) UNION ALL SELECT n + 1 FROM t WHERE n < 100) SELECT SUM(n) FROM t"
+      }
+    },
+    {
+      "sql": "SELECT a, b, c, d, sum(y) FROM z GROUP BY CUBE(a) ROLLUP(a), GROUPING SETS((b, c)), d",
+      "read": {},
+      "write": {
+        "presto": "SELECT a, b, c, d, SUM(y) FROM z GROUP BY d, GROUPING SETS ((b, c)), CUBE (a), ROLLUP (a)",
+        "hive": "SELECT a, b, c, d, SUM(y) FROM z GROUP BY d, GROUPING SETS ((b, c)), CUBE (a), ROLLUP (a)"
+      }
+    },
+    {
+      "sql": "JSON_FORMAT(CAST(MAP_FROM_ENTRIES(ARRAY[('action_type', 'at')]) AS JSON))",
+      "read": {},
+      "write": {
+        "presto": "JSON_FORMAT(CAST(MAP_FROM_ENTRIES(ARRAY[('action_type', 'at')]) AS JSON))",
+        "spark": "TO_JSON(MAP_FROM_ENTRIES(ARRAY(('action_type', 'at'))))"
+      }
+    },
+    {
+      "sql": "JSON_FORMAT(x)",
+      "read": {},
+      "write": {
+        "bigquery": "TO_JSON_STRING(x)",
+        "duckdb": "CAST(TO_JSON(x) AS TEXT)",
+        "presto": "JSON_FORMAT(x)",
+        "spark": "TO_JSON(x)"
+      }
+    },
+    {
+      "sql": "JSON_FORMAT(JSON '\"x\"')",
+      "read": {},
+      "write": {
+        "bigquery": "TO_JSON_STRING(PARSE_JSON('\"x\"'))",
+        "duckdb": "CAST(TO_JSON(JSON('\"x\"')) AS TEXT)",
+        "presto": "JSON_FORMAT(JSON_PARSE('\"x\"'))",
+        "spark": "REGEXP_EXTRACT(TO_JSON(FROM_JSON('[\"x\"]', SCHEMA_OF_JSON('[\"x\"]'))), '^.(.*).$', 1)"
+      }
+    },
+    {
+      "sql": "SELECT JSON_FORMAT(JSON '{\"a\": 1, \"b\": \"c\"}')",
+      "read": {},
+      "write": {
+        "spark": "SELECT REGEXP_EXTRACT(TO_JSON(FROM_JSON('[{\"a\": 1, \"b\": \"c\"}]', SCHEMA_OF_JSON('[{\"a\": 1, \"b\": \"c\"}]'))), '^.(.*).$', 1)"
+      }
+    },
+    {
+      "sql": "SELECT JSON_FORMAT(JSON '[1, 2, 3]')",
+      "read": {},
+      "write": {
+        "spark": "SELECT REGEXP_EXTRACT(TO_JSON(FROM_JSON('[[1, 2, 3]]', SCHEMA_OF_JSON('[[1, 2, 3]]'))), '^.(.*).$', 1)"
+      }
+    },
+    {
+      "sql": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+      "read": {
+        "presto": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "trino": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "duckdb": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "snowflake": "REGEXP_SUBSTR('abc', '(a)(b)(c)')"
+      },
+      "write": {
+        "presto": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "trino": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "duckdb": "REGEXP_EXTRACT('abc', '(a)(b)(c)')",
+        "snowflake": "REGEXP_SUBSTR('abc', '(a)(b)(c)')",
+        "hive": "REGEXP_EXTRACT('abc', '(a)(b)(c)', 0)",
+        "spark2": "REGEXP_EXTRACT('abc', '(a)(b)(c)', 0)",
+        "spark": "REGEXP_EXTRACT('abc', '(a)(b)(c)', 0)",
+        "databricks": "REGEXP_EXTRACT('abc', '(a)(b)(c)', 0)"
+      }
+    },
+    {
+      "sql": "CURRENT_USER",
+      "read": {
+        "presto": "CURRENT_USER",
+        "trino": "CURRENT_USER",
+        "snowflake": "CURRENT_USER()"
+      },
+      "write": {
+        "trino": "CURRENT_USER",
+        "snowflake": "CURRENT_USER()"
+      }
+    },
+    {
+      "sql": "SELECT NULLABLE FROM system.jdbc.types",
+      "read": {
+        "presto": "SELECT NULLABLE FROM system.jdbc.types",
+        "trino": "SELECT NULLABLE FROM system.jdbc.types"
+      },
+      "write": {}
+    },
+    {
+      "sql": "TO_UTF8(x)",
+      "read": {
+        "duckdb": "ENCODE(x)",
+        "spark": "ENCODE(x, 'utf-8')"
+      },
+      "write": {
+        "duckdb": "ENCODE(x)",
+        "presto": "TO_UTF8(x)",
+        "spark": "ENCODE(x, 'utf-8')"
+      }
+    },
+    {
+      "sql": "FROM_UTF8(x)",
+      "read": {
+        "duckdb": "DECODE(x)",
+        "spark": "DECODE(x, 'utf-8')"
+      },
+      "write": {
+        "duckdb": "DECODE(x)",
+        "presto": "FROM_UTF8(x)",
+        "spark": "DECODE(x, 'utf-8')"
+      }
+    },
+    {
+      "sql": "TO_HEX(x)",
+      "read": {},
+      "write": {
+        "spark": "HEX(x)"
+      }
+    },
+    {
+      "sql": "FROM_HEX(x)",
+      "read": {},
+      "write": {
+        "spark": "UNHEX(x)"
+      }
+    },
+    {
+      "sql": "HEX(x)",
+      "read": {},
+      "write": {
+        "presto": "TO_HEX(x)"
+      }
+    },
+    {
+      "sql": "UNHEX(x)",
+      "read": {},
+      "write": {
+        "presto": "FROM_HEX(x)"
+      }
+    },
+    {
+      "sql": "SELECT CAST(JSON '[1,23,456]' AS ARRAY(INTEGER))",
+      "read": {},
+      "write": {
+        "spark": "SELECT FROM_JSON('[1,23,456]', 'ARRAY<INT>')",
+        "presto": "SELECT CAST(JSON_PARSE('[1,23,456]') AS ARRAY(INTEGER))"
+      }
+    },
+    {
+      "sql": "SELECT CAST(JSON '{\"k1\":1,\"k2\":23,\"k3\":456}' AS MAP(VARCHAR, INTEGER))",
+      "read": {},
+      "write": {
+        "spark": "SELECT FROM_JSON('{\"k1\":1,\"k2\":23,\"k3\":456}', 'MAP<STRING, INT>')",
+        "presto": "SELECT CAST(JSON_PARSE('{\"k1\":1,\"k2\":23,\"k3\":456}') AS MAP(VARCHAR, INTEGER))"
+      }
+    },
+    {
+      "sql": "SELECT CAST(ARRAY [1, 23, 456] AS JSON)",
+      "read": {},
+      "write": {
+        "spark": "SELECT TO_JSON(ARRAY(1, 23, 456))",
+        "presto": "SELECT CAST(ARRAY[1, 23, 456] AS JSON)"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'dd')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%d', ts)",
+        "presto": "DATE_FORMAT(ts, '%d')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'hh')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%H', ts)",
+        "presto": "DATE_FORMAT(ts, '%H')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'hh24')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%H', ts)",
+        "presto": "DATE_FORMAT(ts, '%H')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'mi')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%M', ts)",
+        "presto": "DATE_FORMAT(ts, '%i')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'mm')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%m', ts)",
+        "presto": "DATE_FORMAT(ts, '%m')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'ss')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%S', ts)",
+        "presto": "DATE_FORMAT(ts, '%s')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'yyyy')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%Y', ts)",
+        "presto": "DATE_FORMAT(ts, '%Y')"
+      }
+    },
+    {
+      "sql": "TO_CHAR(ts, 'yy')",
+      "read": {},
+      "write": {
+        "bigquery": "FORMAT_DATE('%y', ts)",
+        "presto": "DATE_FORMAT(ts, '%y')"
+      }
+    },
+    {
+      "sql": "SIGN(x)",
+      "read": {
+        "presto": "SIGN(x)",
+        "spark": "SIGNUM(x)",
+        "starrocks": "SIGN(x)"
+      },
+      "write": {
+        "presto": "SIGN(x)",
+        "spark": "SIGN(x)",
+        "starrocks": "SIGN(x)"
+      }
+    },
+    {
+      "sql": "BITWISE_AND_AGG(x)",
+      "read": {
+        "presto": "BITWISE_AND_AGG(x)",
+        "trino": "BITWISE_AND_AGG(x)",
+        "oracle": "BITWISE_AND_AGG(x)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "BITWISE_OR_AGG(x)",
+      "read": {
+        "presto": "BITWISE_OR_AGG(x)",
+        "trino": "BITWISE_OR_AGG(x)",
+        "oracle": "BITWISE_OR_AGG(x)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "BITWISE_XOR_AGG(x)",
+      "read": {
+        "presto": "BITWISE_XOR_AGG(x)",
+        "trino": "BITWISE_XOR_AGG(x)",
+        "oracle": "BITWISE_XOR_AGG(x)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "INITCAP(col)",
+      "read": {},
+      "write": {
+        "presto": "REGEXP_REPLACE(col, '(\\w)(\\w*)', x -> UPPER(x[1]) || LOWER(x[2]))"
+      }
+    },
+    {
+      "sql": "SELECT COALESCE(ELEMENT_AT(MAP_FROM_ENTRIES(ARRAY[(51, '1')]), id), quantity) FROM my_table",
+      "read": {},
+      "write": {
+        "presto": "SELECT COALESCE(ELEMENT_AT(MAP_FROM_ENTRIES(ARRAY[(51, '1')]), id), quantity) FROM my_table"
+      }
+    },
+    {
+      "sql": "SELECT ELEMENT_AT(ARRAY[1, 2, 3], 4)",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT [1, 2, 3][SAFE_ORDINAL(4)]",
+        "postgres": "SELECT (ARRAY[1, 2, 3])[4]",
+        "presto": "SELECT ELEMENT_AT(ARRAY[1, 2, 3], 4)"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_SCALAR(TRY(FILTER(CAST(JSON_EXTRACT('{\"k1\": [{\"k2\": \"{\\\"k3\\\": 1}\", \"k4\": \"v\"}]}', '$.k1') AS ARRAY(MAP(VARCHAR, VARCHAR))), x -> x['k4'] = 'v')[1]['k2']), '$.k3')",
+      "read": {},
+      "write": {
+        "presto": "SELECT JSON_EXTRACT_SCALAR(TRY(FILTER(CAST(JSON_EXTRACT('{\"k1\": [{\"k2\": \"{\\\"k3\\\": 1}\", \"k4\": \"v\"}]}', '$.k1') AS ARRAY(MAP(VARCHAR, VARCHAR))), x -> x['k4'] = 'v')[1]['k2']), '$.k3')",
+        "spark": "SELECT GET_JSON_OBJECT(FILTER(FROM_JSON(GET_JSON_OBJECT('{\"k1\": [{\"k2\": \"{\\\\\"k3\\\\\": 1}\", \"k4\": \"v\"}]}', '$.k1'), 'ARRAY<MAP<STRING, STRING>>'), x -> x['k4'] = 'v')[0]['k2'], '$.k3')"
+      }
+    }
+  ]
+}

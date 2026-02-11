@@ -1,0 +1,1948 @@
+{
+  "dialect": "postgres",
+  "identity": [
+    {
+      "sql": "SELECT GET_BIT(CAST(44 AS BIT(10)), 6)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t GROUP BY ROLLUP (a || '^' || b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COSH(1.5)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT EXP(1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT MODE() WITHIN GROUP (ORDER BY status DESC) AS most_common FROM orders",
+      "expected": null
+    },
+    {
+      "sql": "SELECT ST_DISTANCE(gg1, gg2, FALSE) AS sphere_dist",
+      "expected": null
+    },
+    {
+      "sql": "SHA384(x)",
+      "expected": null
+    },
+    {
+      "sql": "1.x",
+      "expected": "1. AS x"
+    },
+    {
+      "sql": "|/ x",
+      "expected": "SQRT(x)"
+    },
+    {
+      "sql": "||/ x",
+      "expected": "CBRT(x)"
+    },
+    {
+      "sql": "SELECT EXTRACT(QUARTER FROM CAST('2025-04-26' AS DATE))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE_TRUNC('QUARTER', CAST('2025-04-26' AS DATE))",
+      "expected": null
+    },
+    {
+      "sql": "STRING_TO_ARRAY('xx~^~yy~^~zz', '~^~', 'yy')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT x FROM t WHERE CAST($1 AS TEXT) = 'ok'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t TABLESAMPLE SYSTEM (50) REPEATABLE (55)",
+      "expected": null
+    },
+    {
+      "sql": "x @@ y",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS MONEY)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS INT4RANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS INT4MULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS INT8RANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS INT8MULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS NUMRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS NUMMULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS TSRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS TSMULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS TSTZRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS TSTZMULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS DATERANGE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS DATEMULTIRANGE)",
+      "expected": null
+    },
+    {
+      "sql": "x$",
+      "expected": null
+    },
+    {
+      "sql": "LENGTH(x)",
+      "expected": null
+    },
+    {
+      "sql": "LENGTH(x, utf8)",
+      "expected": null
+    },
+    {
+      "sql": "CHAR_LENGTH(x)",
+      "expected": "LENGTH(x)"
+    },
+    {
+      "sql": "CHARACTER_LENGTH(x)",
+      "expected": "LENGTH(x)"
+    },
+    {
+      "sql": "SELECT ARRAY[1, 2, 3]",
+      "expected": null
+    },
+    {
+      "sql": "SELECT ARRAY(SELECT 1)",
+      "expected": null
+    },
+    {
+      "sql": "STRING_AGG(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "STRING_AGG(x, ',' ORDER BY y)",
+      "expected": null
+    },
+    {
+      "sql": "STRING_AGG(x, ',' ORDER BY y DESC)",
+      "expected": null
+    },
+    {
+      "sql": "STRING_AGG(DISTINCT x, ',' ORDER BY y DESC)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CASE WHEN SUBSTRING('abcdefg') IN ('ab') THEN 1 ELSE 0 END",
+      "expected": null
+    },
+    {
+      "sql": "COMMENT ON TABLE mytable IS 'this'",
+      "expected": null
+    },
+    {
+      "sql": "COMMENT ON MATERIALIZED VIEW my_view IS 'this'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT e'\\xDEADBEEF'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CAST(e'\\176' AS BYTEA)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x WHERE SUBSTRING('Thomas' FROM '...$') IN ('mas')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(' X' FROM ' XXX ')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(LEADING 'bla' FROM ' XXX ' COLLATE utf8_bin)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM JSON_TO_RECORDSET(z) AS y(\"rank\" INT)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT ~x",
+      "expected": null
+    },
+    {
+      "sql": "x ~ 'y'",
+      "expected": null
+    },
+    {
+      "sql": "x ~* 'y'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM r CROSS JOIN LATERAL UNNEST(ARRAY[1]) AS s(location)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(1 AS DECIMAL) / CAST(2 AS DECIMAL) * -100",
+      "expected": null
+    },
+    {
+      "sql": "EXEC AS myfunc @id = 123",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CURRENT_SCHEMA",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CURRENT_USER",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CURRENT_ROLE",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM ONLY t1",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '-1 MONTH'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '4.1 DAY'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '3.14159 HOUR'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '2.5 MONTH'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '-10.75 MINUTE'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL '0.123456789 SECOND'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY interval ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) - SUM(x) OVER (PARTITION BY y ORDER BY interval ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS total",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM test_data, LATERAL JSONB_ARRAY_ELEMENTS(data) WITH ORDINALITY AS elem(value, ordinality)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT id, name FROM xml_data AS t, XMLTABLE('/root/user' PASSING t.xml COLUMNS id INT PATH '@id', name TEXT PATH 'name/text()') AS x",
+      "expected": null
+    },
+    {
+      "sql": "SELECT id, value FROM xml_content AS t, XMLTABLE(XMLNAMESPACES('http://example.com/ns1' AS ns1, 'http://example.com/ns2' AS ns2), '/root/data' PASSING t.xml COLUMNS id INT PATH '@ns1:id', value TEXT PATH 'ns2:value/text()') AS x",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t WHERE some_column >= CURRENT_DATE + INTERVAL '1 day 1 hour' AND some_another_column IS TRUE",
+      "expected": null
+    },
+    {
+      "sql": "UPDATE \"x\" SET \"y\" = CAST('0 days 60.000000 seconds' AS INTERVAL) WHERE \"x\".\"id\" IN (2, 3)",
+      "expected": null
+    },
+    {
+      "sql": "WITH t1 AS MATERIALIZED (SELECT 1), t2 AS NOT MATERIALIZED (SELECT 2) SELECT * FROM t1, t2",
+      "expected": null
+    },
+    {
+      "sql": "LAST_VALUE(\"col1\") OVER (ORDER BY \"col2\" RANGE BETWEEN INTERVAL '1 DAY' PRECEDING AND '1 month' FOLLOWING)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE ONLY \"Album\" ADD CONSTRAINT \"FK_AlbumArtistId\" FOREIGN KEY (\"ArtistId\") REFERENCES \"Artist\" (\"ArtistId\") ON DELETE CASCADE",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE ONLY \"Album\" ADD CONSTRAINT \"FK_AlbumArtistId\" FOREIGN KEY (\"ArtistId\") REFERENCES \"Artist\" (\"ArtistId\") ON DELETE RESTRICT",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM JSON_ARRAY_ELEMENTS('[1,true, [2,false]]') WITH ORDINALITY",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM JSON_ARRAY_ELEMENTS('[1,true, [2,false]]') WITH ORDINALITY AS kv_json",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM JSON_ARRAY_ELEMENTS('[1,true, [2,false]]') WITH ORDINALITY AS kv_json(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUM(x) OVER a, SUM(y) OVER b FROM c WINDOW a AS (PARTITION BY d), b AS (PARTITION BY e)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CASE WHEN SUBSTRING('abcdefg' FROM 1) IN ('ab') THEN 1 ELSE 0 END",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CASE WHEN SUBSTRING('abcdefg' FROM 1 FOR 2) IN ('ab') THEN 1 ELSE 0 END",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM \"x\" WHERE SUBSTRING(\"x\".\"foo\" FROM 1 FOR 2) IN ('mas')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x WHERE SUBSTRING('Thomas' FROM '%#\"o_a#\"_' FOR '#') IN ('mas')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUBSTRING('bla' + 'foo' || 'bar' FROM 3 - 1 + 5 FOR 4 + SOME_FUNC(arg1, arg2))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP(1284352323.5), TO_TIMESTAMP('05 Dec 2000', 'DD Mon YYYY')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP('05 Dec 2000 10:00 AM', 'DD Mon YYYY HH:MI AM')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP('05 Dec 2000 10:00 PM', 'DD Mon YYYY HH:MI PM')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo, LATERAL (SELECT * FROM bar WHERE bar.id = foo.bar_id) AS ss",
+      "expected": null
+    },
+    {
+      "sql": "SELECT c.oid, n.nspname, c.relname FROM pg_catalog.pg_class AS c LEFT JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace WHERE c.relname OPERATOR(pg_catalog.~) '^(courses)$' COLLATE pg_catalog.default AND pg_catalog.PG_TABLE_IS_VISIBLE(c.oid) ORDER BY 2, 3",
+      "expected": null
+    },
+    {
+      "sql": "SELECT e'foo \\' bar'",
+      "expected": "SELECT e'foo '' bar'"
+    },
+    {
+      "sql": "SELECT e'\\n'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT e'\\t'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT e'update table_name set a = \\'foo\\' where 1 = 0' AS x FROM tab",
+      "expected": "SELECT e'update table_name set a = ''foo'' where 1 = 0' AS x FROM tab"
+    },
+    {
+      "sql": "select count() OVER(partition by a order by a range offset preceding exclude current row)",
+      "expected": "SELECT COUNT() OVER (PARTITION BY a ORDER BY a range BETWEEN offset preceding AND CURRENT ROW EXCLUDE CURRENT ROW)"
+    },
+    {
+      "sql": "SELECT SUBSTRING('Thomas' FOR 3 FROM 2)",
+      "expected": "SELECT SUBSTRING('Thomas' FROM 2 FOR 3)"
+    },
+    {
+      "sql": "SELECT ARRAY[1, 2, 3] <@ ARRAY[1, 2]",
+      "expected": "SELECT ARRAY[1, 2] @> ARRAY[1, 2, 3]"
+    },
+    {
+      "sql": "SELECT DATE_PART('isodow'::varchar(6), current_date)",
+      "expected": "SELECT EXTRACT(CAST('isodow' AS VARCHAR(6)) FROM CURRENT_DATE)"
+    },
+    {
+      "sql": "END WORK AND NO CHAIN",
+      "expected": "COMMIT AND NO CHAIN"
+    },
+    {
+      "sql": "END AND CHAIN",
+      "expected": "COMMIT AND CHAIN"
+    },
+    {
+      "sql": "x ? 'x'",
+      "expected": "x ? 'x'"
+    },
+    {
+      "sql": "SELECT $$a$$",
+      "expected": "SELECT 'a'"
+    },
+    {
+      "sql": "SELECT $$Dianne's horse$$",
+      "expected": "SELECT 'Dianne''s horse'"
+    },
+    {
+      "sql": "SELECT $$The price is $9.95$$ AS msg",
+      "expected": "SELECT 'The price is $9.95' AS msg"
+    },
+    {
+      "sql": "COMMENT ON TABLE mytable IS $$doc this$$",
+      "expected": "COMMENT ON TABLE mytable IS 'doc this'"
+    },
+    {
+      "sql": "UPDATE MYTABLE T1 SET T1.COL = 13",
+      "expected": "UPDATE MYTABLE AS T1 SET T1.COL = 13"
+    },
+    {
+      "sql": "x !~ 'y'",
+      "expected": "NOT x ~ 'y'"
+    },
+    {
+      "sql": "x !~* 'y'",
+      "expected": "NOT x ~* 'y'"
+    },
+    {
+      "sql": "x ~~ 'y'",
+      "expected": "x LIKE 'y'"
+    },
+    {
+      "sql": "x ~~* 'y'",
+      "expected": "x ILIKE 'y'"
+    },
+    {
+      "sql": "x !~~ 'y'",
+      "expected": "NOT x LIKE 'y'"
+    },
+    {
+      "sql": "x !~~* 'y'",
+      "expected": "NOT x ILIKE 'y'"
+    },
+    {
+      "sql": "'45 days'::interval day",
+      "expected": "CAST('45 days' AS INTERVAL DAY)"
+    },
+    {
+      "sql": "'x' 'y' 'z'",
+      "expected": "CONCAT('x', 'y', 'z')"
+    },
+    {
+      "sql": "x::cstring",
+      "expected": "CAST(x AS CSTRING)"
+    },
+    {
+      "sql": "x::oid",
+      "expected": "CAST(x AS OID)"
+    },
+    {
+      "sql": "x::regclass",
+      "expected": "CAST(x AS REGCLASS)"
+    },
+    {
+      "sql": "x::regcollation",
+      "expected": "CAST(x AS REGCOLLATION)"
+    },
+    {
+      "sql": "x::regconfig",
+      "expected": "CAST(x AS REGCONFIG)"
+    },
+    {
+      "sql": "x::regdictionary",
+      "expected": "CAST(x AS REGDICTIONARY)"
+    },
+    {
+      "sql": "x::regnamespace",
+      "expected": "CAST(x AS REGNAMESPACE)"
+    },
+    {
+      "sql": "x::regoper",
+      "expected": "CAST(x AS REGOPER)"
+    },
+    {
+      "sql": "x::regoperator",
+      "expected": "CAST(x AS REGOPERATOR)"
+    },
+    {
+      "sql": "x::regproc",
+      "expected": "CAST(x AS REGPROC)"
+    },
+    {
+      "sql": "x::regprocedure",
+      "expected": "CAST(x AS REGPROCEDURE)"
+    },
+    {
+      "sql": "x::regrole",
+      "expected": "CAST(x AS REGROLE)"
+    },
+    {
+      "sql": "x::regtype",
+      "expected": "CAST(x AS REGTYPE)"
+    },
+    {
+      "sql": "123::CHARACTER VARYING",
+      "expected": "CAST(123 AS VARCHAR)"
+    },
+    {
+      "sql": "TO_TIMESTAMP(123::DOUBLE PRECISION)",
+      "expected": "TO_TIMESTAMP(CAST(123 AS DOUBLE PRECISION))"
+    },
+    {
+      "sql": "SELECT to_timestamp(123)::time without time zone",
+      "expected": "SELECT CAST(TO_TIMESTAMP(123) AS TIME)"
+    },
+    {
+      "sql": "SELECT SUM(x) OVER (PARTITION BY a ORDER BY d ROWS 1 PRECEDING)",
+      "expected": "SELECT SUM(x) OVER (PARTITION BY a ORDER BY d ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)"
+    },
+    {
+      "sql": "SELECT SUBSTRING(2022::CHAR(4) || LPAD(3::CHAR(2), 2, '0') FROM 3 FOR 4)",
+      "expected": "SELECT SUBSTRING(CAST(2022 AS CHAR(4)) || LPAD(CAST(3 AS CHAR(2)), 2, '0') FROM 3 FOR 4)"
+    },
+    {
+      "sql": "SELECT m.name FROM manufacturers AS m LEFT JOIN LATERAL GET_PRODUCT_NAMES(m.id) pname ON TRUE WHERE pname IS NULL",
+      "expected": "SELECT m.name FROM manufacturers AS m LEFT JOIN LATERAL GET_PRODUCT_NAMES(m.id) AS pname ON TRUE WHERE pname IS NULL"
+    },
+    {
+      "sql": "SELECT p1.id, p2.id, v1, v2 FROM polygons AS p1, polygons AS p2, LATERAL VERTICES(p1.poly) v1, LATERAL VERTICES(p2.poly) v2 WHERE (v1 <-> v2) < 10 AND p1.id <> p2.id",
+      "expected": "SELECT p1.id, p2.id, v1, v2 FROM polygons AS p1, polygons AS p2, LATERAL VERTICES(p1.poly) AS v1, LATERAL VERTICES(p2.poly) AS v2 WHERE (v1 <-> v2) < 10 AND p1.id <> p2.id"
+    },
+    {
+      "sql": "SELECT id, email, CAST(deleted AS TEXT) FROM users WHERE deleted NOTNULL",
+      "expected": "SELECT id, email, CAST(deleted AS TEXT) FROM users WHERE NOT deleted IS NULL"
+    },
+    {
+      "sql": "SELECT id, email, CAST(deleted AS TEXT) FROM users WHERE NOT deleted ISNULL",
+      "expected": "SELECT id, email, CAST(deleted AS TEXT) FROM users WHERE NOT deleted IS NULL"
+    },
+    {
+      "sql": "'{\"x\": {\"y\": 1}}'::json->'x'->'y'",
+      "expected": "CAST('{\"x\": {\"y\": 1}}' AS JSON) -> 'x' -> 'y'"
+    },
+    {
+      "sql": "'[1,2,3]'::json->>2",
+      "expected": "CAST('[1,2,3]' AS JSON) ->> 2"
+    },
+    {
+      "sql": "'{\"a\":1,\"b\":2}'::json->>'b'",
+      "expected": "CAST('{\"a\":1,\"b\":2}' AS JSON) ->> 'b'"
+    },
+    {
+      "sql": "'{\"a\":[1,2,3],\"b\":[4,5,6]}'::json#>'{a,2}'",
+      "expected": "CAST('{\"a\":[1,2,3],\"b\":[4,5,6]}' AS JSON) #> '{a,2}'"
+    },
+    {
+      "sql": "'{\"a\":[1,2,3],\"b\":[4,5,6]}'::json#>>'{a,2}'",
+      "expected": "CAST('{\"a\":[1,2,3],\"b\":[4,5,6]}' AS JSON) #>> '{a,2}'"
+    },
+    {
+      "sql": "'[1,2,3]'::json->2",
+      "expected": "CAST('[1,2,3]' AS JSON) -> 2"
+    },
+    {
+      "sql": "SELECT JSON_ARRAY_ELEMENTS((foo->'sections')::JSON) AS sections",
+      "expected": "SELECT JSON_ARRAY_ELEMENTS(CAST((foo -> 'sections') AS JSON)) AS sections"
+    },
+    {
+      "sql": "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET x.a = y.b WHEN NOT MATCHED THEN INSERT (a, b) VALUES (y.a, y.b)",
+      "expected": "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b WHEN NOT MATCHED THEN INSERT (a, b) VALUES (y.a, y.b)"
+    },
+    {
+      "sql": "SELECT * FROM t1*",
+      "expected": "SELECT * FROM t1"
+    },
+    {
+      "sql": "SELECT SUBSTRING('afafa' for 1)",
+      "expected": "SELECT SUBSTRING('afafa' FROM 1 FOR 1)"
+    },
+    {
+      "sql": "CAST(x AS INT8)",
+      "expected": "CAST(x AS BIGINT)"
+    },
+    {
+      "sql": "\n            WITH\n              json_data AS (SELECT '{\"field_id\": [1, 2, 3]}'::JSON AS data),\n              field_ids AS (SELECT 'field_id' AS field_id)\n\n            SELECT\n                JSON_ARRAY_ELEMENTS(json_data.data -> field_ids.field_id) AS element\n            FROM json_data, field_ids\n            ",
+      "expected": "WITH json_data AS (\n  SELECT\n    CAST('{\"field_id\": [1, 2, 3]}' AS JSON) AS data\n), field_ids AS (\n  SELECT\n    'field_id' AS field_id\n)\nSELECT\n  JSON_ARRAY_ELEMENTS(JSON_EXTRACT_PATH(json_data.data, field_ids.field_id)) AS element\nFROM json_data, field_ids"
+    },
+    {
+      "sql": "SELECT TRIM(LEADING ' XXX ' COLLATE \"de_DE\")",
+      "expected": "SELECT LTRIM(' XXX ' COLLATE \"de_DE\")"
+    },
+    {
+      "sql": "SELECT TRIM(TRAILING ' XXX ' COLLATE \"de_DE\")",
+      "expected": "SELECT RTRIM(' XXX ' COLLATE \"de_DE\")"
+    },
+    {
+      "sql": "LEVENSHTEIN(col1, col2)",
+      "expected": null
+    },
+    {
+      "sql": "LEVENSHTEIN_LESS_EQUAL(col1, col2, 1)",
+      "expected": null
+    },
+    {
+      "sql": "LEVENSHTEIN(col1, col2, 1, 2, 3)",
+      "expected": null
+    },
+    {
+      "sql": "LEVENSHTEIN_LESS_EQUAL(col1, col2, 1, 2, 3, 4)",
+      "expected": null
+    },
+    {
+      "sql": "COPY tbl (col1, col2) FROM 'file' WITH (FORMAT format, HEADER MATCH, FREEZE TRUE)",
+      "expected": null
+    },
+    {
+      "sql": "COPY tbl (col1, col2) TO 'file' WITH (FORMAT format, HEADER MATCH, FREEZE TRUE)",
+      "expected": null
+    },
+    {
+      "sql": "COPY (SELECT * FROM t) TO 'file' WITH (FORMAT format, HEADER MATCH, FREEZE TRUE)",
+      "expected": null
+    },
+    {
+      "sql": "cast(a as FLOAT)",
+      "expected": "CAST(a AS DOUBLE PRECISION)"
+    },
+    {
+      "sql": "cast(a as FLOAT8)",
+      "expected": "CAST(a AS DOUBLE PRECISION)"
+    },
+    {
+      "sql": "cast(a as FLOAT4)",
+      "expected": "CAST(a AS REAL)"
+    },
+    {
+      "sql": "SELECT js, js IS JSON AS \"json?\", js IS JSON VALUE AS \"scalar?\", js IS JSON SCALAR AS \"scalar?\", js IS JSON OBJECT AS \"object?\", js IS JSON ARRAY AS \"array?\" FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT js, js IS JSON ARRAY WITH UNIQUE KEYS AS \"array w. UK?\", js IS JSON ARRAY WITHOUT UNIQUE KEYS AS \"array w/o UK?\", js IS JSON ARRAY UNIQUE KEYS AS \"array w UK 2?\" FROM t",
+      "expected": null
+    },
+    {
+      "sql": "MERGE INTO target_table USING source_table AS source ON target.id = source.id WHEN MATCHED THEN DO NOTHING WHEN NOT MATCHED THEN DO NOTHING RETURNING MERGE_ACTION(), *",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1 FROM ((VALUES (1)) AS vals(id) LEFT OUTER JOIN tbl ON vals.id = tbl.id)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT OVERLAY(a PLACING b FROM 1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT OVERLAY(a PLACING b FROM 1 FOR 1)",
+      "expected": null
+    },
+    {
+      "sql": "/*+ some comment*/ SELECT b.foo, b.bar FROM baz AS b",
+      "expected": "/* + some comment */ SELECT b.foo, b.bar FROM baz AS b"
+    },
+    {
+      "sql": "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY a) FILTER(WHERE CAST(b AS BOOLEAN)) AS mean_value FROM (VALUES (0, 't')) AS fake_data(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo WHERE id = %s",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo WHERE id = %(id_param)s",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo WHERE id = ?",
+      "expected": null
+    },
+    {
+      "sql": "SELECT '{\"a\":1, \"b\":2, \"c\":3}'::jsonb ?| array['b', 'c']",
+      "expected": "SELECT CAST('{\"a\":1, \"b\":2, \"c\":3}' AS JSONB) ?| ARRAY['b', 'c']"
+    },
+    {
+      "sql": "SELECT '[\"a\", \"b\"]'::jsonb ?& array['a', 'b']",
+      "expected": "SELECT CAST('[\"a\", \"b\"]' AS JSONB) ?& ARRAY['a', 'b']"
+    },
+    {
+      "sql": "SELECT '[\"a\", {\"b\":1}]'::jsonb #- '{1,b}'",
+      "expected": "SELECT CAST('[\"a\", {\"b\":1}]' AS JSONB) #- '{1,b}'"
+    },
+    {
+      "sql": "SELECT JSON_AGG(DISTINCT name) FROM users",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_AGG(c1 ORDER BY c1) FROM (VALUES ('c'), ('b'), ('a')) AS t(c1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSON_AGG(DISTINCT c1 ORDER BY c1) FROM (VALUES ('c'), ('b'), ('a')) AS t(c1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT NUMRANGE(1.1, 2.2) -|- NUMRANGE(2.2, 3.3)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SLOPE(point '(4,4)', point '(0,0)')",
+      "expected": "SELECT SLOPE(CAST('(4,4)' AS POINT), CAST('(0,0)' AS POINT))"
+    },
+    {
+      "sql": "WIDTH_BUCKET(10, ARRAY[5, 15])",
+      "expected": null
+    },
+    {
+      "sql": "WIDTH_BUCKET(10, 5, 15, 25)",
+      "expected": null
+    },
+    {
+      "sql": "ALTER INDEX \"IX_Ratings_Column1\" RENAME TO \"IX_Ratings_Column2\"",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE x (a TEXT COLLATE \"de_DE\")",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE x (a TEXT COLLATE pg_catalog.\"default\")",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (col INT[3][5])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (col INT[3])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX IF NOT EXISTS ON t(c)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX et_vid_idx ON et(vid) INCLUDE (fid)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX idx_x ON x USING BTREE(x, y) WHERE (NOT y IS NULL)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (elems JSONB[])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE public.y (x TSTZRANGE NOT NULL)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (foo HSTORE)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (foo JSONB)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (foo VARCHAR(64)[])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (foo INT) PARTITION BY HASH(foo)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) RETURNING a",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) RETURNING a, b",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "UPDATE tbl_name SET foo = 123 RETURNING a",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE cities_partdef PARTITION OF cities DEFAULT",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (c CHAR(2) UNIQUE NOT NULL) INHERITS (t1)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE s.t (c CHAR(2) UNIQUE NOT NULL) INHERITS (s.t1, s.t2)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION x(INT) RETURNS INT SET search_path = 'public'",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 CONTINUE IDENTITY",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 RESTART IDENTITY",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 CASCADE",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 RESTRICT",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 CONTINUE IDENTITY CASCADE",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 RESTART IDENTITY RESTRICT",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET LOGGED",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET UNLOGGED",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET WITHOUT CLUSTER",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET WITHOUT OIDS",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET ACCESS METHOD method",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET TABLESPACE tablespace",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE t1 SET (fillfactor = 5, autovacuum_enabled = TRUE)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO book (isbn, title) VALUES ($1, $2) ON CONFLICT(isbn) WHERE deleted_at IS NULL DO UPDATE SET title = EXCLUDED.title RETURNING id, isbn",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO newtable AS t(a, b, c) VALUES (1, 2, 3) ON CONFLICT(c) DO UPDATE SET a = t.a + 1 WHERE t.a < 1",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE tested_table ADD CONSTRAINT unique_example UNIQUE (column_name) NOT VALID",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION pymax(a INT, b INT) RETURNS INT LANGUAGE plpython3u AS $$\n  if a > b:\n    return a\n  return b\n$$",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (vid INT NOT NULL, CONSTRAINT ht_vid_nid_fid_idx EXCLUDE (INT4RANGE(vid, nid) WITH &&, INT4RANGE(fid, fid, '[]') WITH &&))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (i INT, a TEXT, PRIMARY KEY (i) INCLUDE (a))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (i INT, PRIMARY KEY (i), EXCLUDE USING gist(col varchar_pattern_ops DESC NULLS LAST WITH &&) WITH (sp1=1, sp2=2))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (i INT, EXCLUDE USING btree(INT4RANGE(vid, nid, '[]') ASC NULLS FIRST WITH &&) INCLUDE (col1, col2))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (i INT, EXCLUDE USING gin(col1 WITH &&, col2 WITH ||) USING INDEX TABLESPACE tablespace WHERE (id > 5))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE A (LIKE B INCLUDING CONSTRAINT INCLUDING COMPRESSION EXCLUDING COMMENTS)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE cust_part3 PARTITION OF customers FOR VALUES WITH (MODULUS 3, REMAINDER 2)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE measurement_y2016m07 PARTITION OF measurement (unitsales DEFAULT 0) FOR VALUES FROM ('2016-07-01') TO ('2016-08-01')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE measurement_ym_older PARTITION OF measurement_year_month FOR VALUES FROM (MINVALUE, MINVALUE) TO (2016, 11)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE measurement_ym_y2016m11 PARTITION OF measurement_year_month FOR VALUES FROM (2016, 11) TO (2016, 12)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE cities_ab PARTITION OF cities (CONSTRAINT city_id_nonzero CHECK (city_id <> 0)) FOR VALUES IN ('a', 'b')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE cities_ab PARTITION OF cities (CONSTRAINT city_id_nonzero CHECK (city_id <> 0)) FOR VALUES IN ('a', 'b') PARTITION BY RANGE(population)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX foo ON bar.baz USING btree(col1 varchar_pattern_ops ASC, col2)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX index_issues_on_title_trigram ON public.issues USING gin(title public.gin_trgm_ops)",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) ON CONFLICT(id) DO NOTHING RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) ON CONFLICT(id) DO UPDATE SET x.id = 1 RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) ON CONFLICT(id) DO UPDATE SET x.id = excluded.id RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) ON CONFLICT ON CONSTRAINT pkey DO NOTHING RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO x VALUES (1, 'a', 2.0) ON CONFLICT ON CONSTRAINT pkey DO UPDATE SET x.id = 1 RETURNING *",
+      "expected": null
+    },
+    {
+      "sql": "DELETE FROM event USING sales AS s WHERE event.eventid = s.eventid RETURNING a",
+      "expected": null
+    },
+    {
+      "sql": "WITH t(c) AS (SELECT 1) SELECT * INTO UNLOGGED foo FROM (SELECT c AS c FROM t) AS temp",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (x TIMESTAMP WITHOUT TIME ZONE[][])",
+      "expected": "CREATE TABLE test (x TIMESTAMP[][])"
+    },
+    {
+      "sql": "CREATE FUNCTION add(integer, integer) RETURNS INT LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT AS 'select $1 + $2;'",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION add(integer, integer) RETURNS INT LANGUAGE SQL IMMUTABLE STRICT AS 'select $1 + $2;'",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION add(INT, INT) RETURNS INT SET search_path TO 'public' AS 'select $1 + $2;' LANGUAGE SQL IMMUTABLE",
+      "expected": "CREATE FUNCTION add(INT, INT) RETURNS INT SET search_path = 'public' AS 'select $1 + $2;' LANGUAGE SQL IMMUTABLE"
+    },
+    {
+      "sql": "CREATE FUNCTION x(INT) RETURNS INT SET foo FROM CURRENT",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION add(integer, integer) RETURNS integer AS 'select $1 + $2;' LANGUAGE SQL IMMUTABLE CALLED ON NULL INPUT",
+      "expected": null
+    },
+    {
+      "sql": "CREATE CONSTRAINT TRIGGER my_trigger AFTER INSERT OR DELETE OR UPDATE OF col_a, col_b ON public.my_table DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION do_sth()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE UNLOGGED TABLE foo AS WITH t(c) AS (SELECT 1) SELECT * FROM (SELECT c AS c FROM t) AS temp",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE foo ADD COLUMN id BIGINT NOT NULL PRIMARY KEY DEFAULT 1, ADD CONSTRAINT fk_orders_user FOREIGN KEY (id) REFERENCES foo (id)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (col integer ARRAY[3])",
+      "expected": "CREATE TABLE t (col INT[3])"
+    },
+    {
+      "sql": "CREATE TABLE t (col integer ARRAY)",
+      "expected": "CREATE TABLE t (col INT[])"
+    },
+    {
+      "sql": "CREATE FUNCTION x(INT) RETURNS INT SET search_path TO 'public'",
+      "expected": "CREATE FUNCTION x(INT) RETURNS INT SET search_path = 'public'"
+    },
+    {
+      "sql": "CREATE TABLE test (x TIMESTAMP WITHOUT TIME ZONE[][])",
+      "expected": "CREATE TABLE test (x TIMESTAMP[][])"
+    },
+    {
+      "sql": "CREATE OR REPLACE FUNCTION function_name (input_a character varying DEFAULT NULL::character varying)",
+      "expected": "CREATE OR REPLACE FUNCTION function_name(input_a VARCHAR DEFAULT CAST(NULL AS VARCHAR))"
+    },
+    {
+      "sql": "CREATE TABLE products (product_no INT UNIQUE, name TEXT, price DECIMAL)",
+      "expected": "CREATE TABLE products (product_no INT UNIQUE, name TEXT, price DECIMAL)"
+    },
+    {
+      "sql": "CREATE TABLE products (product_no INT CONSTRAINT must_be_different UNIQUE, name TEXT CONSTRAINT present NOT NULL, price DECIMAL)",
+      "expected": "CREATE TABLE products (product_no INT CONSTRAINT must_be_different UNIQUE, name TEXT CONSTRAINT present NOT NULL, price DECIMAL)"
+    },
+    {
+      "sql": "CREATE TABLE products (product_no INT, name TEXT, price DECIMAL, UNIQUE (product_no, name))",
+      "expected": "CREATE TABLE products (product_no INT, name TEXT, price DECIMAL, UNIQUE (product_no, name))"
+    },
+    {
+      "sql": "CREATE TABLE products (product_no INT UNIQUE, name TEXT, price DECIMAL CHECK (price > 0), discounted_price DECIMAL CONSTRAINT positive_discount CHECK (discounted_price > 0), CHECK (product_no > 1), CONSTRAINT valid_discount CHECK (price > discounted_price))",
+      "expected": null
+    },
+    {
+      "sql": "\n            CREATE INDEX index_ci_builds_on_commit_id_and_artifacts_expireatandidpartial\n            ON public.ci_builds\n            USING btree (commit_id, artifacts_expire_at, id)\n            WHERE (\n                ((type)::text = 'Ci::Build'::text)\n                AND ((retried = false) OR (retried IS NULL))\n                AND ((name)::text = ANY (ARRAY[\n                    ('sast'::character varying)::text,\n                    ('dependency_scanning'::character varying)::text,\n                    ('sast:container'::character varying)::text,\n                    ('container_scanning'::character varying)::text,\n                    ('dast'::character varying)::text\n                ]))\n            )\n            ",
+      "expected": "CREATE INDEX index_ci_builds_on_commit_id_and_artifacts_expireatandidpartial ON public.ci_builds USING btree(commit_id, artifacts_expire_at, id) WHERE ((CAST((type) AS TEXT) = CAST('Ci::Build' AS TEXT)) AND ((retried = FALSE) OR (retried IS NULL)) AND (CAST((name) AS TEXT) = ANY(ARRAY[CAST((CAST('sast' AS VARCHAR)) AS TEXT), CAST((CAST('dependency_scanning' AS VARCHAR)) AS TEXT), CAST((CAST('sast:container' AS VARCHAR)) AS TEXT), CAST((CAST('container_scanning' AS VARCHAR)) AS TEXT), CAST((CAST('dast' AS VARCHAR)) AS TEXT)])))"
+    },
+    {
+      "sql": "CREATE INDEX index_ci_pipelines_on_project_idandrefandiddesc ON public.ci_pipelines USING btree(project_id, ref, id DESC)",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE ONLY t1, t2*, ONLY t3, t4, t5* RESTART IDENTITY CASCADE",
+      "expected": "TRUNCATE TABLE ONLY t1, t2, ONLY t3, t4, t5 RESTART IDENTITY CASCADE"
+    },
+    {
+      "sql": "CREATE TABLE tbl (col INT UNIQUE NULLS NOT DISTINCT DEFAULT 9.99)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE tbl (col UUID UNIQUE DEFAULT GEN_RANDOM_UUID())",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE tbl (col UUID, UNIQUE NULLS NOT DISTINCT (col))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE tbl (col_a INT GENERATED ALWAYS AS (1 + 2) STORED)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE tbl (col_a INTERVAL GENERATED ALWAYS AS (a - b) STORED)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX CONCURRENTLY ix_table_id ON tbl USING btree(id)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_table_id ON tbl USING btree(id)",
+      "expected": null
+    },
+    {
+      "sql": "DROP INDEX ix_table_id",
+      "expected": null
+    },
+    {
+      "sql": "DROP INDEX IF EXISTS ix_table_id",
+      "expected": null
+    },
+    {
+      "sql": "DROP INDEX CONCURRENTLY ix_table_id",
+      "expected": null
+    },
+    {
+      "sql": "DROP INDEX CONCURRENTLY IF EXISTS ix_table_id",
+      "expected": null
+    },
+    {
+      "sql": "\n        CREATE TABLE IF NOT EXISTS public.rental\n        (\n            inventory_id INT NOT NULL,\n            CONSTRAINT rental_customer_id_fkey FOREIGN KEY (customer_id)\n                REFERENCES public.customer (customer_id) MATCH FULL\n                ON UPDATE CASCADE\n                ON DELETE RESTRICT,\n            CONSTRAINT rental_inventory_id_fkey FOREIGN KEY (inventory_id)\n                REFERENCES public.inventory (inventory_id) MATCH PARTIAL\n                ON UPDATE CASCADE\n                ON DELETE RESTRICT,\n            CONSTRAINT rental_staff_id_fkey FOREIGN KEY (staff_id)\n                REFERENCES public.staff (staff_id) MATCH SIMPLE\n                ON UPDATE CASCADE\n                ON DELETE RESTRICT,\n            INITIALLY IMMEDIATE\n        )\n        ",
+      "expected": "CREATE TABLE IF NOT EXISTS public.rental (inventory_id INT NOT NULL, CONSTRAINT rental_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customer (customer_id) MATCH FULL ON UPDATE CASCADE ON DELETE RESTRICT, CONSTRAINT rental_inventory_id_fkey FOREIGN KEY (inventory_id) REFERENCES public.inventory (inventory_id) MATCH PARTIAL ON UPDATE CASCADE ON DELETE RESTRICT, CONSTRAINT rental_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff (staff_id) MATCH SIMPLE ON UPDATE CASCADE ON DELETE RESTRICT, INITIALLY IMMEDIATE)"
+    },
+    {
+      "sql": "SELECT * FROM UNNEST(ARRAY[1, 2], ARRAY['foo', 'bar', 'baz']) AS x(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT a, LOGICAL_OR(b) FROM table GROUP BY a",
+      "expected": "SELECT a, BOOL_OR(b) FROM table GROUP BY a"
+    },
+    {
+      "sql": "SELECT CONCAT('abcde', 2, NULL, 22)",
+      "expected": null
+    },
+    {
+      "sql": "VAR_SAMP(x)",
+      "expected": "VAR_SAMP(x)"
+    },
+    {
+      "sql": "VAR_POP(x)",
+      "expected": "VAR_POP(x)"
+    },
+    {
+      "sql": "VARIANCE(x)",
+      "expected": "VAR_SAMP(x)"
+    },
+    {
+      "sql": "SELECT * FROM ROWS FROM (FUNC1(col1, col2))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM ROWS FROM (FUNC1(col1) AS alias1(\"col1\" TEXT), FUNC2(col2) AS alias2(\"col2\" INT)) WITH ORDINALITY",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM table1, ROWS FROM (FUNC1(col1) AS alias1(\"col1\" TEXT)) WITH ORDINALITY AS alias3(\"col3\" INT, \"col4\" TEXT)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT ARRAY_LENGTH(ARRAY[1, 2, 3], 1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME foo)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME foo, XMLATTRIBUTES('xyz' AS bar))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME test, XMLATTRIBUTES(a, b)) FROM test",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME foo, XMLATTRIBUTES(CURRENT_DATE AS bar), 'cont', 'ent')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME \"foo$bar\", XMLATTRIBUTES('xyz' AS \"a&b\"))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT XMLELEMENT(NAME foo, XMLATTRIBUTES('xyz' AS bar), XMLELEMENT(NAME abc), XMLCOMMENT('test'), XMLELEMENT(NAME xyz))",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE TBL",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE TBL(col1, col2)",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE VERBOSE SKIP_LOCKED TBL(col1, col2)",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE BUFFER_USAGE_LIMIT 1337 TBL",
+      "expected": null
+    },
+    {
+      "sql": "WITH RECURSIVE search_graph(id, link, data, depth) AS (SELECT g.id, g.link, g.data, 1 FROM graph AS g UNION ALL SELECT g.id, g.link, g.data, sg.depth + 1 FROM graph AS g, search_graph AS sg WHERE g.id = sg.link) CYCLE id SET is_cycle USING path SELECT * FROM search_graph",
+      "expected": null
+    },
+    {
+      "sql": "ROUND(x)",
+      "expected": null
+    },
+    {
+      "sql": "ROUND(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "ROUND(CAST(x AS DOUBLE PRECISION))",
+      "expected": null
+    },
+    {
+      "sql": "ROUND(CAST(x AS DECIMAL), 4)",
+      "expected": null
+    },
+    {
+      "sql": "ROUND(CAST(x AS INT), 4)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE foo (data XML)",
+      "expected": null
+    },
+    {
+      "sql": "GRANT EXECUTE ON FUNCTION calculate_bonus(integer) TO analyst",
+      "expected": "GRANT EXECUTE ON FUNCTION CALCULATE_BONUS(integer) TO analyst"
+    },
+    {
+      "sql": "REVOKE EXECUTE ON FUNCTION calculate_bonus(integer) FROM analyst",
+      "expected": "REVOKE EXECUTE ON FUNCTION CALCULATE_BONUS(integer) FROM analyst"
+    },
+    {
+      "sql": "ARRAY[1, 2, 3] && ARRAY[1, 2]",
+      "expected": null
+    },
+    {
+      "sql": "a ?| b",
+      "expected": null
+    },
+    {
+      "sql": "a ?& b",
+      "expected": null
+    },
+    {
+      "sql": "a #- b",
+      "expected": null
+    },
+    {
+      "sql": "1::\"int\"",
+      "expected": "CAST(1 AS INT)"
+    },
+    {
+      "sql": "1::\"udt\"",
+      "expected": "CAST(1 AS \"udt\")"
+    },
+    {
+      "sql": "x::JSON -> 'duration' ->> -1",
+      "expected": "JSON_EXTRACT_PATH_TEXT(CAST(x AS JSON) -> 'duration', -1)"
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "x ? y",
+      "read": {},
+      "write": {
+        "postgres": "x ? y"
+      }
+    },
+    {
+      "sql": "SELECT CURRENT_TIMESTAMP + INTERVAL '-3 MONTH'",
+      "read": {
+        "mysql": "SELECT DATE_ADD(CURRENT_TIMESTAMP, INTERVAL -1 QUARTER)",
+        "postgres": "SELECT CURRENT_TIMESTAMP + INTERVAL '-3 MONTH'",
+        "tsql": "SELECT DATEADD(QUARTER, -1, GETDATE())"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT ARRAY[]::INT[] AS foo",
+      "read": {},
+      "write": {
+        "postgres": "SELECT CAST(ARRAY[] AS INT[]) AS foo",
+        "duckdb": "SELECT CAST([] AS INT[]) AS foo"
+      }
+    },
+    {
+      "sql": "STRING_TO_ARRAY('xx~^~yy~^~zz', '~^~', 'yy')",
+      "read": {
+        "doris": "SPLIT_BY_STRING('xx~^~yy~^~zz', '~^~', 'yy')"
+      },
+      "write": {
+        "doris": "SPLIT_BY_STRING('xx~^~yy~^~zz', '~^~', 'yy')",
+        "postgres": "STRING_TO_ARRAY('xx~^~yy~^~zz', '~^~', 'yy')"
+      }
+    },
+    {
+      "sql": "SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]",
+      "read": {
+        "duckdb": "SELECT [1, 2, 3] @> [1, 2]"
+      },
+      "write": {
+        "duckdb": "SELECT [1, 2, 3] @> [1, 2]",
+        "postgres": "SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]"
+      }
+    },
+    {
+      "sql": "SELECT REGEXP_REPLACE('mr .', '[^a-zA-Z]', '', 'g')",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT REGEXP_REPLACE('mr .', '[^a-zA-Z]', '', 'g')",
+        "postgres": "SELECT REGEXP_REPLACE('mr .', '[^a-zA-Z]', '', 'g')"
+      }
+    },
+    {
+      "sql": "CREATE TABLE t (c INT)",
+      "read": {
+        "mysql": "CREATE TABLE t (c INT COMMENT 'comment 1') COMMENT = 'comment 2'"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT * FROM \"test_table\" ORDER BY RANDOM() LIMIT 5",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT * FROM `test_table` ORDER BY RAND() NULLS LAST LIMIT 5",
+        "duckdb": "SELECT * FROM \"test_table\" ORDER BY RANDOM() LIMIT 5",
+        "postgres": "SELECT * FROM \"test_table\" ORDER BY RANDOM() LIMIT 5",
+        "tsql": "SELECT TOP 5 * FROM [test_table] ORDER BY RAND()"
+      }
+    },
+    {
+      "sql": "SELECT (data -> 'en-US') AS acat FROM my_table",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT (data -> '$.\"en-US\"') AS acat FROM my_table",
+        "postgres": "SELECT (data -> 'en-US') AS acat FROM my_table"
+      }
+    },
+    {
+      "sql": "SELECT (data ->> 'en-US') AS acat FROM my_table",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT (data ->> '$.\"en-US\"') AS acat FROM my_table",
+        "postgres": "SELECT (data ->> 'en-US') AS acat FROM my_table"
+      }
+    },
+    {
+      "sql": "SELECT JSON_EXTRACT_PATH_TEXT(x, k1, k2, k3) FROM t",
+      "read": {
+        "clickhouse": "SELECT JSONExtractString(x, k1, k2, k3) FROM t",
+        "redshift": "SELECT JSON_EXTRACT_PATH_TEXT(x, k1, k2, k3) FROM t"
+      },
+      "write": {
+        "clickhouse": "SELECT JSONExtractString(x, k1, k2, k3) FROM t",
+        "postgres": "SELECT JSON_EXTRACT_PATH_TEXT(x, k1, k2, k3) FROM t",
+        "redshift": "SELECT JSON_EXTRACT_PATH_TEXT(x, k1, k2, k3) FROM t"
+      }
+    },
+    {
+      "sql": "x #> 'y'",
+      "read": {},
+      "write": {
+        "postgres": "x #> 'y'"
+      }
+    },
+    {
+      "sql": "x #>> 'y'",
+      "read": {},
+      "write": {
+        "postgres": "x #>> 'y'"
+      }
+    },
+    {
+      "sql": "x -> 'y' -> 0 -> 'z'",
+      "read": {},
+      "write": {
+        "postgres": "x -> 'y' -> 0 -> 'z'"
+      }
+    },
+    {
+      "sql": "JSON_EXTRACT_PATH('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}','f4')",
+      "read": {},
+      "write": {
+        "bigquery": "JSON_EXTRACT('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4')",
+        "duckdb": "'{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}' -> '$.f4'",
+        "mysql": "JSON_EXTRACT('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4')",
+        "postgres": "JSON_EXTRACT_PATH('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', 'f4')",
+        "presto": "JSON_EXTRACT('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4')",
+        "redshift": "JSON_EXTRACT_PATH_TEXT('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', 'f4')",
+        "spark": "GET_JSON_OBJECT('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4')",
+        "sqlite": "'{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}' -> '$.f4'",
+        "tsql": "ISNULL(JSON_QUERY('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4'), JSON_VALUE('{\"f2\":{\"f3\":1},\"f4\":{\"f5\":99,\"f6\":\"foo\"}}', '$.f4'))"
+      }
+    },
+    {
+      "sql": "JSON_EXTRACT_PATH_TEXT('{\"farm\": [\"a\", \"b\", \"c\"]}', 'farm', '0')",
+      "read": {
+        "duckdb": "'{\"farm\": [\"a\", \"b\", \"c\"]}' ->> '$.farm[0]'",
+        "redshift": "JSON_EXTRACT_PATH_TEXT('{\"farm\": [\"a\", \"b\", \"c\"]}', 'farm', '0')"
+      },
+      "write": {
+        "duckdb": "'{\"farm\": [\"a\", \"b\", \"c\"]}' ->> '$.farm[0]'",
+        "postgres": "JSON_EXTRACT_PATH_TEXT('{\"farm\": [\"a\", \"b\", \"c\"]}', 'farm', '0')",
+        "redshift": "JSON_EXTRACT_PATH_TEXT('{\"farm\": [\"a\", \"b\", \"c\"]}', 'farm', '0')"
+      }
+    },
+    {
+      "sql": "JSON_EXTRACT_PATH(x, 'x', 'y', 'z')",
+      "read": {
+        "duckdb": "x -> '$.x.y.z'",
+        "postgres": "JSON_EXTRACT_PATH(x, 'x', 'y', 'z')"
+      },
+      "write": {
+        "duckdb": "x -> '$.x.y.z'",
+        "redshift": "JSON_EXTRACT_PATH_TEXT(x, 'x', 'y', 'z')"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t TABLESAMPLE SYSTEM (50)",
+      "read": {},
+      "write": {
+        "postgres": "SELECT * FROM t TABLESAMPLE SYSTEM (50)"
+      }
+    },
+    {
+      "sql": "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount)",
+      "read": {},
+      "write": {
+        "databricks": "SELECT PERCENTILE_APPROX(amount, 0.5)",
+        "postgres": "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY amount)",
+        "presto": "SELECT APPROX_PERCENTILE(amount, 0.5)",
+        "spark": "SELECT PERCENTILE_APPROX(amount, 0.5)",
+        "trino": "SELECT APPROX_PERCENTILE(amount, 0.5)"
+      }
+    },
+    {
+      "sql": "e'x'",
+      "read": {},
+      "write": {
+        "mysql": "x"
+      }
+    },
+    {
+      "sql": "SELECT DATE_PART('minute', timestamp '2023-01-04 04:05:06.789')",
+      "read": {},
+      "write": {
+        "postgres": "SELECT EXTRACT(minute FROM CAST('2023-01-04 04:05:06.789' AS TIMESTAMP))",
+        "redshift": "SELECT EXTRACT(minute FROM CAST('2023-01-04 04:05:06.789' AS TIMESTAMP))",
+        "snowflake": "SELECT DATE_PART(minute, CAST('2023-01-04 04:05:06.789' AS TIMESTAMP))"
+      }
+    },
+    {
+      "sql": "SELECT DATE_PART('month', date '20220502')",
+      "read": {},
+      "write": {
+        "postgres": "SELECT EXTRACT(month FROM CAST('20220502' AS DATE))",
+        "redshift": "SELECT EXTRACT(month FROM CAST('20220502' AS DATE))",
+        "snowflake": "SELECT DATE_PART(month, CAST('20220502' AS DATE))"
+      }
+    },
+    {
+      "sql": "SELECT (DATE '2016-01-10', DATE '2016-02-01') OVERLAPS (DATE '2016-01-20', DATE '2016-02-10')",
+      "read": {},
+      "write": {
+        "postgres": "SELECT (CAST('2016-01-10' AS DATE), CAST('2016-02-01' AS DATE)) OVERLAPS (CAST('2016-01-20' AS DATE), CAST('2016-02-10' AS DATE))",
+        "tsql": "SELECT (CAST('2016-01-10' AS DATE), CAST('2016-02-01' AS DATE)) OVERLAPS (CAST('2016-01-20' AS DATE), CAST('2016-02-10' AS DATE))"
+      }
+    },
+    {
+      "sql": "x ^ y",
+      "read": {},
+      "write": {
+        "postgres": "POWER(x, y)"
+      }
+    },
+    {
+      "sql": "x # y",
+      "read": {},
+      "write": {
+        "postgres": "x # y"
+      }
+    },
+    {
+      "sql": "SELECT GENERATE_SERIES(1, 5)",
+      "read": {},
+      "write": {
+        "postgres": "SELECT GENERATE_SERIES(1, 5)"
+      }
+    },
+    {
+      "sql": "WITH dates AS (SELECT GENERATE_SERIES('2020-01-01'::DATE, '2024-01-01'::DATE, '1 day'::INTERVAL) AS date), date_table AS (SELECT DISTINCT DATE_TRUNC('MONTH', date) AS date FROM dates) SELECT * FROM date_table",
+      "read": {},
+      "write": {
+        "duckdb": "WITH dates AS (SELECT UNNEST(GENERATE_SERIES(CAST('2020-01-01' AS DATE), CAST('2024-01-01' AS DATE), CAST('1 day' AS INTERVAL))) AS date), date_table AS (SELECT DISTINCT DATE_TRUNC('MONTH', date) AS date FROM dates) SELECT * FROM date_table",
+        "postgres": "WITH dates AS (SELECT GENERATE_SERIES(CAST('2020-01-01' AS DATE), CAST('2024-01-01' AS DATE), CAST('1 day' AS INTERVAL)) AS date), date_table AS (SELECT DISTINCT DATE_TRUNC('MONTH', date) AS date FROM dates) SELECT * FROM date_table"
+      }
+    },
+    {
+      "sql": "GENERATE_SERIES(a, b, '  2   days  ')",
+      "read": {},
+      "write": {
+        "postgres": "GENERATE_SERIES(a, b, INTERVAL '2 DAYS')",
+        "presto": "UNNEST(SEQUENCE(a, b, INTERVAL '2' DAY))",
+        "trino": "UNNEST(SEQUENCE(a, b, INTERVAL '2' DAY))"
+      }
+    },
+    {
+      "sql": "GENERATE_SERIES('2019-01-01'::TIMESTAMP, NOW(), '1day')",
+      "read": {},
+      "write": {
+        "databricks": "EXPLODE(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP() AS TIMESTAMP), INTERVAL '1' DAY))",
+        "hive": "EXPLODE(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP() AS TIMESTAMP), INTERVAL '1' DAY))",
+        "postgres": "GENERATE_SERIES(CAST('2019-01-01' AS TIMESTAMP), CURRENT_TIMESTAMP, INTERVAL '1 DAY')",
+        "presto": "UNNEST(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP AS TIMESTAMP), INTERVAL '1' DAY))",
+        "spark": "EXPLODE(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP() AS TIMESTAMP), INTERVAL '1' DAY))",
+        "spark2": "EXPLODE(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP() AS TIMESTAMP), INTERVAL '1' DAY))",
+        "trino": "UNNEST(SEQUENCE(CAST('2019-01-01' AS TIMESTAMP), CAST(CURRENT_TIMESTAMP AS TIMESTAMP), INTERVAL '1' DAY))"
+      }
+    },
+    {
+      "sql": "SELECT * FROM GENERATE_SERIES(a, b)",
+      "read": {
+        "tsql": "SELECT * FROM GENERATE_SERIES(a, b)"
+      },
+      "write": {
+        "databricks": "SELECT * FROM EXPLODE(SEQUENCE(a, b))",
+        "hive": "SELECT * FROM EXPLODE(SEQUENCE(a, b))",
+        "postgres": "SELECT * FROM GENERATE_SERIES(a, b)",
+        "presto": "SELECT * FROM UNNEST(SEQUENCE(a, b))",
+        "spark": "SELECT * FROM EXPLODE(SEQUENCE(a, b))",
+        "spark2": "SELECT * FROM EXPLODE(SEQUENCE(a, b))",
+        "trino": "SELECT * FROM UNNEST(SEQUENCE(a, b))",
+        "tsql": "SELECT * FROM GENERATE_SERIES(a, b)"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4)",
+      "read": {},
+      "write": {
+        "postgres": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4)",
+        "presto": "SELECT * FROM t CROSS JOIN UNNEST(SEQUENCE(2, 4))",
+        "trino": "SELECT * FROM t CROSS JOIN UNNEST(SEQUENCE(2, 4))",
+        "tsql": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4)"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4) AS s",
+      "read": {},
+      "write": {
+        "postgres": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4) AS s",
+        "presto": "SELECT * FROM t CROSS JOIN UNNEST(SEQUENCE(2, 4)) AS _u(s)",
+        "trino": "SELECT * FROM t CROSS JOIN UNNEST(SEQUENCE(2, 4)) AS _u(s)",
+        "tsql": "SELECT * FROM t CROSS JOIN GENERATE_SERIES(2, 4) AS s"
+      }
+    },
+    {
+      "sql": "SELECT * FROM x FETCH 1 ROW",
+      "read": {},
+      "write": {
+        "postgres": "SELECT * FROM x FETCH FIRST 1 ROWS ONLY",
+        "presto": "SELECT * FROM x FETCH FIRST 1 ROWS ONLY",
+        "hive": "SELECT * FROM x LIMIT 1",
+        "spark": "SELECT * FROM x LIMIT 1",
+        "sqlite": "SELECT * FROM x LIMIT 1"
+      }
+    },
+    {
+      "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+      "read": {},
+      "write": {
+        "postgres": "SELECT fname, lname, age FROM person ORDER BY age DESC, fname ASC, lname",
+        "presto": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname",
+        "hive": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname NULLS LAST",
+        "spark": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname NULLS LAST"
+      }
+    },
+    {
+      "sql": "SELECT CASE WHEN SUBSTRING('abcdefg' FROM 1 FOR 2) IN ('ab') THEN 1 ELSE 0 END",
+      "read": {},
+      "write": {
+        "hive": "SELECT CASE WHEN SUBSTRING('abcdefg', 1, 2) IN ('ab') THEN 1 ELSE 0 END",
+        "spark": "SELECT CASE WHEN SUBSTRING('abcdefg', 1, 2) IN ('ab') THEN 1 ELSE 0 END"
+      }
+    },
+    {
+      "sql": "SELECT * FROM x WHERE SUBSTRING(col1 FROM 3 + LENGTH(col1) - 10 FOR 10) IN (col2)",
+      "read": {},
+      "write": {
+        "hive": "SELECT * FROM x WHERE SUBSTRING(col1, 3 + LENGTH(col1) - 10, 10) IN (col2)",
+        "spark": "SELECT * FROM x WHERE SUBSTRING(col1, 3 + LENGTH(col1) - 10, 10) IN (col2)"
+      }
+    },
+    {
+      "sql": "SELECT TRIM(BOTH ' XXX ')",
+      "read": {},
+      "write": {
+        "mysql": "SELECT TRIM(' XXX ')",
+        "postgres": "SELECT TRIM(' XXX ')",
+        "hive": "SELECT TRIM(' XXX ')"
+      }
+    },
+    {
+      "sql": "TRIM(LEADING FROM ' XXX ')",
+      "read": {},
+      "write": {
+        "mysql": "LTRIM(' XXX ')",
+        "postgres": "LTRIM(' XXX ')",
+        "hive": "LTRIM(' XXX ')",
+        "presto": "LTRIM(' XXX ')"
+      }
+    },
+    {
+      "sql": "TRIM(TRAILING FROM ' XXX ')",
+      "read": {},
+      "write": {
+        "mysql": "RTRIM(' XXX ')",
+        "postgres": "RTRIM(' XXX ')",
+        "hive": "RTRIM(' XXX ')",
+        "presto": "RTRIM(' XXX ')"
+      }
+    },
+    {
+      "sql": "TRIM(BOTH 'as' FROM 'as string as')",
+      "read": {},
+      "write": {
+        "postgres": "TRIM(BOTH 'as' FROM 'as string as')",
+        "spark": "TRIM(BOTH 'as' FROM 'as string as')"
+      }
+    },
+    {
+      "sql": "'{\"a\":1,\"b\":2}'::json->'b'",
+      "read": {},
+      "write": {
+        "postgres": "CAST('{\"a\":1,\"b\":2}' AS JSON) -> 'b'",
+        "redshift": "JSON_EXTRACT_PATH_TEXT('{\"a\":1,\"b\":2}', 'b')"
+      }
+    },
+    {
+      "sql": "merge into x as x using (select id) as y on a = b WHEN matched then update set X.\"A\" = y.b",
+      "read": {},
+      "write": {
+        "postgres": "MERGE INTO x AS x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET \"A\" = y.b",
+        "trino": "MERGE INTO x AS x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET \"A\" = y.b",
+        "snowflake": "MERGE INTO x AS x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET X.\"A\" = y.b"
+      }
+    },
+    {
+      "sql": "merge into x as z using (select id) as y on a = b WHEN matched then update set X.a = y.b",
+      "read": {},
+      "write": {
+        "postgres": "MERGE INTO x AS z USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b",
+        "snowflake": "MERGE INTO x AS z USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET X.a = y.b"
+      }
+    },
+    {
+      "sql": "merge into x as z using (select id) as y on a = b WHEN matched then update set Z.a = y.b",
+      "read": {},
+      "write": {
+        "postgres": "MERGE INTO x AS z USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b",
+        "snowflake": "MERGE INTO x AS z USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET Z.a = y.b"
+      }
+    },
+    {
+      "sql": "merge into x using (select id) as y on a = b WHEN matched then update set x.a = y.b",
+      "read": {},
+      "write": {
+        "postgres": "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET a = y.b",
+        "snowflake": "MERGE INTO x USING (SELECT id) AS y ON a = b WHEN MATCHED THEN UPDATE SET x.a = y.b"
+      }
+    },
+    {
+      "sql": "x / y ^ z",
+      "read": {},
+      "write": {
+        "postgres": "x / POWER(y, z)"
+      }
+    },
+    {
+      "sql": "CAST(x AS NAME)",
+      "read": {
+        "redshift": "CAST(x AS NAME)"
+      },
+      "write": {
+        "postgres": "CAST(x AS NAME)",
+        "redshift": "CAST(x AS NAME)"
+      }
+    },
+    {
+      "sql": "1 / DIV(4, 2)",
+      "read": {
+        "postgres": "1 / DIV(4, 2)"
+      },
+      "write": {
+        "sqlite": "1 / CAST(CAST(CAST(4 AS REAL) / 2 AS INTEGER) AS REAL)",
+        "duckdb": "1 / CAST(4 // 2 AS DECIMAL)",
+        "bigquery": "1 / CAST(DIV(4, 2) AS NUMERIC)"
+      }
+    },
+    {
+      "sql": "CAST(DIV(4, 2) AS DECIMAL(5, 3))",
+      "read": {
+        "duckdb": "CAST(4 // 2 AS DECIMAL(5, 3))"
+      },
+      "write": {
+        "duckdb": "CAST(CAST(4 // 2 AS DECIMAL) AS DECIMAL(5, 3))",
+        "postgres": "CAST(DIV(4, 2) AS DECIMAL(5, 3))"
+      }
+    },
+    {
+      "sql": "SELECT TO_DATE('01/01/2000', 'MM/DD/YYYY')",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CAST(STRPTIME('01/01/2000', '%m/%d/%Y') AS DATE)",
+        "postgres": "SELECT TO_DATE('01/01/2000', 'MM/DD/YYYY')"
+      }
+    },
+    {
+      "sql": "SELECT JSONB_EXISTS('{\"a\": [1,2,3]}', 'a')",
+      "read": {},
+      "write": {
+        "postgres": "SELECT JSONB_EXISTS('{\"a\": [1,2,3]}', 'a')",
+        "duckdb": "SELECT JSON_EXISTS('{\"a\": [1,2,3]}', '$.a')"
+      }
+    },
+    {
+      "sql": "WITH t AS (SELECT ARRAY[1, 2, 3] AS col) SELECT * FROM t WHERE 1 <= ANY(col) AND 2 = ANY(col)",
+      "read": {},
+      "write": {
+        "postgres": "WITH t AS (SELECT ARRAY[1, 2, 3] AS col) SELECT * FROM t WHERE 1 <= ANY(col) AND 2 = ANY(col)",
+        "hive": "WITH t AS (SELECT ARRAY(1, 2, 3) AS col) SELECT * FROM t WHERE EXISTS(col, x -> 1 <= x) AND EXISTS(col, x -> 2 = x)",
+        "spark2": "WITH t AS (SELECT ARRAY(1, 2, 3) AS col) SELECT * FROM t WHERE EXISTS(col, x -> 1 <= x) AND EXISTS(col, x -> 2 = x)",
+        "spark": "WITH t AS (SELECT ARRAY(1, 2, 3) AS col) SELECT * FROM t WHERE EXISTS(col, x -> 1 <= x) AND EXISTS(col, x -> 2 = x)",
+        "databricks": "WITH t AS (SELECT ARRAY(1, 2, 3) AS col) SELECT * FROM t WHERE EXISTS(col, x -> 1 <= x) AND EXISTS(col, x -> 2 = x)"
+      }
+    },
+    {
+      "sql": "SELECT JSON_OBJECT_AGG(k, v) FROM t",
+      "read": {},
+      "write": {
+        "postgres": "SELECT JSON_OBJECT_AGG(k, v) FROM t",
+        "duckdb": "SELECT JSON_GROUP_OBJECT(k, v) FROM t"
+      }
+    },
+    {
+      "sql": "SELECT JSONB_OBJECT_AGG(k, v) FROM t",
+      "read": {},
+      "write": {
+        "postgres": "SELECT JSONB_OBJECT_AGG(k, v) FROM t",
+        "duckdb": "SELECT JSON_GROUP_OBJECT(k, v) FROM t"
+      }
+    },
+    {
+      "sql": "SELECT DATE_BIN('30 days', timestamp_col, (SELECT MIN(TIMESTAMP) from table)) FROM table",
+      "read": {},
+      "write": {
+        "postgres": "SELECT DATE_BIN('30 days', timestamp_col, (SELECT MIN(TIMESTAMP) FROM table)) FROM table",
+        "duckdb": "SELECT TIME_BUCKET('30 days', timestamp_col, (SELECT MIN(TIMESTAMP) FROM \"table\")) FROM \"table\""
+      }
+    },
+    {
+      "sql": "SELECT ANY_VALUE(1) AS col",
+      "read": {},
+      "write": {
+        "postgres": "SELECT ANY_VALUE(1) AS col",
+        "postgres, version=16": "SELECT ANY_VALUE(1) AS col",
+        "postgres, version=17.5": "SELECT ANY_VALUE(1) AS col",
+        "postgres, version=15": "SELECT MAX(1) AS col",
+        "postgres, version=13.9": "SELECT MAX(1) AS col"
+      }
+    },
+    {
+      "sql": "SELECT REGEXP_REPLACE('aaa', 'a', 'b')",
+      "read": {
+        "postgres": "SELECT REGEXP_REPLACE('aaa', 'a', 'b')",
+        "duckdb": "SELECT REGEXP_REPLACE('aaa', 'a', 'b')"
+      },
+      "write": {
+        "duckdb": "SELECT REGEXP_REPLACE('aaa', 'a', 'b')"
+      }
+    },
+    {
+      "sql": "SELECT TO_CHAR(foo, bar)",
+      "read": {
+        "redshift": "SELECT TO_CHAR(foo, bar)"
+      },
+      "write": {
+        "postgres": "SELECT TO_CHAR(foo, bar)",
+        "redshift": "SELECT TO_CHAR(foo, bar)"
+      }
+    },
+    {
+      "sql": "CREATE TABLE table1 (a INT, b INT, PRIMARY KEY (a))",
+      "read": {
+        "sqlite": "CREATE TABLE table1 (a INT, b INT, PRIMARY KEY (a))",
+        "postgres": "CREATE TABLE table1 (a INT, b INT, PRIMARY KEY (a))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "UPDATE foo SET a = bar.a, b = bar.b FROM bar WHERE foo.id = bar.id",
+      "read": {},
+      "write": {
+        "postgres": "UPDATE foo SET a = bar.a, b = bar.b FROM bar WHERE foo.id = bar.id",
+        "doris": "UPDATE foo SET a = bar.a, b = bar.b FROM bar WHERE foo.id = bar.id",
+        "starrocks": "UPDATE foo SET a = bar.a, b = bar.b FROM bar WHERE foo.id = bar.id",
+        "mysql": "UPDATE foo JOIN bar ON TRUE SET foo.a = bar.a, foo.b = bar.b WHERE foo.id = bar.id",
+        "singlestore": "UPDATE foo JOIN bar ON TRUE SET foo.a = bar.a, foo.b = bar.b WHERE foo.id = bar.id"
+      }
+    },
+    {
+      "sql": "CREATE TABLE x (a UUID, b BYTEA)",
+      "read": {},
+      "write": {
+        "duckdb": "CREATE TABLE x (a UUID, b BLOB)",
+        "presto": "CREATE TABLE x (a UUID, b VARBINARY)",
+        "hive": "CREATE TABLE x (a UUID, b BINARY)",
+        "spark": "CREATE TABLE x (a STRING, b BINARY)",
+        "tsql": "CREATE TABLE x (a UNIQUEIDENTIFIER, b VARBINARY)"
+      }
+    },
+    {
+      "sql": "SELECT UNNEST(c) FROM t",
+      "read": {},
+      "write": {
+        "hive": "SELECT EXPLODE(c) FROM t",
+        "postgres": "SELECT UNNEST(c) FROM t",
+        "presto": "SELECT IF(_u.pos = _u_2.pos_2, _u_2.col) AS col FROM t CROSS JOIN UNNEST(SEQUENCE(1, GREATEST(CARDINALITY(c)))) AS _u(pos) CROSS JOIN UNNEST(c) WITH ORDINALITY AS _u_2(col, pos_2) WHERE _u.pos = _u_2.pos_2 OR (_u.pos > CARDINALITY(c) AND _u_2.pos_2 = CARDINALITY(c))"
+      }
+    },
+    {
+      "sql": "SELECT UNNEST(ARRAY[1])",
+      "read": {},
+      "write": {
+        "hive": "SELECT EXPLODE(ARRAY(1))",
+        "postgres": "SELECT UNNEST(ARRAY[1])",
+        "presto": "SELECT IF(_u.pos = _u_2.pos_2, _u_2.col) AS col FROM UNNEST(SEQUENCE(1, GREATEST(CARDINALITY(ARRAY[1])))) AS _u(pos) CROSS JOIN UNNEST(ARRAY[1]) WITH ORDINALITY AS _u_2(col, pos_2) WHERE _u.pos = _u_2.pos_2 OR (_u.pos > CARDINALITY(ARRAY[1]) AND _u_2.pos_2 = CARDINALITY(ARRAY[1]))"
+      }
+    },
+    {
+      "sql": "CONCAT(a, b)",
+      "read": {},
+      "write": {
+        "clickhouse": "CONCAT(COALESCE(a, ''), COALESCE(b, ''))",
+        "duckdb": "CONCAT(a, b)",
+        "postgres": "CONCAT(a, b)",
+        "presto": "CONCAT(COALESCE(CAST(a AS VARCHAR), ''), COALESCE(CAST(b AS VARCHAR), ''))"
+      }
+    },
+    {
+      "sql": "a || b",
+      "read": {},
+      "write": {
+        "clickhouse": "a || b",
+        "duckdb": "a || b",
+        "postgres": "a || b",
+        "presto": "CONCAT(CAST(a AS VARCHAR), CAST(b AS VARCHAR))"
+      }
+    },
+    {
+      "sql": "VAR_POP(x)",
+      "read": {},
+      "write": {
+        "postgres": "VAR_POP(x)"
+      }
+    },
+    {
+      "sql": "SELECT CORR(a, b)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CORR(a, b)",
+        "postgres": "SELECT CORR(a, b)"
+      }
+    },
+    {
+      "sql": "SELECT CORR(a, b) OVER (PARTITION BY c)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CORR(a, b) OVER (PARTITION BY c)",
+        "postgres": "SELECT CORR(a, b) OVER (PARTITION BY c)"
+      }
+    },
+    {
+      "sql": "SELECT CORR(a, b) FILTER(WHERE c > 0)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CORR(a, b) FILTER(WHERE c > 0)",
+        "postgres": "SELECT CORR(a, b) FILTER(WHERE c > 0)"
+      }
+    },
+    {
+      "sql": "SELECT CORR(a, b) FILTER(WHERE c > 0) OVER (PARTITION BY d)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CORR(a, b) FILTER(WHERE c > 0) OVER (PARTITION BY d)",
+        "postgres": "SELECT CORR(a, b) FILTER(WHERE c > 0) OVER (PARTITION BY d)"
+      }
+    },
+    {
+      "sql": "ARRAY_LENGTH(arr, 1)",
+      "read": {
+        "bigquery": "ARRAY_LENGTH(arr)",
+        "duckdb": "ARRAY_LENGTH(arr)",
+        "presto": "CARDINALITY(arr)",
+        "drill": "REPEATED_COUNT(arr)",
+        "teradata": "CARDINALITY(arr)",
+        "hive": "SIZE(arr)",
+        "spark2": "SIZE(arr)",
+        "spark": "SIZE(arr)",
+        "databricks": "SIZE(arr)"
+      },
+      "write": {
+        "duckdb": "ARRAY_LENGTH(arr, 1)",
+        "presto": "CARDINALITY(arr)",
+        "teradata": "CARDINALITY(arr)",
+        "bigquery": "ARRAY_LENGTH(arr)",
+        "drill": "REPEATED_COUNT(arr)",
+        "clickhouse": "LENGTH(arr)",
+        "hive": "SIZE(arr)",
+        "spark2": "SIZE(arr)",
+        "spark": "SIZE(arr)",
+        "databricks": "SIZE(arr)"
+      }
+    },
+    {
+      "sql": "ARRAY_LENGTH(arr, foo)",
+      "read": {},
+      "write": {
+        "duckdb": "ARRAY_LENGTH(arr, foo)"
+      }
+    },
+    {
+      "sql": "ROUND(CAST(CAST(x AS DOUBLE PRECISION) AS DECIMAL), 4)",
+      "read": {
+        "postgres": "ROUND(x::DOUBLE, 4)",
+        "hive": "ROUND(x::DOUBLE, 4)",
+        "bigquery": "ROUND(x::DOUBLE, 4)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "ROUND(CAST(x AS DECIMAL(18, 3)), 4)",
+      "read": {
+        "duckdb": "ROUND(x::DECIMAL, 4)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "BEGIN",
+      "read": {},
+      "write": {
+        "postgres": "BEGIN",
+        "presto": "START TRANSACTION",
+        "trino": "START TRANSACTION"
+      }
+    },
+    {
+      "sql": "SELECT col[1]",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT col[0]",
+        "duckdb": "SELECT col[1]",
+        "hive": "SELECT col[0]",
+        "postgres": "SELECT col[1]",
+        "presto": "SELECT col[1]"
+      }
+    }
+  ]
+}

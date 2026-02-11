@@ -1,0 +1,234 @@
+{
+  "dialect": "trino",
+  "identity": [
+    {
+      "sql": "REFRESH MATERIALIZED VIEW mynamespace.test_view",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(m.properties, 'lax $.area' OMIT QUOTES NULL ON ERROR)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_EXTRACT(content, json_path)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'lax $.HY.*')",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'strict $.HY.*' WITH WRAPPER)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'strict $.HY.*' WITH ARRAY WRAPPER)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'strict $.HY.*' WITH UNCONDITIONAL WRAPPER)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'strict $.HY.*' WITHOUT CONDITIONAL WRAPPER)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(description, 'strict $.comment' KEEP QUOTES)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(description, 'strict $.comment' OMIT QUOTES ON SCALAR STRING)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_QUERY(content, 'strict $.HY.*' WITH UNCONDITIONAL WRAPPER KEEP QUOTES)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TIMESTAMP '2012-10-31 01:00 -2'",
+      "expected": "SELECT CAST('2012-10-31 01:00 -2' AS TIMESTAMP WITH TIME ZONE)"
+    },
+    {
+      "sql": "SELECT TIMESTAMP '2012-10-31 01:00 +2'",
+      "expected": "SELECT CAST('2012-10-31 01:00 +2' AS TIMESTAMP WITH TIME ZONE)"
+    },
+    {
+      "sql": "SELECT * FROM tbl MATCH_RECOGNIZE (PARTITION BY id ORDER BY col MEASURES FIRST(col, 2) AS col1, LAST(col, 2) AS col2 PATTERN (B* A) DEFINE A AS col = 1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(DISTINCT col, ',') WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col, '; ' ON OVERFLOW ERROR) WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col, '; ' ON OVERFLOW TRUNCATE WITH COUNT) WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col, '; ' ON OVERFLOW TRUNCATE WITHOUT COUNT) WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col, '; ' ON OVERFLOW TRUNCATE '...' WITH COUNT) WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col, '; ' ON OVERFLOW TRUNCATE '...' WITHOUT COUNT) WITHIN GROUP (ORDER BY col ASC) FROM tbl",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LISTAGG(col) WITHIN GROUP (ORDER BY col DESC) FROM tbl",
+      "expected": "SELECT LISTAGG(col, ',') WITHIN GROUP (ORDER BY col DESC) FROM tbl"
+    },
+    {
+      "sql": "SELECT TRIM('!' FROM '!foo!')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(BOTH '$' FROM '$var$')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(TRAILING 'ER' FROM UPPER('worker'))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(LEADING FROM '  abcd')",
+      "expected": "SELECT LTRIM('  abcd')"
+    },
+    {
+      "sql": "SELECT TRIM('!foo!', '!')",
+      "expected": "SELECT TRIM('!' FROM '!foo!')"
+    },
+    {
+      "sql": "ALTER TABLE users RENAME TO people",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE IF EXISTS users RENAME TO people",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE users ADD COLUMN zip VARCHAR",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS zip VARCHAR",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE users DROP COLUMN zip",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE IF EXISTS users DROP COLUMN IF EXISTS zip",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE users RENAME COLUMN id TO user_id",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE IF EXISTS users RENAME COLUMN IF EXISTS id TO user_id",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE users ALTER COLUMN id SET DATA TYPE BIGINT",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE users ALTER COLUMN id DROP NOT NULL",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE people SET AUTHORIZATION alice",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE people SET AUTHORIZATION ROLE PUBLIC",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE people SET PROPERTIES x = 'y'",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE people SET PROPERTIES foo = 123, 'foo bar' = 456",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE people SET PROPERTIES x = DEFAULT",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW people RENAME TO users",
+      "expected": null
+    },
+    {
+      "sql": "ALTER VIEW people SET AUTHORIZATION alice",
+      "expected": null
+    },
+    {
+      "sql": "CREATE SCHEMA foo WITH (LOCATION='s3://bucket/foo')",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE foo.bar WITH (LOCATION='s3://bucket/foo/bar') AS SELECT 1",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE foo (a VARCHAR, b INTEGER, c DATE) WITH (PARTITIONED_BY=ARRAY['a', 'b'])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE \"foo\" (\"a\" VARCHAR, \"b\" INTEGER, \"c\" DATE) WITH (PARTITIONED_BY=ARRAY['a', 'b'])",
+      "expected": null,
+      "identify": true
+    },
+    {
+      "sql": "CREATE TABLE foo (a VARCHAR, b INTEGER, c DATE) WITH (PARTITIONING=ARRAY['a', 'bucket(4, b)', 'month(c)'])",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE \"foo\" (\"a\" VARCHAR, \"b\" INTEGER, \"c\" DATE) WITH (PARTITIONING=ARRAY['a', 'bucket(4, b)', 'month(c)'])",
+      "expected": null,
+      "identify": true
+    },
+    {
+      "sql": "ANALYZE tbl",
+      "expected": null
+    },
+    {
+      "sql": "ANALYZE tbl WITH (prop1=val1, prop2=val2)",
+      "expected": null
+    },
+    {
+      "sql": "JSON_VALUE(jl.extra_attributes, 'lax $.amount_source' RETURNING VARCHAR)",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "SELECT TIMESTAMP '2012-10-31 01:00:00 +02:00'",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT CAST('2012-10-31 01:00:00 +02:00' AS TIMESTAMPTZ)",
+        "trino": "SELECT CAST('2012-10-31 01:00:00 +02:00' AS TIMESTAMP WITH TIME ZONE)"
+      }
+    },
+    {
+      "sql": "SELECT FORMAT('%s', 123)",
+      "read": {},
+      "write": {
+        "duckdb": "SELECT FORMAT('{}', 123)",
+        "snowflake": "SELECT TO_CHAR(123)",
+        "trino": "SELECT FORMAT('%s', 123)"
+      }
+    }
+  ]
+}

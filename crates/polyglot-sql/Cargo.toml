@@ -1,0 +1,30 @@
+[package]
+name = "polyglot-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core SQL parsing and dialect translation library"
+
+[features]
+default = []
+bindings = ["dep:ts-rs"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+unicode-segmentation = { workspace = true }
+ts-rs = { version = "12.0", features = ["serde-compat"], optional = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+once_cell = "1.19"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "transpile"
+harness = false

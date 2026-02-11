@@ -1,0 +1,1464 @@
+{
+  "dialect": "clickhouse",
+  "identity": [
+    {
+      "sql": "SELECT DISTINCT ON (\"id\") * FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1 OR (1 = 2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1 AND (1 = 2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT json.a.:Int64",
+      "expected": null
+    },
+    {
+      "sql": "SELECT json.a.:JSON.b.:Int64",
+      "expected": null
+    },
+    {
+      "sql": "WITH arrayJoin([(1, [2, 3])]) AS arr SELECT arr",
+      "expected": null
+    },
+    {
+      "sql": "CAST(1 AS Bool)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT toString(CHAR(104.1, 101, 108.9, 108.9, 111, 32))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT toFloat(like)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT like",
+      "expected": null
+    },
+    {
+      "sql": "SELECT STR_TO_DATE(str, fmt, tz)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT STR_TO_DATE('05 12 2000', '%d %m %Y')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT EXTRACT(YEAR FROM toDateTime('2023-02-01'))",
+      "expected": null
+    },
+    {
+      "sql": "extract(haystack, pattern)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x LIMIT 1 UNION ALL SELECT * FROM y",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CAST(x AS Tuple(String, Array(Nullable(Float64))))",
+      "expected": null
+    },
+    {
+      "sql": "countIf(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "x = y",
+      "expected": null
+    },
+    {
+      "sql": "x <> y",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM (SELECT a FROM b SAMPLE 0.01)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM (SELECT a FROM b SAMPLE 1 / 10 OFFSET 1 / 2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT sum(foo * bar) FROM bla SAMPLE 10000000",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS Nested(ID UInt32, Serial UInt32, EventTime DateTime))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS Enum('hello' = 1, 'world' = 2))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS Enum('hello', 'world'))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS Enum('hello' = 1, 'world'))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS Enum8('hello' = -123, 'world'))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS FixedString(1))",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS LowCardinality(FixedString))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT isNaN(1.0)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT startsWith('Spider-Man', 'Spi')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT xor(TRUE, FALSE)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(['hello'], 'Array(Enum8(''hello'' = 1))')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT x, COUNT() FROM y GROUP BY x WITH TOTALS",
+      "expected": null
+    },
+    {
+      "sql": "SELECT INTERVAL t.days DAY",
+      "expected": null
+    },
+    {
+      "sql": "SELECT match('abc', '([a-z]+)')",
+      "expected": null
+    },
+    {
+      "sql": "dictGet(x, 'y')",
+      "expected": null
+    },
+    {
+      "sql": "WITH final AS (SELECT 1) SELECT * FROM final",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x FINAL",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x AS y FINAL",
+      "expected": null
+    },
+    {
+      "sql": "'a' IN mapKeys(map('a', 1, 'b', 2))",
+      "expected": null
+    },
+    {
+      "sql": "CAST((1, 2) AS Tuple(a Int8, b Int16))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo LEFT ANY JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo LEFT ASOF JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo ASOF JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo ANY JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo GLOBAL ANY JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo GLOBAL LEFT ANY JOIN bla",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantile(0.5)(a)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantiles(0.5)(a) AS x FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantilesIf(0.5)(a, a > 1) AS x FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantileState(0.5)(a) AS x FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT deltaSumMerge(a) AS x FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantiles(0.1, 0.2, 0.3)(a)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT quantileTiming(0.5)(RANGE(100))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT histogram(5)(a)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT groupUniqArray(2)(a)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT exponentialTimeDecayedAvg(60)(a, b)",
+      "expected": null
+    },
+    {
+      "sql": "levenshteinDistance(col1, col2)",
+      "expected": "editDistance(col1, col2)"
+    },
+    {
+      "sql": "SELECT * FROM foo WHERE x GLOBAL IN (SELECT * FROM bar)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo WHERE x GLOBAL NOT IN (SELECT * FROM bar)",
+      "expected": null
+    },
+    {
+      "sql": "POSITION(haystack, needle)",
+      "expected": null
+    },
+    {
+      "sql": "POSITION(haystack, needle, position)",
+      "expected": null
+    },
+    {
+      "sql": "CAST(x AS DATETIME)",
+      "expected": "CAST(x AS DateTime)"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ)",
+      "expected": "CAST(x AS DateTime)"
+    },
+    {
+      "sql": "CAST(x as MEDIUMINT)",
+      "expected": "CAST(x AS Int32)"
+    },
+    {
+      "sql": "CAST(x AS DECIMAL(38, 2))",
+      "expected": "CAST(x AS Decimal(38, 2))"
+    },
+    {
+      "sql": "SELECT arrayJoin([1, 2, 3] AS src) AS dst, 'Hello', src",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSONExtractString('{\"x\": {\"y\": 1}}', 'x', 'y')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM table LIMIT 1 BY a, b",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM table LIMIT 2 OFFSET 1 BY a, b",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 ON CLUSTER test_cluster",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE TABLE t1 ON CLUSTER '{cluster}'",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE DATABASE db",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE DATABASE db ON CLUSTER test_cluster",
+      "expected": null
+    },
+    {
+      "sql": "TRUNCATE DATABASE db ON CLUSTER '{cluster}'",
+      "expected": null
+    },
+    {
+      "sql": "EXCHANGE TABLES x.a AND y.b",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (id UInt8) ENGINE=Null()",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM foo ORDER BY bar OFFSET 0 ROWS FETCH NEXT 10 ROWS WITH TIES",
+      "expected": null
+    },
+    {
+      "sql": "SELECT DATE_BIN(toDateTime('2023-01-01 14:45:00'), INTERVAL '1' MINUTE, toDateTime('2023-01-01 14:35:30'), 'UTC')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CAST(1730098800 AS DateTime64) AS DATETIME, 'test' AS interp ORDER BY DATETIME WITH FILL FROM toDateTime64(1730098800, 3) - INTERVAL '7' HOUR TO toDateTime64(1730185140, 3) - INTERVAL '7' HOUR STEP toIntervalSecond(900) INTERPOLATE (interp)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT number, COUNT() OVER (PARTITION BY number % 3) AS partition_count FROM numbers(10) WINDOW window_name AS (PARTITION BY number) QUALIFY partition_count = 4 ORDER BY number",
+      "expected": null
+    },
+    {
+      "sql": "SELECT id, quantileGK(100, 0.95)(reading) OVER (PARTITION BY id ORDER BY id RANGE BETWEEN 30000 PRECEDING AND CURRENT ROW) AS window FROM table",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM table LIMIT 1 BY CONCAT(datalayerVariantNo, datalayerProductId, warehouse)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT JSONExtractString('{\"a\": \"hello\", \"b\": [-100, 200.0, 300]}', 'a')",
+      "expected": null
+    },
+    {
+      "sql": "ATTACH DATABASE DEFAULT ENGINE = ORDINARY",
+      "expected": null
+    },
+    {
+      "sql": "SELECT n, source FROM (SELECT toFloat32(number % 10) AS n, 'original' AS source FROM numbers(10) WHERE number % 3 = 1) ORDER BY n WITH FILL",
+      "expected": null
+    },
+    {
+      "sql": "SELECT n, source FROM (SELECT toFloat32(number % 10) AS n, 'original' AS source FROM numbers(10) WHERE number % 3 = 1) ORDER BY n WITH FILL FROM 0 TO 5.51 STEP 0.5",
+      "expected": null
+    },
+    {
+      "sql": "SELECT toDate((number * 10) * 86400) AS d1, toDate(number * 86400) AS d2, 'original' AS source FROM numbers(10) WHERE (number % 3) = 1 ORDER BY d2 WITH FILL, d1 WITH FILL STEP 5",
+      "expected": null
+    },
+    {
+      "sql": "SELECT n, source, inter FROM (SELECT toFloat32(number % 10) AS n, 'original' AS source, number AS inter FROM numbers(10) WHERE number % 3 = 1) ORDER BY n WITH FILL FROM 0 TO 5.51 STEP 0.5 INTERPOLATE (inter AS inter + 1)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUM(1) AS impressions, arrayJoin(cities) AS city, arrayJoin(browsers) AS browser FROM (SELECT ['Istanbul', 'Berlin', 'Bobruisk'] AS cities, ['Firefox', 'Chrome', 'Chrome'] AS browsers) GROUP BY 2, 3",
+      "expected": null
+    },
+    {
+      "sql": "SELECT sum(1) AS impressions, (arrayJoin(arrayZip(cities, browsers)) AS t).1 AS city, t.2 AS browser FROM (SELECT ['Istanbul', 'Berlin', 'Bobruisk'] AS cities, ['Firefox', 'Chrome', 'Chrome'] AS browsers) GROUP BY 2, 3",
+      "expected": null
+    },
+    {
+      "sql": "SELECT CAST(tuple(1 AS \"a\", 2 AS \"b\", 3.0 AS \"c\").2 AS Nullable(String))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test (id UInt8) ENGINE=AggregatingMergeTree() ORDER BY tuple()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ON CLUSTER default (id UInt8) ENGINE=AggregatingMergeTree() ORDER BY tuple()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE test ON CLUSTER '{cluster}' (id UInt8) ENGINE=AggregatingMergeTree() ORDER BY tuple()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW test_view ON CLUSTER cl1 (id UInt8) ENGINE=AggregatingMergeTree() ORDER BY tuple() AS SELECT * FROM test_data",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW test_view ON CLUSTER '{cluster}' (id UInt8) ENGINE=AggregatingMergeTree() ORDER BY tuple() AS SELECT * FROM test_data",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW test_view ON CLUSTER cl1 TO table1 AS SELECT * FROM test_data",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW test_view ON CLUSTER '{cluster}' TO table1 AS SELECT * FROM test_data",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW test_view TO db.table1 (id UInt8) AS SELECT * FROM test_data",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (foo String CODEC(LZ4HC(9), ZSTD, DELTA), size String ALIAS formatReadableSize(size_bytes), INDEX idx1 a TYPE bloom_filter(0.001) GRANULARITY 1, INDEX idx2 a TYPE set(100) GRANULARITY 2, INDEX idx3 a TYPE minmax GRANULARITY 3)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT generate_series FROM generate_series(0, 10) AS g(x)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT t.c FROM (SELECT arrayJoin([1,2,3,4,5]) AS c) AS t WHERE (t.c + 0) NOT IN (1,2)",
+      "expected": "SELECT t.c FROM (SELECT arrayJoin([1, 2, 3, 4, 5]) AS c) AS t WHERE NOT ((t.c + 0) IN (1, 2))"
+    },
+    {
+      "sql": "SELECT * FROM t1, t2",
+      "expected": "SELECT * FROM t1 CROSS JOIN t2"
+    },
+    {
+      "sql": "SELECT and(1, 2)",
+      "expected": "SELECT 1 AND 2"
+    },
+    {
+      "sql": "SELECT or(1, 2)",
+      "expected": "SELECT 1 OR 2"
+    },
+    {
+      "sql": "SELECT generate_series FROM generate_series(0, 10) AS g",
+      "expected": "SELECT generate_series FROM generate_series(0, 10) AS g(generate_series)"
+    },
+    {
+      "sql": "INSERT INTO tab VALUES ({'key1': 1, 'key2': 10}), ({'key1': 2, 'key2': 20}), ({'key1': 3, 'key2': 30})",
+      "expected": "INSERT INTO tab VALUES ((map('key1', 1, 'key2', 10))), ((map('key1', 2, 'key2', 20))), ((map('key1', 3, 'key2', 30)))"
+    },
+    {
+      "sql": "SELECT (toUInt8('1') + toUInt8('2')) IS NOT NULL",
+      "expected": "SELECT NOT ((toUInt8('1') + toUInt8('2')) IS NULL)"
+    },
+    {
+      "sql": "SELECT $1$foo$1$",
+      "expected": "SELECT 'foo'"
+    },
+    {
+      "sql": "SELECT * FROM table LIMIT 1, 2 BY a, b",
+      "expected": "SELECT * FROM table LIMIT 2 OFFSET 1 BY a, b"
+    },
+    {
+      "sql": "SELECT SUM(1) AS impressions FROM (SELECT ['Istanbul', 'Berlin', 'Bobruisk'] AS cities) WHERE arrayJoin(cities) IN ['Istanbul', 'Berlin']",
+      "expected": "SELECT SUM(1) AS impressions FROM (SELECT ['Istanbul', 'Berlin', 'Bobruisk'] AS cities) WHERE arrayJoin(cities) IN ('Istanbul', 'Berlin')"
+    },
+    {
+      "sql": "SELECT SUBSTRING_INDEX(str, delim, count)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', -2)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT xor(0, 1, 1, 0)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT POSITION(needle IN haystack)",
+      "expected": "SELECT POSITION(haystack, needle)"
+    },
+    {
+      "sql": "SELECT * FROM x LIMIT 10 SETTINGS max_results = 100, result = 'break'",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x LIMIT 10 SETTINGS max_results = 100, result_",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x FORMAT PrettyCompact",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM x LIMIT 10 SETTINGS max_results = 100, result_ FORMAT PrettyCompact",
+      "expected": null
+    },
+    {
+      "sql": "SELECT isNaN(x)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT startsWith('a', 'b')",
+      "expected": null
+    },
+    {
+      "sql": "SYSTEM STOP MERGES foo.bar",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO FUNCTION s3('url', 'CSV', 'name String, value UInt32', 'gzip') SELECT name, value FROM existing_table",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')",
+      "expected": "INSERT INTO FUNCTION remote('localhost', default.simple_table) VALUES ((100), ('inserted via remote()'))"
+    },
+    {
+      "sql": "INSERT INTO TABLE FUNCTION hdfs('hdfs://hdfs1:9000/test', 'TSV', 'name String, column2 UInt32, column3 UInt32') VALUES ('test', 1, 2)",
+      "expected": "INSERT INTO FUNCTION hdfs('hdfs://hdfs1:9000/test', 'TSV', 'name String, column2 UInt32, column3 UInt32') VALUES (('test'), (1), (2))"
+    },
+    {
+      "sql": "SELECT 1 FORMAT TabSeparated",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM t FORMAT TabSeparated",
+      "expected": null
+    },
+    {
+      "sql": "SELECT FORMAT",
+      "expected": null
+    },
+    {
+      "sql": "SELECT formatDateTime(NOW(), '%Y-%m-%d', '%T')",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits DROP PARTITION 201901",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits DROP PARTITION ALL",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits DROP PARTITION tuple(toYYYYMM(toDate('2019-01-25')))",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits DROP PARTITION ID '201901'",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits REPLACE PARTITION 201901 FROM visits_tmp",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits REPLACE PARTITION ALL FROM visits_tmp",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits REPLACE PARTITION tuple(toYYYYMM(toDate('2019-01-25'))) FROM visits_tmp",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits REPLACE PARTITION ID '201901' FROM visits_tmp",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits ON CLUSTER test_cluster DROP COLUMN col1",
+      "expected": null
+    },
+    {
+      "sql": "ALTER TABLE visits ON CLUSTER '{cluster}' DROP COLUMN col1",
+      "expected": null
+    },
+    {
+      "sql": "DELETE FROM tbl ON CLUSTER test_cluster WHERE date = '2019-01-01'",
+      "expected": null
+    },
+    {
+      "sql": "DELETE FROM tbl ON CLUSTER '{cluster}' WHERE date = '2019-01-01'",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO t (col1, col2) VALUES ('abcd', 1234)",
+      "expected": "INSERT INTO t (col1, col2) VALUES (('abcd'), (1234))"
+    },
+    {
+      "sql": "SELECT TRIM(TRAILING ')' FROM '(   Hello, world!   )')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRIM(LEADING '(' FROM '(   Hello, world!   )')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * APPLY(sum) FROM columns_transformers",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COLUMNS('[jk]') APPLY(toString) FROM columns_transformers",
+      "expected": null
+    },
+    {
+      "sql": "SELECT COLUMNS('[jk]') APPLY(toString) APPLY(length) APPLY(max) FROM columns_transformers",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * APPLY(sum), COLUMNS('col') APPLY(sum) APPLY(avg) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM ABC WHERE hasAny(COLUMNS('.*field') APPLY(toUInt64) APPLY(to), (SELECT groupUniqArray(toUInt64(field))))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT col apply",
+      "expected": "SELECT col AS apply"
+    },
+    {
+      "sql": "SELECT name FROM data WHERE (SELECT DISTINCT name FROM data) IS NOT NULL",
+      "expected": "SELECT name FROM data WHERE NOT ((SELECT DISTINCT name FROM data) IS NULL)"
+    },
+    {
+      "sql": "SELECT 1_2_3_4_5",
+      "expected": null
+    },
+    {
+      "sql": "SELECT 1_b",
+      "expected": "SELECT 1_b"
+    },
+    {
+      "sql": "SELECT COUNT(1) FROM table SETTINGS additional_table_filters = {'a': 'b', 'c': 'd'}",
+      "expected": null
+    },
+    {
+      "sql": "SELECT arrayConcat([1, 2], [3, 4])",
+      "expected": null
+    },
+    {
+      "sql": "SELECT parseDateTime('2021-01-04+23:00:00', '%Y-%m-%d+%H:%i:%s')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT parseDateTime('2021-01-04+23:00:00', '%Y-%m-%d+%H:%i:%s', 'Asia/Istanbul')",
+      "expected": null
+    },
+    {
+      "sql": "farmFingerprint64(x1, x2, x3)",
+      "expected": null
+    },
+    {
+      "sql": "cosineDistance(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "L2Distance(x, y)",
+      "expected": null
+    },
+    {
+      "sql": "tuple(1 = 1, 'foo' = 'foo')",
+      "expected": null
+    },
+    {
+      "sql": "SELECT LIKE(a, b)",
+      "expected": "SELECT a LIKE b"
+    },
+    {
+      "sql": "SELECT notLike(a, b)",
+      "expected": "SELECT NOT a LIKE b"
+    },
+    {
+      "sql": "SELECT ilike(a, b)",
+      "expected": "SELECT a ILIKE b"
+    },
+    {
+      "sql": "currentDatabase()",
+      "expected": "CURRENT_DATABASE()"
+    },
+    {
+      "sql": "currentSchemas(TRUE)",
+      "expected": "CURRENT_SCHEMAS(TRUE)"
+    },
+    {
+      "sql": "SELECT quantilesExactExclusive(0.25, 0.5, 0.75)(x) AS y FROM (SELECT number AS x FROM num)",
+      "expected": null
+    },
+    {
+      "sql": "SELECT or(0, 1, -2)",
+      "expected": "SELECT 0 OR 1 OR -2"
+    },
+    {
+      "sql": "SELECT and(1, 2, 3)",
+      "expected": "SELECT 1 AND 2 AND 3"
+    },
+    {
+      "sql": "SELECT or(and(3, 0), 5)",
+      "expected": "SELECT (3 AND 0) OR 5"
+    },
+    {
+      "sql": "SELECT * FROM VALUES ((1, 1), (2, 1), (3, 1), (4, 1))",
+      "expected": null
+    },
+    {
+      "sql": "SELECT type, id FROM VALUES ('id Int, type Int', (1, 1), (2, 1), (3, 1), (4, 1))",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO t (col1, col2) VALUES ('abcd', 1234)",
+      "expected": "INSERT INTO t (col1, col2) VALUES (('abcd'), (1234))"
+    },
+    {
+      "sql": "INSERT INTO t (col1, col2) FORMAT Values('abcd', 1234)",
+      "expected": "INSERT INTO t (col1, col2) VALUES (('abcd'), (1234))"
+    },
+    {
+      "sql": "WITH 'x' AS foo SELECT foo",
+      "expected": null
+    },
+    {
+      "sql": "WITH ['c'] AS field_names SELECT field_names",
+      "expected": null
+    },
+    {
+      "sql": "WITH SUM(bytes) AS foo SELECT foo FROM system.parts",
+      "expected": null
+    },
+    {
+      "sql": "WITH (SELECT foo) AS bar SELECT bar + 5",
+      "expected": null
+    },
+    {
+      "sql": "WITH test1 AS (SELECT i + 1, j + 1 FROM test1) SELECT * FROM test1",
+      "expected": null
+    },
+    {
+      "sql": "arraySlice(x, 1)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION linear_equation AS (x, k, b) -> k * x + b",
+      "expected": null
+    },
+    {
+      "sql": "CREATE MATERIALIZED VIEW a.b TO a.c (c Int32) AS SELECT * FROM a.d",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE ip_data (ip4 IPv4, ip6 IPv6) ENGINE=TinyLog()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE dates (dt1 Date32) ENGINE=TinyLog()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE named_tuples (a Tuple(select String, i Int64))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (a String) EMPTY AS SELECT * FROM dummy",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t1 (a String EPHEMERAL, b String EPHEMERAL func(), c String MATERIALIZED func(), d String ALIAS func()) ENGINE=TinyLog()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (a String, b String, c UInt64, PROJECTION p1 (SELECT a, sum(c) GROUP BY a, b), PROJECTION p2 (SELECT b, sum(c) GROUP BY b)) ENGINE=MergeTree()",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE xyz (ts DateTime, data String) ENGINE=MergeTree() ORDER BY ts SETTINGS index_granularity = 8192 COMMENT '{\"key\": \"value\"}'",
+      "expected": null
+    },
+    {
+      "sql": "INSERT INTO FUNCTION s3('a', 'b', 'c', 'd', 'e') PARTITION BY CONCAT(s1, s2, s3, s4) SETTINGS set1 = 1, set2 = '2' SELECT * FROM some_table SETTINGS foo = 3",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE data5 (\"x\" UInt32, \"y\" UInt32) ENGINE=MergeTree ORDER BY (round(y / 1000000000), cityHash64(x)) SAMPLE BY cityHash64(x)",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE foo (x UInt32) TTL time_column + INTERVAL '1' MONTH DELETE WHERE column = 'value'",
+      "expected": null
+    },
+    {
+      "sql": "CREATE FUNCTION parity_str AS (n) -> IF(n % 2, 'odd', 'even')",
+      "expected": "CREATE FUNCTION parity_str AS n -> CASE WHEN n % 2 THEN 'odd' ELSE 'even' END"
+    },
+    {
+      "sql": "CREATE TABLE a ENGINE=Memory AS SELECT 1 AS c COMMENT 'foo'",
+      "expected": "CREATE TABLE a ENGINE=Memory AS (SELECT 1 AS c) COMMENT 'foo'"
+    },
+    {
+      "sql": "CREATE TABLE t1 (\"x\" UInt32, \"y\" Dynamic, \"z\" Dynamic(max_types = 10)) ENGINE=MergeTree ORDER BY x",
+      "expected": null
+    },
+    {
+      "sql": "GRANT SELECT(x, y) ON db.table TO john WITH GRANT OPTION",
+      "expected": null
+    },
+    {
+      "sql": "GRANT INSERT(x, y) ON db.table TO john",
+      "expected": null
+    },
+    {
+      "sql": "REVOKE SELECT(x, y) ON db.table FROM john",
+      "expected": null
+    },
+    {
+      "sql": "REVOKE INSERT(x, y) ON db.table FROM john",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM arrays_test ARRAY JOIN arr1, arrays_test.arr2 AS foo, ['a', 'b', 'c'] AS elem",
+      "expected": null
+    },
+    {
+      "sql": "SELECT s, arr FROM arrays_test ARRAY JOIN arr",
+      "expected": null
+    },
+    {
+      "sql": "SELECT s, arr, a FROM arrays_test LEFT ARRAY JOIN arr AS a",
+      "expected": null
+    },
+    {
+      "sql": "SELECT s, arr_external FROM arrays_test ARRAY JOIN [1, 2, 3] AS arr_external",
+      "expected": null
+    },
+    {
+      "sql": "SELECT * FROM arrays_test ARRAY JOIN [1, 2, 3] AS arr_external1, ['a', 'b', 'c'] AS arr_external2, splitByString(',', 'asd,qwerty,zxc') AS arr_external3",
+      "expected": null
+    },
+    {
+      "sql": "SELECT row_number(column1) OVER (PARTITION BY column2 ORDER BY column3) FROM table",
+      "expected": null
+    },
+    {
+      "sql": "SELECT row_number() OVER (PARTITION BY column2 ORDER BY column3) FROM table",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRANSFORM(foo, [1, 2], ['first', 'second']) FROM table",
+      "expected": null
+    },
+    {
+      "sql": "SELECT TRANSFORM(foo, [1, 2], ['first', 'second'], 'default') FROM table",
+      "expected": null
+    },
+    {
+      "sql": "splitByChar('', x)",
+      "expected": null
+    },
+    {
+      "sql": "1 AS FORMAT",
+      "expected": null
+    },
+    {
+      "sql": "current_timestamp",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t1 (a String MATERIALIZED func())",
+      "expected": null
+    },
+    {
+      "sql": "SELECT approx_top_sum(column, weight) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT approx_top_sum(N)(column, weight) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "SELECT approx_top_sum(N, reserved)(column, weight) FROM t",
+      "expected": null
+    },
+    {
+      "sql": "@macro",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+      "read": {},
+      "write": {
+        "databricks": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+        "spark": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+        "mysql": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)"
+      }
+    },
+    {
+      "sql": "SELECT substringIndex('a.b.c.d', '.', 2)",
+      "read": {},
+      "write": {
+        "databricks": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+        "spark": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+        "mysql": "SELECT SUBSTRING_INDEX('a.b.c.d', '.', 2)",
+        "clickhouse": "SELECT substringIndex('a.b.c.d', '.', 2)"
+      }
+    },
+    {
+      "sql": "SELECT CAST(STR_TO_DATE(SUBSTRING(a.eta, 1, 10), '%Y-%m-%d') AS Nullable(DATE))",
+      "read": {
+        "clickhouse": "SELECT CAST(STR_TO_DATE(SUBSTRING(a.eta, 1, 10), '%Y-%m-%d') AS Nullable(DATE))",
+        "oracle": "SELECT to_date(substr(a.eta, 1,10), 'YYYY-MM-DD')"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CHAR(67) || CHAR(65) || CHAR(84)",
+      "read": {
+        "clickhouse": "CHAR(67) || CHAR(65) || CHAR(84)",
+        "oracle": "CHR(67) || CHR(65) || CHR(84)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT lagInFrame(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees",
+      "read": {
+        "clickhouse": "SELECT lagInFrame(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees",
+        "oracle": "SELECT LAG(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT leadInFrame(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees",
+      "read": {
+        "clickhouse": "SELECT leadInFrame(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees",
+        "oracle": "SELECT LEAD(salary, 1, 0) OVER (ORDER BY hire_date) AS prev_sal FROM employees"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CAST(STR_TO_DATE('05 12 2000', '%d %m %Y') AS Nullable(DATE))",
+      "read": {
+        "clickhouse": "SELECT CAST(STR_TO_DATE('05 12 2000', '%d %m %Y') AS Nullable(DATE))",
+        "postgres": "SELECT TO_DATE('05 12 2000', 'DD MM YYYY')"
+      },
+      "write": {
+        "clickhouse": "SELECT CAST(STR_TO_DATE('05 12 2000', '%d %m %Y') AS Nullable(DATE))",
+        "postgres": "SELECT CAST(CAST(TO_DATE('05 12 2000', 'DD MM YYYY') AS TIMESTAMP) AS DATE)"
+      }
+    },
+    {
+      "sql": "SELECT * FROM x PREWHERE y = 1 WHERE z = 2",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT * FROM x PREWHERE y = 1 WHERE z = 2"
+      }
+    },
+    {
+      "sql": "SELECT * FROM x AS prewhere",
+      "read": {
+        "clickhouse": "SELECT * FROM x AS prewhere",
+        "duckdb": "SELECT * FROM x prewhere"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT a, b FROM (SELECT * FROM x) AS t(a, b)",
+      "read": {
+        "clickhouse": "SELECT a, b FROM (SELECT * FROM x) AS t(a, b)",
+        "duckdb": "SELECT a, b FROM (SELECT * FROM x) AS t(a, b)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT arrayJoin([1,2,3])",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT arrayJoin([1, 2, 3])",
+        "postgres": "SELECT UNNEST(ARRAY[1, 2, 3])"
+      }
+    },
+    {
+      "sql": "has([1], x)",
+      "read": {
+        "postgres": "x = any(array[1])"
+      },
+      "write": {}
+    },
+    {
+      "sql": "NOT has([1], x)",
+      "read": {
+        "postgres": "any(array[1]) <> x"
+      },
+      "write": {}
+    },
+    {
+      "sql": "has([1], x)",
+      "read": {
+        "clickhouse": "has([1], x)",
+        "presto": "CONTAINS(ARRAY[1], x)",
+        "spark": "ARRAY_CONTAINS(ARRAY(1), x)"
+      },
+      "write": {
+        "presto": "CONTAINS(ARRAY[1], x)",
+        "spark": "ARRAY_CONTAINS(ARRAY(1), x)"
+      }
+    },
+    {
+      "sql": "SELECT CAST('2020-01-01' AS Nullable(DateTime)) + INTERVAL '500' MICROSECOND",
+      "read": {
+        "duckdb": "SELECT TIMESTAMP '2020-01-01' + INTERVAL '500 us'",
+        "postgres": "SELECT TIMESTAMP '2020-01-01' + INTERVAL '500 us'"
+      },
+      "write": {
+        "clickhouse": "SELECT CAST('2020-01-01' AS Nullable(DateTime)) + INTERVAL '500' MICROSECOND",
+        "duckdb": "SELECT CAST('2020-01-01' AS TIMESTAMP) + INTERVAL '500' MICROSECOND",
+        "postgres": "SELECT CAST('2020-01-01' AS TIMESTAMP) + INTERVAL '500 MICROSECOND'"
+      }
+    },
+    {
+      "sql": "SELECT CURRENT_DATE()",
+      "read": {
+        "clickhouse": "SELECT CURRENT_DATE()",
+        "postgres": "SELECT CURRENT_DATE"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT CURRENT_TIMESTAMP()",
+      "read": {
+        "clickhouse": "SELECT CURRENT_TIMESTAMP()",
+        "postgres": "SELECT CURRENT_TIMESTAMP"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT match('ThOmAs', CONCAT('(?i)', 'thomas'))",
+      "read": {
+        "postgres": "SELECT 'ThOmAs' ~* 'thomas'"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT match('ThOmAs', CONCAT('(?i)', x)) FROM t",
+      "read": {
+        "postgres": "SELECT 'ThOmAs' ~* x FROM t"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT '\\0'",
+      "read": {
+        "mysql": "SELECT '\u0000'"
+      },
+      "write": {
+        "clickhouse": "SELECT '\\0'",
+        "mysql": "SELECT '\u0000'"
+      }
+    },
+    {
+      "sql": "DATE_ADD(DAY, 1, x)",
+      "read": {
+        "clickhouse": "dateAdd(DAY, 1, x)",
+        "presto": "DATE_ADD('DAY', 1, x)"
+      },
+      "write": {
+        "clickhouse": "DATE_ADD(DAY, 1, x)",
+        "presto": "DATE_ADD('DAY', 1, x)"
+      }
+    },
+    {
+      "sql": "DATE_DIFF(DAY, a, b)",
+      "read": {
+        "clickhouse": "dateDiff(DAY, a, b)",
+        "presto": "DATE_DIFF('DAY', a, b)"
+      },
+      "write": {
+        "clickhouse": "DATE_DIFF(DAY, a, b)",
+        "presto": "DATE_DIFF('DAY', a, b)"
+      }
+    },
+    {
+      "sql": "SELECT xor(1, 0)",
+      "read": {
+        "clickhouse": "SELECT xor(1, 0)",
+        "mysql": "SELECT 1 XOR 0"
+      },
+      "write": {
+        "mysql": "SELECT 1 XOR 0"
+      }
+    },
+    {
+      "sql": "SELECT xor(0, 1, xor(1, 0, 0))",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT xor(0, 1, xor(1, 0, 0))",
+        "mysql": "SELECT 0 XOR 1 XOR 1 XOR 0 XOR 0"
+      }
+    },
+    {
+      "sql": "SELECT xor(xor(1, 0), 1)",
+      "read": {
+        "clickhouse": "SELECT xor(xor(1, 0), 1)",
+        "mysql": "SELECT 1 XOR 0 XOR 1"
+      },
+      "write": {
+        "clickhouse": "SELECT xor(xor(1, 0), 1)",
+        "mysql": "SELECT 1 XOR 0 XOR 1"
+      }
+    },
+    {
+      "sql": "CONCAT(a, b)",
+      "read": {
+        "clickhouse": "CONCAT(a, b)",
+        "mysql": "CONCAT(a, b)"
+      },
+      "write": {
+        "mysql": "CONCAT(a, b)",
+        "postgres": "a || b"
+      }
+    },
+    {
+      "sql": "'Enum8(\\'Sunday\\' = 0)'",
+      "read": {},
+      "write": {
+        "clickhouse": "'Enum8(''Sunday'' = 0)'"
+      }
+    },
+    {
+      "sql": "SELECT uniq(x) FROM (SELECT any(y) AS x FROM (SELECT 1 AS y))",
+      "read": {
+        "bigquery": "SELECT APPROX_COUNT_DISTINCT(x) FROM (SELECT ANY_VALUE(y) x FROM (SELECT 1 y))"
+      },
+      "write": {
+        "bigquery": "SELECT APPROX_COUNT_DISTINCT(x) FROM (SELECT ANY_VALUE(y) AS x FROM (SELECT 1 AS y))"
+      }
+    },
+    {
+      "sql": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC, lname",
+        "spark": "SELECT fname, lname, age FROM person ORDER BY age DESC NULLS FIRST, fname ASC NULLS LAST, lname NULLS LAST"
+      }
+    },
+    {
+      "sql": "CAST(1 AS NULLABLE(Int64))",
+      "read": {},
+      "write": {
+        "clickhouse": "CAST(1 AS Nullable(Int64))"
+      }
+    },
+    {
+      "sql": "CAST(1 AS Nullable(DateTime64(6, 'UTC')))",
+      "read": {},
+      "write": {
+        "clickhouse": "CAST(1 AS Nullable(DateTime64(6, 'UTC')))"
+      }
+    },
+    {
+      "sql": "SELECT quantileIf(0.5)(a, true)",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT quantileIf(0.5)(a, TRUE)"
+      }
+    },
+    {
+      "sql": "SELECT * FROM foo JOIN bar USING id, name",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT * FROM foo JOIN bar USING (id, name)"
+      }
+    },
+    {
+      "sql": "SELECT * FROM foo ANY LEFT JOIN bla ON foo.c1 = bla.c2",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT * FROM foo LEFT ANY JOIN bla ON foo.c1 = bla.c2"
+      }
+    },
+    {
+      "sql": "SELECT * FROM foo GLOBAL ANY LEFT JOIN bla ON foo.c1 = bla.c2",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT * FROM foo GLOBAL LEFT ANY JOIN bla ON foo.c1 = bla.c2"
+      }
+    },
+    {
+      "sql": "\n            SELECT\n                loyalty,\n                count()\n            FROM hits SEMI LEFT JOIN users USING (UserID)\n            GROUP BY loyalty\n            ORDER BY loyalty ASC\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT loyalty, count() FROM hits LEFT SEMI JOIN users USING (UserID) GROUP BY loyalty ORDER BY loyalty ASC"
+      }
+    },
+    {
+      "sql": "SELECT quantile(0.5)(a)",
+      "read": {
+        "duckdb": "SELECT quantile(a, 0.5)",
+        "clickhouse": "SELECT median(a)"
+      },
+      "write": {
+        "clickhouse": "SELECT quantile(0.5)(a)"
+      }
+    },
+    {
+      "sql": "SELECT quantiles(0.5, 0.4)(a)",
+      "read": {
+        "duckdb": "SELECT quantile(a, [0.5, 0.4])"
+      },
+      "write": {
+        "clickhouse": "SELECT quantiles(0.5, 0.4)(a)"
+      }
+    },
+    {
+      "sql": "SELECT quantiles(0.5)(a)",
+      "read": {
+        "duckdb": "SELECT quantile(a, [0.5])"
+      },
+      "write": {
+        "clickhouse": "SELECT quantiles(0.5)(a)"
+      }
+    },
+    {
+      "sql": "SELECT IS_NAN(x), ISNAN(x)",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT isNaN(x), isNaN(x)"
+      }
+    },
+    {
+      "sql": "SELECT STARTS_WITH('a', 'b'), STARTSWITH('a', 'b')",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT startsWith('a', 'b'), startsWith('a', 'b')"
+      }
+    },
+    {
+      "sql": "SELECT formatDateTime(NOW(), '%Y-%m-%d')",
+      "read": {
+        "clickhouse": "SELECT formatDateTime(NOW(), '%Y-%m-%d')",
+        "mysql": "SELECT DATE_FORMAT(NOW(), '%Y-%m-%d')"
+      },
+      "write": {
+        "clickhouse": "SELECT formatDateTime(NOW(), '%Y-%m-%d')",
+        "mysql": "SELECT DATE_FORMAT(NOW(), '%Y-%m-%d')"
+      }
+    },
+    {
+      "sql": "INSERT INTO t (col1, col2) VALUES ('abcd', 1234)",
+      "read": {},
+      "write": {
+        "clickhouse": "INSERT INTO t (col1, col2) VALUES (('abcd'), (1234))",
+        "postgres": "INSERT INTO t (col1, col2) VALUES (('abcd'), (1234))"
+      }
+    },
+    {
+      "sql": "SELECT col FROM (SELECT 1 AS col) AS _t",
+      "read": {
+        "duckdb": "SELECT col FROM (VALUES (1)) AS _t(col)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "SELECT col1, col2 FROM (SELECT 1 AS col1, 2 AS col2 UNION ALL SELECT 3, 4) AS _t",
+      "read": {
+        "duckdb": "SELECT col1, col2 FROM (VALUES (1, 2), (3, 4)) AS _t(col1, col2)"
+      },
+      "write": {}
+    },
+    {
+      "sql": "x ? 1 : 2",
+      "read": {},
+      "write": {
+        "clickhouse": "CASE WHEN x THEN 1 ELSE 2 END"
+      }
+    },
+    {
+      "sql": "IF(BAR(col), sign > 0 ? FOO() : 0, 1)",
+      "read": {},
+      "write": {
+        "clickhouse": "CASE WHEN BAR(col) THEN CASE WHEN sign > 0 THEN FOO() ELSE 0 END ELSE 1 END"
+      }
+    },
+    {
+      "sql": "x AND FOO() > 3 + 2 ? 1 : 2",
+      "read": {},
+      "write": {
+        "clickhouse": "CASE WHEN x AND FOO() > 3 + 2 THEN 1 ELSE 2 END"
+      }
+    },
+    {
+      "sql": "x ? (y ? 1 : 2) : 3",
+      "read": {},
+      "write": {
+        "clickhouse": "CASE WHEN x THEN (CASE WHEN y THEN 1 ELSE 2 END) ELSE 3 END"
+      }
+    },
+    {
+      "sql": "x AND (foo() ? FALSE : TRUE) ? (y ? 1 : 2) : 3",
+      "read": {},
+      "write": {
+        "clickhouse": "CASE WHEN x AND (CASE WHEN foo() THEN FALSE ELSE TRUE END) THEN (CASE WHEN y THEN 1 ELSE 2 END) ELSE 3 END"
+      }
+    },
+    {
+      "sql": "SELECT {abc: UInt32}, {b: String}, {c: DateTime},{d: Map(String, Array(UInt8))}, {e: Tuple(UInt8, String)}",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT {abc: UInt32}, {b: String}, {c: DateTime}, {d: Map(String, Array(UInt8))}, {e: Tuple(UInt8, String)}"
+      }
+    },
+    {
+      "sql": "SELECT * FROM {table: Identifier}",
+      "read": {},
+      "write": {
+        "clickhouse": "SELECT * FROM {table: Identifier}"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE my_db.my_table\n            (\n                someId UUID,\n                aggregatedColumn AggregateFunction(any, String),\n                aggregatedColumnWithParams AggregateFunction(any(somecolumn), String),\n            )\n            ENGINE = AggregatingMergeTree()\n            ORDER BY (someId)\n                    ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE my_db.my_table (\n  someId UUID,\n  aggregatedColumn AggregateFunction(any, String),\n  aggregatedColumnWithParams AggregateFunction(any(somecolumn), String)\n)\nENGINE=AggregatingMergeTree()\nORDER BY (\n  someId\n)"
+      }
+    },
+    {
+      "sql": "CREATE DATABASE x",
+      "read": {
+        "duckdb": "CREATE SCHEMA x"
+      },
+      "write": {
+        "clickhouse": "CREATE DATABASE x",
+        "duckdb": "CREATE SCHEMA x"
+      }
+    },
+    {
+      "sql": "DROP DATABASE x",
+      "read": {
+        "duckdb": "DROP SCHEMA x"
+      },
+      "write": {
+        "clickhouse": "DROP DATABASE x",
+        "duckdb": "DROP SCHEMA x"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE example1 (\n               timestamp DateTime,\n               x UInt32 TTL now() + INTERVAL 1 MONTH,\n               y String TTL timestamp + INTERVAL 1 DAY,\n               z String\n            )\n            ENGINE = MergeTree\n            ORDER BY tuple()\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE example1 (\n  timestamp DateTime,\n  x UInt32 TTL now() + INTERVAL '1' MONTH,\n  y String TTL timestamp + INTERVAL '1' DAY,\n  z String\n)\nENGINE=MergeTree\nORDER BY tuple()"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE test (id UInt64, timestamp DateTime64, data String, max_hits UInt64, sum_hits UInt64) ENGINE = MergeTree\n            PRIMARY KEY (id, toStartOfDay(timestamp), timestamp)\n            TTL timestamp + INTERVAL 1 DAY\n            GROUP BY id, toStartOfDay(timestamp)\n            SET\n               max_hits = max(max_hits),\n               sum_hits = sum(sum_hits)\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE test (\n  id UInt64,\n  timestamp DateTime64,\n  data String,\n  max_hits UInt64,\n  sum_hits UInt64\n)\nENGINE=MergeTree\nPRIMARY KEY (id, dateTrunc('DAY', timestamp), timestamp)\nTTL\n  timestamp + INTERVAL '1' DAY\nGROUP BY\n  id,\n  dateTrunc('DAY', timestamp)\nSET\n  max_hits = max(max_hits),\n  sum_hits = sum(sum_hits)"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE test (id String, data String) ENGINE = AggregatingMergeTree()\n                ORDER BY tuple()\n            SETTINGS\n                max_suspicious_broken_parts=500,\n                parts_to_throw_insert=100\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE test (\n  id String,\n  data String\n)\nENGINE=AggregatingMergeTree()\nORDER BY tuple()\nSETTINGS\n  max_suspicious_broken_parts = 500,\n  parts_to_throw_insert = 100"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE example_table\n            (\n                d DateTime,\n                a Int\n            )\n            ENGINE = MergeTree\n            PARTITION BY toYYYYMM(d)\n            ORDER BY d\n            TTL d + INTERVAL 1 MONTH DELETE,\n                d + INTERVAL 1 WEEK TO VOLUME 'aaa',\n                d + INTERVAL 2 WEEK TO DISK 'bbb';\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE example_table (\n  d DateTime,\n  a Int32\n)\nENGINE=MergeTree\nPARTITION BY toYYYYMM(d)\nORDER BY d\nTTL\n  d + INTERVAL '1' MONTH DELETE,\n  d + INTERVAL '1' WEEK TO VOLUME 'aaa',\n  d + INTERVAL '2' WEEK TO DISK 'bbb'"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE table_with_where\n            (\n                d DateTime,\n                a Int\n            )\n            ENGINE = MergeTree\n            PARTITION BY toYYYYMM(d)\n            ORDER BY d\n            TTL d + INTERVAL 1 MONTH DELETE WHERE toDayOfWeek(d) = 1;\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE table_with_where (\n  d DateTime,\n  a Int32\n)\nENGINE=MergeTree\nPARTITION BY toYYYYMM(d)\nORDER BY d\nTTL\n  d + INTERVAL '1' MONTH DELETE\nWHERE\n  toDayOfWeek(d) = 1"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE table_for_recompression\n            (\n                d DateTime,\n                key UInt64,\n                value String\n            ) ENGINE MergeTree()\n            ORDER BY tuple()\n            PARTITION BY key\n            TTL d + INTERVAL 1 MONTH RECOMPRESS CODEC(ZSTD(17)), d + INTERVAL 1 YEAR RECOMPRESS CODEC(LZ4HC(10))\n            SETTINGS min_rows_for_wide_part = 0, min_bytes_for_wide_part = 0;\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE table_for_recompression (\n  d DateTime,\n  key UInt64,\n  value String\n)\nENGINE=MergeTree()\nORDER BY tuple()\nPARTITION BY key\nTTL\n  d + INTERVAL '1' MONTH RECOMPRESS CODEC(ZSTD(17)),\n  d + INTERVAL '1' YEAR RECOMPRESS CODEC(LZ4HC(10))\nSETTINGS\n  min_rows_for_wide_part = 0,\n  min_bytes_for_wide_part = 0"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE table_for_aggregation\n            (\n                d DateTime,\n                k1 Int,\n                k2 Int,\n                x Int,\n                y Int\n            )\n            ENGINE = MergeTree\n            ORDER BY (k1, k2)\n            TTL d + INTERVAL 1 MONTH GROUP BY k1, k2 SET x = max(x), y = min(y);\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE table_for_aggregation (\n  d DateTime,\n  k1 Int32,\n  k2 Int32,\n  x Int32,\n  y Int32\n)\nENGINE=MergeTree\nORDER BY (k1, k2)\nTTL\n  d + INTERVAL '1' MONTH\nGROUP BY\n  k1,\n  k2\nSET\n  x = max(x),\n  y = min(y)"
+      }
+    },
+    {
+      "sql": "\n            CREATE DICTIONARY discounts_dict (\n                advertiser_id UInt64,\n                discount_start_date Date,\n                discount_end_date Date,\n                amount Float64\n            )\n            PRIMARY KEY id\n            SOURCE(CLICKHOUSE(TABLE 'discounts'))\n            LIFETIME(MIN 1 MAX 1000)\n            LAYOUT(RANGE_HASHED(range_lookup_strategy 'max'))\n            RANGE(MIN discount_start_date MAX discount_end_date)\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE DICTIONARY discounts_dict (\n  advertiser_id UInt64,\n  discount_start_date DATE,\n  discount_end_date DATE,\n  amount Float64\n)\nPRIMARY KEY (id)\nSOURCE(CLICKHOUSE(\n  TABLE 'discounts'\n))\nLIFETIME(MIN 1 MAX 1000)\nLAYOUT(RANGE_HASHED(\n  range_lookup_strategy 'max'\n))\nRANGE(MIN discount_start_date MAX discount_end_date)"
+      }
+    },
+    {
+      "sql": "\n            CREATE DICTIONARY my_ip_trie_dictionary (\n                prefix String,\n                asn UInt32,\n                cca2 String DEFAULT '??'\n            )\n            PRIMARY KEY prefix\n            SOURCE(CLICKHOUSE(TABLE 'my_ip_addresses'))\n            LAYOUT(IP_TRIE)\n            LIFETIME(3600);\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE DICTIONARY my_ip_trie_dictionary (\n  prefix String,\n  asn UInt32,\n  cca2 String DEFAULT '??'\n)\nPRIMARY KEY (prefix)\nSOURCE(CLICKHOUSE(\n  TABLE 'my_ip_addresses'\n))\nLAYOUT(IP_TRIE())\nLIFETIME(MIN 0 MAX 3600)"
+      }
+    },
+    {
+      "sql": "\n            CREATE DICTIONARY polygons_test_dictionary\n            (\n                key Array(Array(Array(Tuple(Float64, Float64)))),\n                name String\n            )\n            PRIMARY KEY key\n            SOURCE(CLICKHOUSE(TABLE 'polygons_test_table'))\n            LAYOUT(POLYGON(STORE_POLYGON_KEY_COLUMN 1))\n            LIFETIME(0);\n            ",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE DICTIONARY polygons_test_dictionary (\n  key Array(Array(Array(Tuple(Float64, Float64)))),\n  name String\n)\nPRIMARY KEY (key)\nSOURCE(CLICKHOUSE(\n  TABLE 'polygons_test_table'\n))\nLAYOUT(POLYGON(\n  STORE_POLYGON_KEY_COLUMN 1\n))\nLIFETIME(MIN 0 MAX 0)"
+      }
+    },
+    {
+      "sql": "\n            CREATE TABLE t (\n                a AggregateFunction(quantiles(0.5, 0.9), UInt64),\n                b AggregateFunction(quantiles, UInt64),\n                c SimpleAggregateFunction(sum, Float64),\n                d AggregateFunction(count)\n            )",
+      "read": {},
+      "write": {
+        "clickhouse": "CREATE TABLE t (\n  a AggregateFunction(quantiles(0.5, 0.9), UInt64),\n  b AggregateFunction(quantiles, UInt64),\n  c SimpleAggregateFunction(sum, Float64),\n  d AggregateFunction(count)\n)"
+      }
+    },
+    {
+      "sql": "toMonday(x)",
+      "read": {},
+      "write": {
+        "databricks": "DATE_TRUNC('WEEK', x)",
+        "duckdb": "DATE_TRUNC('WEEK', x)",
+        "doris": "DATE_TRUNC(x, 'WEEK')",
+        "presto": "DATE_TRUNC('WEEK', x)",
+        "spark": "DATE_TRUNC('WEEK', x)"
+      }
+    },
+    {
+      "sql": "splitByString('s', x)",
+      "read": {
+        "bigquery": "SPLIT(x, 's')",
+        "duckdb": "STRING_SPLIT(x, 's')"
+      },
+      "write": {
+        "clickhouse": "splitByString('s', x)",
+        "doris": "SPLIT_BY_STRING(x, 's')",
+        "duckdb": "STR_SPLIT(x, 's')",
+        "hive": "SPLIT(x, CONCAT('\\\\Q', 's', '\\\\E'))"
+      }
+    },
+    {
+      "sql": "splitByRegexp('\\\\d+', x)",
+      "read": {
+        "duckdb": "STRING_SPLIT_REGEX(x, '\\d+')",
+        "hive": "SPLIT(x, '\\\\d+')"
+      },
+      "write": {
+        "clickhouse": "splitByRegexp('\\\\d+', x)",
+        "duckdb": "STR_SPLIT_REGEX(x, '\\d+')",
+        "hive": "SPLIT(x, '\\\\d+')"
+      }
+    },
+    {
+      "sql": "SELECT col[1]",
+      "read": {},
+      "write": {
+        "bigquery": "SELECT col[0]",
+        "duckdb": "SELECT col[1]",
+        "hive": "SELECT col[0]",
+        "clickhouse": "SELECT col[1]",
+        "presto": "SELECT col[1]"
+      }
+    }
+  ]
+}

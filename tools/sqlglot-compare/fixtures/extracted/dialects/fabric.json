@@ -1,0 +1,203 @@
+{
+  "dialect": "fabric",
+  "identity": [
+    {
+      "sql": "CAST(x AS BOOLEAN)",
+      "expected": "CAST(x AS BIT)"
+    },
+    {
+      "sql": "CAST(x AS DATE)",
+      "expected": "CAST(x AS DATE)"
+    },
+    {
+      "sql": "CAST(x AS DATETIME)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS DECIMAL)",
+      "expected": "CAST(x AS DECIMAL)"
+    },
+    {
+      "sql": "CAST(x AS DOUBLE)",
+      "expected": "CAST(x AS FLOAT)"
+    },
+    {
+      "sql": "CAST(x AS IMAGE)",
+      "expected": "CAST(x AS VARBINARY)"
+    },
+    {
+      "sql": "CAST(x AS INT)",
+      "expected": "CAST(x AS INT)"
+    },
+    {
+      "sql": "CAST(x AS JSON)",
+      "expected": "CAST(x AS VARCHAR)"
+    },
+    {
+      "sql": "CAST(x AS MONEY)",
+      "expected": "CAST(x AS DECIMAL)"
+    },
+    {
+      "sql": "CAST(x AS NCHAR)",
+      "expected": "CAST(x AS CHAR)"
+    },
+    {
+      "sql": "CAST(x AS NVARCHAR)",
+      "expected": "CAST(x AS VARCHAR)"
+    },
+    {
+      "sql": "CAST(x AS ROWVERSION)",
+      "expected": "CAST(x AS ROWVERSION)"
+    },
+    {
+      "sql": "CAST(x AS SMALLDATETIME)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS SMALLMONEY)",
+      "expected": "CAST(x AS DECIMAL)"
+    },
+    {
+      "sql": "CAST(x AS TEXT)",
+      "expected": "CAST(x AS VARCHAR(MAX))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMP)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPNTZ)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TINYINT)",
+      "expected": "CAST(x AS SMALLINT)"
+    },
+    {
+      "sql": "CAST(x AS UTINYINT)",
+      "expected": "CAST(x AS SMALLINT)"
+    },
+    {
+      "sql": "CAST(x AS UUID)",
+      "expected": "CAST(x AS UNIQUEIDENTIFIER)"
+    },
+    {
+      "sql": "CAST(x AS VARIANT)",
+      "expected": "CAST(x AS SQL_VARIANT)"
+    },
+    {
+      "sql": "CAST(x AS XML)",
+      "expected": "CAST(x AS VARCHAR)"
+    },
+    {
+      "sql": "CAST(x AS TIME)",
+      "expected": "CAST(x AS TIME(6))"
+    },
+    {
+      "sql": "CAST(x AS DATETIME2)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIME(3))",
+      "expected": "CAST(x AS TIME(3))"
+    },
+    {
+      "sql": "CAST(x AS DATETIME2(3))",
+      "expected": "CAST(x AS DATETIME2(3))"
+    },
+    {
+      "sql": "CAST(x AS TIME(6))",
+      "expected": "CAST(x AS TIME(6))"
+    },
+    {
+      "sql": "CAST(x AS DATETIME2(6))",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIME(7))",
+      "expected": "CAST(x AS TIME(6))"
+    },
+    {
+      "sql": "CAST(x AS DATETIME2(7))",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIME(9))",
+      "expected": "CAST(x AS TIME(6))"
+    },
+    {
+      "sql": "CAST(x AS DATETIME2(9))",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ)",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(3))",
+      "expected": "CAST(x AS DATETIME2(3))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(6))",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(9))",
+      "expected": "CAST(x AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ) AT TIME ZONE 'Pacific Standard Time'",
+      "expected": "CAST(CAST(x AS DATETIMEOFFSET(6)) AT TIME ZONE 'Pacific Standard Time' AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(3)) AT TIME ZONE 'Pacific Standard Time'",
+      "expected": "CAST(CAST(x AS DATETIMEOFFSET(3)) AT TIME ZONE 'Pacific Standard Time' AS DATETIME2(3))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(6)) AT TIME ZONE 'Pacific Standard Time'",
+      "expected": "CAST(CAST(x AS DATETIMEOFFSET(6)) AT TIME ZONE 'Pacific Standard Time' AS DATETIME2(6))"
+    },
+    {
+      "sql": "CAST(x AS TIMESTAMPTZ(9)) AT TIME ZONE 'Pacific Standard Time'",
+      "expected": "CAST(CAST(x AS DATETIMEOFFSET(6)) AT TIME ZONE 'Pacific Standard Time' AS DATETIME2(6))"
+    },
+    {
+      "sql": "UNIX_TO_TIME(column)",
+      "expected": "DATEADD(MICROSECONDS, CAST(ROUND(column * 1e6, 0) AS BIGINT), CAST('1970-01-01' AS DATETIME2(6)))"
+    },
+    {
+      "sql": "CREATE TABLE t (col VARCHAR)",
+      "expected": "CREATE TABLE t (col VARCHAR(1))"
+    },
+    {
+      "sql": "CREATE TABLE t (col VARCHAR(50))",
+      "expected": null
+    },
+    {
+      "sql": "CREATE TABLE t (col CHAR)",
+      "expected": "CREATE TABLE t (col CHAR(1))"
+    },
+    {
+      "sql": "CREATE TABLE t (col CHAR(10))",
+      "expected": null
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "CREATE TABLE t (col VARCHAR(MAX))",
+      "read": {
+        "postgres": "CREATE TABLE t (col VARCHAR)",
+        "tsql": "CREATE TABLE t (col VARCHAR(MAX))"
+      },
+      "write": {}
+    },
+    {
+      "sql": "CREATE TABLE t (col CHAR(MAX))",
+      "read": {
+        "postgres": "CREATE TABLE t (col CHAR)",
+        "tsql": "CREATE TABLE t (col CHAR(MAX))"
+      },
+      "write": {}
+    }
+  ]
+}

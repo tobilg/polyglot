@@ -1,0 +1,1154 @@
+//! Tree traversal utilities for SQL expression ASTs.
+//!
+//! This module provides read-only traversal, search, and transformation utilities
+//! for the [`Expression`] tree produced by the parser. Because Rust's ownership
+//! model does not allow parent pointers inside the AST, parent information is
+//! tracked externally via [`TreeContext`] (built on demand).
+//!
+//! # Traversal
+//!
+//! Two iterator types are provided:
+//! - [`DfsIter`] -- depth-first (pre-order) traversal using a stack. Visits a node
+//!   before its children. Good for top-down analysis and early termination.
+//! - [`BfsIter`] -- breadth-first (level-order) traversal using a queue. Visits all
+//!   nodes at depth N before any node at depth N+1. Good for level-aware analysis.
+//!
+//! Both are available through the [`ExpressionWalk`] trait methods [`dfs`](ExpressionWalk::dfs)
+//! and [`bfs`](ExpressionWalk::bfs).
+//!
+//! # Searching
+//!
+//! The [`ExpressionWalk`] trait also provides convenience methods for finding expressions:
+//! [`find`](ExpressionWalk::find), [`find_all`](ExpressionWalk::find_all),
+//! [`contains`](ExpressionWalk::contains), and [`count`](ExpressionWalk::count).
+//! Common predicates are available as free functions: [`is_column`], [`is_literal`],
+//! [`is_function`], [`is_aggregate`], [`is_window_function`], [`is_subquery`], and
+//! [`is_select`].
+//!
+//! # Transformation
+//!
+//! The [`transform`] and [`transform_map`] functions perform bottom-up (post-order)
+//! tree rewrites, delegating to [`transform_recursive`](crate::dialects::transform_recursive).
+//! The [`ExpressionWalk::transform_owned`] method provides the same capability as
+//! an owned method on `Expression`.
+//!
+//! Based on traversal patterns from `sqlglot/expressions.py`.
+
+use crate::expressions::Expression;
+use std::collections::{HashMap, VecDeque};
+
+/// Unique identifier for expression nodes during traversal
+pub type NodeId = usize;
+
+/// Information about a node's parent relationship
+#[derive(Debug, Clone)]
+pub struct ParentInfo {
+    /// The NodeId of the parent (None for root)
+    pub parent_id: Option<NodeId>,
+    /// Which argument/field in the parent this node occupies
+    pub arg_key: String,
+    /// Index if the node is part of a list (e.g., expressions in SELECT)
+    pub index: Option<usize>,
+}
+
+/// External parent-tracking context for an expression tree.
+///
+/// Since Rust's ownership model does not allow intrusive parent pointers in the AST,
+/// `TreeContext` provides an on-demand side-table that maps each node (identified by
+/// a [`NodeId`]) to its [`ParentInfo`] (parent node, field name, and list index).
+///
+/// Build a context from any expression root with [`TreeContext::build`], then query
+/// parent relationships with [`get`](TreeContext::get), ancestry chains with
+/// [`ancestors_of`](TreeContext::ancestors_of), or tree depth with
+/// [`depth_of`](TreeContext::depth_of).
+///
+/// This is useful when analysis requires upward navigation (e.g., determining whether
+/// a column reference appears inside a WHERE clause or a JOIN condition).
+#[derive(Debug, Default)]
+pub struct TreeContext {
+    /// Map from NodeId to parent information
+    nodes: HashMap<NodeId, ParentInfo>,
+    /// Counter for generating NodeIds
+    next_id: NodeId,
+    /// Stack for tracking current path during traversal
+    path: Vec<(NodeId, String, Option<usize>)>,
+}
+
+impl TreeContext {
+    /// Create a new empty tree context
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build context from an expression tree
+    pub fn build(root: &Expression) -> Self {
+        let mut ctx = Self::new();
+        ctx.visit_expr(root);
+        ctx
+    }
+
+    /// Visit an expression and record parent information
+    fn visit_expr(&mut self, expr: &Expression) -> NodeId {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        // Record parent info based on current path
+        let parent_info = if let Some((parent_id, arg_key, index)) = self.path.last() {
+            ParentInfo {
+                parent_id: Some(*parent_id),
+                arg_key: arg_key.clone(),
+                index: *index,
+            }
+        } else {
+            ParentInfo {
+                parent_id: None,
+                arg_key: String::new(),
+                index: None,
+            }
+        };
+        self.nodes.insert(id, parent_info);
+
+        // Visit children
+        for (key, child) in iter_children(expr) {
+            self.path.push((id, key.to_string(), None));
+            self.visit_expr(child);
+            self.path.pop();
+        }
+
+        // Visit children in lists
+        for (key, children) in iter_children_lists(expr) {
+            for (idx, child) in children.iter().enumerate() {
+                self.path.push((id, key.to_string(), Some(idx)));
+                self.visit_expr(child);
+                self.path.pop();
+            }
+        }
+
+        id
+    }
+
+    /// Get parent info for a node
+    pub fn get(&self, id: NodeId) -> Option<&ParentInfo> {
+        self.nodes.get(&id)
+    }
+
+    /// Get the depth of a node (0 for root)
+    pub fn depth_of(&self, id: NodeId) -> usize {
+        let mut depth = 0;
+        let mut current = id;
+        while let Some(info) = self.nodes.get(&current) {
+            if let Some(parent_id) = info.parent_id {
+                depth += 1;
+                current = parent_id;
+            } else {
+                break;
+            }
+        }
+        depth
+    }
+
+    /// Get ancestors of a node (parent, grandparent, etc.)
+    pub fn ancestors_of(&self, id: NodeId) -> Vec<NodeId> {
+        let mut ancestors = Vec::new();
+        let mut current = id;
+        while let Some(info) = self.nodes.get(&current) {
+            if let Some(parent_id) = info.parent_id {
+                ancestors.push(parent_id);
+                current = parent_id;
+            } else {
+                break;
+            }
+        }
+        ancestors
+    }
+}
+
+/// Iterate over single-child fields of an expression
+///
+/// Returns an iterator of (field_name, &Expression) pairs.
+fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
+    let mut children = Vec::new();
+
+    match expr {
+        Expression::Alias(a) => {
+            children.push(("this", &a.this));
+        }
+        Expression::Cast(c) => {
+            children.push(("this", &c.this));
+        }
+        Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => {
+            children.push(("this", &u.this));
+        }
+        Expression::Paren(p) => {
+            children.push(("this", &p.this));
+        }
+        Expression::IsNull(i) => {
+            children.push(("this", &i.this));
+        }
+        Expression::Exists(e) => {
+            children.push(("this", &e.this));
+        }
+        Expression::Subquery(s) => {
+            children.push(("this", &s.this));
+        }
+        Expression::Where(w) => {
+            children.push(("this", &w.this));
+        }
+        Expression::Having(h) => {
+            children.push(("this", &h.this));
+        }
+        Expression::Qualify(q) => {
+            children.push(("this", &q.this));
+        }
+        Expression::And(op)
+        | Expression::Or(op)
+        | Expression::Add(op)
+        | Expression::Sub(op)
+        | Expression::Mul(op)
+        | Expression::Div(op)
+        | Expression::Mod(op)
+        | Expression::Eq(op)
+        | Expression::Neq(op)
+        | Expression::Lt(op)
+        | Expression::Lte(op)
+        | Expression::Gt(op)
+        | Expression::Gte(op)
+        | Expression::BitwiseAnd(op)
+        | Expression::BitwiseOr(op)
+        | Expression::BitwiseXor(op)
+        | Expression::Concat(op) => {
+            children.push(("left", &op.left));
+            children.push(("right", &op.right));
+        }
+        Expression::Like(op) | Expression::ILike(op) => {
+            children.push(("left", &op.left));
+            children.push(("right", &op.right));
+        }
+        Expression::Between(b) => {
+            children.push(("this", &b.this));
+            children.push(("low", &b.low));
+            children.push(("high", &b.high));
+        }
+        Expression::In(i) => {
+            children.push(("this", &i.this));
+        }
+        Expression::Case(c) => {
+            if let Some(ref operand) = &c.operand {
+                children.push(("operand", operand));
+            }
+        }
+        Expression::WindowFunction(wf) => {
+            children.push(("this", &wf.this));
+        }
+        Expression::Union(u) => {
+            children.push(("left", &u.left));
+            children.push(("right", &u.right));
+        }
+        Expression::Intersect(i) => {
+            children.push(("left", &i.left));
+            children.push(("right", &i.right));
+        }
+        Expression::Except(e) => {
+            children.push(("left", &e.left));
+            children.push(("right", &e.right));
+        }
+        Expression::Ordered(o) => {
+            children.push(("this", &o.this));
+        }
+        Expression::Interval(i) => {
+            if let Some(ref this) = i.this {
+                children.push(("this", this));
+            }
+        }
+        _ => {}
+    }
+
+    children
+}
+
+/// Iterate over list-child fields of an expression
+///
+/// Returns an iterator of (field_name, &[Expression]) pairs.
+fn iter_children_lists(expr: &Expression) -> Vec<(&'static str, &[Expression])> {
+    let mut lists = Vec::new();
+
+    match expr {
+        Expression::Select(s) => {
+            lists.push(("expressions", s.expressions.as_slice()));
+            // Note: FROM, JOINs, etc. are stored differently
+        }
+        Expression::Function(f) => {
+            lists.push(("args", f.args.as_slice()));
+        }
+        Expression::AggregateFunction(f) => {
+            lists.push(("args", f.args.as_slice()));
+        }
+        Expression::From(f) => {
+            lists.push(("expressions", f.expressions.as_slice()));
+        }
+        Expression::GroupBy(g) => {
+            lists.push(("expressions", g.expressions.as_slice()));
+        }
+        // OrderBy.expressions is Vec<Ordered>, not Vec<Expression>
+        // We handle Ordered items via iter_children
+        Expression::In(i) => {
+            lists.push(("expressions", i.expressions.as_slice()));
+        }
+        Expression::Array(a) => {
+            lists.push(("expressions", a.expressions.as_slice()));
+        }
+        Expression::Tuple(t) => {
+            lists.push(("expressions", t.expressions.as_slice()));
+        }
+        // Values.expressions is Vec<Tuple>, handle specially
+        Expression::Coalesce(c) => {
+            lists.push(("expressions", c.expressions.as_slice()));
+        }
+        Expression::Greatest(g) | Expression::Least(g) => {
+            lists.push(("expressions", g.expressions.as_slice()));
+        }
+        _ => {}
+    }
+
+    lists
+}
+
+/// Pre-order depth-first iterator over an expression tree.
+///
+/// Visits each node before its children, using a stack-based approach. This means
+/// the root is yielded first, followed by the entire left subtree (recursively),
+/// then the right subtree. For a binary expression `a + b`, the iteration order
+/// is: `Add`, `a`, `b`.
+///
+/// Created via [`ExpressionWalk::dfs`] or [`DfsIter::new`].
+pub struct DfsIter<'a> {
+    stack: Vec<&'a Expression>,
+}
+
+impl<'a> DfsIter<'a> {
+    /// Create a new DFS iterator starting from the given expression
+    pub fn new(root: &'a Expression) -> Self {
+        Self { stack: vec![root] }
+    }
+}
+
+impl<'a> Iterator for DfsIter<'a> {
+    type Item = &'a Expression;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let expr = self.stack.pop()?;
+
+        // Add children in reverse order so they come out in forward order
+        let children: Vec<_> = iter_children(expr).into_iter().map(|(_, e)| e).collect();
+        for child in children.into_iter().rev() {
+            self.stack.push(child);
+        }
+
+        let lists: Vec<_> = iter_children_lists(expr)
+            .into_iter()
+            .flat_map(|(_, es)| es.iter())
+            .collect();
+        for child in lists.into_iter().rev() {
+            self.stack.push(child);
+        }
+
+        Some(expr)
+    }
+}
+
+/// Level-order breadth-first iterator over an expression tree.
+///
+/// Visits all nodes at depth N before any node at depth N+1, using a queue-based
+/// approach. For a tree `(a + b) = c`, the iteration order is: `Eq` (depth 0),
+/// `Add`, `c` (depth 1), `a`, `b` (depth 2).
+///
+/// Created via [`ExpressionWalk::bfs`] or [`BfsIter::new`].
+pub struct BfsIter<'a> {
+    queue: VecDeque<&'a Expression>,
+}
+
+impl<'a> BfsIter<'a> {
+    /// Create a new BFS iterator starting from the given expression
+    pub fn new(root: &'a Expression) -> Self {
+        let mut queue = VecDeque::new();
+        queue.push_back(root);
+        Self { queue }
+    }
+}
+
+impl<'a> Iterator for BfsIter<'a> {
+    type Item = &'a Expression;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let expr = self.queue.pop_front()?;
+
+        // Add children to queue
+        for (_, child) in iter_children(expr) {
+            self.queue.push_back(child);
+        }
+
+        for (_, children) in iter_children_lists(expr) {
+            for child in children {
+                self.queue.push_back(child);
+            }
+        }
+
+        Some(expr)
+    }
+}
+
+/// Extension trait that adds traversal and search methods to [`Expression`].
+///
+/// This trait is implemented for `Expression` and provides a fluent API for
+/// iterating, searching, measuring, and transforming expression trees without
+/// needing to import the iterator types directly.
+pub trait ExpressionWalk {
+    /// Returns a depth-first (pre-order) iterator over this expression and all descendants.
+    ///
+    /// The root node is yielded first, then its children are visited recursively
+    /// from left to right.
+    fn dfs(&self) -> DfsIter<'_>;
+
+    /// Returns a breadth-first (level-order) iterator over this expression and all descendants.
+    ///
+    /// All nodes at depth N are yielded before any node at depth N+1.
+    fn bfs(&self) -> BfsIter<'_>;
+
+    /// Finds the first expression matching `predicate` in depth-first order.
+    ///
+    /// Returns `None` if no descendant (including this node) matches.
+    fn find<F>(&self, predicate: F) -> Option<&Expression>
+    where
+        F: Fn(&Expression) -> bool;
+
+    /// Collects all expressions matching `predicate` in depth-first order.
+    ///
+    /// Returns an empty vector if no descendants match.
+    fn find_all<F>(&self, predicate: F) -> Vec<&Expression>
+    where
+        F: Fn(&Expression) -> bool;
+
+    /// Returns `true` if this node or any descendant matches `predicate`.
+    fn contains<F>(&self, predicate: F) -> bool
+    where
+        F: Fn(&Expression) -> bool;
+
+    /// Counts how many nodes (including this one) match `predicate`.
+    fn count<F>(&self, predicate: F) -> usize
+    where
+        F: Fn(&Expression) -> bool;
+
+    /// Returns direct child expressions of this node.
+    ///
+    /// Collects all single-child fields and list-child fields into a flat vector
+    /// of references. Leaf nodes return an empty vector.
+    fn children(&self) -> Vec<&Expression>;
+
+    /// Returns the maximum depth of the expression tree rooted at this node.
+    ///
+    /// A leaf node has depth 0, a node whose deepest child is a leaf has depth 1, etc.
+    fn tree_depth(&self) -> usize;
+
+    /// Transforms this expression tree bottom-up using the given function (owned variant).
+    ///
+    /// Children are transformed first, then `fun` is called on the resulting node.
+    /// Return `Ok(None)` from `fun` to replace a node with `NULL`.
+    /// Return `Ok(Some(expr))` to substitute the node with `expr`.
+    fn transform_owned<F>(self, fun: F) -> crate::Result<Expression>
+    where
+        F: Fn(Expression) -> crate::Result<Option<Expression>>,
+        Self: Sized;
+}
+
+impl ExpressionWalk for Expression {
+    fn dfs(&self) -> DfsIter<'_> {
+        DfsIter::new(self)
+    }
+
+    fn bfs(&self) -> BfsIter<'_> {
+        BfsIter::new(self)
+    }
+
+    fn find<F>(&self, predicate: F) -> Option<&Expression>
+    where
+        F: Fn(&Expression) -> bool,
+    {
+        self.dfs().find(|e| predicate(e))
+    }
+
+    fn find_all<F>(&self, predicate: F) -> Vec<&Expression>
+    where
+        F: Fn(&Expression) -> bool,
+    {
+        self.dfs().filter(|e| predicate(e)).collect()
+    }
+
+    fn contains<F>(&self, predicate: F) -> bool
+    where
+        F: Fn(&Expression) -> bool,
+    {
+        self.dfs().any(|e| predicate(e))
+    }
+
+    fn count<F>(&self, predicate: F) -> usize
+    where
+        F: Fn(&Expression) -> bool,
+    {
+        self.dfs().filter(|e| predicate(e)).count()
+    }
+
+    fn children(&self) -> Vec<&Expression> {
+        let mut result: Vec<&Expression> = Vec::new();
+        for (_, child) in iter_children(self) {
+            result.push(child);
+        }
+        for (_, children_list) in iter_children_lists(self) {
+            for child in children_list {
+                result.push(child);
+            }
+        }
+        result
+    }
+
+    fn tree_depth(&self) -> usize {
+        let mut max_depth = 0;
+
+        for (_, child) in iter_children(self) {
+            let child_depth = child.tree_depth();
+            if child_depth + 1 > max_depth {
+                max_depth = child_depth + 1;
+            }
+        }
+
+        for (_, children) in iter_children_lists(self) {
+            for child in children {
+                let child_depth = child.tree_depth();
+                if child_depth + 1 > max_depth {
+                    max_depth = child_depth + 1;
+                }
+            }
+        }
+
+        max_depth
+    }
+
+    fn transform_owned<F>(self, fun: F) -> crate::Result<Expression>
+    where
+        F: Fn(Expression) -> crate::Result<Option<Expression>>,
+    {
+        transform(self, &fun)
+    }
+}
+
+/// Transforms an expression tree bottom-up, with optional node removal.
+///
+/// Recursively transforms all children first, then applies `fun` to the resulting node.
+/// If `fun` returns `Ok(None)`, the node is replaced with an `Expression::Null`.
+/// If `fun` returns `Ok(Some(expr))`, the node is replaced with `expr`.
+///
+/// This is the primary transformation entry point when callers need the ability to
+/// "delete" nodes by returning `None`.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use polyglot_sql::traversal::transform;
+///
+/// // Remove all Paren wrapper nodes from a tree
+/// let result = transform(expr, &|e| match e {
+///     Expression::Paren(p) => Ok(Some(p.this)),
+///     other => Ok(Some(other)),
+/// })?;
+/// ```
+pub fn transform<F>(expr: Expression, fun: &F) -> crate::Result<Expression>
+where
+    F: Fn(Expression) -> crate::Result<Option<Expression>>,
+{
+    crate::dialects::transform_recursive(expr, &|e| match fun(e)? {
+        Some(transformed) => Ok(transformed),
+        None => Ok(Expression::Null(crate::expressions::Null)),
+    })
+}
+
+/// Transforms an expression tree bottom-up without node removal.
+///
+/// Like [`transform`], but `fun` returns an `Expression` directly rather than
+/// `Option<Expression>`, so nodes cannot be deleted. This is a convenience wrapper
+/// for the common case where every node is mapped to exactly one output node.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use polyglot_sql::traversal::transform_map;
+///
+/// // Uppercase all column names in a tree
+/// let result = transform_map(expr, &|e| match e {
+///     Expression::Column(mut c) => {
+///         c.name.name = c.name.name.to_uppercase();
+///         Ok(Expression::Column(c))
+///     }
+///     other => Ok(other),
+/// })?;
+/// ```
+pub fn transform_map<F>(expr: Expression, fun: &F) -> crate::Result<Expression>
+where
+    F: Fn(Expression) -> crate::Result<Expression>,
+{
+    crate::dialects::transform_recursive(expr, fun)
+}
+
+// ---------------------------------------------------------------------------
+// Common expression predicates
+// ---------------------------------------------------------------------------
+// These free functions are intended for use with the search methods on
+// `ExpressionWalk` (e.g., `expr.find(is_column)`, `expr.contains(is_aggregate)`).
+
+/// Returns `true` if `expr` is a column reference ([`Expression::Column`]).
+pub fn is_column(expr: &Expression) -> bool {
+    matches!(expr, Expression::Column(_))
+}
+
+/// Returns `true` if `expr` is a literal value (number, string, boolean, or NULL).
+pub fn is_literal(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::Literal(_) | Expression::Boolean(_) | Expression::Null(_)
+    )
+}
+
+/// Returns `true` if `expr` is a function call (regular or aggregate).
+pub fn is_function(expr: &Expression) -> bool {
+    matches!(
+        expr,
+        Expression::Function(_) | Expression::AggregateFunction(_)
+    )
+}
+
+/// Returns `true` if `expr` is a subquery ([`Expression::Subquery`]).
+pub fn is_subquery(expr: &Expression) -> bool {
+    matches!(expr, Expression::Subquery(_))
+}
+
+/// Returns `true` if `expr` is a SELECT statement ([`Expression::Select`]).
+pub fn is_select(expr: &Expression) -> bool {
+    matches!(expr, Expression::Select(_))
+}
+
+/// Returns `true` if `expr` is an aggregate function ([`Expression::AggregateFunction`]).
+pub fn is_aggregate(expr: &Expression) -> bool {
+    matches!(expr, Expression::AggregateFunction(_))
+}
+
+/// Returns `true` if `expr` is a window function ([`Expression::WindowFunction`]).
+pub fn is_window_function(expr: &Expression) -> bool {
+    matches!(expr, Expression::WindowFunction(_))
+}
+
+/// Collects all column references ([`Expression::Column`]) from the expression tree.
+///
+/// Performs a depth-first search and returns references to every column node found.
+pub fn get_columns(expr: &Expression) -> Vec<&Expression> {
+    expr.find_all(is_column)
+}
+
+/// Collects all table references ([`Expression::Table`]) from the expression tree.
+///
+/// Performs a depth-first search and returns references to every table node found.
+pub fn get_tables(expr: &Expression) -> Vec<&Expression> {
+    expr.find_all(|e| matches!(e, Expression::Table(_)))
+}
+
+/// Returns `true` if the expression tree contains any aggregate function calls.
+pub fn contains_aggregate(expr: &Expression) -> bool {
+    expr.contains(is_aggregate)
+}
+
+/// Returns `true` if the expression tree contains any window function calls.
+pub fn contains_window_function(expr: &Expression) -> bool {
+    expr.contains(is_window_function)
+}
+
+/// Returns `true` if the expression tree contains any subquery nodes.
+pub fn contains_subquery(expr: &Expression) -> bool {
+    expr.contains(is_subquery)
+}
+
+/// Find the parent of `target` within the tree rooted at `root`.
+///
+/// Uses pointer identity ([`std::ptr::eq`]) — `target` must be a reference
+/// obtained from the same tree (e.g., via [`ExpressionWalk::find`] or DFS iteration).
+///
+/// Returns `None` if `target` is the root itself or is not found in the tree.
+pub fn find_parent<'a>(root: &'a Expression, target: &Expression) -> Option<&'a Expression> {
+    fn search<'a>(node: &'a Expression, target: *const Expression) -> Option<&'a Expression> {
+        for (_, child) in iter_children(node) {
+            if std::ptr::eq(child, target) {
+                return Some(node);
+            }
+            if let Some(found) = search(child, target) {
+                return Some(found);
+            }
+        }
+        for (_, children_list) in iter_children_lists(node) {
+            for child in children_list {
+                if std::ptr::eq(child, target) {
+                    return Some(node);
+                }
+                if let Some(found) = search(child, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    search(root, target as *const Expression)
+}
+
+/// Find the first ancestor of `target` matching `predicate`, walking from
+/// parent toward root.
+///
+/// Uses pointer identity for target lookup. Returns `None` if no ancestor
+/// matches or `target` is not found in the tree.
+pub fn find_ancestor<'a, F>(
+    root: &'a Expression,
+    target: &Expression,
+    predicate: F,
+) -> Option<&'a Expression>
+where
+    F: Fn(&Expression) -> bool,
+{
+    // Build path from root to target
+    fn build_path<'a>(
+        node: &'a Expression,
+        target: *const Expression,
+        path: &mut Vec<&'a Expression>,
+    ) -> bool {
+        if std::ptr::eq(node, target) {
+            return true;
+        }
+        path.push(node);
+        for (_, child) in iter_children(node) {
+            if build_path(child, target, path) {
+                return true;
+            }
+        }
+        for (_, children_list) in iter_children_lists(node) {
+            for child in children_list {
+                if build_path(child, target, path) {
+                    return true;
+                }
+            }
+        }
+        path.pop();
+        false
+    }
+
+    let mut path = Vec::new();
+    if !build_path(root, target as *const Expression, &mut path) {
+        return None;
+    }
+
+    // Walk path in reverse (parent first, then grandparent, etc.)
+    for ancestor in path.iter().rev() {
+        if predicate(ancestor) {
+            return Some(ancestor);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expressions::{BinaryOp, Column, Identifier, Literal};
+
+    fn make_column(name: &str) -> Expression {
+        Expression::Column(Column {
+            name: Identifier {
+                name: name.to_string(),
+                quoted: false,
+                trailing_comments: vec![],
+            },
+            table: None,
+            join_mark: false,
+            trailing_comments: vec![],
+        })
+    }
+
+    fn make_literal(value: i64) -> Expression {
+        Expression::Literal(Literal::Number(value.to_string()))
+    }
+
+    #[test]
+    fn test_dfs_simple() {
+        let left = make_column("a");
+        let right = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left,
+            right,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let nodes: Vec<_> = expr.dfs().collect();
+        assert_eq!(nodes.len(), 3); // Eq, Column, Literal
+        assert!(matches!(nodes[0], Expression::Eq(_)));
+        assert!(matches!(nodes[1], Expression::Column(_)));
+        assert!(matches!(nodes[2], Expression::Literal(_)));
+    }
+
+    #[test]
+    fn test_find() {
+        let left = make_column("a");
+        let right = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left,
+            right,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let column = expr.find(is_column);
+        assert!(column.is_some());
+        assert!(matches!(column.unwrap(), Expression::Column(_)));
+
+        let literal = expr.find(is_literal);
+        assert!(literal.is_some());
+        assert!(matches!(literal.unwrap(), Expression::Literal(_)));
+    }
+
+    #[test]
+    fn test_find_all() {
+        let col1 = make_column("a");
+        let col2 = make_column("b");
+        let expr = Expression::And(Box::new(BinaryOp {
+            left: col1,
+            right: col2,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let columns = expr.find_all(is_column);
+        assert_eq!(columns.len(), 2);
+    }
+
+    #[test]
+    fn test_contains() {
+        let col = make_column("a");
+        let lit = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left: col,
+            right: lit,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        assert!(expr.contains(is_column));
+        assert!(expr.contains(is_literal));
+        assert!(!expr.contains(is_subquery));
+    }
+
+    #[test]
+    fn test_count() {
+        let col1 = make_column("a");
+        let col2 = make_column("b");
+        let lit = make_literal(1);
+
+        let inner = Expression::Add(Box::new(BinaryOp {
+            left: col2,
+            right: lit,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left: col1,
+            right: inner,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        assert_eq!(expr.count(is_column), 2);
+        assert_eq!(expr.count(is_literal), 1);
+    }
+
+    #[test]
+    fn test_tree_depth() {
+        // Single node
+        let lit = make_literal(1);
+        assert_eq!(lit.tree_depth(), 0);
+
+        // One level
+        let col = make_column("a");
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left: col,
+            right: lit.clone(),
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+        assert_eq!(expr.tree_depth(), 1);
+
+        // Two levels
+        let inner = Expression::Add(Box::new(BinaryOp {
+            left: make_column("b"),
+            right: lit,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+        let outer = Expression::Eq(Box::new(BinaryOp {
+            left: make_column("a"),
+            right: inner,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+        assert_eq!(outer.tree_depth(), 2);
+    }
+
+    #[test]
+    fn test_tree_context() {
+        let col = make_column("a");
+        let lit = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left: col,
+            right: lit,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let ctx = TreeContext::build(&expr);
+
+        // Root has no parent
+        let root_info = ctx.get(0).unwrap();
+        assert!(root_info.parent_id.is_none());
+
+        // Children have root as parent
+        let left_info = ctx.get(1).unwrap();
+        assert_eq!(left_info.parent_id, Some(0));
+        assert_eq!(left_info.arg_key, "left");
+
+        let right_info = ctx.get(2).unwrap();
+        assert_eq!(right_info.parent_id, Some(0));
+        assert_eq!(right_info.arg_key, "right");
+    }
+
+    // -- Step 8: transform / transform_map tests --
+
+    #[test]
+    fn test_transform_rename_columns() {
+        let ast = crate::parser::Parser::parse_sql("SELECT a, b FROM t").unwrap();
+        let expr = ast[0].clone();
+        let result = super::transform_map(expr, &|e| {
+            if let Expression::Column(ref c) = e {
+                if c.name.name == "a" {
+                    return Ok(Expression::Column(Column {
+                        name: Identifier::new("alpha"),
+                        table: c.table.clone(),
+                        join_mark: false,
+                        trailing_comments: vec![],
+                    }));
+                }
+            }
+            Ok(e)
+        })
+        .unwrap();
+        let sql = crate::generator::Generator::sql(&result).unwrap();
+        assert!(sql.contains("alpha"), "Expected 'alpha' in: {}", sql);
+        assert!(sql.contains("b"), "Expected 'b' in: {}", sql);
+    }
+
+    #[test]
+    fn test_transform_noop() {
+        let ast = crate::parser::Parser::parse_sql("SELECT 1 + 2").unwrap();
+        let expr = ast[0].clone();
+        let result = super::transform_map(expr.clone(), &|e| Ok(e)).unwrap();
+        let sql1 = crate::generator::Generator::sql(&expr).unwrap();
+        let sql2 = crate::generator::Generator::sql(&result).unwrap();
+        assert_eq!(sql1, sql2);
+    }
+
+    #[test]
+    fn test_transform_nested() {
+        let ast = crate::parser::Parser::parse_sql("SELECT a + b FROM t").unwrap();
+        let expr = ast[0].clone();
+        let result = super::transform_map(expr, &|e| {
+            if let Expression::Column(ref c) = e {
+                return Ok(Expression::Literal(Literal::Number(
+                    if c.name.name == "a" { "1" } else { "2" }.to_string(),
+                )));
+            }
+            Ok(e)
+        })
+        .unwrap();
+        let sql = crate::generator::Generator::sql(&result).unwrap();
+        assert_eq!(sql, "SELECT 1 + 2 FROM t");
+    }
+
+    #[test]
+    fn test_transform_error() {
+        let ast = crate::parser::Parser::parse_sql("SELECT a FROM t").unwrap();
+        let expr = ast[0].clone();
+        let result = super::transform_map(expr, &|e| {
+            if let Expression::Column(ref c) = e {
+                if c.name.name == "a" {
+                    return Err(crate::error::Error::Parse("test error".to_string()));
+                }
+            }
+            Ok(e)
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_transform_owned_trait() {
+        let ast = crate::parser::Parser::parse_sql("SELECT x FROM t").unwrap();
+        let expr = ast[0].clone();
+        let result = expr.transform_owned(|e| Ok(Some(e))).unwrap();
+        let sql = crate::generator::Generator::sql(&result).unwrap();
+        assert_eq!(sql, "SELECT x FROM t");
+    }
+
+    // -- children() tests --
+
+    #[test]
+    fn test_children_leaf() {
+        let lit = make_literal(1);
+        assert_eq!(lit.children().len(), 0);
+    }
+
+    #[test]
+    fn test_children_binary_op() {
+        let left = make_column("a");
+        let right = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left,
+            right,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+        let children = expr.children();
+        assert_eq!(children.len(), 2);
+        assert!(matches!(children[0], Expression::Column(_)));
+        assert!(matches!(children[1], Expression::Literal(_)));
+    }
+
+    #[test]
+    fn test_children_select() {
+        let ast = crate::parser::Parser::parse_sql("SELECT a, b FROM t").unwrap();
+        let expr = &ast[0];
+        let children = expr.children();
+        // Should include select list items (a, b)
+        assert!(children.len() >= 2);
+    }
+
+    // -- find_parent() tests --
+
+    #[test]
+    fn test_find_parent_binary() {
+        let left = make_column("a");
+        let right = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left,
+            right,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        // Find the column child and get its parent
+        let col = expr.find(is_column).unwrap();
+        let parent = super::find_parent(&expr, col);
+        assert!(parent.is_some());
+        assert!(matches!(parent.unwrap(), Expression::Eq(_)));
+    }
+
+    #[test]
+    fn test_find_parent_root_has_none() {
+        let lit = make_literal(1);
+        let parent = super::find_parent(&lit, &lit);
+        assert!(parent.is_none());
+    }
+
+    // -- find_ancestor() tests --
+
+    #[test]
+    fn test_find_ancestor_select() {
+        let ast = crate::parser::Parser::parse_sql("SELECT a FROM t WHERE a > 1").unwrap();
+        let expr = &ast[0];
+
+        // Find a column inside the WHERE clause
+        let where_col = expr.dfs().find(|e| {
+            if let Expression::Column(c) = e {
+                c.name.name == "a"
+            } else {
+                false
+            }
+        });
+        assert!(where_col.is_some());
+
+        // Find Select ancestor of that column
+        let ancestor = super::find_ancestor(expr, where_col.unwrap(), is_select);
+        assert!(ancestor.is_some());
+        assert!(matches!(ancestor.unwrap(), Expression::Select(_)));
+    }
+
+    #[test]
+    fn test_find_ancestor_no_match() {
+        let left = make_column("a");
+        let right = make_literal(1);
+        let expr = Expression::Eq(Box::new(BinaryOp {
+            left,
+            right,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let col = expr.find(is_column).unwrap();
+        let ancestor = super::find_ancestor(&expr, col, is_select);
+        assert!(ancestor.is_none());
+    }
+
+    #[test]
+    fn test_ancestors() {
+        let col = make_column("a");
+        let lit = make_literal(1);
+        let inner = Expression::Add(Box::new(BinaryOp {
+            left: col,
+            right: lit,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+        let outer = Expression::Eq(Box::new(BinaryOp {
+            left: make_column("b"),
+            right: inner,
+            left_comments: vec![],
+            operator_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let ctx = TreeContext::build(&outer);
+
+        // The inner Add's left child (column "a") should have ancestors
+        // Node 0: Eq
+        // Node 1: Column "b" (left of Eq)
+        // Node 2: Add (right of Eq)
+        // Node 3: Column "a" (left of Add)
+        // Node 4: Literal (right of Add)
+
+        let ancestors = ctx.ancestors_of(3);
+        assert_eq!(ancestors, vec![2, 0]); // Add, then Eq
+    }
+}

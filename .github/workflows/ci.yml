@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Lib unit tests
+        run: cargo test --lib -p polyglot-sql
+
+      - name: Generic identity tests
+        run: cargo test --test sqlglot_identity test_sqlglot_identity_all -p polyglot-sql -- --nocapture
+
+      - name: Dialect identity tests
+        run: cargo test --test sqlglot_dialect_identity test_sqlglot_dialect_identity_all -p polyglot-sql -- --nocapture
+
+      - name: Transpilation tests
+        run: cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
+
+  sdk-build:
+    needs: rust-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build WASM
+        run: cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm
+
+      - name: Install SDK dependencies
+        run: cd packages/sdk && npm ci
+
+      - name: Build SDK
+        run: cd packages/sdk && npm run build
+
+      - name: Test SDK
+        run: cd packages/sdk && npm test
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: packages/sdk/wasm/
+
+      - name: Upload SDK dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: packages/sdk/dist/
+
+  publish-crate:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sdk-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish -p polyglot-sql
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-npm:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sdk-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: packages/sdk/wasm/
+
+      - name: Download SDK dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: packages/sdk/dist/
+
+      - name: Publish to npm
+        run: cd packages/sdk && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  deploy-docs:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sdk-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: packages/sdk/wasm/
+
+      - name: Install documentation dependencies
+        run: cd packages/documentation && npm install
+
+      - name: Build documentation
+        run: cd packages/documentation && npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: packages/documentation
+          command: pages deploy dist --project-name=polyglot-sql-api
