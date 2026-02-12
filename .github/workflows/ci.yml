@@ -47,21 +47,26 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
 
       - name: Build WASM
         run: cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm
 
-      - name: Install SDK dependencies
-        run: cd packages/sdk && npm ci
+      - name: Install dependencies
+        run: pnpm install
 
       - name: Build SDK
-        run: cd packages/sdk && npm run build
+        run: cd packages/sdk && pnpm run build
 
       - name: Test SDK
-        run: cd packages/sdk && npm test
+        run: cd packages/sdk && pnpm test
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
@@ -96,9 +101,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - name: Download WASM artifact
@@ -114,7 +124,7 @@ jobs:
           path: packages/sdk/dist/
 
       - name: Publish to npm
-        run: cd packages/sdk && npm publish --access public
+        run: cd packages/sdk && pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -125,9 +135,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
 
       - name: Download WASM artifact
         uses: actions/download-artifact@v4
@@ -135,11 +150,11 @@ jobs:
           name: wasm
           path: packages/sdk/wasm/
 
-      - name: Install documentation dependencies
-        run: cd packages/documentation && npm install
+      - name: Install dependencies
+        run: pnpm install
 
       - name: Build documentation
-        run: cd packages/documentation && npm run build
+        run: cd packages/documentation && pnpm run build
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
