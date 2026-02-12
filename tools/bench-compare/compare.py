@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run polyglot-core and sqlglot benchmarks, then print a comparison table.
+"""Run polyglot-sql and sqlglot benchmarks, then print a comparison table.
 
 Run with: uv run python3 tools/bench-compare/compare.py
 """
@@ -13,9 +13,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 
 def run_rust_bench():
-    print("Running polyglot-core benchmarks (release build)...", file=sys.stderr)
+    print("Running polyglot-sql benchmarks (release build)...", file=sys.stderr)
     result = subprocess.run(
-        ["cargo", "run", "--example", "bench_json", "-p", "polyglot-core", "--release"],
+        ["cargo", "run", "--example", "bench_json", "-p", "polyglot-sql", "--release"],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,
@@ -82,9 +82,9 @@ def print_table(rust_data, python_data):
     python_map = {make_key(b): b for b in python_data["benchmarks"]}
 
     print()
-    print(f"Polyglot-Core vs SQLGlot Performance Comparison")
-    print(f"================================================")
-    print(f"  polyglot-core: v{rust_data['version']}")
+    print(f"Polyglot-SQL vs SQLGlot Performance Comparison")
+    print(f"===============================================")
+    print(f"  polyglot-sql: v{rust_data['version']}")
     print(f"  sqlglot:       v{python_data['version']}")
     print()
 

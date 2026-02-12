@@ -4,63 +4,61 @@
  * These tests verify that the thin TypeScript wrappers correctly delegate
  * to the Rust builder API via WASM and produce correct SQL output.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  // Expression helpers
-  Expr,
-  col,
-  lit,
-  star,
-  sqlNull,
-  boolean,
-  table,
-  sqlExpr,
-  condition,
-  func,
-  not,
-  cast,
+  abs,
   alias,
   and,
-  or,
+  avg,
+  boolean,
+  caseOf,
+  caseWhen,
+  cast,
+  ceil,
+  coalesce,
+  col,
+  condition,
   // Convenience functions
   count,
-  countDistinct,
-  sum,
-  avg,
-  min,
-  max,
-  upper,
-  lower,
-  length,
-  trim,
-  coalesce,
-  nullIf,
-  abs,
-  round,
-  floor,
-  ceil,
-  greatest,
-  least,
   currentDate,
   currentTimestamp,
-  rowNumber,
-  rank,
+  del,
+  deleteFrom,
   denseRank,
-  // Query builders
-  select,
+  // Expression helpers
+  Expr,
+  except,
+  floor,
+  func,
+  greatest,
   insert,
   insertInto,
-  update,
-  deleteFrom,
-  del,
-  mergeInto,
-  caseWhen,
-  caseOf,
-  union,
-  unionAll,
   intersect,
-  except,
+  least,
+  length,
+  lit,
+  lower,
+  max,
+  mergeInto,
+  min,
+  not,
+  nullIf,
+  or,
+  rank,
+  round,
+  rowNumber,
   SelectBuilder,
+  // Query builders
+  select,
+  sqlExpr,
+  sqlNull,
+  star,
+  sum,
+  table,
+  trim,
+  unionAll,
+  update,
+  upper,
 } from './builders';
 
 // ============================================================================
@@ -131,7 +129,9 @@ describe('Expression helpers', () => {
   });
 
   it('func() with multiple args', () => {
-    expect(func('COALESCE', col('a'), col('b'), lit(0)).toSql()).toBe('COALESCE(a, b, 0)');
+    expect(func('COALESCE', col('a'), col('b'), lit(0)).toSql()).toBe(
+      'COALESCE(a, b, 0)',
+    );
   });
 
   it('not() negates expression', () => {
@@ -153,17 +153,33 @@ describe('Expression helpers', () => {
 
 describe('Expr operators', () => {
   describe('comparison', () => {
-    it('eq', () => { expect(col('x').eq(lit(1)).toSql()).toBe('x = 1'); });
-    it('neq', () => { expect(col('x').neq(lit(1)).toSql()).toBe('x <> 1'); });
-    it('lt', () => { expect(col('x').lt(lit(1)).toSql()).toBe('x < 1'); });
-    it('lte', () => { expect(col('x').lte(lit(1)).toSql()).toBe('x <= 1'); });
-    it('gt', () => { expect(col('x').gt(lit(1)).toSql()).toBe('x > 1'); });
-    it('gte', () => { expect(col('x').gte(lit(1)).toSql()).toBe('x >= 1'); });
+    it('eq', () => {
+      expect(col('x').eq(lit(1)).toSql()).toBe('x = 1');
+    });
+    it('neq', () => {
+      expect(col('x').neq(lit(1)).toSql()).toBe('x <> 1');
+    });
+    it('lt', () => {
+      expect(col('x').lt(lit(1)).toSql()).toBe('x < 1');
+    });
+    it('lte', () => {
+      expect(col('x').lte(lit(1)).toSql()).toBe('x <= 1');
+    });
+    it('gt', () => {
+      expect(col('x').gt(lit(1)).toSql()).toBe('x > 1');
+    });
+    it('gte', () => {
+      expect(col('x').gte(lit(1)).toSql()).toBe('x >= 1');
+    });
   });
 
   describe('string convenience (auto-converts to column)', () => {
-    it('eq with string', () => { expect(col('x').eq('y').toSql()).toBe('x = y'); });
-    it('gt with number', () => { expect(col('x').gt(5).toSql()).toBe('x > 5'); });
+    it('eq with string', () => {
+      expect(col('x').eq('y').toSql()).toBe('x = y');
+    });
+    it('gt with number', () => {
+      expect(col('x').gt(5).toSql()).toBe('x > 5');
+    });
   });
 
   describe('logical', () => {
@@ -182,41 +198,73 @@ describe('Expr operators', () => {
   });
 
   describe('arithmetic', () => {
-    it('add', () => { expect(col('a').add(col('b')).toSql()).toBe('a + b'); });
-    it('sub', () => { expect(col('a').sub(col('b')).toSql()).toBe('a - b'); });
-    it('mul', () => { expect(col('a').mul(col('b')).toSql()).toBe('a * b'); });
-    it('div', () => { expect(col('a').div(col('b')).toSql()).toBe('a / b'); });
+    it('add', () => {
+      expect(col('a').add(col('b')).toSql()).toBe('a + b');
+    });
+    it('sub', () => {
+      expect(col('a').sub(col('b')).toSql()).toBe('a - b');
+    });
+    it('mul', () => {
+      expect(col('a').mul(col('b')).toSql()).toBe('a * b');
+    });
+    it('div', () => {
+      expect(col('a').div(col('b')).toSql()).toBe('a / b');
+    });
   });
 
   describe('pattern matching', () => {
     it('like', () => {
-      expect(col('name').like(lit('%test%')).toSql()).toBe("name LIKE '%test%'");
+      expect(col('name').like(lit('%test%')).toSql()).toBe(
+        "name LIKE '%test%'",
+      );
     });
     it('ilike', () => {
-      expect(col('name').ilike(lit('%test%')).toSql()).toBe("name ILIKE '%test%'");
+      expect(col('name').ilike(lit('%test%')).toSql()).toBe(
+        "name ILIKE '%test%'",
+      );
     });
   });
 
   describe('predicates', () => {
-    it('isNull', () => { expect(col('x').isNull().toSql()).toBe('x IS NULL'); });
-    it('isNotNull', () => { expect(col('x').isNotNull().toSql()).toBe('NOT x IS NULL'); });
+    it('isNull', () => {
+      expect(col('x').isNull().toSql()).toBe('x IS NULL');
+    });
+    it('isNotNull', () => {
+      expect(col('x').isNotNull().toSql()).toBe('NOT x IS NULL');
+    });
     it('between', () => {
-      expect(col('age').between(lit(18), lit(65)).toSql()).toBe('age BETWEEN 18 AND 65');
+      expect(col('age').between(lit(18), lit(65)).toSql()).toBe(
+        'age BETWEEN 18 AND 65',
+      );
     });
     it('inList', () => {
-      expect(col('status').inList(lit('a'), lit('b')).toSql()).toBe("status IN ('a', 'b')");
+      expect(col('status').inList(lit('a'), lit('b')).toSql()).toBe(
+        "status IN ('a', 'b')",
+      );
     });
     it('notIn', () => {
-      expect(col('x').notIn(lit(1), lit(2), lit(3)).toSql()).toBe('x NOT IN (1, 2, 3)');
+      expect(col('x').notIn(lit(1), lit(2), lit(3)).toSql()).toBe(
+        'x NOT IN (1, 2, 3)',
+      );
     });
   });
 
   describe('transform', () => {
-    it('alias', () => { expect(col('name').alias('n').toSql()).toBe('name AS n'); });
-    it('as (alias for alias)', () => { expect(col('name').as('n').toSql()).toBe('name AS n'); });
-    it('cast', () => { expect(col('id').cast('VARCHAR').toSql()).toBe('CAST(id AS VARCHAR)'); });
-    it('asc', () => { expect(col('name').asc().toSql()).toBe('name ASC'); });
-    it('desc', () => { expect(col('age').desc().toSql()).toBe('age DESC'); });
+    it('alias', () => {
+      expect(col('name').alias('n').toSql()).toBe('name AS n');
+    });
+    it('as (alias for alias)', () => {
+      expect(col('name').as('n').toSql()).toBe('name AS n');
+    });
+    it('cast', () => {
+      expect(col('id').cast('VARCHAR').toSql()).toBe('CAST(id AS VARCHAR)');
+    });
+    it('asc', () => {
+      expect(col('name').asc().toSql()).toBe('name ASC');
+    });
+    it('desc', () => {
+      expect(col('age').desc().toSql()).toBe('age DESC');
+    });
   });
 
   it('Expr is reusable (methods clone internally)', () => {
@@ -311,14 +359,13 @@ describe('SelectBuilder', () => {
       .limit(10)
       .offset(5)
       .toSql();
-    expect(sql).toBe('SELECT name FROM users ORDER BY name ASC LIMIT 10 OFFSET 5');
+    expect(sql).toBe(
+      'SELECT name FROM users ORDER BY name ASC LIMIT 10 OFFSET 5',
+    );
   });
 
   it('DISTINCT', () => {
-    const sql = select('name')
-      .from('users')
-      .distinct()
-      .toSql();
+    const sql = select('name').from('users').distinct().toSql();
     expect(sql).toBe('SELECT DISTINCT name FROM users');
   });
 
@@ -341,10 +388,7 @@ describe('SelectBuilder', () => {
   });
 
   it('dialect-specific output', () => {
-    const sql = select('*')
-      .from('users')
-      .limit(10)
-      .toSql('tsql');
+    const sql = select('*').from('users').limit(10).toSql('tsql');
     // TSQL uses TOP instead of LIMIT
     expect(sql).toContain('TOP 10');
   });
@@ -394,10 +438,7 @@ describe('InsertBuilder', () => {
   });
 
   it('insert() is alias for insertInto()', () => {
-    const sql = insert('users')
-      .columns('id')
-      .values(lit(1))
-      .toSql();
+    const sql = insert('users').columns('id').values(lit(1)).toSql();
     expect(sql).toContain('INSERT INTO users');
   });
 
@@ -465,7 +506,7 @@ describe('MergeBuilder', () => {
       .whenMatchedUpdate({ name: col('source.name') })
       .whenNotMatchedInsert(
         ['id', 'name'],
-        [col('source.id'), col('source.name')]
+        [col('source.id'), col('source.name')],
       )
       .toSql();
     expect(sql).toContain('MERGE INTO');
@@ -492,7 +533,9 @@ describe('CaseBuilder', () => {
       .when(lit(1), lit('active'))
       .when(lit(0), lit('inactive'))
       .toSql();
-    expect(sql).toBe("CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END");
+    expect(sql).toBe(
+      "CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END",
+    );
   });
 
   it('build() returns Expr', () => {
@@ -512,10 +555,7 @@ describe('SetOpBuilder', () => {
   it('UNION ALL with ORDER BY and LIMIT', () => {
     const a = select('id').from('a');
     const b = select('id').from('b');
-    const sql = unionAll(a, b)
-      .orderBy('id')
-      .limit(10)
-      .toSql();
+    const sql = unionAll(a, b).orderBy('id').limit(10).toSql();
     expect(sql).toContain('UNION ALL');
     expect(sql).toContain('ORDER BY');
     expect(sql).toContain('LIMIT 10');
@@ -541,29 +581,59 @@ describe('SetOpBuilder', () => {
 // ============================================================================
 
 describe('Convenience functions', () => {
-  it('count()', () => { expect(count().toSql()).toBe('COUNT(*)'); });
-  it('count(expr)', () => { expect(count(col('id')).toSql()).toBe('COUNT(id)'); });
-  it('sum()', () => { expect(sum(col('amount')).toSql()).toBe('SUM(amount)'); });
-  it('avg()', () => { expect(avg(col('score')).toSql()).toBe('AVG(score)'); });
-  it('min()', () => { expect(min(col('price')).toSql()).toBe('MIN(price)'); });
-  it('max()', () => { expect(max(col('price')).toSql()).toBe('MAX(price)'); });
+  it('count()', () => {
+    expect(count().toSql()).toBe('COUNT(*)');
+  });
+  it('count(expr)', () => {
+    expect(count(col('id')).toSql()).toBe('COUNT(id)');
+  });
+  it('sum()', () => {
+    expect(sum(col('amount')).toSql()).toBe('SUM(amount)');
+  });
+  it('avg()', () => {
+    expect(avg(col('score')).toSql()).toBe('AVG(score)');
+  });
+  it('min()', () => {
+    expect(min(col('price')).toSql()).toBe('MIN(price)');
+  });
+  it('max()', () => {
+    expect(max(col('price')).toSql()).toBe('MAX(price)');
+  });
 
-  it('upper()', () => { expect(upper(col('name')).toSql()).toBe('UPPER(name)'); });
-  it('lower()', () => { expect(lower(col('name')).toSql()).toBe('LOWER(name)'); });
-  it('length()', () => { expect(length(col('name')).toSql()).toBe('LENGTH(name)'); });
-  it('trim()', () => { expect(trim(col('name')).toSql()).toBe('TRIM(name)'); });
+  it('upper()', () => {
+    expect(upper(col('name')).toSql()).toBe('UPPER(name)');
+  });
+  it('lower()', () => {
+    expect(lower(col('name')).toSql()).toBe('LOWER(name)');
+  });
+  it('length()', () => {
+    expect(length(col('name')).toSql()).toBe('LENGTH(name)');
+  });
+  it('trim()', () => {
+    expect(trim(col('name')).toSql()).toBe('TRIM(name)');
+  });
 
   it('coalesce()', () => {
-    expect(coalesce(col('a'), col('b'), lit(0)).toSql()).toBe('COALESCE(a, b, 0)');
+    expect(coalesce(col('a'), col('b'), lit(0)).toSql()).toBe(
+      'COALESCE(a, b, 0)',
+    );
   });
   it('nullIf()', () => {
     expect(nullIf(col('x'), lit(0)).toSql()).toBe('NULLIF(x, 0)');
   });
 
-  it('abs()', () => { expect(abs(col('x')).toSql()).toBe('ABS(x)'); });
-  it('round()', () => { expect(round(col('x')).toSql()).toBe('ROUND(x)'); });
-  it('floor()', () => { expect(floor(col('x')).toSql()).toBe('FLOOR(x)'); });
-  it('ceil()', () => { expect(ceil(col('x')).toSql()).toBe('CEIL(x)'); });
+  it('abs()', () => {
+    expect(abs(col('x')).toSql()).toBe('ABS(x)');
+  });
+  it('round()', () => {
+    expect(round(col('x')).toSql()).toBe('ROUND(x)');
+  });
+  it('floor()', () => {
+    expect(floor(col('x')).toSql()).toBe('FLOOR(x)');
+  });
+  it('ceil()', () => {
+    expect(ceil(col('x')).toSql()).toBe('CEIL(x)');
+  });
 
   it('greatest()', () => {
     expect(greatest(col('a'), col('b')).toSql()).toBe('GREATEST(a, b)');
@@ -572,12 +642,22 @@ describe('Convenience functions', () => {
     expect(least(col('a'), col('b')).toSql()).toBe('LEAST(a, b)');
   });
 
-  it('currentDate()', () => { expect(currentDate().toSql()).toBe('CURRENT_DATE()'); });
-  it('currentTimestamp()', () => { expect(currentTimestamp().toSql()).toBe('CURRENT_TIMESTAMP()'); });
+  it('currentDate()', () => {
+    expect(currentDate().toSql()).toBe('CURRENT_DATE()');
+  });
+  it('currentTimestamp()', () => {
+    expect(currentTimestamp().toSql()).toBe('CURRENT_TIMESTAMP()');
+  });
 
-  it('rowNumber()', () => { expect(rowNumber().toSql()).toBe('ROW_NUMBER()'); });
-  it('rank()', () => { expect(rank().toSql()).toBe('RANK()'); });
-  it('denseRank()', () => { expect(denseRank().toSql()).toBe('DENSE_RANK()'); });
+  it('rowNumber()', () => {
+    expect(rowNumber().toSql()).toBe('ROW_NUMBER()');
+  });
+  it('rank()', () => {
+    expect(rank().toSql()).toBe('RANK()');
+  });
+  it('denseRank()', () => {
+    expect(denseRank().toSql()).toBe('DENSE_RANK()');
+  });
 });
 
 // ============================================================================
@@ -600,7 +680,9 @@ describe('End-to-end queries', () => {
       .limit(50)
       .toSql('postgresql');
 
-    expect(sql).toContain('SELECT u.name, COUNT(*) AS order_count, SUM(o.total) AS total_spent');
+    expect(sql).toContain(
+      'SELECT u.name, COUNT(*) AS order_count, SUM(o.total) AS total_spent',
+    );
     expect(sql).toContain('FROM users');
     expect(sql).toContain('LEFT JOIN orders ON u.id = o.user_id');
     expect(sql).toContain('WHERE u.active = TRUE');
@@ -611,8 +693,7 @@ describe('End-to-end queries', () => {
   });
 
   it('INSERT with multiple rows', () => {
-    const b = insertInto('users')
-      .columns('id', 'name');
+    const b = insertInto('users').columns('id', 'name');
     b.values(lit(1), lit('Alice'));
     b.values(lit(2), lit('Bob'));
     const sql = b.toSql();

@@ -9,13 +9,17 @@
  */
 
 import type { Expression } from '../../generated/Expression';
-import { type ExpressionType, type ExpressionByKey, getExprType } from '../helpers';
+import {
+  type ExpressionByKey,
+  type ExpressionType,
+  getExprType,
+} from '../helpers';
 
 /**
  * Generic type guard factory
  */
 function isType<T extends ExpressionType>(
-  type: T
+  type: T,
 ): (expr: Expression) => expr is ExpressionByKey<T> {
   return (expr: Expression): expr is ExpressionByKey<T> =>
     type in (expr as Record<string, unknown>);
@@ -287,15 +291,23 @@ export function isSetOperation(expr: Expression): boolean {
 export function isComparison(expr: Expression): boolean {
   const t = getExprType(expr);
   return (
-    t === 'eq' || t === 'neq' || t === 'lt' || t === 'lte' ||
-    t === 'gt' || t === 'gte' || t === 'like' || t === 'i_like'
+    t === 'eq' ||
+    t === 'neq' ||
+    t === 'lt' ||
+    t === 'lte' ||
+    t === 'gt' ||
+    t === 'gte' ||
+    t === 'like' ||
+    t === 'i_like'
   );
 }
 
 /** Check if expression is an arithmetic operator */
 export function isArithmetic(expr: Expression): boolean {
   const t = getExprType(expr);
-  return t === 'add' || t === 'sub' || t === 'mul' || t === 'div' || t === 'mod';
+  return (
+    t === 'add' || t === 'sub' || t === 'mul' || t === 'div' || t === 'mod'
+  );
 }
 
 /** Check if expression is a logical operator */
@@ -308,15 +320,27 @@ export function isLogical(expr: Expression): boolean {
 export function isDDL(expr: Expression): boolean {
   const t = getExprType(expr);
   return (
-    t === 'create_table' || t === 'drop_table' || t === 'alter_table' ||
-    t === 'create_index' || t === 'drop_index' ||
-    t === 'create_view' || t === 'drop_view' ||
-    t === 'create_schema' || t === 'drop_schema' ||
-    t === 'create_database' || t === 'drop_database' ||
-    t === 'create_function' || t === 'drop_function' ||
-    t === 'create_procedure' || t === 'drop_procedure' ||
-    t === 'create_sequence' || t === 'drop_sequence' || t === 'alter_sequence' ||
-    t === 'create_trigger' || t === 'drop_trigger' ||
-    t === 'create_type' || t === 'drop_type'
+    t === 'create_table' ||
+    t === 'drop_table' ||
+    t === 'alter_table' ||
+    t === 'create_index' ||
+    t === 'drop_index' ||
+    t === 'create_view' ||
+    t === 'drop_view' ||
+    t === 'create_schema' ||
+    t === 'drop_schema' ||
+    t === 'create_database' ||
+    t === 'drop_database' ||
+    t === 'create_function' ||
+    t === 'drop_function' ||
+    t === 'create_procedure' ||
+    t === 'drop_procedure' ||
+    t === 'create_sequence' ||
+    t === 'drop_sequence' ||
+    t === 'alter_sequence' ||
+    t === 'create_trigger' ||
+    t === 'drop_trigger' ||
+    t === 'create_type' ||
+    t === 'drop_type'
   );
 }

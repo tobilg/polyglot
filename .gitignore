@@ -52,15 +52,19 @@ plans/
 target/
 
 # Generated TypeScript bindings (ts-rs)
-crates/polyglot-core/bindings/
-packages/polyglot/src/generated/
-
-packages/polyglot/dist
-packages/polyglot/node_modules
+crates/polyglot-sql/bindings/
 
 tools/sqlglot-compare/dist
 tools/sqlglot-compare/node_modules
 
+# WASM build output
+packages/sdk/wasm/
+crates/polyglot-sql-wasm/pkg/
+crates/polyglot-sql-wasm/pkg-bundler/
+crates/polyglot-sql-wasm/pkg-node/
+
 # Node.js
 node_modules/
 dist/
+packages/sdk/coverage/
+

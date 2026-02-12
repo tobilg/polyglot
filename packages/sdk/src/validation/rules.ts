@@ -4,17 +4,21 @@
  * These rules check for semantic issues beyond syntax correctness.
  */
 
+import { getExprData, getExprType } from '../ast/helpers';
+import {
+  findByType,
+  getAggregateFunctions,
+  hasAggregates,
+} from '../ast/visitor/walker';
 import type { Expression } from '../generated/Expression';
 import type { ValidationError, ValidationOptions } from './types';
-import { findByType, hasAggregates, getAggregateFunctions } from '../ast/visitor/walker';
-import { getExprType, getExprData } from '../ast/helpers';
 
 /**
  * Run all semantic validation rules on an expression
  */
 export function validateSemantics(
   expr: Expression,
-  options: ValidationOptions
+  options: ValidationOptions,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -31,7 +35,7 @@ export function validateSemantics(
  */
 function validateSelect(
   select: Expression,
-  _options: ValidationOptions
+  _options: ValidationOptions,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
 
@@ -39,7 +43,8 @@ function validateSelect(
   const stars = findByType(select, 'star');
   if (stars.length > 0) {
     errors.push({
-      message: 'SELECT * is discouraged; specify columns explicitly for better performance and maintainability',
+      message:
+        'SELECT * is discouraged; specify columns explicitly for better performance and maintainability',
       severity: 'warning',
       code: 'W001',
     });
@@ -73,7 +78,8 @@ function validateSelect(
 
     if (hasNonAggregateColumn && aggregateFunctions.length > 0) {
       errors.push({
-        message: 'Mixing aggregate functions with non-aggregated columns without GROUP BY may cause errors in strict SQL mode',
+        message:
+          'Mixing aggregate functions with non-aggregated columns without GROUP BY may cause errors in strict SQL mode',
         severity: 'warning',
         code: 'W002',
       });
@@ -84,7 +90,8 @@ function validateSelect(
   if (selectData.distinct && selectData.order_by) {
     // This is a simplified check - full check would require column name matching
     errors.push({
-      message: 'DISTINCT with ORDER BY: ensure ORDER BY columns are in SELECT list',
+      message:
+        'DISTINCT with ORDER BY: ensure ORDER BY columns are in SELECT list',
       severity: 'warning',
       code: 'W003',
     });

@@ -7,11 +7,11 @@
 
 // Import the WASM module - synchronously initialized on import via bundler target
 import {
-  transpile as wasmTranspile,
-  parse as wasmParse,
-  generate as wasmGenerate,
   format_sql as wasmFormatSql,
+  generate as wasmGenerate,
   get_dialects as wasmGetDialects,
+  parse as wasmParse,
+  transpile as wasmTranspile,
   version as wasmVersion,
 } from '../wasm/polyglot_sql_wasm.js';
 
@@ -57,13 +57,6 @@ export enum Dialect {
 /**
  * Transpilation options
  */
-export interface TranspileOptions {
-  /** Source dialect to parse the SQL with */
-  read: Dialect;
-  /** Target dialect to generate SQL for */
-  write: Dialect;
-}
-
 /**
  * Result of a transpilation operation
  */
@@ -102,20 +95,26 @@ export function isInitialized(): boolean {
  * Transpile SQL from one dialect to another.
  *
  * @param sql - The SQL string to transpile
- * @param options - Transpilation options specifying source and target dialects
+ * @param read - Source dialect to parse the SQL with
+ * @param write - Target dialect to generate SQL for
  * @returns The transpiled SQL statements
  *
  * @example
  * ```typescript
  * const result = transpile(
  *   "SELECT IFNULL(a, b)",
- *   { read: Dialect.MySQL, write: Dialect.PostgreSQL }
+ *   Dialect.MySQL,
+ *   Dialect.PostgreSQL,
  * );
  * // result.sql[0] = "SELECT COALESCE(a, b)"
  * ```
  */
-export function transpile(sql: string, options: TranspileOptions): TranspileResult {
-  const resultJson = wasmTranspile(sql, options.read, options.write);
+export function transpile(
+  sql: string,
+  read: Dialect,
+  write: Dialect,
+): TranspileResult {
+  const resultJson = wasmTranspile(sql, read, write);
   return JSON.parse(resultJson) as TranspileResult;
 }
 
@@ -132,7 +131,10 @@ export function transpile(sql: string, options: TranspileOptions): TranspileResu
  * console.log(result.ast);
  * ```
  */
-export function parse(sql: string, dialect: Dialect = Dialect.Generic): ParseResult {
+export function parse(
+  sql: string,
+  dialect: Dialect = Dialect.Generic,
+): ParseResult {
   const resultJson = wasmParse(sql, dialect);
   const result = JSON.parse(resultJson);
 
@@ -151,7 +153,10 @@ export function parse(sql: string, dialect: Dialect = Dialect.Generic): ParseRes
  * @param dialect - The target dialect
  * @returns The generated SQL
  */
-export function generate(ast: any, dialect: Dialect = Dialect.Generic): TranspileResult {
+export function generate(
+  ast: any,
+  dialect: Dialect = Dialect.Generic,
+): TranspileResult {
   const astJson = JSON.stringify(ast);
   const resultJson = wasmGenerate(astJson, dialect);
   return JSON.parse(resultJson) as TranspileResult;
@@ -170,7 +175,10 @@ export function generate(ast: any, dialect: Dialect = Dialect.Generic): Transpil
  * // result.sql[0] = "SELECT\n  a,\n  b\nFROM t\nWHERE x = 1"
  * ```
  */
-export function format(sql: string, dialect: Dialect = Dialect.Generic): TranspileResult {
+export function format(
+  sql: string,
+  dialect: Dialect = Dialect.Generic,
+): TranspileResult {
   const resultJson = wasmFormatSql(sql, dialect);
   return JSON.parse(resultJson) as TranspileResult;
 }
@@ -215,8 +223,8 @@ export class Polyglot {
   /**
    * Transpile SQL from one dialect to another.
    */
-  transpile(sql: string, options: TranspileOptions): TranspileResult {
-    return transpile(sql, options);
+  transpile(sql: string, read: Dialect, write: Dialect): TranspileResult {
+    return transpile(sql, read, write);
   }
 
   /**
@@ -257,119 +265,115 @@ export class Polyglot {
 
 // Re-export AST module (types, guards, helpers, visitor — excluding old builders)
 export * as ast from './ast';
-
+// Also export commonly used AST items at top level for convenience
+export {
+  findAll,
+  getColumns,
+  isColumn,
+  isFunction,
+  isLiteral,
+  // Type guards
+  isSelect,
+  renameColumns,
+  transform,
+  // Visitor utilities
+  walk,
+} from './ast';
 // Re-export WASM-backed builders at top level
 export {
-  // Expression class & types
-  Expr,
-  type ExprInput,
-  // Expression helpers
-  col,
-  lit,
-  star,
-  sqlNull,
-  boolean,
-  table,
-  sqlExpr,
-  condition,
-  func,
-  not,
-  cast,
+  abs,
   alias,
   and,
-  or,
+  avg,
+  boolean,
+  CaseBuilder,
+  caseOf,
+  caseWhen,
+  cast,
+  ceil,
+  coalesce,
+  // Expression helpers
+  col,
+  concatWs,
+  condition,
   // Convenience functions
   count,
   countDistinct,
-  sum,
-  avg,
-  min,
-  max,
-  upper,
-  lower,
-  length,
-  trim,
-  ltrim,
-  rtrim,
-  reverse,
-  initcap,
-  substring,
-  replace,
-  concatWs,
-  coalesce,
-  nullIf,
-  ifNull,
-  abs,
-  round,
-  floor,
-  ceil,
-  power,
-  sqrt,
-  ln,
-  exp,
-  sign,
-  greatest,
-  least,
   currentDate,
   currentTime,
   currentTimestamp,
-  extract,
-  rowNumber,
-  rank,
+  DeleteBuilder,
+  del,
+  deleteFrom,
   denseRank,
-  // Query builders
-  SelectBuilder,
-  select,
+  // Expression class & types
+  Expr,
+  type ExprInput,
+  except,
+  exp,
+  extract,
+  floor,
+  func,
+  greatest,
   InsertBuilder,
+  ifNull,
+  initcap,
   insert,
   insertInto,
-  UpdateBuilder,
-  update,
-  DeleteBuilder,
-  deleteFrom,
-  del,
+  intersect,
+  least,
+  length,
+  lit,
+  ln,
+  lower,
+  ltrim,
   MergeBuilder,
+  max,
   mergeInto,
-  CaseBuilder,
-  caseWhen,
-  caseOf,
+  min,
+  not,
+  nullIf,
+  or,
+  power,
+  rank,
+  replace,
+  reverse,
+  round,
+  rowNumber,
+  rtrim,
+  // Query builders
+  SelectBuilder,
   SetOpBuilder,
+  select,
+  sign,
+  sqlExpr,
+  sqlNull,
+  sqrt,
+  star,
+  substring,
+  sum,
+  table,
+  trim,
+  UpdateBuilder,
   union,
   unionAll,
-  intersect,
-  except,
+  update,
+  upper,
 } from './builders';
-
-// Also export commonly used AST items at top level for convenience
-export {
-  // Type guards
-  isSelect,
-  isColumn,
-  isLiteral,
-  isFunction,
-  // Visitor utilities
-  walk,
-  findAll,
-  getColumns,
-  transform,
-  renameColumns,
-} from './ast';
-
-// Re-export validation module
-export { validate, ValidationSeverity } from './validation';
 export type {
-  ValidationResult,
   ValidationError,
   ValidationOptions,
+  ValidationResult,
 } from './validation';
-
-export { validateWithSchema } from './validation/schema-validator';
+// Re-export validation module
+export { ValidationSeverity, validate } from './validation';
 export type {
-  Schema,
-  TableSchema,
   ColumnSchema,
+  Schema,
   SchemaValidationOptions,
+  TableSchema,
 } from './validation/schema-validator';
+export { validateWithSchema } from './validation/schema-validator';
 
 // Default export
 export default {

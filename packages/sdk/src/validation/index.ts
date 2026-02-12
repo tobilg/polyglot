@@ -4,17 +4,29 @@
  * Provides syntax and semantic validation for SQL queries.
  */
 
-import { validate as wasmValidate, parse as wasmParse } from '../../wasm/polyglot_sql_wasm.js';
-import type { ValidationResult, ValidationError, ValidationOptions } from './types';
+import {
+  parse as wasmParse,
+  validate as wasmValidate,
+} from '../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../generated/Expression';
 import { validateSemantics } from './rules';
+import type {
+  ValidationError,
+  ValidationOptions,
+  ValidationResult,
+} from './types';
 
 export type { ValidationResult, ValidationError, ValidationOptions };
-export { ValidationSeverity } from './types';
+export type {
+  ColumnSchema,
+  Schema,
+  SchemaValidationOptions,
+  TableSchema,
+} from './schema-validator';
 
 // Re-export schema validation
 export { validateWithSchema } from './schema-validator';
-export type { Schema, TableSchema, ColumnSchema, SchemaValidationOptions } from './schema-validator';
+export { ValidationSeverity } from './types';
 
 /**
  * Dialect type for validation (matches the main Dialect enum)
@@ -61,7 +73,7 @@ export type ValidateDialect =
 export function validate(
   sql: string,
   dialect: ValidateDialect | string = 'generic',
-  options: ValidationOptions = {}
+  options: ValidationOptions = {},
 ): ValidationResult {
   // Step 1: Syntax validation via WASM
   const resultJson = wasmValidate(sql, dialect);

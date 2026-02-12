@@ -46,9 +46,8 @@ export type ExpressionByKey<K extends ExpressionType> = Extract<
  * // => Select
  * ```
  */
-export type ExpressionInner<K extends ExpressionType> = ExpressionByKey<K> extends Record<K, infer V>
-  ? V
-  : never;
+export type ExpressionInner<K extends ExpressionType> =
+  ExpressionByKey<K> extends Record<K, infer V> ? V : never;
 
 /**
  * Get the type tag (variant key) of an Expression at runtime.

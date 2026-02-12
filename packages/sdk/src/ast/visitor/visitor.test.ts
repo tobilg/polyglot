@@ -7,54 +7,53 @@
  * instead of { "type": "variant", ...data }.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { col, lit } from '../../builders';
+import type { Expression } from '../../generated/Expression';
+import { Dialect, generate, parse } from '../../index';
+import { getExprData, getExprType, makeExpr } from '../helpers';
 import {
-  // Walker functions
-  walk,
+  addSelectColumns,
+  addWhere,
+  clone,
+  countNodes,
+  every,
   findAll,
   findByType,
   findFirst,
-  some,
-  every,
-  countNodes,
-  getColumns,
-  getTables,
-  getIdentifiers,
-  getFunctions,
   getAggregateFunctions,
-  getWindowFunctions,
-  getSubqueries,
-  getLiterals,
   getColumnNames,
-  getTableNames,
-  hasAggregates,
-  hasWindowFunctions,
-  hasSubqueries,
+  getColumns,
   getDepth,
+  getFunctions,
+  getIdentifiers,
+  getLiterals,
+  getSubqueries,
+  getTableNames,
+  getTables,
+  getWindowFunctions,
+  hasAggregates,
+  hasSubqueries,
+  hasWindowFunctions,
   nodeCount,
-  // Transformer functions
-  transform,
-  replaceNodes,
-  replaceByType,
+  qualifyColumns,
+  remove,
+  removeLimitOffset,
+  removeSelectColumns,
+  removeWhere,
   renameColumns,
   renameTables,
-  qualifyColumns,
-  addWhere,
-  removeWhere,
-  addSelectColumns,
-  removeSelectColumns,
+  replaceByType,
+  replaceNodes,
+  setDistinct,
   setLimit,
   setOffset,
-  removeLimitOffset,
-  setDistinct,
-  clone,
-  remove,
+  some,
+  // Transformer functions
+  transform,
+  // Walker functions
+  walk,
 } from './index';
-
-import { parse, generate, Dialect } from '../../index';
-import { col, lit } from '../../builders';
-import type { Expression } from '../../generated/Expression';
-import { getExprType, getExprData, makeExpr } from '../helpers';
 
 // Helper to parse SQL and get the first statement
 function parseFirst(sql: string): Expression {
@@ -115,8 +114,12 @@ describe('Walker Functions', () => {
       let columnCount = 0;
 
       walk(ast, {
-        select: () => { selectCount++; },
-        column: () => { columnCount++; },
+        select: () => {
+          selectCount++;
+        },
+        column: () => {
+          columnCount++;
+        },
       });
 
       expect(selectCount).toBe(1);
@@ -149,7 +152,10 @@ describe('Walker Functions', () => {
 
     it('should return empty array when no matches', () => {
       const ast = parseFirst('SELECT 1');
-      const subqueries = findAll(ast, (node) => getExprType(node) === 'subquery');
+      const subqueries = findAll(
+        ast,
+        (node) => getExprType(node) === 'subquery',
+      );
 
       expect(subqueries).toEqual([]);
     });
@@ -231,7 +237,10 @@ describe('Walker Functions', () => {
 
     it('should return false when some nodes do not match', () => {
       const ast = parseFirst('SELECT a, b FROM users');
-      const allAreColumns = every(ast, (node) => getExprType(node) === 'column');
+      const allAreColumns = every(
+        ast,
+        (node) => getExprType(node) === 'column',
+      );
 
       expect(allAreColumns).toBe(false);
     });
@@ -240,7 +249,10 @@ describe('Walker Functions', () => {
   describe('countNodes()', () => {
     it('should count nodes matching predicate', () => {
       const ast = parseFirst('SELECT a, b, c FROM users');
-      const columnCount = countNodes(ast, (node) => getExprType(node) === 'column');
+      const columnCount = countNodes(
+        ast,
+        (node) => getExprType(node) === 'column',
+      );
 
       expect(columnCount).toBe(3);
     });
@@ -303,7 +315,7 @@ describe('Convenience Finder Functions', () => {
 
       // But they can be found by type
       const allNodes = findAll(ast, (n) =>
-        ['upper', 'lower'].includes(getExprType(n))
+        ['upper', 'lower'].includes(getExprType(n)),
       );
       expect(allNodes.length).toBe(2);
     });
@@ -311,7 +323,9 @@ describe('Convenience Finder Functions', () => {
 
   describe('getAggregateFunctions()', () => {
     it('should find aggregate functions in SELECT', () => {
-      const ast = parseFirst('SELECT COUNT(*), SUM(amount), AVG(price) FROM orders');
+      const ast = parseFirst(
+        'SELECT COUNT(*), SUM(amount), AVG(price) FROM orders',
+      );
       const aggregates = getAggregateFunctions(ast);
 
       expect(aggregates.length).toBe(3);
@@ -327,7 +341,9 @@ describe('Convenience Finder Functions', () => {
 
   describe('getWindowFunctions()', () => {
     it('should find window functions in SELECT', () => {
-      const ast = parseFirst('SELECT ROW_NUMBER() OVER (ORDER BY id) FROM users');
+      const ast = parseFirst(
+        'SELECT ROW_NUMBER() OVER (ORDER BY id) FROM users',
+      );
       const windows = getWindowFunctions(ast);
 
       expect(windows.length).toBe(1);
@@ -458,6 +474,7 @@ describe('Transformer Functions', () => {
           if (getExprType(node) === 'select') {
             transformed = true;
           }
+          return undefined;
         },
       });
 
@@ -472,6 +489,7 @@ describe('Transformer Functions', () => {
       transform(ast, {
         column: () => {
           columnVisited = true;
+          return undefined;
         },
       });
 
@@ -491,7 +509,7 @@ describe('Transformer Functions', () => {
           const data = getExprData(node) as { value?: string };
           return data.value === '1';
         },
-        makeExpr('literal', { literal_type: 'number', value: '100' })
+        makeExpr('literal', { literal_type: 'number', value: '100' }),
       );
 
       const sql = toSql(newAst);
@@ -510,7 +528,7 @@ describe('Transformer Functions', () => {
             literal_type: 'number',
             value: String(Number(data.value || 0) * 10),
           });
-        }
+        },
       );
 
       const sql = toSql(newAst);
@@ -526,7 +544,7 @@ describe('Transformer Functions', () => {
       const newAst = replaceByType(
         ast,
         'null',
-        makeExpr('literal', { literal_type: 'number', value: '0' })
+        makeExpr('literal', { literal_type: 'number', value: '0' }),
       );
 
       const sql = toSql(newAst);
@@ -627,7 +645,10 @@ describe('WHERE Clause Manipulation', () => {
     });
 
     it('should not modify non-SELECT nodes', () => {
-      const literalAst = makeExpr('literal', { literal_type: 'number', value: '1' });
+      const literalAst = makeExpr('literal', {
+        literal_type: 'number',
+        value: '1',
+      });
       const condition = col('a').eq(lit(1)).toJSON() as Expression;
       const result = addWhere(literalAst, condition);
 
@@ -674,7 +695,7 @@ describe('SELECT Clause Manipulation', () => {
       const newAst = addSelectColumns(
         ast,
         col('b').toJSON() as Expression,
-        col('c').toJSON() as Expression
+        col('c').toJSON() as Expression,
       );
       const sql = toSql(newAst);
 

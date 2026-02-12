@@ -1,6 +1,7 @@
 {
   "name": "sqlglot-compare",
-  "version": "1.0.0",
+  "private": true,
+  "version": "0.1.0",
   "description": "Comparison framework for SQLGlot vs Polyglot compatibility testing",
   "type": "module",
   "main": "dist/index.js",

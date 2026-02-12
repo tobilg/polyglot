@@ -68,7 +68,8 @@ import { transpile, Dialect } from '@polyglot-sql/sdk';
 // Transpile MySQL to PostgreSQL
 const result = transpile(
   'SELECT IFNULL(a, b) FROM t',
-  { read: Dialect.MySQL, write: Dialect.PostgreSQL }
+  Dialect.MySQL,
+  Dialect.PostgreSQL,
 );
 console.log(result.sql[0]); // SELECT COALESCE(a, b) FROM t
 ```
@@ -119,30 +120,30 @@ cd packages/sdk && npm run build
 
 ## Testing
 
-Polyglot maintains compatibility with sqlglot through **6,284 fixture tests** extracted from the Python reference implementation. All test suites pass at **100%**.
+Polyglot maintains compatibility with sqlglot through **8,455 fixture tests** extracted from the Python reference implementation. All test suites pass at **100%**.
 
 | Category | Count | Pass Rate |
 |----------|------:|:---------:|
 | Generic identity | 955 | 100% |
-| Dialect identity | 3,489 | 100% |
-| Transpilation | 1,816 | 100% |
+| Dialect identity | 3,461 | 100% |
+| Transpilation | 4,015 | 100% |
 | Pretty-print | 24 | 100% |
-| Lib unit tests | 693 | 100% |
-| **Total** | **6,977** | **100%** |
+| Lib unit tests | 704 | 100% |
+| **Total** | **9,159** | **100%** |
 
 ```bash
 # Setup fixtures (required once)
 make setup-fixtures
 
 # Run all tests
-make test-rust-all          # All 6,284 fixture tests
-make test-rust-lib          # 693 lib unit tests
+make test-rust-all          # All 8,455 fixture tests
+make test-rust-lib          # 704 lib unit tests
 make test-rust-verify       # Full verification (lib + identity + dialect + transpilation)
 
 # Individual test suites
 make test-rust-identity     # 955 generic identity tests
-make test-rust-dialect      # 3,489 dialect identity tests
-make test-rust-transpile    # 1,816 transpilation tests
+make test-rust-dialect      # 3,461 dialect identity tests
+make test-rust-transpile    # 4,015 transpilation tests
 make test-rust-pretty       # 24 pretty-print tests
 
 # Additional tests

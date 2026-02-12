@@ -14,7 +14,7 @@ export type VisitorCallback<T = void> = (
   node: Expression,
   parent: Expression | null,
   key: string | null,
-  index: number | null
+  index: number | null,
 ) => T;
 
 /**
@@ -36,7 +36,7 @@ export type TransformCallback = (
   node: Expression,
   parent: Expression | null,
   key: string | null,
-  index: number | null
+  index: number | null,
 ) => Expression | undefined | null;
 
 /**
@@ -56,7 +56,7 @@ export type TransformConfig = {
  */
 export type NodePredicate = (
   node: Expression,
-  parent: Expression | null
+  parent: Expression | null,
 ) => boolean;
 
 /**

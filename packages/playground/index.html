@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Polyglot SQL Playground</title>
+    <style>
+      .init-spinner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background: #fafafa;
+        color: #71717a;
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+        font-size: 14px;
+        gap: 12px;
+      }
+      @media (prefers-color-scheme: dark) {
+        .init-spinner {
+          background: #09090b;
+          color: #a1a1aa;
+        }
+      }
+      .init-spinner::before {
+        content: "";
+        width: 20px;
+        height: 20px;
+        border: 2px solid #e4e4e7;
+        border-top-color: #71717a;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @media (prefers-color-scheme: dark) {
+        .init-spinner::before {
+          border-color: #27272a;
+          border-top-color: #a1a1aa;
+        }
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="init-spinner">Loading WASM runtime…</div></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -5,7 +5,7 @@
  */
 
 import type { Expression } from '../../generated/Expression';
-import type { ExpressionType, ExpressionByKey } from '../helpers';
+import type { ExpressionByKey, ExpressionType } from '../helpers';
 
 // ============================================================================
 // Expression Type Extraction

@@ -9,13 +9,13 @@
 
 // Helpers for externally tagged Expression format
 export {
-  getExprType,
-  getExprData,
-  isExpressionValue,
-  makeExpr,
-  type ExpressionType,
   type ExpressionByKey,
   type ExpressionInner,
+  type ExpressionType,
+  getExprData,
+  getExprType,
+  isExpressionValue,
+  makeExpr,
 } from './helpers';
 
 // Types - export all from types (includes type guards like isSelect, isColumn, etc.)

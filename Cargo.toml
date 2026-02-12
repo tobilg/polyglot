@@ -11,7 +11,11 @@ edition = "2021"
 license = "MIT"
 authors = ["polyglot contributors"]
 repository = "https://github.com/tobilg/polyglot"
+homepage = "https://github.com/tobilg/polyglot"
+documentation = "https://docs.rs/polyglot-sql"
 description = "SQL dialect translator compiled to WebAssembly"
+keywords = ["sql", "transpile", "dialect", "parser", "wasm"]
+categories = ["compilers", "parser-implementations", "wasm"]
 
 [workspace.dependencies]
 # Serialization

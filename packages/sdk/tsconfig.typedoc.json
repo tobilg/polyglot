@@ -2,6 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "forceConsistentCasingInFileNames": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "types": ["node"]
   },
   "exclude": ["node_modules", "dist", "src/**/*.test.ts"]

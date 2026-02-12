@@ -2,20 +2,18 @@
   "$schema": "https://typedoc.org/schema.json",
   "name": "Polyglot SQL API Documentation",
   "entryPoints": [
-    "../sdk"
+    "../sdk/src/index.ts"
   ],
-  "entryPointStrategy": "packages",
-  "packageOptions": {
-    "tsconfig": "tsconfig.typedoc.json"
-  },
+  "entryPointStrategy": "resolve",
+  "tsconfig": "../sdk/tsconfig.typedoc.json",
   "router": "structure-dir",
   "out": "dist",
-  "readme": "./README.md",
-  "includeVersion": false,
+  "readme": "../sdk/README.md",
+  "includeVersion": true,
   "excludePrivate": true,
   "excludeProtected": true,
   "excludeInternal": true,
-  "titleLink": "https://polyglot-sql-api.pages.dev",
+  "titleLink": "/",
   "navigationLinks": {
     "GitHub": "https://github.com/tobilg/polyglot",
     "npm": "https://www.npmjs.com/package/@polyglot-sql/sdk"

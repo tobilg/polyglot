@@ -9,8 +9,17 @@
  */
 
 import type { Expression } from '../../generated/Expression';
-import type { TransformConfig, TransformCallback, NodePredicate } from './types';
-import { getExprType, getExprData, isExpressionValue, makeExpr } from '../helpers';
+import {
+  getExprData,
+  getExprType,
+  isExpressionValue,
+  makeExpr,
+} from '../helpers';
+import type {
+  NodePredicate,
+  TransformCallback,
+  TransformConfig,
+} from './types';
 
 // ============================================================================
 // Core Transformer
@@ -29,14 +38,14 @@ import { getExprType, getExprData, isExpressionValue, makeExpr } from '../helper
 function transformValue(
   value: unknown,
   config: TransformConfig,
-  parent: Expression
+  parent: Expression,
 ): unknown {
   if (value === null || value === undefined) return value;
 
   if (Array.isArray(value)) {
     if (value.length > 0 && isExpressionValue(value[0])) {
       return value.map((item, i) =>
-        transformNode(item as Expression, config, parent, null, i)
+        transformNode(item as Expression, config, parent, null, i),
       );
     }
     if (value.length > 0 && Array.isArray(value[0])) {
@@ -85,7 +94,7 @@ function transformNode(
   config: TransformConfig,
   parent: Expression | null,
   key: string | null,
-  index: number | null
+  index: number | null,
 ): Expression {
   // Call enter callback
   let currentNode = node;
@@ -102,7 +111,9 @@ function transformNode(
 
   // Call type-specific callback
   const nodeType = getExprType(currentNode);
-  const typeCallback = config[nodeType as keyof TransformConfig] as TransformCallback | undefined;
+  const typeCallback = config[nodeType as keyof TransformConfig] as
+    | TransformCallback
+    | undefined;
   if (typeCallback) {
     const result = typeCallback(currentNode, parent, key, index);
     if (result === null) {
@@ -166,7 +177,7 @@ function transformNode(
  */
 export function transform(
   node: Expression,
-  config: TransformConfig
+  config: TransformConfig,
 ): Expression {
   return transformNode(node, config, null, null, null);
 }
@@ -191,15 +202,14 @@ export function transform(
 export function replaceNodes(
   node: Expression,
   predicate: NodePredicate,
-  replacement: Expression | ((node: Expression) => Expression)
+  replacement: Expression | ((node: Expression) => Expression),
 ): Expression {
   return transform(node, {
     enter: (n, parent) => {
       if (predicate(n, parent)) {
-        return typeof replacement === 'function'
-          ? replacement(n)
-          : replacement;
+        return typeof replacement === 'function' ? replacement(n) : replacement;
       }
+      return undefined;
     },
   });
 }
@@ -210,16 +220,14 @@ export function replaceNodes(
 export function replaceByType(
   node: Expression,
   type: string,
-  replacement:
-    | Expression
-    | ((node: Expression) => Expression)
+  replacement: Expression | ((node: Expression) => Expression),
 ): Expression {
   return replaceNodes(
     node,
     (n: Expression) => getExprType(n) === type,
     typeof replacement === 'function'
       ? (n: Expression) => (replacement as (node: Expression) => Expression)(n)
-      : replacement
+      : replacement,
   );
 }
 
@@ -240,11 +248,14 @@ export function replaceByType(
  */
 export function renameColumns(
   node: Expression,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): Expression {
   return transform(node, {
     column: (n) => {
-      const data = getExprData(n) as { name: { name: string; quoted: boolean }; table: unknown };
+      const data = getExprData(n) as {
+        name: { name: string; quoted: boolean };
+        table: unknown;
+      };
       const oldName = data.name.name;
       if (mapping[oldName]) {
         return makeExpr('column', {
@@ -252,6 +263,7 @@ export function renameColumns(
           name: { ...data.name, name: mapping[oldName] },
         });
       }
+      return undefined;
     },
     identifier: (n) => {
       const data = getExprData(n) as { name: string; quoted: boolean };
@@ -262,6 +274,7 @@ export function renameColumns(
           name: mapping[oldName],
         });
       }
+      return undefined;
     },
   });
 }
@@ -279,11 +292,13 @@ export function renameColumns(
  */
 export function renameTables(
   node: Expression,
-  mapping: Record<string, string>
+  mapping: Record<string, string>,
 ): Expression {
   return transform(node, {
     table: (n) => {
-      const data = getExprData(n) as { name: { name: string; quoted: boolean } };
+      const data = getExprData(n) as {
+        name: { name: string; quoted: boolean };
+      };
       const oldName = data.name.name;
       if (mapping[oldName]) {
         return makeExpr('table', {
@@ -291,6 +306,7 @@ export function renameTables(
           name: { ...data.name, name: mapping[oldName] },
         });
       }
+      return undefined;
     },
   });
 }
@@ -307,7 +323,7 @@ export function renameTables(
  */
 export function qualifyColumns(
   node: Expression,
-  tableName: string
+  tableName: string,
 ): Expression {
   return transform(node, {
     column: (n) => {
@@ -318,6 +334,7 @@ export function qualifyColumns(
           table: { name: tableName, quoted: false },
         });
       }
+      return undefined;
     },
   });
 }
@@ -337,7 +354,7 @@ export function qualifyColumns(
 export function addWhere(
   node: Expression,
   condition: Expression,
-  operator: 'and' | 'or' = 'and'
+  operator: 'and' | 'or' = 'and',
 ): Expression {
   if (getExprType(node) !== 'select') {
     return node;
@@ -411,7 +428,7 @@ export function addSelectColumns(
  */
 export function removeSelectColumns(
   node: Expression,
-  predicate: (col: Expression) => boolean
+  predicate: (col: Expression) => boolean,
 ): Expression {
   if (getExprType(node) !== 'select') {
     return node;
@@ -434,7 +451,7 @@ export function removeSelectColumns(
  */
 export function setLimit(
   node: Expression,
-  limit: number | Expression
+  limit: number | Expression,
 ): Expression {
   if (getExprType(node) !== 'select') {
     return node;
@@ -459,7 +476,7 @@ export function setLimit(
  */
 export function setOffset(
   node: Expression,
-  offset: number | Expression
+  offset: number | Expression,
 ): Expression {
   if (getExprType(node) !== 'select') {
     return node;
@@ -504,7 +521,7 @@ export function removeLimitOffset(node: Expression): Expression {
  */
 export function setDistinct(
   node: Expression,
-  distinct: boolean = true
+  distinct: boolean = true,
 ): Expression {
   if (getExprType(node) !== 'select') {
     return node;
@@ -538,7 +555,7 @@ export function clone(node: Expression): Expression {
 function removeFromValue(
   value: unknown,
   predicate: NodePredicate,
-  parent: Expression
+  parent: Expression,
 ): unknown {
   if (value === null || value === undefined) return value;
 
@@ -577,10 +594,7 @@ function removeFromValue(
  * Note: This can only remove nodes that are in arrays (like expressions in SELECT)
  * Removing required nodes will leave them unchanged
  */
-export function remove(
-  node: Expression,
-  predicate: NodePredicate
-): Expression {
+export function remove(node: Expression, predicate: NodePredicate): Expression {
   const nodeType = getExprType(node);
   const innerData = getExprData(node);
 

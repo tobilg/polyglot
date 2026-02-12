@@ -5,14 +5,19 @@
  */
 
 import { parse as wasmParse } from '../../wasm/polyglot_sql_wasm.js';
+import { getExprData, getExprType } from '../ast/helpers';
+import { getColumns, walk } from '../ast/visitor/walker';
 import type { Expression } from '../generated/Expression';
-import type { ValidationResult, ValidationError } from './types';
-import type { Schema, TableSchema, SchemaValidationOptions } from './schema';
 import { validate } from './index';
-import { getColumns, getTables, walk } from '../ast/visitor/walker';
-import { getExprType, getExprData } from '../ast/helpers';
+import type { Schema, SchemaValidationOptions, TableSchema } from './schema';
+import type { ValidationError, ValidationResult } from './types';
 
-export type { Schema, TableSchema, ColumnSchema, SchemaValidationOptions } from './schema';
+export type {
+  ColumnSchema,
+  Schema,
+  SchemaValidationOptions,
+  TableSchema,
+} from './schema';
 
 /**
  * Validate SQL against a database schema.
@@ -48,7 +53,7 @@ export function validateWithSchema(
   sql: string,
   schema: Schema,
   dialect: string = 'generic',
-  options: SchemaValidationOptions = {}
+  options: SchemaValidationOptions = {},
 ): ValidationResult {
   const { strict = schema.strict ?? true, semantic = false } = options;
 
@@ -125,7 +130,7 @@ function buildSchemaMap(schema: Schema): Map<string, TableSchema> {
 function validateStatement(
   stmt: Expression,
   schemaMap: Map<string, TableSchema>,
-  strict: boolean
+  strict: boolean,
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   const severity = strict ? 'error' : 'warning';
@@ -135,7 +140,14 @@ function validateStatement(
   const referencedTables = new Set<string>();
 
   // Find all table references (including aliases from FROM and JOIN clauses)
-  collectTableReferences(stmt, schemaMap, tableAliases, referencedTables, errors, severity);
+  collectTableReferences(
+    stmt,
+    schemaMap,
+    tableAliases,
+    referencedTables,
+    errors,
+    severity,
+  );
 
   // Validate column references
   const columns = getColumns(stmt);
@@ -159,7 +171,7 @@ function validateStatement(
     if (tableName && schemaMap.has(tableName)) {
       const tableSchema = schemaMap.get(tableName)!;
       const columnExists = tableSchema.columns.some(
-        (c) => c.name.toLowerCase() === colName
+        (c) => c.name.toLowerCase() === colName,
       );
 
       if (!columnExists) {
@@ -175,7 +187,7 @@ function validateStatement(
       if (schemaMap.has(singleTable)) {
         const tableSchema = schemaMap.get(singleTable)!;
         const columnExists = tableSchema.columns.some(
-          (c) => c.name.toLowerCase() === colName
+          (c) => c.name.toLowerCase() === colName,
         );
 
         if (!columnExists) {
@@ -192,7 +204,9 @@ function validateStatement(
       for (const tblName of referencedTables) {
         if (schemaMap.has(tblName)) {
           const tableSchema = schemaMap.get(tblName)!;
-          if (tableSchema.columns.some((c) => c.name.toLowerCase() === colName)) {
+          if (
+            tableSchema.columns.some((c) => c.name.toLowerCase() === colName)
+          ) {
             found = true;
             break;
           }
@@ -230,7 +244,8 @@ function getNodeData(node: unknown): Record<string, unknown> | null {
   const keys = Object.keys(node);
   if (keys.length === 1) {
     const val = (node as Record<string, unknown>)[keys[0]];
-    if (typeof val === 'object' && val !== null) return val as Record<string, unknown>;
+    if (typeof val === 'object' && val !== null)
+      return val as Record<string, unknown>;
   }
   return null;
 }
@@ -339,7 +354,7 @@ function collectTableReferences(
   tableAliases: Map<string, string>,
   referencedTables: Set<string>,
   errors: ValidationError[],
-  severity: 'error' | 'warning'
+  severity: 'error' | 'warning',
 ): void {
   // For SELECT statements, extract from FROM clause directly
   const stmtData = getExprData(stmt) as Record<string, unknown>;

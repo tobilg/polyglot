@@ -1,15 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  init,
-  isInitialized,
-  transpile,
-  parse,
-  generate,
+  Dialect,
   format,
+  generate,
   getDialects,
   getVersion,
-  Dialect,
+  init,
+  isInitialized,
   Polyglot,
+  parse,
+  transpile,
 } from './index';
 
 describe('Polyglot SDK', () => {
@@ -101,47 +101,32 @@ describe('Polyglot SDK', () => {
 
   describe('transpile', () => {
     it('should transpile SQL from one dialect to another', () => {
-      const result = transpile('SELECT 1', {
-        read: Dialect.Generic,
-        write: Dialect.PostgreSQL,
-      });
+      const result = transpile('SELECT 1', Dialect.Generic, Dialect.PostgreSQL);
       expect(result.success).toBe(true);
       expect(result.sql).toBeDefined();
     });
 
     it('should transpile same dialect without changes', () => {
-      const result = transpile('SELECT a FROM t', {
-        read: Dialect.Generic,
-        write: Dialect.Generic,
-      });
+      const result = transpile('SELECT a FROM t', Dialect.Generic, Dialect.Generic);
       expect(result.success).toBe(true);
       expect(result.sql).toBeDefined();
     });
 
     it('should handle multiple statements', () => {
-      const result = transpile('SELECT 1; SELECT 2', {
-        read: Dialect.Generic,
-        write: Dialect.Generic,
-      });
+      const result = transpile('SELECT 1; SELECT 2', Dialect.Generic, Dialect.Generic);
       expect(result.success).toBe(true);
       expect(result.sql).toBeDefined();
       expect(result.sql!.length).toBe(2);
     });
 
     it('should transform IFNULL to COALESCE for PostgreSQL', () => {
-      const result = transpile('SELECT IFNULL(a, b)', {
-        read: Dialect.MySQL,
-        write: Dialect.PostgreSQL,
-      });
+      const result = transpile('SELECT IFNULL(a, b)', Dialect.MySQL, Dialect.PostgreSQL);
       expect(result.success).toBe(true);
       expect(result.sql![0]).toContain('COALESCE');
     });
 
     it('should transform NVL to IFNULL for MySQL', () => {
-      const result = transpile('SELECT NVL(a, b)', {
-        read: Dialect.Generic,
-        write: Dialect.MySQL,
-      });
+      const result = transpile('SELECT NVL(a, b)', Dialect.Generic, Dialect.MySQL);
       expect(result.success).toBe(true);
       expect(result.sql![0]).toContain('IFNULL');
     });
@@ -180,10 +165,7 @@ describe('Polyglot SDK', () => {
 
     it('should transpile SQL', () => {
       const polyglot = Polyglot.getInstance();
-      const result = polyglot.transpile('SELECT 1', {
-        read: Dialect.Generic,
-        write: Dialect.PostgreSQL,
-      });
+      const result = polyglot.transpile('SELECT 1', Dialect.Generic, Dialect.PostgreSQL);
       expect(result.success).toBe(true);
     });
 
@@ -197,7 +179,10 @@ describe('Polyglot SDK', () => {
     it('should generate SQL', () => {
       const polyglot = Polyglot.getInstance();
       const parseResult = polyglot.parse('SELECT 1', Dialect.Generic);
-      const generateResult = polyglot.generate(parseResult.ast, Dialect.Generic);
+      const generateResult = polyglot.generate(
+        parseResult.ast,
+        Dialect.Generic,
+      );
       expect(generateResult.success).toBe(true);
     });
 
@@ -240,7 +225,8 @@ describe('Edge cases', () => {
   });
 
   it('should handle complex nested queries', () => {
-    const sql = 'SELECT * FROM (SELECT a FROM t WHERE a > 1) AS sub WHERE sub.a < 10';
+    const sql =
+      'SELECT * FROM (SELECT a FROM t WHERE a > 1) AS sub WHERE sub.a < 10';
     const result = parse(sql, Dialect.Generic);
     expect(result.success).toBe(true);
   });

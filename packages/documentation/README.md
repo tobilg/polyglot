@@ -23,7 +23,8 @@ import { transpile, Dialect } from '@polyglot-sql/sdk';
 
 const result = transpile(
   'SELECT IFNULL(a, b) FROM t',
-  { read: Dialect.MySQL, write: Dialect.PostgreSQL }
+  Dialect.MySQL,
+  Dialect.PostgreSQL,
 );
 console.log(result.sql[0]); // SELECT COALESCE(a, b) FROM t
 ```

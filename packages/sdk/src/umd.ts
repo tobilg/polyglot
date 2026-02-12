@@ -9,82 +9,155 @@
  * <script src="https://unpkg.com/@polyglot-sql/sdk/dist/umd/polyglot.umd.js"></script>
  * <script>
  *   const { transpile, parse, Dialect } = window.PolyglotSQL;
- *   const result = transpile('SELECT 1', {
- *     read: Dialect.MySQL,
- *     write: Dialect.PostgreSQL,
- *   });
+ *   const result = transpile('SELECT 1', Dialect.MySQL, Dialect.PostgreSQL);
  * </script>
  * ```
  */
 
 // Core APIs
 export {
-  init,
-  isInitialized,
-  transpile,
-  parse,
-  generate,
+  ast,
+  Dialect,
   format,
+  generate,
   getDialects,
   getVersion,
-  Dialect,
+  init,
+  isInitialized,
   Polyglot,
+  parse,
+  transpile,
 } from './index';
+export type { ParseResult, TranspileResult } from './index';
 
-// Types
-export type {
-  TranspileOptions,
-  TranspileResult,
-  ParseResult,
-} from './index';
-
-// Validation APIs
+// AST: Type guards & Visitors
 export {
-  validate,
-  validateWithSchema,
-  ValidationSeverity,
-} from './validation';
-
-export type {
-  ValidationResult,
-  ValidationError,
-  ValidationOptions,
-  Schema,
-  TableSchema,
-  ColumnSchema,
-  SchemaValidationOptions,
-} from './validation';
-
-// AST Module
-export { ast } from './index';
-
-// Type guards
-export {
-  isSelect,
-  isColumn,
-  isLiteral,
-  isFunction,
-} from './ast';
-
-// Builders
-export {
-  select,
-  insert,
-  update,
-  deleteFrom,
-  col,
-  and,
-  or,
-} from './builders';
-
-// Visitors
-export {
-  walk,
   findAll,
   getColumns,
-  transform,
+  isColumn,
+  isFunction,
+  isLiteral,
+  isSelect,
   renameColumns,
+  transform,
+  walk,
 } from './ast';
+
+// Builders: Expression class & types
+export {
+  Expr,
+  type ExprInput,
+} from './builders';
+
+// Builders: Expression helpers
+export {
+  col,
+  lit,
+  star,
+  sqlNull,
+  boolean,
+  table,
+  sqlExpr,
+  condition,
+  func,
+} from './builders';
+
+// Builders: Query builders
+export {
+  SelectBuilder,
+  InsertBuilder,
+  UpdateBuilder,
+  DeleteBuilder,
+  MergeBuilder,
+  CaseBuilder,
+  SetOpBuilder,
+  select,
+  insert,
+  insertInto,
+  update,
+  deleteFrom,
+  del,
+  mergeInto,
+  caseWhen,
+  caseOf,
+  union,
+  unionAll,
+  intersect,
+  except,
+} from './builders';
+
+// Builders: Logical operators
+export {
+  and,
+  or,
+  not,
+  cast,
+  alias,
+} from './builders';
+
+// Builders: Convenience functions
+export {
+  // Aggregate
+  count,
+  countDistinct,
+  sum,
+  avg,
+  min,
+  max,
+  // String
+  upper,
+  lower,
+  length,
+  trim,
+  ltrim,
+  rtrim,
+  reverse,
+  initcap,
+  substring,
+  replace,
+  concatWs,
+  // Null handling
+  coalesce,
+  nullIf,
+  ifNull,
+  // Math
+  abs,
+  round,
+  floor,
+  ceil,
+  power,
+  sqrt,
+  ln,
+  exp,
+  sign,
+  greatest,
+  least,
+  // Date/time
+  currentDate,
+  currentTime,
+  currentTimestamp,
+  extract,
+  // Window
+  rowNumber,
+  rank,
+  denseRank,
+} from './builders';
+
+// Validation
+export {
+  ValidationSeverity,
+  validate,
+  validateWithSchema,
+} from './validation';
+export type {
+  ColumnSchema,
+  Schema,
+  SchemaValidationOptions,
+  TableSchema,
+  ValidationError,
+  ValidationOptions,
+  ValidationResult,
+} from './validation';
 
 // Default export for convenience
 import * as PolyglotSQL from './index';

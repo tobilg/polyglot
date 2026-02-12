@@ -2,7 +2,8 @@
         test-rust-transpile test-rust-pretty test-rust-roundtrip test-rust-matrix \
         test-rust-compat test-rust-errors test-rust-functions test-rust-lib test-rust-verify \
         test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
-        bench-compare bench-rust bench-python
+        bench-compare bench-rust bench-python \
+        playground-dev playground-build playground-preview playground-deploy
 
 # Default target
 help:
@@ -17,13 +18,13 @@ help:
 	@echo "Rust Tests (fast):"
 	@echo "  make test-rust           - Run all Rust tests"
 	@echo "  make test-rust-all       - Run all sqlglot fixture tests"
-	@echo "  make test-rust-lib       - Run lib unit tests (693)"
+	@echo "  make test-rust-lib       - Run lib unit tests (704)"
 	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation"
 	@echo ""
-	@echo "  SQLGlot Fixture Tests (6,284 tests):"
+	@echo "  SQLGlot Fixture Tests (8,455 tests):"
 	@echo "  make test-rust-identity  - Generic identity tests (955)"
-	@echo "  make test-rust-dialect   - Dialect identity tests (3,489)"
-	@echo "  make test-rust-transpile - Transpilation tests (1,816)"
+	@echo "  make test-rust-dialect   - Dialect identity tests (3,461)"
+	@echo "  make test-rust-transpile - Transpilation tests (4,015)"
 	@echo "  make test-rust-pretty    - Pretty-printing tests (24)"
 	@echo ""
 	@echo "  Additional Tests:"
@@ -46,6 +47,12 @@ help:
 	@echo "  make copy-bindings       - Copy bindings from Rust crate to TypeScript SDK"
 	@echo "  make build-wasm          - Build WASM package"
 	@echo "  make build-all           - Build everything"
+	@echo ""
+	@echo "Playground:"
+	@echo "  make playground-dev         - Run playground dev server"
+	@echo "  make playground-build       - Build playground for production"
+	@echo "  make playground-preview     - Preview production build"
+	@echo "  make playground-deploy      - Deploy to Cloudflare Pages"
 	@echo ""
 	@echo "Clean:"
 	@echo "  make clean               - Remove all build artifacts"
@@ -220,6 +227,26 @@ validate: test-rust test-compare
 	@echo "All tests passed!"
 
 # =============================================================================
+# Playground
+# =============================================================================
+
+# Run playground dev server
+playground-dev:
+	cd packages/playground && pnpm run dev
+
+# Build playground for production
+playground-build:
+	cd packages/playground && pnpm run build
+
+# Preview production build
+playground-preview:
+	cd packages/playground && pnpm run preview
+
+# Deploy to Cloudflare Pages
+playground-deploy: playground-build
+	cd packages/playground && pnpm run deploy
+
+# =============================================================================
 # Clean
 # =============================================================================
 
@@ -232,4 +259,6 @@ clean:
 	rm -rf packages/sdk/node_modules
 	rm -rf tools/sqlglot-compare/dist
 	rm -rf tools/sqlglot-compare/node_modules
+	rm -rf packages/playground/dist
+	rm -rf packages/playground/node_modules
 	@echo "Clean complete."

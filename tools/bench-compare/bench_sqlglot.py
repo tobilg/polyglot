@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark sqlglot operations and output JSON for comparison with polyglot-core.
+"""Benchmark sqlglot operations and output JSON for comparison with polyglot-sql.
 
 Run with: uv run --with sqlglot python3 tools/bench-compare/bench_sqlglot.py
 """
@@ -70,7 +70,7 @@ COMPLEX_SELECT = (
 
 WARMUP = 5
 
-# Mapping from polyglot-core dialect names to sqlglot dialect names
+# Mapping from polyglot-sql dialect names to sqlglot dialect names
 DIALECT_MAP = {
     "generic": None,
     "postgresql": "postgres",

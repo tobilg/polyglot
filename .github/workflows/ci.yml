@@ -147,3 +147,44 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: packages/documentation
           command: pages deploy dist --project-name=polyglot-sql-api
+
+  deploy-playground:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sdk-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: packages/sdk/wasm/
+
+      - name: Download SDK dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: packages/sdk/dist/
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build Playground
+        run: cd packages/playground && pnpm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: packages/playground
+          command: pages deploy dist --project-name=polyglot-sql-playground

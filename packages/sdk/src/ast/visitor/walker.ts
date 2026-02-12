@@ -8,8 +8,13 @@
  */
 
 import type { Expression } from '../../generated/Expression';
-import type { VisitorConfig, VisitorCallback, NodePredicate } from './types';
-import { getExprType, getExprData, isExpressionValue, type ExpressionType } from '../helpers';
+import {
+  type ExpressionType,
+  getExprData,
+  getExprType,
+  isExpressionValue,
+} from '../helpers';
+import type { NodePredicate, VisitorCallback, VisitorConfig } from './types';
 
 // ============================================================================
 // Core Walker
@@ -27,7 +32,7 @@ import { getExprType, getExprData, isExpressionValue, type ExpressionType } from
 function collectExprChildren(
   value: unknown,
   key: string,
-  results: Array<{ key: string; value: Expression | Expression[] }>
+  results: Array<{ key: string; value: Expression | Expression[] }>,
 ): void {
   if (value === null || value === undefined) return;
 
@@ -50,7 +55,9 @@ function collectExprChildren(
     results.push({ key, value: value as Expression });
   } else if (typeof value === 'object') {
     // Non-Expression struct (e.g., From, Where, GroupBy) — recurse into its fields
-    for (const [, subValue] of Object.entries(value as Record<string, unknown>)) {
+    for (const [, subValue] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
       collectExprChildren(subValue, key, results);
     }
   }
@@ -63,7 +70,9 @@ function collectExprChildren(
  * looking for Expression children — including those nested inside
  * non-Expression structs like From, Where, GroupBy, etc.
  */
-function getChildren(node: Expression): Array<{ key: string; value: Expression | Expression[] }> {
+function getChildren(
+  node: Expression,
+): Array<{ key: string; value: Expression | Expression[] }> {
   const children: Array<{ key: string; value: Expression | Expression[] }> = [];
 
   // Unwrap the outer envelope to get inner data
@@ -94,7 +103,7 @@ export function walk(
   visitor: VisitorConfig,
   parent: Expression | null = null,
   key: string | null = null,
-  index: number | null = null
+  index: number | null = null,
 ): void {
   // Call enter callback
   if (visitor.enter) {
@@ -140,7 +149,7 @@ export function walk(
  */
 export function findAll(
   node: Expression,
-  predicate: NodePredicate
+  predicate: NodePredicate,
 ): Expression[] {
   const results: Expression[] = [];
 
@@ -166,7 +175,7 @@ export function findAll(
  */
 export function findByType<T extends ExpressionType>(
   node: Expression,
-  type: T
+  type: T,
 ): Expression[] {
   return findAll(node, (n) => getExprType(n) === type);
 }
@@ -181,7 +190,7 @@ export function findByType<T extends ExpressionType>(
  */
 export function findFirst(
   node: Expression,
-  predicate: NodePredicate
+  predicate: NodePredicate,
 ): Expression | undefined {
   let result: Expression | undefined;
 
@@ -208,10 +217,7 @@ export function findFirst(
  * const hasSubquery = some(ast, (node) => getExprType(node) === 'subquery');
  * ```
  */
-export function some(
-  node: Expression,
-  predicate: NodePredicate
-): boolean {
+export function some(node: Expression, predicate: NodePredicate): boolean {
   return findFirst(node, predicate) !== undefined;
 }
 
@@ -226,10 +232,7 @@ export function some(
  * );
  * ```
  */
-export function every(
-  node: Expression,
-  predicate: NodePredicate
-): boolean {
+export function every(node: Expression, predicate: NodePredicate): boolean {
   let result = true;
 
   walk(node, {
@@ -251,10 +254,7 @@ export function every(
  * const columnCount = countNodes(ast, (node) => getExprType(node) === 'column');
  * ```
  */
-export function countNodes(
-  node: Expression,
-  predicate: NodePredicate
-): number {
+export function countNodes(node: Expression, predicate: NodePredicate): number {
   return findAll(node, predicate).length;
 }
 

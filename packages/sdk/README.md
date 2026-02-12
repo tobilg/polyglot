@@ -19,7 +19,8 @@ import { transpile, Dialect } from '@polyglot-sql/sdk';
 
 const result = transpile(
   'SELECT IFNULL(a, b) FROM t',
-  { read: Dialect.MySQL, write: Dialect.PostgreSQL }
+  Dialect.MySQL,
+  Dialect.PostgreSQL,
 );
 console.log(result.sql[0]); // SELECT COALESCE(a, b) FROM t
 ```
@@ -351,7 +352,7 @@ For an object-oriented style, use the singleton `Polyglot` class:
 import { Polyglot, Dialect } from '@polyglot-sql/sdk';
 
 const pg = Polyglot.getInstance();
-const result = pg.transpile('SELECT 1', { read: Dialect.MySQL, write: Dialect.PostgreSQL });
+const result = pg.transpile('SELECT 1', Dialect.MySQL, Dialect.PostgreSQL);
 const formatted = pg.format('SELECT a,b FROM t');
 ```
 
@@ -361,7 +362,7 @@ const formatted = pg.format('SELECT a,b FROM t');
 
 | Function | Description |
 |----------|-------------|
-| `transpile(sql, options)` | Transpile SQL between dialects |
+| `transpile(sql, read, write)` | Transpile SQL between dialects |
 | `parse(sql, dialect?)` | Parse SQL into AST |
 | `generate(ast, dialect?)` | Generate SQL from AST |
 | `format(sql, dialect?)` | Pretty-print SQL |
@@ -463,7 +464,7 @@ For browser use without a bundler:
   // or: https://cdn.jsdelivr.net/npm/@polyglot-sql/sdk/dist/cdn/polyglot.esm.js
 
   const { transpile, Dialect } = polyglot;
-  const result = transpile('SELECT 1', { read: Dialect.MySQL, write: Dialect.PostgreSQL });
+  const result = transpile('SELECT 1', Dialect.MySQL, Dialect.PostgreSQL);
   console.log(result.sql);
 </script>
 ```

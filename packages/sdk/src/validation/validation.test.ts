@@ -2,7 +2,7 @@
  * Validation Tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { validate, validateWithSchema } from './index';
 import type { Schema } from './schema';
 
@@ -17,7 +17,7 @@ describe('validate', () => {
     it('should return valid for complex SQL', () => {
       const result = validate(
         'SELECT id, name FROM users WHERE age > 18 ORDER BY name LIMIT 10',
-        'postgresql'
+        'postgresql',
       );
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
@@ -43,7 +43,9 @@ describe('validate', () => {
 
   describe('semantic validation', () => {
     it('should warn about SELECT * when semantic validation is enabled', () => {
-      const result = validate('SELECT * FROM users', 'generic', { semantic: true });
+      const result = validate('SELECT * FROM users', 'generic', {
+        semantic: true,
+      });
       const warning = result.errors.find((e) => e.code === 'W001');
       expect(warning).toBeDefined();
       expect(warning?.severity).toBe('warning');
@@ -51,27 +53,37 @@ describe('validate', () => {
     });
 
     it('should not warn about SELECT * when semantic validation is disabled', () => {
-      const result = validate('SELECT * FROM users', 'generic', { semantic: false });
+      const result = validate('SELECT * FROM users', 'generic', {
+        semantic: false,
+      });
       expect(result.errors.filter((e) => e.code === 'W001')).toHaveLength(0);
     });
 
     it('should warn about LIMIT without ORDER BY', () => {
-      const result = validate('SELECT id FROM users LIMIT 10', 'generic', { semantic: true });
+      const result = validate('SELECT id FROM users LIMIT 10', 'generic', {
+        semantic: true,
+      });
       const warning = result.errors.find((e) => e.code === 'W004');
       expect(warning).toBeDefined();
       expect(warning?.message).toContain('LIMIT without ORDER BY');
     });
 
     it('should not warn when LIMIT has ORDER BY', () => {
-      const result = validate('SELECT id FROM users ORDER BY id LIMIT 10', 'generic', {
-        semantic: true,
-      });
+      const result = validate(
+        'SELECT id FROM users ORDER BY id LIMIT 10',
+        'generic',
+        {
+          semantic: true,
+        },
+      );
       const warning = result.errors.find((e) => e.code === 'W004');
       expect(warning).toBeUndefined();
     });
 
     it('should still be valid with only warnings', () => {
-      const result = validate('SELECT * FROM users', 'generic', { semantic: true });
+      const result = validate('SELECT * FROM users', 'generic', {
+        semantic: true,
+      });
       expect(result.valid).toBe(true); // Warnings don't make it invalid
       expect(result.errors.length).toBeGreaterThan(0);
     });
@@ -79,7 +91,10 @@ describe('validate', () => {
 
   describe('dialect validation', () => {
     it('should validate PostgreSQL syntax', () => {
-      const result = validate("SELECT * FROM users WHERE name ILIKE '%john%'", 'postgresql');
+      const result = validate(
+        "SELECT * FROM users WHERE name ILIKE '%john%'",
+        'postgresql',
+      );
       expect(result.valid).toBe(true);
     });
 
@@ -136,12 +151,18 @@ describe('validateWithSchema', () => {
 
   describe('column validation', () => {
     it('should validate known columns', () => {
-      const result = validateWithSchema('SELECT id, name, email FROM users', schema);
+      const result = validateWithSchema(
+        'SELECT id, name, email FROM users',
+        schema,
+      );
       expect(result.valid).toBe(true);
     });
 
     it('should detect unknown columns', () => {
-      const result = validateWithSchema('SELECT unknown_col FROM users', schema);
+      const result = validateWithSchema(
+        'SELECT unknown_col FROM users',
+        schema,
+      );
       expect(result.valid).toBe(false);
       const error = result.errors.find((e) => e.code === 'E201');
       expect(error).toBeDefined();
@@ -149,7 +170,10 @@ describe('validateWithSchema', () => {
     });
 
     it('should validate qualified column references', () => {
-      const result = validateWithSchema('SELECT users.id, users.name FROM users', schema);
+      const result = validateWithSchema(
+        'SELECT users.id, users.name FROM users',
+        schema,
+      );
       expect(result.valid).toBe(true);
     });
   });
@@ -158,7 +182,7 @@ describe('validateWithSchema', () => {
     it('should validate joins with multiple tables', () => {
       const result = validateWithSchema(
         'SELECT users.id, orders.total FROM users JOIN orders ON users.id = orders.user_id',
-        schema
+        schema,
       );
       expect(result.valid).toBe(true);
     });
@@ -166,7 +190,7 @@ describe('validateWithSchema', () => {
     it('should detect unknown columns in joins', () => {
       const result = validateWithSchema(
         'SELECT users.id, orders.unknown FROM users JOIN orders ON users.id = orders.user_id',
-        schema
+        schema,
       );
       expect(result.valid).toBe(false);
     });
@@ -180,9 +204,14 @@ describe('validateWithSchema', () => {
     });
 
     it('should report warnings in non-strict mode', () => {
-      const result = validateWithSchema('SELECT unknown FROM users', schema, 'generic', {
-        strict: false,
-      });
+      const result = validateWithSchema(
+        'SELECT unknown FROM users',
+        schema,
+        'generic',
+        {
+          strict: false,
+        },
+      );
       expect(result.valid).toBe(true); // Warnings don't affect validity
       expect(result.errors[0].severity).toBe('warning');
     });
@@ -190,9 +219,14 @@ describe('validateWithSchema', () => {
 
   describe('with semantic validation', () => {
     it('should combine schema and semantic validation', () => {
-      const result = validateWithSchema('SELECT * FROM users LIMIT 10', schema, 'generic', {
-        semantic: true,
-      });
+      const result = validateWithSchema(
+        'SELECT * FROM users LIMIT 10',
+        schema,
+        'generic',
+        {
+          semantic: true,
+        },
+      );
       // Should have both W001 (SELECT *) and W004 (LIMIT without ORDER BY)
       const selectStarWarning = result.errors.find((e) => e.code === 'W001');
       const limitWarning = result.errors.find((e) => e.code === 'W004');
