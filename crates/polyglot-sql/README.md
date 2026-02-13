@@ -1,6 +1,6 @@
 # polyglot-sql
 
-Core SQL parsing and dialect translation library for Rust. Parses, generates, transpiles, and formats SQL across 32+ database dialects.
+Core SQL parsing and dialect translation library for Rust. Parses, generates, transpiles, and formats SQL across 32 database dialects.
 
 Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
@@ -8,7 +8,7 @@ Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
 - **Parse** SQL into a fully-typed AST with 200+ expression types
 - **Generate** SQL from AST nodes for any target dialect
-- **Transpile** between any pair of 32+ dialects in one call
+- **Transpile** between any pair of 32 dialects in one call
 - **Format** / pretty-print SQL
 - **Fluent builder API** for constructing queries programmatically
 - **AST traversal** utilities (DFS/BFS iterators, transform, walk)

@@ -1,14 +1,14 @@
 # Polyglot
 
-WASM-powered SQL transpiler for 32+ dialects, inspired by Python's [sqlglot](https://github.com/tobymao/sqlglot).
+Rust/WASM-powered SQL transpiler for 32 dialects, inspired by Python's [sqlglot](https://github.com/tobymao/sqlglot).
 
-Polyglot parses, generates, transpiles, and formats SQL across 32+ database dialects. It ships as a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/)) and a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk) on npm).
+Polyglot parses, generates, transpiles, and formats SQL across 32 database dialects. It ships as a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/)) and a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk) on npm).
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, and the [TypeScript API Docs](https://polyglot.gh.tobilg.com/).
 
 ## Features
 
-- **Transpile** SQL between any pair of 32+ dialects
+- **Transpile** SQL between any pair of 32 dialects
 - **Parse** SQL into a fully-typed AST
 - **Generate** SQL back from AST nodes
 - **Format** / pretty-print SQL
@@ -95,10 +95,11 @@ See the full [TypeScript SDK README](packages/sdk/README.md) for more examples.
 ```
 polyglot/
 ├── crates/
-│   ├── polyglot-sql/          # Core Rust library (parser, generator, builder)
-│   └── polyglot-sql-wasm/          # WASM bindings
+│   ├── polyglot-sql/           # Core Rust library (parser, generator, builder)
+│   └── polyglot-sql-wasm/      # WASM bindings
 ├── packages/
-│   └── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
+│   ├── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
+│   └── playgroud/              # Playground for testing the SDK (React 19, Tailwind v4, Vite)
 └── tools/
     ├── sqlglot-compare/        # Test extraction & comparison tool
     └── bench-compare/          # Performance benchmarks
@@ -195,6 +196,7 @@ cargo +nightly fuzz run fuzz_transpile
 | `make generate-bindings` | Generate TypeScript type bindings |
 | `make clean` | Remove all build artifacts |
 
-## License
+## Licenses
 
 [MIT](LICENSE)
+[sqlglot MIT](licenses/SQLGLOT_LICENSE.md)

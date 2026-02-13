@@ -1,6 +1,6 @@
 # @polyglot-sql/sdk
 
-WASM-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across 32+ database dialects.
+Rust/WASM-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across 32 database dialects.
 
 Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 

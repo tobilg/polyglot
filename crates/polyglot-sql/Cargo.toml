@@ -3,7 +3,7 @@ name = "polyglot-sql"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core SQL parsing and dialect translation library"
+description = "SQL parsing, validating, formatting, and dialect translation library"
 
 [features]
 default = []

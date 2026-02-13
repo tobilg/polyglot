@@ -3,7 +3,8 @@
         test-rust-compat test-rust-errors test-rust-functions test-rust-lib test-rust-verify \
         test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
-        playground-dev playground-build playground-preview playground-deploy
+        playground-dev playground-build playground-preview playground-deploy \
+        bump-version
 
 # Default target
 help:
@@ -53,6 +54,9 @@ help:
 	@echo "  make playground-build       - Build playground for production"
 	@echo "  make playground-preview     - Preview production build"
 	@echo "  make playground-deploy      - Deploy to Cloudflare Pages"
+	@echo ""
+	@echo "Release:"
+	@echo "  make bump-version V=x.y.z - Bump version in all crates and packages"
 	@echo ""
 	@echo "Clean:"
 	@echo "  make clean               - Remove all build artifacts"
@@ -245,6 +249,20 @@ playground-preview:
 # Deploy to Cloudflare Pages
 playground-deploy: playground-build
 	cd packages/playground && pnpm run deploy
+
+# =============================================================================
+# Release
+# =============================================================================
+
+# Bump version in all crates and packages (usage: make bump-version V=0.1.1)
+bump-version:
+ifndef V
+	$(error Usage: make bump-version V=x.y.z)
+endif
+	@echo "Bumping version to $(V)..."
+	cargo set-version $(V)
+	pnpm -r exec pnpm version $(V) --no-git-tag-version
+	@echo "Version bumped to $(V) in all crates and packages."
 
 # =============================================================================
 # Clean

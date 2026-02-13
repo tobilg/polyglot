@@ -3,7 +3,7 @@ name = "polyglot-sql-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "WebAssembly bindings for polyglot SQL translator"
+description = "WebAssembly bindings for polyglot-sql"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
