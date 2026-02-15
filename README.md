@@ -105,6 +105,23 @@ polyglot/
     └── bench-compare/          # Performance benchmarks
 ```
 
+## Examples
+
+Standalone example projects are available in the [`examples/`](examples/) directory. Each one pulls the latest published package and can be run independently.
+
+### Rust
+
+```bash
+cargo run --manifest-path examples/rust/Cargo.toml
+```
+
+### TypeScript
+
+```bash
+cd examples/typescript
+pnpm install --ignore-workspace && pnpm start
+```
+
 ## Building from Source
 
 ```bash
