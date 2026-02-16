@@ -21431,7 +21431,11 @@ impl Parser {
 
             // Check if this is a subquery (SELECT, WITH, or DuckDB FROM-first)
             if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From) {
-                let query = self.parse_statement()?;
+                let lparen_comments = self.previous_trailing_comments();
+                let mut query = self.parse_statement()?;
+                if let Expression::Select(sel) = &mut query {
+                    sel.leading_comments.splice(0..0, lparen_comments);
+                }
 
                 // Parse LIMIT/OFFSET that may appear after set operations INSIDE the parentheses
                 // e.g., (SELECT 1 EXCEPT (SELECT 2) LIMIT 1)

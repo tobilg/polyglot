@@ -1029,22 +1029,22 @@ mod comment_tests {
             "FROM (/* c_leading_subquery */ SELECT a /* c_in_subquery */ FROM t) AS sub ",
             ") ",
             "SELECT * FROM prep /* c_main_after_table */ ",
+            "WHERE n >= (/* c_where_subquery */ SELECT MAX(x) FROM t) ",
             "ORDER BY n /* c_after_order_by */",
             "\n-- c_line_comment"
         );
         let result = roundtrip(sql);
-        // Re-parse must succeed (no corruption from comments)
         let reparsed = Parser::parse_sql(&result).expect(&format!("Re-parse failed: {}", result));
         let result2 = Generator::sql(&reparsed[0]).expect("Re-generate failed");
         assert_eq!(result, result2, "Roundtrip not stable: {}", result);
 
-        // Each comment must survive as a block comment and not leak as SQL text
         let expected = [
             "c_post_cte_alias",
             "c_after_alias",
             "c_leading_subquery",
             "c_in_subquery",
             "c_main_after_table",
+            "c_where_subquery",
             "c_after_order_by",
             "c_line_comment",
         ];
@@ -1060,6 +1060,7 @@ mod comment_tests {
         assert!(!result.contains("is_a bad_comment"),
             "Line comment leaked as SQL text: {}", result);
     }
+
 }
 
 // ============================================================================
