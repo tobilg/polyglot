@@ -186,7 +186,7 @@ bench-rust:
 
 # Run Python sqlglot benchmarks (JSON output)
 bench-python:
-	@uv run --with sqlglot python3 tools/bench-compare/bench_sqlglot.py
+	@uv run --with sqlglot[rs] python3 tools/bench-compare/bench_sqlglot.py
 
 # =============================================================================
 # Build

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark sqlglot operations and output JSON for comparison with polyglot-sql.
 
-Run with: uv run --with sqlglot python3 tools/bench-compare/bench_sqlglot.py
+Run with: uv run --with sqlglot[rs] python3 tools/bench-compare/bench_sqlglot.py
 """
 
 import json
