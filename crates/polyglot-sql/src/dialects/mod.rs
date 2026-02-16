@@ -1317,6 +1317,22 @@ where
             Expression::BitwiseXorAgg(f)
         }
 
+        // Merge: recurse into ON clause, USING, and WHEN bodies
+        Expression::Merge(mut m) => {
+            m.this = Box::new(transform_recursive(*m.this, transform_fn)?);
+            m.using = Box::new(transform_recursive(*m.using, transform_fn)?);
+            if let Some(on) = m.on.take() {
+                m.on = Some(Box::new(transform_recursive(*on, transform_fn)?));
+            }
+            if let Some(whens) = m.whens.take() {
+                m.whens = Some(Box::new(transform_recursive(*whens, transform_fn)?));
+            }
+            if let Some(with_) = m.with_.take() {
+                m.with_ = Some(Box::new(transform_recursive(*with_, transform_fn)?));
+            }
+            Expression::Merge(m)
+        }
+
         // Pass through leaf nodes unchanged
         other => other,
     };
