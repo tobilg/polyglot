@@ -865,6 +865,65 @@ impl TokenType {
                 | TokenType::Overwrite
                 | TokenType::StraightJoin
                 | TokenType::Start
+                // Additional keywords registered in tokenizer but previously missing from is_keyword()
+                | TokenType::Ignore
+                | TokenType::Domain
+                | TokenType::Apply
+                | TokenType::Respect
+                | TokenType::Materialized
+                | TokenType::Prewhere
+                | TokenType::Old
+                | TokenType::New
+                | TokenType::Cast
+                | TokenType::TryCast
+                | TokenType::SafeCast
+                | TokenType::Transaction
+                | TokenType::Describe
+                | TokenType::Kill
+                | TokenType::Lambda
+                | TokenType::Declare
+                | TokenType::Keep
+                | TokenType::Output
+                | TokenType::Percent
+                | TokenType::Qualify
+                | TokenType::Returning
+                | TokenType::Language
+                | TokenType::Preserve
+                | TokenType::Savepoint
+                | TokenType::Rollback
+                | TokenType::Body
+                | TokenType::Increment
+                | TokenType::Minvalue
+                | TokenType::Maxvalue
+                | TokenType::Cycle
+                | TokenType::NoCycle
+                | TokenType::Seed
+                | TokenType::Namespace
+                | TokenType::Authorization
+                | TokenType::Restart
+                | TokenType::Before
+                | TokenType::Instead
+                | TokenType::Each
+                | TokenType::Statement
+                | TokenType::Referencing
+                | TokenType::Of
+                | TokenType::Separator
+                | TokenType::Others
+                | TokenType::Placing
+                | TokenType::Owned
+                | TokenType::Running
+                | TokenType::Define
+                | TokenType::Measures
+                | TokenType::MatchRecognize
+                | TokenType::AutoIncrement
+                | TokenType::Connect
+                | TokenType::Distribute
+                | TokenType::Bernoulli
+                | TokenType::TableSample
+                | TokenType::Inpath
+                | TokenType::Pragma
+                | TokenType::Siblings
+                | TokenType::SerdeProperties
         )
     }
 
