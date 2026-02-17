@@ -46041,7 +46041,6 @@ mod join_marker_tests {
 
 #[cfg(test)]
 mod clickhouse_parser_regression_tests {
-    use super::*;
     use crate::dialects::DialectType;
 
     #[test]

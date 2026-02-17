@@ -489,7 +489,7 @@ mod tests {
         // COUNT is Expression::Count, not Expression::AggregateFunction
         // So get_functions (which checks Function | AggregateFunction) may return 0
         // That's OK — we have separate get_aggregate_functions for typed aggs
-        assert!(funcs.len() >= 0);
+        let _ = funcs.len();
     }
 
     #[test]

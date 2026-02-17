@@ -439,12 +439,7 @@ fn make_or(left: Expression, right: Expression) -> Expression {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generator::Generator;
     use crate::parser::Parser;
-
-    fn gen(expr: &Expression) -> String {
-        Generator::new().generate(expr).unwrap()
-    }
 
     fn parse(sql: &str) -> Expression {
         Parser::parse_sql(sql).expect("Failed to parse")[0].clone()

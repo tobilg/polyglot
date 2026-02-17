@@ -1148,10 +1148,6 @@ mod tests {
         Expression::Literal(Literal::Number(val.to_string()))
     }
 
-    fn make_float(val: f64) -> Expression {
-        Expression::Literal(Literal::Number(val.to_string()))
-    }
-
     fn make_string(val: &str) -> Expression {
         Expression::Literal(Literal::String(val.to_string()))
     }

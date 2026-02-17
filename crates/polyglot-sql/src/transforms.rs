@@ -4099,12 +4099,6 @@ mod tests {
     use crate::dialects::{Dialect, DialectType};
     use crate::expressions::Column;
 
-    fn parse(sql: &str) -> Expression {
-        let dialect = Dialect::get(DialectType::Generic);
-        let ast = dialect.parse(sql).unwrap();
-        ast.into_iter().next().unwrap()
-    }
-
     fn gen(expr: &Expression) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         dialect.generate(expr).unwrap()
