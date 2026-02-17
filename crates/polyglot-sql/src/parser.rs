@@ -4645,7 +4645,7 @@ impl Parser {
         self.check(TokenType::Outer) ||
         // ClickHouse: ARRAY JOIN, GLOBAL JOIN, ALL JOIN, ANY JOIN
         (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) &&
-            (self.check_identifier("ARRAY") || self.check(TokenType::Global) || self.check(TokenType::All) || self.check(TokenType::Any)))
+            (self.check_identifier("ARRAY") || self.check_identifier("GLOBAL") || self.check(TokenType::All) || self.check(TokenType::Any)))
     }
 
     /// Try to parse a JOIN kind
@@ -4659,7 +4659,7 @@ impl Parser {
             let mut use_outer = false;
             let mut use_inner = false;
 
-            if self.match_token(TokenType::Global) {
+            if self.match_identifier("GLOBAL") {
                 global = true;
             }
 
