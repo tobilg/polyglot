@@ -2250,6 +2250,7 @@ impl Parser {
                 }))
             }
         } else if self.match_token(TokenType::LParen) {
+            let lparen_trailing = self.previous_trailing_comments();
             // Subquery or parenthesized set operation or (VALUES ...)
             if self.check(TokenType::Values) {
                 // (VALUES (...), (...)) AS t(c1, c2) or (VALUES (0) foo(bar))
@@ -2278,7 +2279,10 @@ impl Parser {
             } else if self.check(TokenType::Select) || self.check(TokenType::With)
                 || self.check(TokenType::Pivot) || self.check(TokenType::Unpivot)
                 || self.check(TokenType::From) || self.check(TokenType::Merge) {
-                let query = self.parse_statement()?;
+                let mut query = self.parse_statement()?;
+                if let Expression::Select(sel) = &mut query {
+                    sel.leading_comments.splice(0..0, lparen_trailing);
+                }
                 self.expect(TokenType::RParen)?;
                 let trailing = self.previous_trailing_comments();
                 // Check for set operations after parenthesized query
@@ -21427,7 +21431,11 @@ impl Parser {
 
             // Check if this is a subquery (SELECT, WITH, or DuckDB FROM-first)
             if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From) {
-                let query = self.parse_statement()?;
+                let lparen_comments = self.previous_trailing_comments();
+                let mut query = self.parse_statement()?;
+                if let Expression::Select(sel) = &mut query {
+                    sel.leading_comments.splice(0..0, lparen_comments);
+                }
 
                 // Parse LIMIT/OFFSET that may appear after set operations INSIDE the parentheses
                 // e.g., (SELECT 1 EXCEPT (SELECT 2) LIMIT 1)
@@ -31004,7 +31012,7 @@ impl Parser {
             Ok(Identifier {
                 name: token.text,
                 quoted,
-                trailing_comments: Vec::new(),
+                trailing_comments: token.trailing_comments,
             })
         } else if self.check(TokenType::String)
             && matches!(self.config.dialect, Some(crate::dialects::DialectType::DuckDB))
@@ -31014,7 +31022,7 @@ impl Parser {
             Ok(Identifier {
                 name: token.text,
                 quoted: true,
-                trailing_comments: Vec::new(),
+                trailing_comments: token.trailing_comments,
             })
         } else {
             Err(Error::parse(format!(
@@ -38813,6 +38821,7 @@ impl Parser {
         if !self.match_token(TokenType::LParen) {
             return Ok(None);
         }
+        let lparen_comments = self.previous_trailing_comments();
 
         // Check for empty tuple ()
         if self.match_token(TokenType::RParen) {
@@ -38821,7 +38830,10 @@ impl Parser {
 
         // Try to parse as subquery first
         if self.check(TokenType::Select) || self.check(TokenType::With) {
-            let query = self.parse_statement()?;
+            let mut query = self.parse_statement()?;
+            if let Expression::Select(sel) = &mut query {
+                sel.leading_comments.splice(0..0, lparen_comments);
+            }
             self.expect(TokenType::RParen)?;
             return Ok(Some(Expression::Subquery(Box::new(Subquery {
                 this: query,

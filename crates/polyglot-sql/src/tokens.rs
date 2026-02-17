@@ -1425,7 +1425,8 @@ impl<'a> TokenizerState<'a> {
             self.advance();
         }
         let comment: String = self.chars[start..self.current].iter().collect();
-        let comment_text = comment.trim().to_string();
+        let trimmed = comment.trim();
+        let comment_text = format!("/* {} */", trimmed);
 
         // Attach to previous token as trailing comment, or buffer for next token
         if let Some(last) = self.tokens.last_mut() {

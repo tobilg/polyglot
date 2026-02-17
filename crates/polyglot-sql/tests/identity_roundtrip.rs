@@ -1020,6 +1020,47 @@ mod comment_tests {
     fn test_hint_comments() {
         assert_roundtrip("SELECT /*+ SOME_HINT(foo) */ 1");
     }
+
+    #[test]
+    fn test_comment_locations_survive_roundtrip() {
+        let sql = concat!(
+            "WITH prep /* c_post_cte_alias */ AS (",
+            "SELECT 1 AS n /* c_after_alias */ ",
+            "FROM (/* c_leading_subquery */ SELECT a /* c_in_subquery */ FROM t) AS sub ",
+            ") ",
+            "SELECT * FROM prep /* c_main_after_table */ ",
+            "WHERE n >= (/* c_where_subquery */ SELECT MAX(x) FROM t) ",
+            "ORDER BY n /* c_after_order_by */",
+            "\n-- c_line_comment"
+        );
+        let result = roundtrip(sql);
+        let reparsed = Parser::parse_sql(&result).expect(&format!("Re-parse failed: {}", result));
+        let result2 = Generator::sql(&reparsed[0]).expect("Re-generate failed");
+        assert_eq!(result, result2, "Roundtrip not stable: {}", result);
+
+        let expected = [
+            "c_post_cte_alias",
+            "c_after_alias",
+            "c_leading_subquery",
+            "c_in_subquery",
+            "c_main_after_table",
+            "c_where_subquery",
+            "c_after_order_by",
+            "c_line_comment",
+        ];
+        for tag in &expected {
+            assert!(result.contains(&format!("/* {} */", tag)),
+                "Comment '{}' missing or malformed in output.\nInput:  {}\nOutput: {}", tag, sql, result);
+        }
+    }
+
+    #[test]
+    fn test_line_comment_not_leaked_as_sql() {
+        let result = roundtrip("SELECT * FROM (\nSELECT 1 AS is_a\n-- bad_comment\n) AS p");
+        assert!(!result.contains("is_a bad_comment"),
+            "Line comment leaked as SQL text: {}", result);
+    }
+
 }
 
 // ============================================================================
