@@ -948,6 +948,8 @@ pub struct TokenizerConfig {
     /// When false (Spark/Databricks), backslashes in raw strings are always literal.
     /// Python sqlglot: STRING_ESCAPES_ALLOWED_IN_RAW_STRINGS (default True)
     pub string_escapes_allowed_in_raw_strings: bool,
+    /// Whether # starts a single-line comment (ClickHouse, MySQL)
+    pub hash_comments: bool,
 }
 
 impl Default for TokenizerConfig {
@@ -1277,6 +1279,7 @@ impl Default for TokenizerConfig {
             // Default: backslash escapes ARE allowed in raw strings (sqlglot default)
             // Spark/Databricks set this to false
             string_escapes_allowed_in_raw_strings: true,
+            hash_comments: false,
         }
     }
 }
@@ -1412,8 +1415,26 @@ impl<'a> TokenizerState<'a> {
                         return;
                     }
                 }
+                '#' if self.config.hash_comments => {
+                    self.scan_hash_line_comment();
+                }
                 _ => break,
             }
+        }
+    }
+
+    fn scan_hash_line_comment(&mut self) {
+        self.advance(); // #
+        let start = self.current;
+        while !self.is_at_end() && self.peek() != '\n' {
+            self.advance();
+        }
+        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment_text = comment.trim().to_string();
+        if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
+        } else {
+            self.comments.push(comment_text);
         }
     }
 

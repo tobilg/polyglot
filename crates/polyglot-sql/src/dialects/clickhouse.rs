@@ -28,6 +28,8 @@ impl DialectImpl for ClickHouseDialect {
         config.identifiers_can_start_with_digit = true;
         // ClickHouse uses backslash escaping in strings
         config.string_escapes.push('\\');
+        // ClickHouse supports # as single-line comment
+        config.hash_comments = true;
         config
     }
 

@@ -5900,6 +5900,10 @@ pub enum AlterTableAction {
         partition: Expression,
         source: Option<Box<Expression>>,
     },
+    /// Raw SQL for dialect-specific ALTER TABLE actions (e.g., ClickHouse UPDATE/DELETE/DETACH/etc.)
+    Raw {
+        sql: String,
+    },
 }
 
 /// Actions for ALTER COLUMN

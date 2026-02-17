@@ -8111,6 +8111,9 @@ impl Generator {
                     self.generate_expression(src)?;
                 }
             }
+            AlterTableAction::Raw { sql } => {
+                self.write(sql);
+            }
         }
         Ok(())
     }
