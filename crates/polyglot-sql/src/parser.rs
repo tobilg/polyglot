@@ -2946,6 +2946,10 @@ impl Parser {
                 {
                     self.advance(); // consume *
                     table_name.name.push('*');
+                } else if self.check(TokenType::Star) && self.is_connected() {
+                    // PostgreSQL inheritance syntax: t1* means include child tables
+                    // Consume and discard — semantically equivalent to default behavior
+                    self.advance();
                 }
                 let trailing_comments = self.previous_trailing_comments();
                 Expression::Table(TableRef {
