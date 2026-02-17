@@ -196,6 +196,45 @@ describe('validateWithSchema', () => {
     });
   });
 
+  describe('column validation without FROM clause', () => {
+    it('should detect unknown columns when no FROM clause is present', () => {
+      const result = validateWithSchema('SELECT scooby', schema);
+      expect(result.valid).toBe(false);
+      const error = result.errors.find((e) => e.code === 'E201');
+      expect(error).toBeDefined();
+      expect(error?.message).toContain('scooby');
+    });
+
+    it('should pass known columns even without FROM clause', () => {
+      const result = validateWithSchema('SELECT id', schema);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should detect unknown columns with dialect specified', () => {
+      const clickhouseSchema: Schema = {
+        tables: [
+          {
+            name: 'demo_daily_orders',
+            columns: [
+              { name: 'date', type: 'Date' },
+              { name: 'category', type: 'String' },
+              { name: 'transactions', type: 'Int64' },
+            ],
+          },
+        ],
+      };
+      const result = validateWithSchema(
+        'SELECT scooby',
+        clickhouseSchema,
+        'clickhouse',
+      );
+      expect(result.valid).toBe(false);
+      const error = result.errors.find((e) => e.code === 'E201');
+      expect(error).toBeDefined();
+      expect(error?.message).toContain('scooby');
+    });
+  });
+
   describe('strict mode', () => {
     it('should report errors in strict mode (default)', () => {
       const result = validateWithSchema('SELECT unknown FROM users', schema);

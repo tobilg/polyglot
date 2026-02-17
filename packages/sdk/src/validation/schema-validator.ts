@@ -220,6 +220,25 @@ function validateStatement(
           code: 'E201',
         });
       }
+    } else if (!tableName && referencedTables.size === 0 && schemaMap.size > 0) {
+      // No FROM clause - check column against all tables in the schema
+      let found = false;
+      for (const [, tableSchema] of schemaMap) {
+        if (
+          tableSchema.columns.some((c) => c.name.toLowerCase() === colName)
+        ) {
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        errors.push({
+          message: `Unknown column '${colName}'`,
+          severity,
+          code: 'E201',
+        });
+      }
     }
   }
 
