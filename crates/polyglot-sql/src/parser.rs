@@ -20147,8 +20147,7 @@ impl Parser {
                             global: global_in,
                             unnest: Some(Box::new(unnest_expr)),
                         }))
-                    } else {
-                    self.expect(TokenType::LParen)?;
+                    } else if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::Select) || self.check(TokenType::With) {
                         let subquery = self.parse_statement()?;
                         self.expect(TokenType::RParen)?;
@@ -20172,6 +20171,17 @@ impl Parser {
                             unnest: None,
                         }))
                     }
+                    } else {
+                        // ClickHouse/DuckDB: IN without parentheses: expr NOT IN table_name
+                        let table_expr = self.parse_primary()?;
+                        Expression::In(Box::new(In {
+                            this: left,
+                            expressions: vec![table_expr],
+                            query: None,
+                            not: true,
+                            global: global_in,
+                            unnest: None,
+                        }))
                     }
                 } else if self.match_token(TokenType::Between) {
                     let low = self.parse_bitwise_or()?;
