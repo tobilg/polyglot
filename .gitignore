@@ -40,6 +40,8 @@
 # debug information files
 *.dwo
 
+**/.DS_Store
+
 # AI
 external-projects/
 CLAUDE.md

@@ -1,0 +1,47 @@
+{
+  "dialect": "datafusion",
+  "category": "dml",
+  "identity": [
+    {
+      "sql": "INSERT INTO t VALUES (1, 2, 3)",
+      "description": "INSERT VALUES"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+      "description": "INSERT multiple rows"
+    },
+    {
+      "sql": "INSERT INTO t (a, b) VALUES (1, 2)",
+      "description": "INSERT with column list"
+    },
+    {
+      "sql": "INSERT INTO t (a, b) SELECT x, y FROM s",
+      "description": "INSERT SELECT"
+    },
+    {
+      "sql": "INSERT INTO t SELECT * FROM s",
+      "description": "INSERT SELECT star"
+    },
+    {
+      "sql": "INSERT INTO t SELECT * FROM s WHERE x > 1",
+      "description": "INSERT SELECT with WHERE"
+    },
+    {
+      "sql": "INSERT INTO t (a, b) SELECT x, y FROM s WHERE x > 1 ORDER BY x",
+      "description": "INSERT SELECT with WHERE and ORDER BY"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, NULL)",
+      "description": "INSERT with NULL"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, TRUE, FALSE)",
+      "description": "INSERT with boolean values"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, 'hello', 3.14)",
+      "description": "INSERT with mixed types"
+    }
+  ],
+  "transpilation": []
+}

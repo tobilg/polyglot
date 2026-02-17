@@ -39494,10 +39494,11 @@ impl Parser {
 
             // Apply transform to query
             if let Some(transform) = transform_result {
-                // Wrap current query with transform in a Tuple
+                // Wrap current query with transform in a PipeOperator
                 let current_query = query.ok_or_else(|| Error::parse("Expected base query before pipe syntax transform"))?;
-                query = Some(Expression::Tuple(Box::new(Tuple {
-                    expressions: vec![current_query, transform],
+                query = Some(Expression::PipeOperator(Box::new(PipeOperator {
+                    this: current_query,
+                    expression: transform,
                 })));
             }
         }

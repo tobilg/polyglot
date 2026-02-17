@@ -96,6 +96,7 @@ pub enum Expression {
     Intersect(Box<Intersect>),
     Except(Box<Except>),
     Subquery(Box<Subquery>),
+    PipeOperator(Box<PipeOperator>),
     Pivot(Box<Pivot>),
     PivotAlias(Box<PivotAlias>),
     Unpivot(Box<Unpivot>),
@@ -1965,6 +1966,19 @@ pub struct Subquery {
     /// Trailing comments after the closing paren
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+}
+
+/// Pipe operator expression: query |> transform
+///
+/// Used in DataFusion and BigQuery pipe syntax:
+///   FROM t |> WHERE x > 1 |> SELECT x, y |> ORDER BY x |> LIMIT 10
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct PipeOperator {
+    /// The input query/expression (left side of |>)
+    pub this: Expression,
+    /// The piped operation (right side of |>)
+    pub expression: Expression,
 }
 
 /// VALUES table constructor: VALUES (1, 'a'), (2, 'b')

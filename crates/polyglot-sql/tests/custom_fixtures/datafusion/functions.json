@@ -1,0 +1,417 @@
+{
+  "dialect": "datafusion",
+  "category": "functions",
+  "identity": [
+    {
+      "sql": "SELECT abs(x) FROM t",
+      "expected": "SELECT ABS(x) FROM t",
+      "description": "ABS function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT ceil(x) FROM t",
+      "expected": "SELECT CEIL(x) FROM t",
+      "description": "CEIL function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT floor(x) FROM t",
+      "expected": "SELECT FLOOR(x) FROM t",
+      "description": "FLOOR function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT round(x, 2) FROM t",
+      "description": "ROUND function"
+    },
+    {
+      "sql": "SELECT trunc(x, 2) FROM t",
+      "description": "TRUNC function"
+    },
+    {
+      "sql": "SELECT power(x, 2) FROM t",
+      "description": "POWER function"
+    },
+    {
+      "sql": "SELECT sqrt(x) FROM t",
+      "expected": "SELECT SQRT(x) FROM t",
+      "description": "SQRT function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT ln(x) FROM t",
+      "expected": "SELECT LN(x) FROM t",
+      "description": "LN function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT log(x) FROM t",
+      "description": "LOG function"
+    },
+    {
+      "sql": "SELECT log2(x) FROM t",
+      "description": "LOG2 function"
+    },
+    {
+      "sql": "SELECT log10(x) FROM t",
+      "description": "LOG10 function"
+    },
+    {
+      "sql": "SELECT exp(x) FROM t",
+      "expected": "SELECT EXP(x) FROM t",
+      "description": "EXP function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT coalesce(a, b, c) FROM t",
+      "description": "COALESCE function"
+    },
+    {
+      "sql": "SELECT nullif(a, b) FROM t",
+      "description": "NULLIF function"
+    },
+    {
+      "sql": "SELECT greatest(a, b, c) FROM t",
+      "description": "GREATEST function"
+    },
+    {
+      "sql": "SELECT least(a, b, c) FROM t",
+      "description": "LEAST function"
+    },
+    {
+      "sql": "SELECT length(s) FROM t",
+      "expected": "SELECT LENGTH(s) FROM t",
+      "description": "LENGTH function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT upper(s) FROM t",
+      "expected": "SELECT UPPER(s) FROM t",
+      "description": "UPPER function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT lower(s) FROM t",
+      "expected": "SELECT LOWER(s) FROM t",
+      "description": "LOWER function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT trim(s) FROM t",
+      "expected": "SELECT TRIM(s) FROM t",
+      "description": "TRIM function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT ltrim(s) FROM t",
+      "description": "LTRIM function"
+    },
+    {
+      "sql": "SELECT rtrim(s) FROM t",
+      "description": "RTRIM function"
+    },
+    {
+      "sql": "SELECT substr(s, 1, 5) FROM t",
+      "expected": "SELECT SUBSTRING(s, 1, 5) FROM t",
+      "description": "SUBSTR function (normalized to SUBSTRING)"
+    },
+    {
+      "sql": "SELECT replace(s, 'old', 'new') FROM t",
+      "description": "REPLACE function"
+    },
+    {
+      "sql": "SELECT reverse(s) FROM t",
+      "description": "REVERSE function"
+    },
+    {
+      "sql": "SELECT repeat(s, 3) FROM t",
+      "description": "REPEAT function"
+    },
+    {
+      "sql": "SELECT concat(a, b, c) FROM t",
+      "description": "CONCAT function"
+    },
+    {
+      "sql": "SELECT concat_ws('-', a, b, c) FROM t",
+      "description": "CONCAT_WS function"
+    },
+    {
+      "sql": "SELECT lpad(s, 10, '0') FROM t",
+      "description": "LPAD function"
+    },
+    {
+      "sql": "SELECT rpad(s, 10, '0') FROM t",
+      "description": "RPAD function"
+    },
+    {
+      "sql": "SELECT left(s, 5) FROM t",
+      "description": "LEFT function"
+    },
+    {
+      "sql": "SELECT right(s, 5) FROM t",
+      "description": "RIGHT function"
+    },
+    {
+      "sql": "SELECT starts_with(s, 'pre') FROM t",
+      "expected": "SELECT STARTS_WITH(s, 'pre') FROM t",
+      "description": "STARTS_WITH function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT ends_with(s, 'suf') FROM t",
+      "expected": "SELECT ENDS_WITH(s, 'suf') FROM t",
+      "description": "ENDS_WITH function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT strpos(s, 'sub') FROM t",
+      "expected": "SELECT STRPOS(s, 'sub') FROM t",
+      "description": "STRPOS function (parsed as dedicated expression)"
+    },
+    {
+      "sql": "SELECT regexp_replace(s, 'pattern', 'replacement') FROM t",
+      "description": "REGEXP_REPLACE function"
+    },
+    {
+      "sql": "SELECT regexp_match(s, 'pattern') FROM t",
+      "description": "REGEXP_MATCH function"
+    },
+    {
+      "sql": "SELECT now()",
+      "description": "NOW function"
+    },
+    {
+      "sql": "SELECT current_date()",
+      "description": "CURRENT_DATE function"
+    },
+    {
+      "sql": "SELECT current_timestamp()",
+      "description": "CURRENT_TIMESTAMP function"
+    },
+    {
+      "sql": "SELECT date_trunc('month', ts) FROM t",
+      "description": "DATE_TRUNC function"
+    },
+    {
+      "sql": "SELECT date_part('year', ts) FROM t",
+      "description": "DATE_PART function"
+    },
+    {
+      "sql": "SELECT EXTRACT(YEAR FROM ts) FROM t",
+      "description": "EXTRACT YEAR"
+    },
+    {
+      "sql": "SELECT EXTRACT(MONTH FROM ts) FROM t",
+      "description": "EXTRACT MONTH"
+    },
+    {
+      "sql": "SELECT EXTRACT(DAY FROM ts) FROM t",
+      "description": "EXTRACT DAY"
+    },
+    {
+      "sql": "SELECT to_timestamp(s) FROM t",
+      "description": "TO_TIMESTAMP function"
+    },
+    {
+      "sql": "SELECT to_date(s, '%Y-%m-%d') FROM t",
+      "description": "TO_DATE function"
+    },
+    {
+      "sql": "SELECT count(*) FROM t",
+      "description": "COUNT star"
+    },
+    {
+      "sql": "SELECT count(DISTINCT x) FROM t",
+      "description": "COUNT DISTINCT"
+    },
+    {
+      "sql": "SELECT sum(x) FROM t",
+      "description": "SUM"
+    },
+    {
+      "sql": "SELECT avg(x) FROM t",
+      "description": "AVG"
+    },
+    {
+      "sql": "SELECT min(x) FROM t",
+      "description": "MIN"
+    },
+    {
+      "sql": "SELECT max(x) FROM t",
+      "description": "MAX"
+    },
+    {
+      "sql": "SELECT median(x) FROM t",
+      "description": "MEDIAN function"
+    },
+    {
+      "sql": "SELECT approx_distinct(x) FROM t",
+      "description": "APPROX_DISTINCT function"
+    },
+    {
+      "sql": "SELECT approx_median(x) FROM t",
+      "description": "APPROX_MEDIAN function"
+    },
+    {
+      "sql": "SELECT approx_percentile_cont(x, 0.5) FROM t",
+      "description": "APPROX_PERCENTILE_CONT function"
+    },
+    {
+      "sql": "SELECT array_agg(x) FROM t",
+      "description": "ARRAY_AGG function"
+    },
+    {
+      "sql": "SELECT bool_and(x) FROM t",
+      "description": "BOOL_AND function"
+    },
+    {
+      "sql": "SELECT bool_or(x) FROM t",
+      "description": "BOOL_OR function"
+    },
+    {
+      "sql": "SELECT bit_and(x) FROM t",
+      "description": "BIT_AND function"
+    },
+    {
+      "sql": "SELECT bit_or(x) FROM t",
+      "description": "BIT_OR function"
+    },
+    {
+      "sql": "SELECT bit_xor(x) FROM t",
+      "description": "BIT_XOR function"
+    },
+    {
+      "sql": "SELECT ROW_NUMBER() OVER (ORDER BY x) FROM t",
+      "description": "ROW_NUMBER window function"
+    },
+    {
+      "sql": "SELECT RANK() OVER (ORDER BY x) FROM t",
+      "description": "RANK window function"
+    },
+    {
+      "sql": "SELECT DENSE_RANK() OVER (ORDER BY x) FROM t",
+      "description": "DENSE_RANK window function"
+    },
+    {
+      "sql": "SELECT NTILE(4) OVER (ORDER BY x) FROM t",
+      "description": "NTILE window function"
+    },
+    {
+      "sql": "SELECT LAG(x, 1) OVER (ORDER BY y) FROM t",
+      "description": "LAG window function"
+    },
+    {
+      "sql": "SELECT LEAD(x, 1) OVER (ORDER BY y) FROM t",
+      "description": "LEAD window function"
+    },
+    {
+      "sql": "SELECT FIRST_VALUE(x) OVER (ORDER BY y) FROM t",
+      "description": "FIRST_VALUE window function"
+    },
+    {
+      "sql": "SELECT LAST_VALUE(x) OVER (ORDER BY y) FROM t",
+      "description": "LAST_VALUE window function"
+    },
+    {
+      "sql": "SELECT NTH_VALUE(x, 3) OVER (ORDER BY y) FROM t",
+      "description": "NTH_VALUE window function"
+    },
+    {
+      "sql": "SELECT sum(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+      "description": "Window function with PARTITION BY"
+    },
+    {
+      "sql": "SELECT sum(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+      "description": "Window function with ROWS frame"
+    },
+    {
+      "sql": "SELECT sum(x) OVER (ORDER BY y ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t",
+      "description": "Window function with bounded ROWS frame"
+    },
+    {
+      "sql": "SELECT make_array(1, 2, 3)",
+      "description": "MAKE_ARRAY function"
+    },
+    {
+      "sql": "SELECT array_length(arr) FROM t",
+      "expected": "SELECT ARRAY_LENGTH(arr) FROM t",
+      "description": "ARRAY_LENGTH function"
+    },
+    {
+      "sql": "SELECT array_element(arr, 1) FROM t",
+      "description": "ARRAY_ELEMENT function"
+    },
+    {
+      "sql": "SELECT array_concat(arr1, arr2) FROM t",
+      "description": "ARRAY_CONCAT function"
+    },
+    {
+      "sql": "SELECT array_has(arr, 1) FROM t",
+      "description": "ARRAY_HAS function"
+    },
+    {
+      "sql": "SELECT array_position(arr, 1) FROM t",
+      "expected": "SELECT ARRAY_POSITION(arr, 1) FROM t",
+      "description": "ARRAY_POSITION function"
+    },
+    {
+      "sql": "SELECT array_sort(arr) FROM t",
+      "description": "ARRAY_SORT function"
+    },
+    {
+      "sql": "SELECT array_distinct(arr) FROM t",
+      "expected": "SELECT ARRAY_DISTINCT(arr) FROM t",
+      "description": "ARRAY_DISTINCT function"
+    },
+    {
+      "sql": "SELECT struct(1 AS a, 'hello' AS b)",
+      "expected": "SELECT ROW(1, 'hello')",
+      "description": "STRUCT constructor"
+    },
+    {
+      "sql": "SELECT named_struct('a', 1, 'b', 2)",
+      "description": "NAMED_STRUCT function"
+    },
+    {
+      "sql": "SELECT md5(s) FROM t",
+      "description": "MD5 function"
+    },
+    {
+      "sql": "SELECT sha256(s) FROM t",
+      "description": "SHA256 function"
+    },
+    {
+      "sql": "SELECT encode(s, 'base64') FROM t",
+      "description": "ENCODE function"
+    },
+    {
+      "sql": "SELECT decode(s, 'base64') FROM t",
+      "description": "DECODE function"
+    },
+    {
+      "sql": "SELECT random()",
+      "expected": "SELECT RANDOM()",
+      "description": "RANDOM function"
+    },
+    {
+      "sql": "SELECT pi()",
+      "expected": "SELECT PI()",
+      "description": "PI function"
+    },
+    {
+      "sql": "SELECT chr(65)",
+      "description": "CHR function"
+    },
+    {
+      "sql": "SELECT ascii('A')",
+      "description": "ASCII function"
+    },
+    {
+      "sql": "SELECT initcap(s) FROM t",
+      "expected": "SELECT INITCAP(s) FROM t",
+      "description": "INITCAP function"
+    },
+    {
+      "sql": "SELECT bit_length(s) FROM t",
+      "description": "BIT_LENGTH function"
+    },
+    {
+      "sql": "SELECT char_length(s) FROM t",
+      "expected": "SELECT LENGTH(s) FROM t",
+      "description": "CHAR_LENGTH function"
+    },
+    {
+      "sql": "SELECT octet_length(s) FROM t",
+      "description": "OCTET_LENGTH function"
+    }
+  ],
+  "transpilation": []
+}

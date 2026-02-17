@@ -251,6 +251,7 @@ pub fn get_dialects() -> String {
         "drill",
         "dremio",
         "exasol",
+        "datafusion",
     ];
     serde_json::to_string(&dialects).unwrap()
 }
@@ -1321,6 +1322,7 @@ mod tests {
             "drill",
             "dremio",
             "exasol",
+            "datafusion",
         ];
 
         for dialect in dialects {

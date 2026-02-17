@@ -1,0 +1,146 @@
+{
+  "dialect": "datafusion",
+  "category": "operators",
+  "identity": [
+    {
+      "sql": "SELECT 1 + 2",
+      "description": "Addition"
+    },
+    {
+      "sql": "SELECT 1 - 2",
+      "description": "Subtraction"
+    },
+    {
+      "sql": "SELECT 1 * 2",
+      "description": "Multiplication"
+    },
+    {
+      "sql": "SELECT 1 / 2",
+      "description": "Division"
+    },
+    {
+      "sql": "SELECT 1 % 2",
+      "description": "Modulo"
+    },
+    {
+      "sql": "SELECT -x FROM t",
+      "description": "Unary negation"
+    },
+    {
+      "sql": "SELECT x = 1 FROM t",
+      "description": "Equality"
+    },
+    {
+      "sql": "SELECT x <> 1 FROM t",
+      "description": "Not equal"
+    },
+    {
+      "sql": "SELECT x != 1 FROM t",
+      "expected": "SELECT x <> 1 FROM t",
+      "description": "Not equal (alternate)"
+    },
+    {
+      "sql": "SELECT x > 1 FROM t",
+      "description": "Greater than"
+    },
+    {
+      "sql": "SELECT x < 1 FROM t",
+      "description": "Less than"
+    },
+    {
+      "sql": "SELECT x >= 1 FROM t",
+      "description": "Greater than or equal"
+    },
+    {
+      "sql": "SELECT x <= 1 FROM t",
+      "description": "Less than or equal"
+    },
+    {
+      "sql": "SELECT TRUE AND FALSE",
+      "description": "AND operator"
+    },
+    {
+      "sql": "SELECT TRUE OR FALSE",
+      "description": "OR operator"
+    },
+    {
+      "sql": "SELECT NOT TRUE",
+      "description": "NOT operator"
+    },
+    {
+      "sql": "SELECT x & y FROM t",
+      "description": "Bitwise AND"
+    },
+    {
+      "sql": "SELECT x | y FROM t",
+      "description": "Bitwise OR"
+    },
+    {
+      "sql": "SELECT x ^ y FROM t",
+      "description": "Bitwise XOR"
+    },
+    {
+      "sql": "SELECT ~x FROM t",
+      "description": "Bitwise NOT"
+    },
+    {
+      "sql": "SELECT x << 2 FROM t",
+      "description": "Left shift"
+    },
+    {
+      "sql": "SELECT x >> 2 FROM t",
+      "description": "Right shift"
+    },
+    {
+      "sql": "SELECT 'hello' || ' ' || 'world'",
+      "description": "String concatenation"
+    },
+    {
+      "sql": "SELECT x ~ 'pattern' FROM t",
+      "expected": "SELECT REGEXP_LIKE(x, 'pattern') FROM t",
+      "description": "Regex match"
+    },
+    {
+      "sql": "SELECT x ~* 'pattern' FROM t",
+      "expected": "SELECT x REGEXP_ILIKE 'pattern' FROM t",
+      "description": "Case-insensitive regex match"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' DAY",
+      "description": "INTERVAL DAY"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' HOUR",
+      "description": "INTERVAL HOUR"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' MINUTE",
+      "description": "INTERVAL MINUTE"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' SECOND",
+      "description": "INTERVAL SECOND"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' MONTH",
+      "description": "INTERVAL MONTH"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' YEAR",
+      "description": "INTERVAL YEAR"
+    },
+    {
+      "sql": "SELECT INTERVAL '1 day 2 hours'",
+      "description": "INTERVAL compound"
+    },
+    {
+      "sql": "SELECT x IS DISTINCT FROM y FROM t",
+      "description": "IS DISTINCT FROM"
+    },
+    {
+      "sql": "SELECT x IS NOT DISTINCT FROM y FROM t",
+      "description": "IS NOT DISTINCT FROM"
+    }
+  ],
+  "transpilation": []
+}

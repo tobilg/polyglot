@@ -1,6 +1,6 @@
 .PHONY: help extract-fixtures test-rust test-rust-all test-rust-identity test-rust-dialect \
         test-rust-transpile test-rust-pretty test-rust-roundtrip test-rust-matrix \
-        test-rust-compat test-rust-errors test-rust-functions test-rust-lib test-rust-verify \
+        test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-verify \
         test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
@@ -20,7 +20,7 @@ help:
 	@echo "  make test-rust           - Run all Rust tests"
 	@echo "  make test-rust-all       - Run all sqlglot fixture tests"
 	@echo "  make test-rust-lib       - Run lib unit tests (704)"
-	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation"
+	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation + custom"
 	@echo ""
 	@echo "  SQLGlot Fixture Tests (8,455 tests):"
 	@echo "  make test-rust-identity  - Generic identity tests (955)"
@@ -34,6 +34,7 @@ help:
 	@echo "  make test-rust-compat    - SQLGlot compatibility tests"
 	@echo "  make test-rust-errors    - Error handling tests"
 	@echo "  make test-rust-functions - Function normalization tests"
+	@echo "  make test-rust-custom   - Custom dialect tests (DataFusion, etc.)"
 	@echo ""
 	@echo "Full Comparison (slow, ~60s):"
 	@echo "  make test-compare        - Run JS comparison tool (requires WASM build)"
@@ -122,7 +123,7 @@ test-rust-all: setup-fixtures
 	cargo test -p polyglot-sql --test sqlglot_identity --test sqlglot_dialect_identity \
 		--test sqlglot_transpilation --test sqlglot_pretty -- --nocapture
 
-# Run lib + identity + dialect identity + transpilation (full verification)
+# Run lib + identity + dialect identity + transpilation + custom dialects (full verification)
 test-rust-verify: setup-fixtures
 	@echo "=== Lib unit tests ==="
 	@cargo test --lib -p polyglot-sql
@@ -135,6 +136,9 @@ test-rust-verify: setup-fixtures
 	@echo ""
 	@echo "=== Transpilation tests ==="
 	@cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
+	@echo ""
+	@echo "=== Custom dialect tests ==="
+	@cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
 
 # -----------------------------------------------------------------------------
 # Additional Rust Tests
@@ -159,6 +163,10 @@ test-rust-errors:
 # Run function normalization tests
 test-rust-functions:
 	cargo test -p polyglot-sql --test test_function_normalizations -- --nocapture
+
+# Run custom dialect tests (auto-discovers all dialects in custom_fixtures/)
+test-rust-custom:
+	cargo test -p polyglot-sql --test custom_dialect_tests -- --nocapture
 
 # Quick check - just compile tests
 test-rust-check:

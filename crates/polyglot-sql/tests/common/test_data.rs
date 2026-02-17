@@ -59,3 +59,55 @@ pub struct TranspilationTest {
     #[serde(default)]
     pub write: HashMap<String, String>,
 }
+
+// =============================================================================
+// Custom dialect fixture types (for dialects not in Python sqlglot)
+// =============================================================================
+
+/// A single fixture file for a custom dialect (e.g., custom_fixtures/datafusion/select.json)
+#[derive(Debug, Deserialize)]
+pub struct CustomDialectFixtureFile {
+    pub dialect: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub identity: Vec<CustomIdentityTest>,
+    #[serde(default)]
+    pub transpilation: Vec<CustomTranspileTest>,
+}
+
+/// A single custom identity test case
+#[derive(Debug, Deserialize)]
+pub struct CustomIdentityTest {
+    pub sql: String,
+    #[serde(default)]
+    pub expected: Option<String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// A single custom transpilation test case (sqlglot-compatible format)
+#[derive(Debug, Deserialize)]
+pub struct CustomTranspileTest {
+    /// The SQL in the file's dialect (used as expected output for `read`, input for `write`)
+    pub sql: String,
+    /// Map of {target_dialect: expected_output} — forward transpilation
+    #[serde(default)]
+    pub write: HashMap<String, String>,
+    /// Map of {source_dialect: source_sql} — reverse transpilation (source → file dialect)
+    #[serde(default)]
+    pub read: HashMap<String, String>,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// All fixtures for a single custom dialect (all files in one subdirectory)
+pub struct CustomDialectFixtures {
+    pub dialect: String,
+    pub files: Vec<CustomDialectFixtureFile>,
+}
+
+/// All custom dialect fixtures discovered from the custom_fixtures directory
+pub struct AllCustomFixtures {
+    pub dialects: Vec<CustomDialectFixtures>,
+}

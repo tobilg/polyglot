@@ -1,0 +1,226 @@
+{
+  "dialect": "datafusion",
+  "category": "identity",
+  "identity": [
+    {
+      "sql": "SELECT 1",
+      "description": "Simple literal select"
+    },
+    {
+      "sql": "SELECT 1, 2, 3",
+      "description": "Multiple literal select"
+    },
+    {
+      "sql": "SELECT a, b, c FROM t",
+      "description": "Simple column select"
+    },
+    {
+      "sql": "SELECT * FROM t",
+      "description": "Star select"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x > 1",
+      "description": "Select with WHERE clause"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x",
+      "description": "Select with ORDER BY"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x LIMIT 10",
+      "description": "Select with ORDER BY and LIMIT"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+      "description": "Select with ORDER BY, LIMIT and OFFSET"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x ASC",
+      "description": "ORDER BY ASC"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x DESC",
+      "description": "ORDER BY DESC"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x NULLS FIRST",
+      "description": "ORDER BY NULLS FIRST"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x NULLS LAST",
+      "description": "ORDER BY NULLS LAST"
+    },
+    {
+      "sql": "SELECT DISTINCT x FROM t",
+      "description": "SELECT DISTINCT"
+    },
+    {
+      "sql": "SELECT ALL x FROM t",
+      "expected": "SELECT x FROM t",
+      "description": "SELECT ALL"
+    },
+    {
+      "sql": "SELECT a AS x, b AS y FROM t",
+      "description": "Column aliases"
+    },
+    {
+      "sql": "SELECT * FROM t AS t1",
+      "description": "Table alias"
+    },
+    {
+      "sql": "SELECT t.* FROM t",
+      "description": "Qualified star"
+    },
+    {
+      "sql": "SELECT 1 WHERE TRUE",
+      "description": "WHERE with boolean literal"
+    },
+    {
+      "sql": "SELECT 1 WHERE FALSE",
+      "description": "WHERE with false literal"
+    },
+    {
+      "sql": "SELECT NULL",
+      "description": "NULL literal"
+    },
+    {
+      "sql": "SELECT TRUE",
+      "description": "TRUE literal"
+    },
+    {
+      "sql": "SELECT FALSE",
+      "description": "FALSE literal"
+    },
+    {
+      "sql": "SELECT 1.5",
+      "description": "Float literal"
+    },
+    {
+      "sql": "SELECT -1",
+      "description": "Negative literal"
+    },
+    {
+      "sql": "SELECT 'hello'",
+      "description": "String literal"
+    },
+    {
+      "sql": "SELECT 'it''s'",
+      "description": "Escaped string literal"
+    },
+    {
+      "sql": "SELECT x FROM t GROUP BY x",
+      "description": "GROUP BY"
+    },
+    {
+      "sql": "SELECT x, count(*) FROM t GROUP BY x HAVING count(*) > 1",
+      "description": "GROUP BY with HAVING"
+    },
+    {
+      "sql": "SELECT x FROM t GROUP BY 1",
+      "description": "GROUP BY ordinal"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x BETWEEN 1 AND 10",
+      "description": "BETWEEN"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x NOT BETWEEN 1 AND 10",
+      "description": "NOT BETWEEN"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x LIKE '%foo%'",
+      "description": "LIKE"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x NOT LIKE '%foo%'",
+      "expected": "SELECT * FROM t WHERE NOT x LIKE '%foo%'",
+      "description": "NOT LIKE"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x ILIKE '%foo%'",
+      "description": "ILIKE (case-insensitive)"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IS NULL",
+      "description": "IS NULL"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IS NOT NULL",
+      "description": "IS NOT NULL"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IN (1, 2, 3)",
+      "description": "IN list"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x NOT IN (1, 2, 3)",
+      "description": "NOT IN list"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IN (SELECT y FROM s)",
+      "description": "IN subquery"
+    },
+    {
+      "sql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+      "description": "CASE WHEN"
+    },
+    {
+      "sql": "SELECT CASE x WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END FROM t",
+      "description": "Simple CASE"
+    },
+    {
+      "sql": "SELECT (SELECT 1)",
+      "description": "Scalar subquery"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT 1 AS x) AS t",
+      "description": "Derived table"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT 1 AS x UNION ALL SELECT 2 AS x) AS t",
+      "description": "Derived table with UNION"
+    },
+    {
+      "sql": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+      "description": "Common table expression"
+    },
+    {
+      "sql": "WITH cte1 AS (SELECT 1 AS x), cte2 AS (SELECT 2 AS y) SELECT * FROM cte1, cte2",
+      "description": "Multiple CTEs"
+    },
+    {
+      "sql": "WITH RECURSIVE cte AS (SELECT 1 AS x UNION ALL SELECT x + 1 FROM cte WHERE x < 10) SELECT * FROM cte",
+      "description": "Recursive CTE"
+    },
+    {
+      "sql": "SELECT 1 UNION ALL SELECT 2",
+      "description": "UNION ALL"
+    },
+    {
+      "sql": "SELECT 1 UNION SELECT 2",
+      "description": "UNION DISTINCT"
+    },
+    {
+      "sql": "SELECT 1 INTERSECT SELECT 2",
+      "description": "INTERSECT"
+    },
+    {
+      "sql": "SELECT 1 EXCEPT SELECT 2",
+      "description": "EXCEPT"
+    },
+    {
+      "sql": "SELECT 'hello' || ' ' || 'world'",
+      "description": "String concatenation"
+    },
+    {
+      "sql": "DESCRIBE t",
+      "description": "DESCRIBE table"
+    },
+    {
+      "sql": "EXPLAIN SELECT 1",
+      "expected": "DESCRIBE SELECT 1",
+      "description": "EXPLAIN"
+    }
+  ],
+  "transpilation": []
+}

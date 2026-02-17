@@ -2006,6 +2006,7 @@ impl Generator {
             }
             Expression::Array(arr) => self.generate_array(arr),
             Expression::Tuple(tuple) => self.generate_tuple(tuple),
+            Expression::PipeOperator(pipe) => self.generate_pipe_operator(pipe),
             Expression::Ordered(ordered) => self.generate_ordered(ordered),
             Expression::DataType(dt) => self.generate_data_type(dt),
             Expression::Raw(raw) => {
@@ -18372,6 +18373,13 @@ impl Generator {
             }
             self.write(")");
         }
+        Ok(())
+    }
+
+    fn generate_pipe_operator(&mut self, pipe: &PipeOperator) -> Result<()> {
+        self.generate_expression(&pipe.this)?;
+        self.write(" |> ");
+        self.generate_expression(&pipe.expression)?;
         Ok(())
     }
 

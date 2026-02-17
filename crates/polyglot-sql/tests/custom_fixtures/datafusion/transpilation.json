@@ -1,0 +1,739 @@
+{
+  "dialect": "datafusion",
+  "category": "transpilation",
+  "identity": [],
+  "transpilation": [
+    {
+      "sql": "SELECT * FROM a LEFT SEMI JOIN b ON a.id = b.id",
+      "write": {
+        "duckdb": "SELECT * FROM a LEFT SEMI JOIN b ON a.id = b.id",
+        "postgresql": "SELECT * FROM a WHERE EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "mysql": "SELECT * FROM a WHERE EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "snowflake": "SELECT * FROM a WHERE EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "spark": "SELECT * FROM a LEFT SEMI JOIN b ON a.id = b.id",
+        "tsql": "SELECT * FROM a WHERE EXISTS((SELECT 1 FROM b WHERE a.id = b.id))"
+      },
+      "description": "LEFT SEMI JOIN to EXISTS for dialects that lack semi join support"
+    },
+    {
+      "sql": "SELECT * FROM a LEFT ANTI JOIN b ON a.id = b.id",
+      "write": {
+        "duckdb": "SELECT * FROM a LEFT ANTI JOIN b ON a.id = b.id",
+        "postgresql": "SELECT * FROM a WHERE NOT EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "mysql": "SELECT * FROM a WHERE NOT EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "snowflake": "SELECT * FROM a WHERE NOT EXISTS((SELECT 1 FROM b WHERE a.id = b.id))",
+        "spark": "SELECT * FROM a LEFT ANTI JOIN b ON a.id = b.id",
+        "tsql": "SELECT * FROM a WHERE NOT EXISTS((SELECT 1 FROM b WHERE a.id = b.id))"
+      },
+      "description": "LEFT ANTI JOIN to NOT EXISTS for dialects that lack anti join support"
+    },
+
+    {
+      "sql": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1",
+      "write": {
+        "duckdb": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1",
+        "snowflake": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1",
+        "postgresql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1",
+        "mysql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1",
+        "spark": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x NULLS LAST) AS _w FROM t) AS _t WHERE _w = 1",
+        "tsql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1"
+      },
+      "description": "QUALIFY ROW_NUMBER elimination for dialects without QUALIFY"
+    },
+    {
+      "sql": "SELECT * FROM t QUALIFY RANK() OVER (ORDER BY x) <= 3",
+      "write": {
+        "duckdb": "SELECT * FROM t QUALIFY RANK() OVER (ORDER BY x) <= 3",
+        "snowflake": "SELECT * FROM t QUALIFY RANK() OVER (ORDER BY x) <= 3",
+        "postgresql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3",
+        "mysql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3",
+        "spark": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x NULLS LAST) AS _w FROM t) AS _t WHERE _w <= 3",
+        "tsql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3"
+      },
+      "description": "QUALIFY RANK elimination for dialects without QUALIFY"
+    },
+
+    {
+      "sql": "SELECT * EXCEPT (col1) FROM t",
+      "write": {
+        "duckdb": "SELECT * EXCLUDE (col1) FROM t",
+        "snowflake": "SELECT * EXCLUDE (col1) FROM t"
+      },
+      "read": {
+        "duckdb": "SELECT * EXCLUDE (col1) FROM t"
+      },
+      "description": "EXCEPT column exclusion to EXCLUDE for DuckDB/Snowflake"
+    },
+    {
+      "sql": "SELECT * EXCEPT (col1, col2) FROM t",
+      "write": {
+        "duckdb": "SELECT * EXCLUDE (col1, col2) FROM t",
+        "snowflake": "SELECT * EXCLUDE (col1, col2) FROM t"
+      },
+      "description": "Multiple column EXCEPT to EXCLUDE for DuckDB/Snowflake"
+    },
+
+    {
+      "sql": "SELECT CAST(x AS DOUBLE) FROM t",
+      "write": {
+        "postgresql": "SELECT CAST(x AS DOUBLE PRECISION) FROM t",
+        "tsql": "SELECT CAST(x AS FLOAT) FROM t",
+        "duckdb": "SELECT CAST(x AS DOUBLE) FROM t",
+        "mysql": "SELECT CAST(x AS DOUBLE) FROM t",
+        "snowflake": "SELECT CAST(x AS DOUBLE) FROM t",
+        "spark": "SELECT CAST(x AS DOUBLE) FROM t"
+      },
+      "description": "DOUBLE type mapping: PostgreSQL uses DOUBLE PRECISION, TSQL uses FLOAT"
+    },
+    {
+      "sql": "SELECT CAST(x AS BOOLEAN) FROM t",
+      "write": {
+        "mysql": "SELECT CAST(x AS SIGNED) FROM t",
+        "tsql": "SELECT CAST(x AS BIT) FROM t",
+        "duckdb": "SELECT CAST(x AS BOOLEAN) FROM t",
+        "postgresql": "SELECT CAST(x AS BOOLEAN) FROM t",
+        "snowflake": "SELECT CAST(x AS BOOLEAN) FROM t",
+        "spark": "SELECT CAST(x AS BOOLEAN) FROM t"
+      },
+      "description": "BOOLEAN type mapping: MySQL uses SIGNED, TSQL uses BIT"
+    },
+    {
+      "sql": "SELECT CAST(x AS VARCHAR) FROM t",
+      "write": {
+        "duckdb": "SELECT CAST(x AS TEXT) FROM t",
+        "mysql": "SELECT CAST(x AS CHAR) FROM t",
+        "spark": "SELECT CAST(x AS STRING) FROM t",
+        "postgresql": "SELECT CAST(x AS VARCHAR) FROM t",
+        "snowflake": "SELECT CAST(x AS VARCHAR) FROM t",
+        "tsql": "SELECT CAST(x AS VARCHAR) FROM t"
+      },
+      "description": "VARCHAR type mapping across dialects"
+    },
+    {
+      "sql": "SELECT CAST(x AS TEXT) FROM t",
+      "write": {
+        "mysql": "SELECT CAST(x AS CHAR) FROM t",
+        "snowflake": "SELECT CAST(x AS VARCHAR) FROM t",
+        "spark": "SELECT CAST(x AS STRING) FROM t",
+        "tsql": "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+        "duckdb": "SELECT CAST(x AS TEXT) FROM t",
+        "postgresql": "SELECT CAST(x AS TEXT) FROM t"
+      },
+      "description": "TEXT type mapping: Snowflake→VARCHAR, Spark→STRING, TSQL→VARCHAR(MAX)"
+    },
+    {
+      "sql": "SELECT CAST(x AS TINYINT) FROM t",
+      "write": {
+        "mysql": "SELECT CAST(x AS SIGNED) FROM t",
+        "postgresql": "SELECT CAST(x AS SMALLINT) FROM t",
+        "duckdb": "SELECT CAST(x AS TINYINT) FROM t",
+        "snowflake": "SELECT CAST(x AS TINYINT) FROM t",
+        "spark": "SELECT CAST(x AS TINYINT) FROM t",
+        "tsql": "SELECT CAST(x AS TINYINT) FROM t"
+      },
+      "description": "TINYINT type mapping: PostgreSQL→SMALLINT, MySQL→SIGNED"
+    },
+    {
+      "sql": "SELECT CAST(x AS FLOAT) FROM t",
+      "write": {
+        "duckdb": "SELECT CAST(x AS REAL) FROM t",
+        "postgresql": "SELECT CAST(x AS DOUBLE PRECISION) FROM t",
+        "snowflake": "SELECT CAST(x AS FLOAT) FROM t",
+        "mysql": "SELECT CAST(x AS FLOAT) FROM t",
+        "spark": "SELECT CAST(x AS FLOAT) FROM t",
+        "tsql": "SELECT CAST(x AS FLOAT) FROM t"
+      },
+      "description": "FLOAT type mapping: DuckDB→REAL, PostgreSQL→DOUBLE PRECISION"
+    },
+    {
+      "sql": "SELECT CAST(x AS TIMESTAMP) FROM t",
+      "write": {
+        "mysql": "SELECT TIMESTAMP(x) FROM t",
+        "tsql": "SELECT CAST(x AS DATETIME2) FROM t",
+        "duckdb": "SELECT CAST(x AS TIMESTAMP) FROM t",
+        "postgresql": "SELECT CAST(x AS TIMESTAMP) FROM t",
+        "snowflake": "SELECT CAST(x AS TIMESTAMP) FROM t",
+        "spark": "SELECT CAST(x AS TIMESTAMP) FROM t"
+      },
+      "read": {
+        "tsql": "SELECT CAST(x AS DATETIME2) FROM t"
+      },
+      "description": "TIMESTAMP type mapping: MySQL→TIMESTAMP(), TSQL→DATETIME2"
+    },
+    {
+      "sql": "SELECT CAST(x AS BIGINT) FROM t",
+      "write": {
+        "mysql": "SELECT CAST(x AS SIGNED) FROM t",
+        "duckdb": "SELECT CAST(x AS BIGINT) FROM t",
+        "postgresql": "SELECT CAST(x AS BIGINT) FROM t",
+        "snowflake": "SELECT CAST(x AS BIGINT) FROM t",
+        "spark": "SELECT CAST(x AS BIGINT) FROM t",
+        "tsql": "SELECT CAST(x AS BIGINT) FROM t"
+      },
+      "description": "BIGINT type mapping: MySQL→SIGNED"
+    },
+    {
+      "sql": "SELECT CAST(x AS INT) FROM t",
+      "write": {
+        "mysql": "SELECT CAST(x AS SIGNED) FROM t",
+        "tsql": "SELECT CAST(x AS INTEGER) FROM t",
+        "duckdb": "SELECT CAST(x AS INT) FROM t",
+        "postgresql": "SELECT CAST(x AS INT) FROM t",
+        "snowflake": "SELECT CAST(x AS INT) FROM t",
+        "spark": "SELECT CAST(x AS INT) FROM t"
+      },
+      "description": "INT type mapping: MySQL→SIGNED, TSQL→INTEGER"
+    },
+    {
+      "sql": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+      "write": {
+        "tsql": "SELECT CAST(x AS NUMERIC(10, 2)) FROM t",
+        "duckdb": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+        "mysql": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+        "postgresql": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+        "snowflake": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+        "spark": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t"
+      },
+      "description": "DECIMAL type mapping: TSQL→NUMERIC"
+    },
+
+    {
+      "sql": "SELECT TRY_CAST(x AS INT) FROM t",
+      "write": {
+        "postgresql": "SELECT CAST(x AS INT) FROM t",
+        "mysql": "SELECT CAST(x AS SIGNED) FROM t",
+        "duckdb": "SELECT TRY_CAST(x AS INT) FROM t",
+        "snowflake": "SELECT TRY_CAST(x AS INT) FROM t",
+        "spark": "SELECT TRY_CAST(x AS INT) FROM t",
+        "tsql": "SELECT TRY_CAST(x AS INTEGER) FROM t"
+      },
+      "description": "TRY_CAST: PostgreSQL/MySQL drop TRY, type mappings applied"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS VARCHAR) FROM t",
+      "write": {
+        "duckdb": "SELECT TRY_CAST(x AS TEXT) FROM t",
+        "mysql": "SELECT CAST(x AS CHAR) FROM t",
+        "postgresql": "SELECT CAST(x AS VARCHAR) FROM t",
+        "spark": "SELECT TRY_CAST(x AS STRING) FROM t",
+        "snowflake": "SELECT TRY_CAST(x AS VARCHAR) FROM t",
+        "tsql": "SELECT TRY_CAST(x AS VARCHAR) FROM t"
+      },
+      "description": "TRY_CAST with VARCHAR: type mapping + TRY removal combined"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS DOUBLE) FROM t",
+      "write": {
+        "postgresql": "SELECT CAST(x AS DOUBLE PRECISION) FROM t",
+        "mysql": "SELECT CAST(x AS DOUBLE) FROM t",
+        "tsql": "SELECT TRY_CAST(x AS FLOAT) FROM t",
+        "duckdb": "SELECT TRY_CAST(x AS DOUBLE) FROM t",
+        "snowflake": "SELECT TRY_CAST(x AS DOUBLE) FROM t",
+        "spark": "SELECT TRY_CAST(x AS DOUBLE) FROM t"
+      },
+      "description": "TRY_CAST with DOUBLE: PostgreSQL drops TRY + maps type, TSQL maps type"
+    },
+
+    {
+      "sql": "SELECT * FROM t ORDER BY x ASC NULLS LAST",
+      "write": {
+        "duckdb": "SELECT * FROM t ORDER BY x ASC",
+        "postgresql": "SELECT * FROM t ORDER BY x ASC",
+        "snowflake": "SELECT * FROM t ORDER BY x ASC",
+        "mysql": "SELECT * FROM t ORDER BY x ASC",
+        "spark": "SELECT * FROM t ORDER BY x ASC NULLS LAST",
+        "tsql": "SELECT * FROM t ORDER BY x ASC NULLS LAST"
+      },
+      "description": "ASC NULLS LAST: redundant for DuckDB/PostgreSQL/Snowflake/MySQL"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x DESC NULLS FIRST",
+      "write": {
+        "postgresql": "SELECT * FROM t ORDER BY x DESC",
+        "snowflake": "SELECT * FROM t ORDER BY x DESC",
+        "duckdb": "SELECT * FROM t ORDER BY x DESC NULLS FIRST",
+        "mysql": "SELECT * FROM t ORDER BY x DESC",
+        "spark": "SELECT * FROM t ORDER BY x DESC NULLS FIRST",
+        "tsql": "SELECT * FROM t ORDER BY x DESC NULLS FIRST"
+      },
+      "description": "DESC NULLS FIRST: redundant for PostgreSQL/Snowflake/MySQL"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
+      "write": {
+        "duckdb": "SELECT * FROM t ORDER BY x DESC",
+        "postgresql": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
+        "mysql": "SELECT * FROM t ORDER BY x DESC",
+        "snowflake": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
+        "spark": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
+        "tsql": "SELECT * FROM t ORDER BY x DESC NULLS LAST"
+      },
+      "description": "DESC NULLS LAST: redundant for DuckDB/MySQL"
+    },
+
+    {
+      "sql": "SELECT 'a' || 'b'",
+      "write": {
+        "mysql": "SELECT 'a' OR 'b'",
+        "spark": "SELECT CONCAT('a', 'b')",
+        "tsql": "SELECT 'a' + 'b'",
+        "duckdb": "SELECT 'a' || 'b'",
+        "postgresql": "SELECT 'a' || 'b'",
+        "snowflake": "SELECT 'a' || 'b'"
+      },
+      "description": "String concatenation operator: MySQL→OR, Spark→CONCAT, TSQL→+"
+    },
+    {
+      "sql": "SELECT x IS DISTINCT FROM y",
+      "write": {
+        "mysql": "SELECT NOT x <=> y",
+        "duckdb": "SELECT x IS DISTINCT FROM y",
+        "postgresql": "SELECT x IS DISTINCT FROM y",
+        "snowflake": "SELECT x IS DISTINCT FROM y",
+        "spark": "SELECT x IS DISTINCT FROM y",
+        "tsql": "SELECT x IS DISTINCT FROM y"
+      },
+      "description": "IS DISTINCT FROM: MySQL uses NOT x <=> y"
+    },
+    {
+      "sql": "SELECT x IS NOT DISTINCT FROM y",
+      "write": {
+        "mysql": "SELECT x <=> y",
+        "duckdb": "SELECT x IS NOT DISTINCT FROM y",
+        "postgresql": "SELECT x IS NOT DISTINCT FROM y",
+        "snowflake": "SELECT x IS NOT DISTINCT FROM y",
+        "spark": "SELECT x IS NOT DISTINCT FROM y",
+        "tsql": "SELECT x IS NOT DISTINCT FROM y"
+      },
+      "read": {
+        "mysql": "SELECT x <=> y"
+      },
+      "description": "IS NOT DISTINCT FROM: MySQL uses x <=> y (null-safe equality)"
+    },
+    {
+      "sql": "SELECT x ILIKE '%foo%'",
+      "write": {
+        "mysql": "SELECT LOWER(x) LIKE LOWER('%foo%')",
+        "tsql": "SELECT LOWER(x) LIKE LOWER('%foo%')",
+        "duckdb": "SELECT x ILIKE '%foo%'",
+        "postgresql": "SELECT x ILIKE '%foo%'",
+        "snowflake": "SELECT x ILIKE '%foo%'",
+        "spark": "SELECT x ILIKE '%foo%'"
+      },
+      "description": "ILIKE: MySQL/TSQL rewrite to LOWER(x) LIKE LOWER(pattern)"
+    },
+
+    {
+      "sql": "SELECT COALESCE(a, b) FROM t",
+      "write": {
+        "tsql": "SELECT ISNULL(a, b) FROM t",
+        "duckdb": "SELECT COALESCE(a, b) FROM t",
+        "mysql": "SELECT COALESCE(a, b) FROM t",
+        "postgresql": "SELECT COALESCE(a, b) FROM t",
+        "snowflake": "SELECT COALESCE(a, b) FROM t",
+        "spark": "SELECT COALESCE(a, b) FROM t"
+      },
+      "description": "COALESCE: TSQL maps to ISNULL"
+    },
+    {
+      "sql": "SELECT STRING_AGG(x, ',') FROM t",
+      "write": {
+        "duckdb": "SELECT LISTAGG(x, ',') FROM t",
+        "mysql": "SELECT GROUP_CONCAT(x SEPARATOR ',') FROM t",
+        "snowflake": "SELECT LISTAGG(x, ',') FROM t",
+        "postgresql": "SELECT STRING_AGG(x, ',') FROM t",
+        "spark": "SELECT LISTAGG(x, ',') FROM t",
+        "tsql": "SELECT STRING_AGG(x, ',') FROM t"
+      },
+      "description": "STRING_AGG: DuckDB/Snowflake→LISTAGG, MySQL→GROUP_CONCAT"
+    },
+    {
+      "sql": "SELECT ARRAY_AGG(x) FROM t",
+      "write": {
+        "mysql": "SELECT GROUP_CONCAT(x) FROM t",
+        "duckdb": "SELECT ARRAY_AGG(x) FROM t",
+        "postgresql": "SELECT ARRAY_AGG(x) FROM t",
+        "snowflake": "SELECT ARRAY_AGG(x) FROM t",
+        "spark": "SELECT COLLECT_LIST(x) FROM t",
+        "tsql": "SELECT ARRAY_AGG(x) FROM t"
+      },
+      "description": "ARRAY_AGG: MySQL→GROUP_CONCAT, Spark→COLLECT_LIST"
+    },
+    {
+      "sql": "SELECT BOOL_AND(x) FROM t",
+      "write": {
+        "snowflake": "SELECT BOOLAND_AGG(x) FROM t",
+        "duckdb": "SELECT BOOL_AND(x) FROM t",
+        "mysql": "SELECT BOOL_AND(x) FROM t",
+        "postgresql": "SELECT BOOL_AND(x) FROM t",
+        "spark": "SELECT BOOL_AND(x) FROM t",
+        "tsql": "SELECT BOOL_AND(x) FROM t"
+      },
+      "description": "BOOL_AND: Snowflake→BOOLAND_AGG"
+    },
+    {
+      "sql": "SELECT BOOL_OR(x) FROM t",
+      "write": {
+        "snowflake": "SELECT BOOLOR_AGG(x) FROM t",
+        "duckdb": "SELECT BOOL_OR(x) FROM t",
+        "mysql": "SELECT BOOL_OR(x) FROM t",
+        "postgresql": "SELECT BOOL_OR(x) FROM t",
+        "spark": "SELECT BOOL_OR(x) FROM t",
+        "tsql": "SELECT BOOL_OR(x) FROM t"
+      },
+      "description": "BOOL_OR: Snowflake→BOOLOR_AGG"
+    },
+    {
+      "sql": "SELECT VAR_SAMP(x) FROM t",
+      "write": {
+        "duckdb": "SELECT VARIANCE(x) FROM t",
+        "snowflake": "SELECT VARIANCE(x) FROM t",
+        "mysql": "SELECT VAR_SAMP(x) FROM t",
+        "postgresql": "SELECT VAR_SAMP(x) FROM t",
+        "spark": "SELECT VAR_SAMP(x) FROM t",
+        "tsql": "SELECT VAR_SAMP(x) FROM t"
+      },
+      "description": "VAR_SAMP: DuckDB/Snowflake→VARIANCE"
+    },
+    {
+      "sql": "SELECT STDDEV_SAMP(x) FROM t",
+      "write": {
+        "snowflake": "SELECT STDDEV(x) FROM t",
+        "duckdb": "SELECT STDDEV_SAMP(x) FROM t",
+        "mysql": "SELECT STDDEV_SAMP(x) FROM t",
+        "postgresql": "SELECT STDDEV_SAMP(x) FROM t",
+        "spark": "SELECT STDDEV_SAMP(x) FROM t",
+        "tsql": "SELECT STDDEV_SAMP(x) FROM t"
+      },
+      "description": "STDDEV_SAMP: Snowflake→STDDEV"
+    },
+    {
+      "sql": "SELECT APPROX_DISTINCT(x) FROM t",
+      "write": {
+        "duckdb": "SELECT APPROX_COUNT_DISTINCT(x) FROM t",
+        "snowflake": "SELECT APPROX_COUNT_DISTINCT(x) FROM t",
+        "spark": "SELECT APPROX_COUNT_DISTINCT(x) FROM t",
+        "mysql": "SELECT APPROX_DISTINCT(x) FROM t",
+        "postgresql": "SELECT APPROX_DISTINCT(x) FROM t",
+        "tsql": "SELECT APPROX_DISTINCT(x) FROM t"
+      },
+      "description": "APPROX_DISTINCT: DuckDB/Snowflake/Spark→APPROX_COUNT_DISTINCT"
+    },
+
+    {
+      "sql": "SELECT length(s) FROM t",
+      "write": {
+        "tsql": "SELECT LEN(s) FROM t",
+        "duckdb": "SELECT LENGTH(s) FROM t",
+        "mysql": "SELECT LENGTH(s) FROM t",
+        "postgresql": "SELECT LENGTH(s) FROM t",
+        "snowflake": "SELECT LENGTH(s) FROM t",
+        "spark": "SELECT LENGTH(s) FROM t"
+      },
+      "read": {
+        "tsql": "SELECT LEN(s) FROM t"
+      },
+      "description": "LENGTH: TSQL→LEN"
+    },
+    {
+      "sql": "SELECT EXTRACT(YEAR FROM ts) FROM t",
+      "write": {
+        "snowflake": "SELECT DATE_PART(YEAR, ts) FROM t",
+        "spark": "SELECT EXTRACT(year FROM ts) FROM t",
+        "tsql": "SELECT DATEPART(YEAR, ts) FROM t",
+        "duckdb": "SELECT EXTRACT(YEAR FROM ts) FROM t",
+        "mysql": "SELECT EXTRACT(YEAR FROM ts) FROM t",
+        "postgresql": "SELECT EXTRACT(YEAR FROM ts) FROM t"
+      },
+      "description": "EXTRACT: Snowflake→DATE_PART, TSQL→DATEPART, Spark lowercases"
+    },
+    {
+      "sql": "SELECT DATE_TRUNC('month', ts) FROM t",
+      "write": {
+        "mysql": "SELECT DATE(ts) FROM t",
+        "tsql": "SELECT DATETRUNC('month', ts) FROM t",
+        "duckdb": "SELECT DATE_TRUNC('month', ts) FROM t",
+        "postgresql": "SELECT DATE_TRUNC('month', ts) FROM t",
+        "snowflake": "SELECT DATE_TRUNC('month', ts) FROM t",
+        "spark": "SELECT DATE_TRUNC('month', ts) FROM t"
+      },
+      "description": "DATE_TRUNC: MySQL→DATE, TSQL→DATETRUNC"
+    },
+    {
+      "sql": "SELECT DATE_PART('year', ts) FROM t",
+      "write": {
+        "duckdb": "SELECT EXTRACT(YEAR FROM ts) FROM t",
+        "postgresql": "SELECT EXTRACT(year FROM ts) FROM t",
+        "spark": "SELECT EXTRACT(year FROM ts) FROM t",
+        "tsql": "SELECT DATEPART(year, ts) FROM t",
+        "mysql": "SELECT DATE_PART('year', ts) FROM t",
+        "snowflake": "SELECT DATE_PART(year, ts) FROM t"
+      },
+      "description": "DATE_PART: DuckDB/PostgreSQL/Spark→EXTRACT"
+    },
+    {
+      "sql": "SELECT NOW()",
+      "write": {
+        "duckdb": "SELECT CURRENT_TIMESTAMP",
+        "postgresql": "SELECT CURRENT_TIMESTAMP",
+        "snowflake": "SELECT CURRENT_TIMESTAMP()",
+        "spark": "SELECT CURRENT_TIMESTAMP()",
+        "tsql": "SELECT GETDATE()",
+        "mysql": "SELECT NOW()"
+      },
+      "description": "NOW(): DuckDB/PostgreSQL→CURRENT_TIMESTAMP, Snowflake/Spark→CURRENT_TIMESTAMP(), TSQL→GETDATE()"
+    },
+    {
+      "sql": "SELECT STARTS_WITH(s, 'pre') FROM t",
+      "write": {
+        "snowflake": "SELECT STARTSWITH(s, 'pre') FROM t",
+        "spark": "SELECT STARTSWITH(s, 'pre') FROM t",
+        "duckdb": "SELECT STARTS_WITH(s, 'pre') FROM t",
+        "mysql": "SELECT STARTS_WITH(s, 'pre') FROM t",
+        "postgresql": "SELECT STARTS_WITH(s, 'pre') FROM t",
+        "tsql": "SELECT STARTS_WITH(s, 'pre') FROM t"
+      },
+      "description": "STARTS_WITH: Snowflake/Spark→STARTSWITH (no underscore)"
+    },
+    {
+      "sql": "SELECT ENDS_WITH(s, 'suf') FROM t",
+      "write": {
+        "snowflake": "SELECT ENDSWITH(s, 'suf') FROM t",
+        "spark": "SELECT ENDSWITH(s, 'suf') FROM t",
+        "duckdb": "SELECT ENDS_WITH(s, 'suf') FROM t",
+        "mysql": "SELECT ENDS_WITH(s, 'suf') FROM t",
+        "postgresql": "SELECT ENDS_WITH(s, 'suf') FROM t",
+        "tsql": "SELECT ENDS_WITH(s, 'suf') FROM t"
+      },
+      "description": "ENDS_WITH: Snowflake/Spark→ENDSWITH (no underscore)"
+    },
+
+    {
+      "sql": "SELECT * FROM t ORDER BY x LIMIT 10",
+      "write": {
+        "tsql": "SELECT TOP 10 * FROM t ORDER BY x",
+        "duckdb": "SELECT * FROM t ORDER BY x LIMIT 10",
+        "mysql": "SELECT * FROM t ORDER BY x LIMIT 10",
+        "postgresql": "SELECT * FROM t ORDER BY x LIMIT 10",
+        "snowflake": "SELECT * FROM t ORDER BY x LIMIT 10",
+        "spark": "SELECT * FROM t ORDER BY x NULLS LAST LIMIT 10"
+      },
+      "description": "LIMIT with ORDER BY: TSQL→TOP, Spark adds NULLS LAST"
+    },
+    {
+      "sql": "SELECT * FROM t LIMIT 10 OFFSET 5",
+      "write": {
+        "tsql": "SELECT * FROM t OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        "duckdb": "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "mysql": "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "postgresql": "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "snowflake": "SELECT * FROM t LIMIT 10 OFFSET 5",
+        "spark": "SELECT * FROM t LIMIT 10 OFFSET 5"
+      },
+      "description": "LIMIT with OFFSET: TSQL→OFFSET/FETCH"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+      "write": {
+        "tsql": "SELECT * FROM t ORDER BY x OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        "duckdb": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+        "mysql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+        "postgresql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+        "snowflake": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
+        "spark": "SELECT * FROM t ORDER BY x NULLS LAST LIMIT 10 OFFSET 5"
+      },
+      "description": "LIMIT+OFFSET with ORDER BY: TSQL→OFFSET/FETCH, Spark adds NULLS LAST"
+    },
+
+    {
+      "sql": "SELECT 1 UNION ALL SELECT 2",
+      "write": {
+        "duckdb": "SELECT 1 UNION ALL SELECT 2",
+        "mysql": "SELECT 1 UNION ALL SELECT 2",
+        "postgresql": "SELECT 1 UNION ALL SELECT 2",
+        "snowflake": "SELECT 1 UNION ALL SELECT 2",
+        "spark": "SELECT 1 UNION ALL SELECT 2",
+        "tsql": "SELECT 1 UNION ALL SELECT 2"
+      },
+      "description": "UNION ALL preserved across all dialects"
+    },
+    {
+      "sql": "SELECT 1 INTERSECT SELECT 2",
+      "write": {
+        "duckdb": "SELECT 1 INTERSECT SELECT 2",
+        "mysql": "SELECT 1 INTERSECT SELECT 2",
+        "postgresql": "SELECT 1 INTERSECT SELECT 2",
+        "snowflake": "SELECT 1 INTERSECT SELECT 2",
+        "spark": "SELECT 1 INTERSECT SELECT 2",
+        "tsql": "SELECT 1 INTERSECT SELECT 2"
+      },
+      "description": "INTERSECT preserved across all dialects"
+    },
+    {
+      "sql": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+      "write": {
+        "duckdb": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+        "mysql": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+        "postgresql": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+        "snowflake": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+        "spark": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte",
+        "tsql": "WITH cte AS (SELECT 1 AS x) SELECT * FROM cte"
+      },
+      "description": "CTE preserved across all dialects"
+    },
+
+    {
+      "sql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+      "write": {
+        "duckdb": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+        "mysql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+        "postgresql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+        "snowflake": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+        "spark": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+        "tsql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t"
+      },
+      "description": "CASE WHEN preserved across all dialects"
+    },
+
+    {
+      "sql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+      "write": {
+        "duckdb": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+        "mysql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+        "postgresql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+        "snowflake": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
+        "spark": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z NULLS LAST) FROM t",
+        "tsql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t"
+      },
+      "description": "Window function: Spark adds NULLS LAST"
+    },
+    {
+      "sql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
+      "write": {
+        "duckdb": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
+        "mysql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
+        "postgresql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
+        "snowflake": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
+        "spark": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y NULLS LAST) FROM t",
+        "tsql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t"
+      },
+      "description": "ROW_NUMBER window function: Spark adds NULLS LAST"
+    },
+
+    {
+      "sql": "SELECT INTERVAL '1' DAY",
+      "write": {
+        "duckdb": "SELECT INTERVAL '1' DAY",
+        "mysql": "SELECT INTERVAL '1' DAY",
+        "postgresql": "SELECT INTERVAL '1 DAY'",
+        "snowflake": "SELECT INTERVAL '1 DAY'",
+        "spark": "SELECT INTERVAL '1' DAY",
+        "tsql": "SELECT INTERVAL '1' DAY"
+      },
+      "description": "INTERVAL DAY preserved across all dialects"
+    },
+    {
+      "sql": "SELECT INTERVAL '1' HOUR",
+      "write": {
+        "duckdb": "SELECT INTERVAL '1' HOUR",
+        "mysql": "SELECT INTERVAL '1' HOUR",
+        "postgresql": "SELECT INTERVAL '1 HOUR'",
+        "snowflake": "SELECT INTERVAL '1 HOUR'",
+        "spark": "SELECT INTERVAL '1' HOUR",
+        "tsql": "SELECT INTERVAL '1' HOUR"
+      },
+      "description": "INTERVAL HOUR preserved across all dialects"
+    },
+
+    {
+      "sql": "SELECT COUNT(*) FROM t",
+      "write": {
+        "duckdb": "SELECT COUNT(*) FROM t",
+        "mysql": "SELECT COUNT(*) FROM t",
+        "postgresql": "SELECT COUNT(*) FROM t",
+        "snowflake": "SELECT COUNT(*) FROM t",
+        "spark": "SELECT COUNT(*) FROM t",
+        "tsql": "SELECT COUNT(*) FROM t"
+      },
+      "description": "COUNT(*) preserved across all dialects"
+    },
+    {
+      "sql": "SELECT GROUPING(x) FROM t",
+      "write": {
+        "duckdb": "SELECT GROUPING(x) FROM t",
+        "mysql": "SELECT GROUPING(x) FROM t",
+        "postgresql": "SELECT GROUPING(x) FROM t",
+        "snowflake": "SELECT GROUPING(x) FROM t",
+        "spark": "SELECT GROUPING(x) FROM t",
+        "tsql": "SELECT GROUPING(x) FROM t"
+      },
+      "description": "GROUPING preserved across all dialects"
+    },
+    {
+      "sql": "SELECT SUBSTRING(s, 1, 5) FROM t",
+      "write": {
+        "duckdb": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "mysql": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "postgresql": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "snowflake": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "spark": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "tsql": "SELECT SUBSTRING(s, 1, 5) FROM t"
+      },
+      "description": "SUBSTRING preserved across all dialects"
+    },
+    {
+      "sql": "SELECT CONCAT(a, b) FROM t",
+      "write": {
+        "duckdb": "SELECT CONCAT(a, b) FROM t",
+        "mysql": "SELECT CONCAT(a, b) FROM t",
+        "postgresql": "SELECT CONCAT(a, b) FROM t",
+        "snowflake": "SELECT CONCAT(a, b) FROM t",
+        "spark": "SELECT CONCAT(a, b) FROM t",
+        "tsql": "SELECT CONCAT(a, b) FROM t"
+      },
+      "description": "CONCAT preserved across all dialects"
+    },
+    {
+      "sql": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+      "write": {
+        "duckdb": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+        "mysql": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+        "postgresql": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+        "snowflake": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+        "spark": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t",
+        "tsql": "SELECT REGEXP_REPLACE(s, 'pat', 'rep') FROM t"
+      },
+      "description": "REGEXP_REPLACE preserved across all dialects"
+    },
+    {
+      "sql": "SELECT CORR(x, y) FROM t",
+      "write": {
+        "duckdb": "SELECT CORR(x, y) FROM t",
+        "mysql": "SELECT CORR(x, y) FROM t",
+        "postgresql": "SELECT CORR(x, y) FROM t",
+        "snowflake": "SELECT CORR(x, y) FROM t",
+        "spark": "SELECT CORR(x, y) FROM t",
+        "tsql": "SELECT CORR(x, y) FROM t"
+      },
+      "description": "CORR preserved across all dialects"
+    },
+
+    {
+      "sql": "SELECT * FROM t LIMIT 10",
+      "write": {
+        "tsql": "SELECT TOP 10 * FROM t"
+      },
+      "read": {
+        "tsql": "SELECT TOP 10 * FROM t"
+      },
+      "description": "LIMIT without ORDER BY: TSQL→TOP"
+    },
+    {
+      "sql": "SELECT CAST(x AS VARCHAR(MAX)) FROM t",
+      "read": {
+        "tsql": "SELECT CAST(x AS NVARCHAR(MAX)) FROM t"
+      },
+      "description": "TSQL NVARCHAR(MAX)→VARCHAR(MAX) reverse mapping"
+    }
+  ]
+}

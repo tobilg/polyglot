@@ -52,6 +52,7 @@ mod fabric;
 mod drill;
 mod dremio;
 mod exasol;
+mod datafusion;
 
 pub use generic::GenericDialect;
 pub use postgres::PostgresDialect;
@@ -86,6 +87,7 @@ pub use fabric::FabricDialect;
 pub use drill::DrillDialect;
 pub use dremio::DremioDialect;
 pub use exasol::ExasolDialect;
+pub use datafusion::DataFusionDialect;
 
 use crate::error::Result;
 use crate::expressions::{Expression, FunctionBody};
@@ -173,6 +175,8 @@ pub enum DialectType {
     Dremio,
     /// Exasol -- in-memory analytic database.
     Exasol,
+    /// Apache DataFusion -- Arrow-based query engine with modern SQL extensions.
+    DataFusion,
 }
 
 impl Default for DialectType {
@@ -217,6 +221,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Drill => write!(f, "drill"),
             DialectType::Dremio => write!(f, "dremio"),
             DialectType::Exasol => write!(f, "exasol"),
+            DialectType::DataFusion => write!(f, "datafusion"),
         }
     }
 }
@@ -259,6 +264,7 @@ impl std::str::FromStr for DialectType {
             "drill" => Ok(DialectType::Drill),
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
+            "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
             _ => Err(crate::error::Error::parse(format!("Unknown dialect: {}", s))),
         }
     }
@@ -1316,6 +1322,11 @@ where
             f.this = transform_recursive(f.this, transform_fn)?;
             Expression::BitwiseXorAgg(f)
         }
+        Expression::PipeOperator(mut pipe) => {
+            pipe.this = transform_recursive(pipe.this, transform_fn)?;
+            pipe.expression = transform_recursive(pipe.expression, transform_fn)?;
+            Expression::PipeOperator(pipe)
+        }
 
         // Pass through leaf nodes unchanged
         other => other,
@@ -1378,6 +1389,7 @@ fn configs_for_dialect_type(
         DialectType::Drill => dialect_configs!(DrillDialect),
         DialectType::Dremio => dialect_configs!(DremioDialect),
         DialectType::Exasol => dialect_configs!(ExasolDialect),
+        DialectType::DataFusion => dialect_configs!(DataFusionDialect),
         _ => dialect_configs!(GenericDialect),
     }
 }
@@ -1861,6 +1873,8 @@ impl Dialect {
                 let expr = transforms::expand_between_in_delete(expr)?;
                 Ok(expr)
             }
+            // DataFusion supports QUALIFY and semi/anti joins natively
+            DialectType::DataFusion => Ok(expr),
             // Oracle - no special preprocessing needed
             DialectType::Oracle => {
                 Ok(expr)
@@ -11597,7 +11611,7 @@ impl Dialect {
                     let is_source_nulls_last = matches!(source,
                         DialectType::DuckDB | DialectType::Presto | DialectType::Trino
                         | DialectType::Dremio | DialectType::Athena | DialectType::ClickHouse
-                        | DialectType::Drill | DialectType::Exasol
+                        | DialectType::Drill | DialectType::Exasol | DialectType::DataFusion
                     );
 
                     // Determine target category to check if default matches
@@ -11608,7 +11622,7 @@ impl Dialect {
                     let is_target_nulls_last = matches!(target,
                         DialectType::DuckDB | DialectType::Presto | DialectType::Trino
                         | DialectType::Dremio | DialectType::Athena | DialectType::ClickHouse
-                        | DialectType::Drill | DialectType::Exasol
+                        | DialectType::Drill | DialectType::Exasol | DialectType::DataFusion
                     );
 
                     // Compute the implied nulls_first for source

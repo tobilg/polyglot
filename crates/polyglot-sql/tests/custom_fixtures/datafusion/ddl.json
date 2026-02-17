@@ -1,0 +1,95 @@
+{
+  "dialect": "datafusion",
+  "category": "ddl",
+  "identity": [
+    {
+      "sql": "CREATE TABLE t (a INT, b VARCHAR, c DOUBLE)",
+      "description": "Basic CREATE TABLE"
+    },
+    {
+      "sql": "CREATE TABLE t (a INT NOT NULL, b VARCHAR, c DOUBLE)",
+      "description": "CREATE TABLE with NOT NULL"
+    },
+    {
+      "sql": "CREATE TABLE t (a INT, b VARCHAR DEFAULT 'hello')",
+      "description": "CREATE TABLE with DEFAULT"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS t (a INT)",
+      "description": "CREATE TABLE IF NOT EXISTS"
+    },
+    {
+      "sql": "CREATE TABLE t AS SELECT * FROM s",
+      "description": "CREATE TABLE AS SELECT"
+    },
+    {
+      "sql": "CREATE OR REPLACE TABLE t (a INT)",
+      "description": "CREATE OR REPLACE TABLE"
+    },
+    {
+      "sql": "CREATE TABLE t (a INT, b INT, PRIMARY KEY (a))",
+      "description": "CREATE TABLE with PRIMARY KEY"
+    },
+    {
+      "sql": "CREATE VIEW v AS SELECT 1",
+      "description": "CREATE VIEW"
+    },
+    {
+      "sql": "CREATE VIEW v AS SELECT a, b FROM t WHERE x > 1",
+      "description": "CREATE VIEW with query"
+    },
+    {
+      "sql": "CREATE OR REPLACE VIEW v AS SELECT 1",
+      "description": "CREATE OR REPLACE VIEW"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "description": "DROP TABLE"
+    },
+    {
+      "sql": "DROP TABLE IF EXISTS t",
+      "description": "DROP TABLE IF EXISTS"
+    },
+    {
+      "sql": "DROP VIEW v",
+      "description": "DROP VIEW"
+    },
+    {
+      "sql": "DROP VIEW IF EXISTS v",
+      "description": "DROP VIEW IF EXISTS"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN c INT",
+      "description": "ALTER TABLE ADD COLUMN"
+    },
+    {
+      "sql": "ALTER TABLE t DROP COLUMN c",
+      "description": "ALTER TABLE DROP COLUMN"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME TO t2",
+      "description": "ALTER TABLE RENAME"
+    },
+    {
+      "sql": "ALTER TABLE t RENAME COLUMN a TO b",
+      "description": "ALTER TABLE RENAME COLUMN"
+    },
+    {
+      "sql": "CREATE TABLE t (a BIGINT, b DOUBLE, c BOOLEAN, d TIMESTAMP, e DATE, f INTERVAL)",
+      "description": "CREATE TABLE with various Arrow types"
+    },
+    {
+      "sql": "CREATE TABLE t (a TINYINT, b SMALLINT, c INT, d BIGINT)",
+      "description": "CREATE TABLE with integer types"
+    },
+    {
+      "sql": "CREATE TABLE t (a FLOAT, b DOUBLE, c DECIMAL(10, 2))",
+      "description": "CREATE TABLE with float types"
+    },
+    {
+      "sql": "CREATE TABLE t (a VARCHAR, b TEXT, c CHAR(10))",
+      "description": "CREATE TABLE with string types"
+    }
+  ],
+  "transpilation": []
+}

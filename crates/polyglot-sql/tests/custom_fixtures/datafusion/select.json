@@ -1,0 +1,131 @@
+{
+  "dialect": "datafusion",
+  "category": "select",
+  "identity": [
+    {
+      "sql": "SELECT * EXCEPT (col1) FROM t",
+      "description": "Column exclusion with EXCEPT"
+    },
+    {
+      "sql": "SELECT * EXCEPT (col1, col2) FROM t",
+      "description": "Multiple column exclusion with EXCEPT"
+    },
+    {
+      "sql": "SELECT * FROM a INNER JOIN b ON a.id = b.id",
+      "description": "INNER JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a LEFT JOIN b ON a.id = b.id",
+      "description": "LEFT JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a RIGHT JOIN b ON a.id = b.id",
+      "description": "RIGHT JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a FULL OUTER JOIN b ON a.id = b.id",
+      "description": "FULL OUTER JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a CROSS JOIN b",
+      "description": "CROSS JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a LEFT SEMI JOIN b ON a.id = b.id",
+      "description": "LEFT SEMI JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a LEFT ANTI JOIN b ON a.id = b.id",
+      "description": "LEFT ANTI JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a NATURAL JOIN b",
+      "description": "NATURAL JOIN"
+    },
+    {
+      "sql": "SELECT * FROM a JOIN b USING (id)",
+      "description": "JOIN USING"
+    },
+    {
+      "sql": "SELECT * FROM a, b WHERE a.id = b.id",
+      "description": "Comma join (implicit cross join)"
+    },
+    {
+      "sql": "SELECT * FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) = 1",
+      "description": "QUALIFY clause"
+    },
+    {
+      "sql": "SELECT * FROM t QUALIFY RANK() OVER (ORDER BY x) <= 3",
+      "description": "QUALIFY with RANK"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x > 1 AND y < 10",
+      "description": "Multiple WHERE conditions with AND"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x > 1 OR y < 10",
+      "description": "WHERE with OR"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NOT x > 1",
+      "description": "WHERE with NOT"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE (x > 1 AND y < 10) OR z = 5",
+      "description": "Parenthesized conditions"
+    },
+    {
+      "sql": "SELECT *, x + y AS total FROM t",
+      "description": "Computed column with star"
+    },
+    {
+      "sql": "SELECT x, y, x + y AS total FROM t",
+      "description": "Computed column"
+    },
+    {
+      "sql": "SELECT a.*, b.x FROM a JOIN b ON a.id = b.id",
+      "description": "Qualified star with join"
+    },
+    {
+      "sql": "SELECT * FROM t ORDER BY x DESC, y ASC",
+      "description": "Multi-column ORDER BY"
+    },
+    {
+      "sql": "SELECT * FROM t LIMIT 10",
+      "description": "LIMIT without ORDER BY"
+    },
+    {
+      "sql": "SELECT * FROM t GROUP BY ROLLUP (x, y)",
+      "expected": "SELECT * FROM t GROUP BY rollup (x, y)",
+      "description": "GROUP BY ROLLUP"
+    },
+    {
+      "sql": "SELECT * FROM t GROUP BY CUBE (x, y)",
+      "expected": "SELECT * FROM t GROUP BY cube (x, y)",
+      "description": "GROUP BY CUBE"
+    },
+    {
+      "sql": "SELECT * FROM t GROUP BY GROUPING SETS ((x), (y), ())",
+      "expected": "SELECT * FROM t GROUP BY grouping sets ((x), (y), ())",
+      "description": "GROUP BY GROUPING SETS"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE EXISTS(SELECT 1 FROM s WHERE s.id = t.id)",
+      "description": "EXISTS subquery"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NOT EXISTS(SELECT 1 FROM s WHERE s.id = t.id)",
+      "description": "NOT EXISTS subquery"
+    },
+    {
+      "sql": "SELECT * FROM unnest(ARRAY[1, 2, 3]) AS t(x)",
+      "expected": "SELECT * FROM UNNEST(ARRAY[1, 2, 3]) AS t(x)",
+      "description": "UNNEST"
+    },
+    {
+      "sql": "SELECT * FROM generate_series(1, 10) AS t(x)",
+      "description": "Generate series as table source"
+    }
+  ],
+  "transpilation": []
+}

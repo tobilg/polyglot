@@ -1,0 +1,128 @@
+{
+  "dialect": "datafusion",
+  "category": "types",
+  "identity": [
+    {
+      "sql": "SELECT CAST(x AS INT) FROM t",
+      "description": "CAST to INT"
+    },
+    {
+      "sql": "SELECT CAST(x AS INTEGER) FROM t",
+      "expected": "SELECT CAST(x AS INT) FROM t",
+      "description": "CAST to INTEGER"
+    },
+    {
+      "sql": "SELECT CAST(x AS BIGINT) FROM t",
+      "description": "CAST to BIGINT"
+    },
+    {
+      "sql": "SELECT CAST(x AS SMALLINT) FROM t",
+      "description": "CAST to SMALLINT"
+    },
+    {
+      "sql": "SELECT CAST(x AS TINYINT) FROM t",
+      "description": "CAST to TINYINT"
+    },
+    {
+      "sql": "SELECT CAST(x AS FLOAT) FROM t",
+      "description": "CAST to FLOAT"
+    },
+    {
+      "sql": "SELECT CAST(x AS DOUBLE) FROM t",
+      "description": "CAST to DOUBLE"
+    },
+    {
+      "sql": "SELECT CAST(x AS BOOLEAN) FROM t",
+      "description": "CAST to BOOLEAN"
+    },
+    {
+      "sql": "SELECT CAST(x AS VARCHAR) FROM t",
+      "description": "CAST to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS TEXT) FROM t",
+      "description": "CAST to TEXT"
+    },
+    {
+      "sql": "SELECT CAST(x AS CHAR) FROM t",
+      "description": "CAST to CHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS DATE) FROM t",
+      "description": "CAST to DATE"
+    },
+    {
+      "sql": "SELECT CAST(x AS TIMESTAMP) FROM t",
+      "description": "CAST to TIMESTAMP"
+    },
+    {
+      "sql": "SELECT CAST(x AS INTERVAL) FROM t",
+      "description": "CAST to INTERVAL"
+    },
+    {
+      "sql": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+      "description": "CAST to DECIMAL with precision and scale"
+    },
+    {
+      "sql": "SELECT CAST(x AS NUMERIC(10, 2)) FROM t",
+      "expected": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t",
+      "description": "CAST to NUMERIC with precision and scale"
+    },
+    {
+      "sql": "SELECT CAST(x AS VARCHAR(255)) FROM t",
+      "description": "CAST to VARCHAR with length"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS INT) FROM t",
+      "description": "TRY_CAST to INT"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS BIGINT) FROM t",
+      "description": "TRY_CAST to BIGINT"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS VARCHAR) FROM t",
+      "description": "TRY_CAST to VARCHAR"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS DOUBLE) FROM t",
+      "description": "TRY_CAST to DOUBLE"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS TIMESTAMP) FROM t",
+      "description": "TRY_CAST to TIMESTAMP"
+    },
+    {
+      "sql": "SELECT arrow_cast(x, 'Int32') FROM t",
+      "description": "arrow_cast function"
+    },
+    {
+      "sql": "SELECT arrow_cast(x, 'Float64') FROM t",
+      "description": "arrow_cast to Float64"
+    },
+    {
+      "sql": "SELECT arrow_cast(x, 'Utf8') FROM t",
+      "description": "arrow_cast to Utf8"
+    },
+    {
+      "sql": "SELECT arrow_typeof(x) FROM t",
+      "description": "arrow_typeof function"
+    },
+    {
+      "sql": "SELECT x::INT FROM t",
+      "expected": "SELECT CAST(x AS INT) FROM t",
+      "description": "Shorthand CAST with ::"
+    },
+    {
+      "sql": "SELECT x::VARCHAR FROM t",
+      "expected": "SELECT CAST(x AS VARCHAR) FROM t",
+      "description": "Shorthand CAST to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS BYTEA) FROM t",
+      "expected": "SELECT CAST(x AS VARBINARY) FROM t",
+      "description": "CAST to BYTEA (binary)"
+    }
+  ],
+  "transpilation": []
+}

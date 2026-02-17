@@ -32,6 +32,9 @@ jobs:
       - name: Transpilation tests
         run: cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
 
+      - name: Custom dialect tests
+        run: cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
+
   sdk-build:
     needs: rust-test
     runs-on: ubuntu-latest
