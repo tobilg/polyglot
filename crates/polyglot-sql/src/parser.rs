@@ -31124,6 +31124,20 @@ impl Parser {
                 quoted,
                 trailing_comments: Vec::new(),
             })
+        } else if self.check(TokenType::LBrace)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            if let Some(param_expr) = self.parse_clickhouse_braced_parameter()? {
+                if let Expression::Parameter(param) = &param_expr {
+                    let name = format!("{{{}: {}}}", param.name.as_deref().unwrap_or(""), param.expression.as_deref().unwrap_or(""));
+                    return Ok(Identifier {
+                        name,
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                    });
+                }
+            }
+            Err(Error::parse("Expected identifier, got LBrace"))
         } else {
             Err(Error::parse(format!(
                 "Expected identifier, got {:?}",
@@ -31168,6 +31182,22 @@ impl Parser {
                 quoted,
                 trailing_comments: Vec::new(),
             })
+        } else if self.check(TokenType::LBrace)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            // ClickHouse query parameter: {name:Type}
+            if let Some(param_expr) = self.parse_clickhouse_braced_parameter()? {
+                // Extract the parameter name to use as the identifier
+                if let Expression::Parameter(param) = &param_expr {
+                    let name = format!("{{{}: {}}}", param.name.as_deref().unwrap_or(""), param.expression.as_deref().unwrap_or(""));
+                    return Ok(Identifier {
+                        name,
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                    });
+                }
+            }
+            Err(Error::parse("Expected identifier, got LBrace"))
         } else {
             Err(Error::parse(format!(
                 "Expected identifier, got {:?}",
@@ -31184,6 +31214,15 @@ impl Parser {
     fn expect_identifier(&mut self) -> Result<String> {
         if self.is_identifier_token() {
             Ok(self.advance().text)
+        } else if self.check(TokenType::LBrace)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            if let Some(param_expr) = self.parse_clickhouse_braced_parameter()? {
+                if let Expression::Parameter(param) = &param_expr {
+                    return Ok(format!("{{{}: {}}}", param.name.as_deref().unwrap_or(""), param.expression.as_deref().unwrap_or("")));
+                }
+            }
+            Err(Error::parse("Expected identifier, got LBrace"))
         } else {
             Err(Error::parse(format!(
                 "Expected identifier, got {:?}",
@@ -31200,6 +31239,15 @@ impl Parser {
     fn expect_identifier_or_keyword(&mut self) -> Result<String> {
         if self.is_identifier_or_keyword_token() {
             Ok(self.advance().text)
+        } else if self.check(TokenType::LBrace)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            if let Some(param_expr) = self.parse_clickhouse_braced_parameter()? {
+                if let Expression::Parameter(param) = &param_expr {
+                    return Ok(format!("{{{}: {}}}", param.name.as_deref().unwrap_or(""), param.expression.as_deref().unwrap_or("")));
+                }
+            }
+            Err(Error::parse("Expected identifier, got LBrace"))
         } else {
             Err(Error::parse(format!(
                 "Expected identifier, got {:?}",
@@ -31217,6 +31265,15 @@ impl Parser {
     fn expect_identifier_or_safe_keyword(&mut self) -> Result<String> {
         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
             Ok(self.advance().text)
+        } else if self.check(TokenType::LBrace)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            if let Some(param_expr) = self.parse_clickhouse_braced_parameter()? {
+                if let Expression::Parameter(param) = &param_expr {
+                    return Ok(format!("{{{}: {}}}", param.name.as_deref().unwrap_or(""), param.expression.as_deref().unwrap_or("")));
+                }
+            }
+            Err(Error::parse("Expected identifier, got LBrace"))
         } else {
             Err(Error::parse(format!(
                 "Expected identifier, got {:?}",
