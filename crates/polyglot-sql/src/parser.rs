@@ -14223,27 +14223,10 @@ impl Parser {
             // ClickHouse-specific ALTER TABLE mutations: UPDATE, DELETE, DETACH, ATTACH,
             // FREEZE, UNFREEZE, MATERIALIZE, CLEAR, COMMENT COLUMN, MODIFY ORDER BY,
             // MOVE PARTITION, FETCH PARTITION, ADD INDEX, DROP INDEX, CLEAR INDEX
-            let peeked = self.peek().text.to_uppercase();
-            let is_ch_action = matches!(peeked.as_str(),
-                "UPDATE" | "DETACH" | "ATTACH" | "FREEZE" | "UNFREEZE" | "MATERIALIZE"
-                | "CLEAR" | "MOVE" | "FETCH" | "APPLY" | "REMOVE"
-            ) || self.check(TokenType::Delete)
-              || (self.check(TokenType::Comment) && {
-                  // COMMENT COLUMN - look ahead for COLUMN
-                  self.current + 1 < self.tokens.len() && self.tokens[self.current + 1].token_type == TokenType::Column
-              })
-              || (self.check_identifier("MODIFY") && {
-                  // MODIFY ORDER BY / MODIFY SETTING / MODIFY TTL / MODIFY QUERY
-                  self.current + 1 < self.tokens.len() && {
-                      let next_text = self.tokens[self.current + 1].text.to_uppercase();
-                      matches!(next_text.as_str(), "ORDER" | "SETTING" | "TTL" | "QUERY" | "SAMPLE" | "CODEC" | "COMMENT" | "REMOVE")
-                          || self.tokens[self.current + 1].token_type == TokenType::Settings
-                  }
-              });
-
-            if is_ch_action {
-                // Consume as a Command expression (to semicolon or comma at top level)
-                let keyword = self.advance().text.to_uppercase();
+            // For ClickHouse, consume any unrecognized ALTER TABLE action as Raw
+            // (covers UPDATE, DELETE, DETACH, ATTACH, FREEZE, MOVE, FETCH, etc.)
+            {
+                let keyword = self.advance().text.clone();
                 let mut tokens: Vec<(String, TokenType)> = vec![(keyword, TokenType::Var)];
                 let mut paren_depth = 0i32;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
@@ -14264,11 +14247,6 @@ impl Parser {
                     tokens.push((text, token.token_type));
                 }
                 Ok(AlterTableAction::Raw { sql: self.join_command_tokens(tokens) })
-            } else {
-                Err(Error::parse(format!(
-                    "Expected ADD, DROP, RENAME, ALTER, SET, UNSET, SWAP, CLUSTER, or REPLACE in ALTER TABLE, got {:?}",
-                    self.peek().token_type
-                )))
             }
         } else {
             Err(Error::parse(format!(
