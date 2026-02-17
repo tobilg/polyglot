@@ -41,6 +41,14 @@ mod syntax_errors {
     }
 
     #[test]
+    fn test_unexpected_token_after_implicit_alias() {
+        // "SELECT scooby dooby doo" should fail: after implicit alias "dooby",
+        // "doo" is an unexpected token (not a comma, FROM, or semicolon)
+        let result = Parser::parse_sql("SELECT scooby dooby doo");
+        assert!(result.is_err(), "Expected error for unexpected token after implicit alias");
+    }
+
+    #[test]
     fn test_missing_select_keyword() {
         let result = Parser::parse_sql("* FROM users");
         assert!(result.is_err(), "Expected error for missing SELECT");

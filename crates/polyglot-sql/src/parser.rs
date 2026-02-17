@@ -558,11 +558,25 @@ impl Parser {
     pub fn parse(&mut self) -> Result<Vec<Expression>> {
         let mut statements = Vec::new();
 
+        // Skip leading semicolons
+        while self.match_token(TokenType::Semicolon) {}
+
         while !self.is_at_end() {
             statements.push(self.parse_statement()?);
 
-            // Consume optional semicolon
-            self.match_token(TokenType::Semicolon);
+            // After a statement, require either end of input or a semicolon separator
+            if !self.is_at_end() {
+                if !self.match_token(TokenType::Semicolon) {
+                    let token = self.peek();
+                    return Err(Error::syntax(
+                        format!("Unexpected token '{}'", token.text),
+                        token.span.line,
+                        token.span.column,
+                    ));
+                }
+                // Consume any additional semicolons
+                while self.match_token(TokenType::Semicolon) {}
+            }
         }
 
         Ok(statements)
