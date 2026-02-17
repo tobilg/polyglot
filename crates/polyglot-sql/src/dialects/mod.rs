@@ -775,6 +775,13 @@ where
             f.this = transform_recursive(f.this, transform_fn)?;
             Expression::Ln(f)
         }
+        Expression::Log(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            if let Some(base) = f.base {
+                f.base = Some(transform_recursive(base, transform_fn)?);
+            }
+            Expression::Log(f)
+        }
         Expression::Exp(mut f) => {
             f.this = transform_recursive(f.this, transform_fn)?;
             Expression::Exp(f)

@@ -639,8 +639,22 @@ impl MySQLDialect {
                 }
             }
 
-            // Keep other types as-is
-            _ => cast.to.clone(),
+            // Types that are valid in MySQL CAST - pass through
+            DataType::Binary { .. } => cast.to.clone(),
+            DataType::Date => cast.to.clone(),
+            DataType::Time { .. } => cast.to.clone(),
+            DataType::Decimal { .. } => cast.to.clone(),
+            DataType::Json => cast.to.clone(),
+            DataType::Float { .. } => cast.to.clone(),
+            DataType::Double { .. } => cast.to.clone(),
+            DataType::Char { .. } => cast.to.clone(),
+            DataType::CharacterSet { .. } => cast.to.clone(),
+            DataType::Enum { .. } => cast.to.clone(),
+            DataType::Set { .. } => cast.to.clone(),
+            DataType::Timestamp { .. } => cast.to.clone(),
+
+            // All other unsupported types -> CHAR
+            _ => DataType::Char { length: None },
         };
 
         Cast {

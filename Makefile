@@ -4,7 +4,8 @@
         test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
-        bump-version
+        bump-version \
+        setup-clickhouse-tests extract-clickhouse-fixtures test-rust-clickhouse clean-clickhouse-fixtures
 
 # Default target
 help:
@@ -58,6 +59,12 @@ help:
 	@echo ""
 	@echo "Release:"
 	@echo "  make bump-version V=x.y.z - Bump version in all crates and packages"
+	@echo ""
+	@echo "ClickHouse Tests:"
+	@echo "  make setup-clickhouse-tests      - Sparse clone ClickHouse test files"
+	@echo "  make extract-clickhouse-fixtures - Extract + validate fixture JSON"
+	@echo "  make test-rust-clickhouse        - Run ClickHouse custom dialect tests"
+	@echo "  make clean-clickhouse-fixtures   - Remove generated ClickHouse fixtures"
 	@echo ""
 	@echo "Clean:"
 	@echo "  make clean               - Remove all build artifacts"
@@ -271,6 +278,41 @@ endif
 	cargo set-version $(V)
 	pnpm -r exec pnpm version $(V) --no-git-tag-version
 	@echo "Version bumped to $(V) in all crates and packages."
+
+# =============================================================================
+# ClickHouse Test Extraction
+# =============================================================================
+
+# Sparse clone ClickHouse test files (only tests/queries/0_stateless/)
+setup-clickhouse-tests:
+	@echo "Setting up ClickHouse test files (sparse clone)..."
+	@mkdir -p external-projects/clickhouse
+	@if [ ! -d external-projects/clickhouse/.git ]; then \
+		cd external-projects/clickhouse && \
+		git init && \
+		git remote add origin https://github.com/ClickHouse/ClickHouse.git && \
+		git sparse-checkout init --cone && \
+		git sparse-checkout set tests/queries/0_stateless && \
+		git fetch --depth=1 origin master && \
+		git checkout master; \
+		echo "ClickHouse test files cloned."; \
+	else \
+		echo "ClickHouse test files already present."; \
+	fi
+
+# Extract ClickHouse SQL tests into custom fixture JSON files
+extract-clickhouse-fixtures: setup-clickhouse-tests
+	@echo "Extracting ClickHouse test fixtures..."
+	uv run --with sqlglot python3 tools/clickhouse-extract/extract-clickhouse-tests.py
+	@echo "Done! Fixtures in crates/polyglot-sql/tests/custom_fixtures/clickhouse/"
+
+# Run ClickHouse custom dialect tests
+test-rust-clickhouse:
+	cargo test --test custom_dialect_tests -p polyglot-sql -- clickhouse --nocapture
+
+# Remove generated ClickHouse fixture files
+clean-clickhouse-fixtures:
+	rm -rf crates/polyglot-sql/tests/custom_fixtures/clickhouse
 
 # =============================================================================
 # Clean

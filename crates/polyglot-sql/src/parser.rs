@@ -23017,6 +23017,35 @@ impl Parser {
         )
     }
 
+    /// Whether the source dialect uses LOG(base, value) order (base first).
+    /// Default is true. BigQuery, TSQL, Tableau, Fabric use LOG(value, base).
+    fn log_base_first(&self) -> bool {
+        !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::BigQuery)
+                | Some(crate::dialects::DialectType::TSQL)
+                | Some(crate::dialects::DialectType::Tableau)
+                | Some(crate::dialects::DialectType::Fabric)
+        )
+    }
+
+    /// Whether the source dialect treats single-arg LOG(x) as LN(x).
+    /// These dialects have LOG_DEFAULTS_TO_LN = True in Python sqlglot.
+    fn log_defaults_to_ln(&self) -> bool {
+        matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::MySQL)
+                | Some(crate::dialects::DialectType::BigQuery)
+                | Some(crate::dialects::DialectType::TSQL)
+                | Some(crate::dialects::DialectType::ClickHouse)
+                | Some(crate::dialects::DialectType::Hive)
+                | Some(crate::dialects::DialectType::Spark)
+                | Some(crate::dialects::DialectType::Databricks)
+                | Some(crate::dialects::DialectType::Drill)
+                | Some(crate::dialects::DialectType::Dremio)
+        )
+    }
+
     /// Parse a typed function call (after the opening paren)
     /// Following Python SQLGlot pattern: match all function aliases to typed expressions
     fn parse_typed_function(&mut self, name: &str, upper_name: &str, quoted: bool) -> Result<Expression> {
@@ -24258,6 +24287,35 @@ impl Parser {
                 let this = self.parse_expression()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Ln(Box::new(UnaryFunc::new(this))))
+            }
+
+            // LOG function - normalize argument order based on source dialect
+            // Some dialects use LOG(base, value), others use LOG(value, base)
+            // Single-arg LOG(x) may mean LN(x) or LOG10(x) depending on dialect
+            "LOG" => {
+                let first = self.parse_expression()?;
+                if self.match_token(TokenType::Comma) {
+                    let second = self.parse_expression()?;
+                    self.expect(TokenType::RParen)?;
+                    // Normalize argument order: internally always this=value, base=base
+                    let (value, base) = if self.log_base_first() {
+                        // LOG(base, value) → this=value, base=base
+                        (second, first)
+                    } else {
+                        // LOG(value, base) → this=value, base=base
+                        (first, second)
+                    };
+                    Ok(Expression::Log(Box::new(LogFunc { this: value, base: Some(base) })))
+                } else {
+                    self.expect(TokenType::RParen)?;
+                    if self.log_defaults_to_ln() {
+                        // Dialects where LOG(x) means LN(x)
+                        Ok(Expression::Ln(Box::new(UnaryFunc::new(first))))
+                    } else {
+                        // Default: LOG(x) with unspecified base (log base 10)
+                        Ok(Expression::Log(Box::new(LogFunc { this: first, base: None })))
+                    }
+                }
             }
 
             // TRIM function with SQL standard syntax

@@ -346,11 +346,119 @@ impl DialectImpl for PostgresDialect {
             // DateDiff -> Complex PostgreSQL pattern using AGE/EXTRACT
             Expression::DateDiff(f) => {
                 // For PostgreSQL, DATEDIFF is converted to EXTRACT(epoch FROM ...) pattern
-                // Simplified: use AGE function
-                Ok(Expression::Function(Box::new(Function::new(
-                    "AGE".to_string(),
-                    vec![f.this, f.expression],
-                ))))
+                // matching the 3-arg string-based DATEDIFF handler below
+                let unit = f.unit.unwrap_or(IntervalUnit::Day);
+
+                // Helper: CAST(expr AS TIMESTAMP)
+                let cast_ts = |e: Expression| -> Expression {
+                    Expression::Cast(Box::new(Cast {
+                        this: e,
+                        to: DataType::Timestamp { precision: None, timezone: false },
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                    }))
+                };
+
+                // Helper: CAST(expr AS BIGINT)
+                let cast_bigint = |e: Expression| -> Expression {
+                    Expression::Cast(Box::new(Cast {
+                        this: e,
+                        to: DataType::BigInt { length: None },
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                    }))
+                };
+
+                // Clone end/start for reuse
+                let end_expr = f.this;
+                let start = f.expression;
+
+                // Helper: end_ts - start_ts
+                let ts_diff = || -> Expression {
+                    Expression::Sub(Box::new(BinaryOp::new(
+                        cast_ts(end_expr.clone()),
+                        cast_ts(start.clone()),
+                    )))
+                };
+
+                // Helper: AGE(end_ts, start_ts)
+                let age_call = || -> Expression {
+                    Expression::Function(Box::new(Function::new(
+                        "AGE".to_string(),
+                        vec![cast_ts(end_expr.clone()), cast_ts(start.clone())],
+                    )))
+                };
+
+                // Helper: EXTRACT(field FROM expr)
+                let extract = |field: DateTimeField, from: Expression| -> Expression {
+                    Expression::Extract(Box::new(ExtractFunc {
+                        this: from,
+                        field,
+                    }))
+                };
+
+                // Helper: number literal
+                let num = |n: i64| -> Expression {
+                    Expression::Literal(Literal::Number(n.to_string()))
+                };
+
+                let epoch_field = DateTimeField::Custom("epoch".to_string());
+
+                let result = match unit {
+                    IntervalUnit::Microsecond => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000)))))
+                    }
+                    IntervalUnit::Millisecond => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000)))))
+                    }
+                    IntervalUnit::Second => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(epoch)
+                    }
+                    IntervalUnit::Minute => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(Expression::Div(Box::new(BinaryOp::new(epoch, num(60)))))
+                    }
+                    IntervalUnit::Hour => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(Expression::Div(Box::new(BinaryOp::new(epoch, num(3600)))))
+                    }
+                    IntervalUnit::Day => {
+                        let epoch = extract(epoch_field, ts_diff());
+                        cast_bigint(Expression::Div(Box::new(BinaryOp::new(epoch, num(86400)))))
+                    }
+                    IntervalUnit::Week => {
+                        let diff_parens = Expression::Paren(Box::new(Paren {
+                            this: ts_diff(),
+                            trailing_comments: Vec::new(),
+                        }));
+                        let days = extract(DateTimeField::Custom("days".to_string()), diff_parens);
+                        cast_bigint(Expression::Div(Box::new(BinaryOp::new(days, num(7)))))
+                    }
+                    IntervalUnit::Month => {
+                        let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
+                        let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
+                        let year_months = Expression::Mul(Box::new(BinaryOp::new(year_part, num(12))));
+                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_months, month_part))))
+                    }
+                    IntervalUnit::Quarter => {
+                        let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
+                        let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
+                        let year_quarters = Expression::Mul(Box::new(BinaryOp::new(year_part, num(4))));
+                        let month_quarters = Expression::Div(Box::new(BinaryOp::new(month_part, num(3))));
+                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_quarters, month_quarters))))
+                    }
+                    IntervalUnit::Year => {
+                        cast_bigint(extract(DateTimeField::Custom("year".to_string()), age_call()))
+                    }
+                };
+                Ok(result)
             }
 
             // UnixToTime -> TO_TIMESTAMP
