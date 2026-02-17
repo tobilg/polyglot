@@ -1096,6 +1096,119 @@ pub enum Expression {
 }
 
 impl Expression {
+    /// Returns `true` if this expression is a valid top-level SQL statement.
+    ///
+    /// Bare expressions like identifiers, literals, and function calls are not
+    /// valid statements. This is used by `validate()` to reject inputs like
+    /// `SELECT scooby dooby doo` which the parser splits into `SELECT scooby AS dooby`
+    /// plus the bare identifier `doo`.
+    pub fn is_statement(&self) -> bool {
+        match self {
+            // Queries
+            Expression::Select(_)
+            | Expression::Union(_)
+            | Expression::Intersect(_)
+            | Expression::Except(_)
+            | Expression::Subquery(_)
+            | Expression::Values(_)
+            | Expression::PipeOperator(_)
+
+            // DML
+            | Expression::Insert(_)
+            | Expression::Update(_)
+            | Expression::Delete(_)
+            | Expression::Copy(_)
+            | Expression::Put(_)
+            | Expression::Merge(_)
+
+            // DDL
+            | Expression::CreateTable(_)
+            | Expression::DropTable(_)
+            | Expression::AlterTable(_)
+            | Expression::CreateIndex(_)
+            | Expression::DropIndex(_)
+            | Expression::CreateView(_)
+            | Expression::DropView(_)
+            | Expression::AlterView(_)
+            | Expression::AlterIndex(_)
+            | Expression::Truncate(_)
+            | Expression::TruncateTable(_)
+            | Expression::CreateSchema(_)
+            | Expression::DropSchema(_)
+            | Expression::DropNamespace(_)
+            | Expression::CreateDatabase(_)
+            | Expression::DropDatabase(_)
+            | Expression::CreateFunction(_)
+            | Expression::DropFunction(_)
+            | Expression::CreateProcedure(_)
+            | Expression::DropProcedure(_)
+            | Expression::CreateSequence(_)
+            | Expression::DropSequence(_)
+            | Expression::AlterSequence(_)
+            | Expression::CreateTrigger(_)
+            | Expression::DropTrigger(_)
+            | Expression::CreateType(_)
+            | Expression::DropType(_)
+            | Expression::Comment(_)
+
+            // Session/Transaction/Control
+            | Expression::Use(_)
+            | Expression::Set(_)
+            | Expression::SetStatement(_)
+            | Expression::Transaction(_)
+            | Expression::Commit(_)
+            | Expression::Rollback(_)
+            | Expression::Grant(_)
+            | Expression::Revoke(_)
+            | Expression::Cache(_)
+            | Expression::Uncache(_)
+            | Expression::LoadData(_)
+            | Expression::Pragma(_)
+            | Expression::Describe(_)
+            | Expression::Show(_)
+            | Expression::Kill(_)
+            | Expression::Execute(_)
+            | Expression::Declare(_)
+            | Expression::Refresh(_)
+            | Expression::AlterSession(_)
+            | Expression::LockingStatement(_)
+
+            // Analyze
+            | Expression::Analyze(_)
+            | Expression::AnalyzeStatistics(_)
+            | Expression::AnalyzeHistogram(_)
+            | Expression::AnalyzeSample(_)
+            | Expression::AnalyzeListChainedRows(_)
+            | Expression::AnalyzeDelete(_)
+
+            // Attach/Detach/Install/Summarize
+            | Expression::Attach(_)
+            | Expression::Detach(_)
+            | Expression::Install(_)
+            | Expression::Summarize(_)
+
+            // Pivot at statement level
+            | Expression::Pivot(_)
+            | Expression::Unpivot(_)
+
+            // Command (raw/unparsed statements)
+            | Expression::Command(_)
+            | Expression::Raw(_)
+
+            // Return statement
+            | Expression::ReturnStmt(_) => true,
+
+            // Annotated wraps another expression with comments — check inner
+            Expression::Annotated(a) => a.this.is_statement(),
+
+            // Alias at top level can wrap a statement (e.g., parenthesized subquery with alias)
+            Expression::Alias(a) => a.this.is_statement(),
+
+            // Everything else (identifiers, literals, operators, functions, etc.)
+            _ => false,
+        }
+    }
+
     /// Create a literal number expression from an integer.
     pub fn number(n: i64) -> Self {
         Expression::Literal(Literal::Number(n.to_string()))
@@ -3601,6 +3714,9 @@ pub enum DataType {
     // Object (Snowflake structured type)
     // fields: Vec of (field_name, field_type, not_null)
     Object { fields: Vec<(String, DataType, bool)>, modifier: Option<String> },
+
+    // Nullable wrapper (ClickHouse): Nullable(String), Nullable(Int32)
+    Nullable { inner: Box<DataType> },
 
     // Custom/User-defined
     Custom { name: String },

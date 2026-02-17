@@ -19344,6 +19344,24 @@ impl Generator {
                 }
                 self.write(")");
             }
+            DataType::Nullable { inner } => {
+                // ClickHouse: Nullable(T), other dialects: just the inner type
+                if matches!(self.config.dialect, Some(DialectType::ClickHouse)) {
+                    self.write("Nullable(");
+                    self.generate_data_type(inner)?;
+                    self.write(")");
+                } else {
+                    // Map ClickHouse-specific custom type names to standard types
+                    match inner.as_ref() {
+                        DataType::Custom { name } if name.to_uppercase() == "DATETIME" => {
+                            self.generate_data_type(&DataType::Timestamp { precision: None, timezone: false })?;
+                        }
+                        _ => {
+                            self.generate_data_type(inner)?;
+                        }
+                    }
+                }
+            }
             DataType::Custom { name } => {
                 // Handle dialect-specific type transformations
                 let name_upper = name.to_uppercase();

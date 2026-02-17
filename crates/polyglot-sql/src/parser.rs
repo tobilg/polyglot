@@ -24640,7 +24640,7 @@ impl Parser {
             // JSON_KEYS, TO_JSON, PARSE_JSON etc. support additional args including named args (BigQuery)
             // e.g., JSON_KEYS(expr, depth, mode => 'lax'), TO_JSON(expr, stringify_wide_numbers => FALSE)
             // e.g., PARSE_JSON('{}', wide_number_mode => 'exact')
-            "JSON_ARRAY_LENGTH" | "JSON_KEYS" | "JSON_TYPE" | "TO_JSON" | "TYPEOF" | "PARSE_JSON" => {
+            "JSON_ARRAY_LENGTH" | "JSON_KEYS" | "JSON_TYPE" | "TO_JSON" | "TYPEOF" | "TOTYPENAME" | "PARSE_JSON" => {
                 let this = self.parse_expression()?;
 
                 // Check for additional arguments (comma-separated, possibly named)
@@ -24668,7 +24668,7 @@ impl Parser {
                         "JSON_KEYS" => Expression::JsonKeys(Box::new(func)),
                         "JSON_TYPE" => Expression::JsonType(Box::new(func)),
                         "TO_JSON" => Expression::ToJson(Box::new(func)),
-                        "TYPEOF" => Expression::Typeof(Box::new(func)),
+                        "TYPEOF" | "TOTYPENAME" => Expression::Typeof(Box::new(func)),
                         "PARSE_JSON" => Expression::ParseJson(Box::new(func)),
                         _ => unreachable!("JSON function name already matched in caller"),
                     })
@@ -29165,6 +29165,13 @@ impl Parser {
                 }
                 Ok(DataType::Custom { name })
             }
+            // ClickHouse Nullable(T) wrapper type
+            "NULLABLE" => {
+                self.expect(TokenType::LParen)?;
+                let inner = self.parse_data_type()?;
+                self.expect(TokenType::RParen)?;
+                Ok(DataType::Nullable { inner: Box::new(inner) })
+            }
             _ => {
                 // Handle custom types with optional parenthesized precision/args
                 // e.g., DATETIME2(2), DATETIMEOFFSET(7), NVARCHAR2(100)
@@ -29605,6 +29612,13 @@ impl Parser {
                 }
                 DataType::Custom { name }
             }
+            // ClickHouse Nullable(T) wrapper type
+            "NULLABLE" => {
+                self.expect(TokenType::LParen)?;
+                let inner = self.parse_data_type_for_cast()?;
+                self.expect(TokenType::RParen)?;
+                DataType::Nullable { inner: Box::new(inner) }
+            }
             // For simple types, use convert_name_to_type to get proper DataType variants
             // This ensures VARCHAR becomes DataType::VarChar, not DataType::Custom
             _ => self.convert_name_to_type(&name)?
@@ -29781,6 +29795,7 @@ impl Parser {
             DataType::String { length: Some(n) } => format!("STRING({})", n),
             DataType::String { length: None } => "STRING".to_string(),
             DataType::Array { element_type, .. } => format!("ARRAY({})", self.data_type_to_string(element_type)),
+            DataType::Nullable { inner } => format!("Nullable({})", self.data_type_to_string(inner)),
             DataType::Custom { name } => name.clone(),
             _ => format!("{:?}", dt),
         }

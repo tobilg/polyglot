@@ -176,7 +176,20 @@ pub fn generate(expression: &Expression, dialect: DialectType) -> Result<String>
 pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
     let d = Dialect::get(dialect);
     match d.parse(sql) {
-        Ok(_) => ValidationResult::success(),
+        Ok(expressions) => {
+            // Reject bare expressions that aren't valid SQL statements.
+            // The parser accepts any expression at the top level, but bare identifiers,
+            // literals, function calls, etc. are not valid statements.
+            for expr in &expressions {
+                if !expr.is_statement() {
+                    let msg = format!("Invalid expression / Unexpected token");
+                    return ValidationResult::with_errors(vec![
+                        ValidationError::error(msg, "E004"),
+                    ]);
+                }
+            }
+            ValidationResult::success()
+        }
         Err(e) => {
             let error = match &e {
                 Error::Syntax {
