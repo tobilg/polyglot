@@ -32,7 +32,7 @@ def run_rust_bench():
 def run_python_bench():
     print("Running sqlglot benchmarks...", file=sys.stderr)
     result = subprocess.run(
-        ["uv", "run", "--with", "sqlglot", "python3",
+        ["uv", "run", "--with", "sqlglot[rs]", "python3",
          os.path.join(PROJECT_ROOT, "tools", "bench-compare", "bench_sqlglot.py")],
         capture_output=True,
         text=True,
