@@ -1819,13 +1819,18 @@ impl Parser {
                 let star_trailing_comments = self.previous_trailing_comments();
                 let star = self.parse_star_modifiers_with_comments(None, star_trailing_comments)?;
                 let mut star_expr = Expression::Star(star);
-                // ClickHouse: * APPLY(func) column transformer
+                // ClickHouse: * APPLY(func) or * APPLY func column transformer
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
-                    while self.check(TokenType::Apply) && self.check_next(TokenType::LParen) {
+                    while self.check(TokenType::Apply) {
                         self.advance(); // consume APPLY
-                        self.advance(); // consume (
-                        let func_name = self.expect_identifier_or_keyword()?;
-                        self.expect(TokenType::RParen)?;
+                        let func_name = if self.match_token(TokenType::LParen) {
+                            let name = self.expect_identifier_or_keyword()?;
+                            self.expect(TokenType::RParen)?;
+                            name
+                        } else {
+                            // APPLY func (no parens)
+                            self.expect_identifier_or_keyword()?
+                        };
                         star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
                             this: Box::new(star_expr),
                             expression: Box::new(Expression::Column(Column {
@@ -13591,6 +13596,18 @@ impl Parser {
         // Handle PURGE (Oracle)
         let purge = self.match_identifier("PURGE");
 
+        // ClickHouse: ON CLUSTER clause
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            let _ = self.parse_on_cluster_clause()?;
+        }
+
+        // ClickHouse: SYNC keyword
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            self.match_identifier("SYNC");
+            self.match_identifier("NO");
+            self.match_identifier("DELAY");
+        }
+
         Ok(Expression::DropTable(Box::new(DropTable {
             names,
             if_exists,
@@ -13606,6 +13623,12 @@ impl Parser {
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
         let name = self.parse_table_ref()?;
+
+        // ClickHouse: ON CLUSTER clause
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            let _ = self.parse_on_cluster_clause()?;
+            self.match_identifier("SYNC");
+        }
 
         Ok(Expression::DropView(Box::new(DropView {
             name,
@@ -16038,9 +16061,22 @@ impl Parser {
                 this_parts.push(current.text.to_uppercase());
                 self.advance();
 
+                // ClickHouse: SHOW CREATE TABLE/VIEW/DICTIONARY <qualified_name>
+                // After detecting CREATE TABLE/VIEW/DICTIONARY, parse the next as a table ref
+                let joined = this_parts.join(" ");
+                if matches!(joined.as_str(), "CREATE TABLE" | "CREATE VIEW"
+                    | "CREATE DICTIONARY" | "CREATE DATABASE"
+                    | "CREATE MATERIALIZED VIEW" | "CREATE LIVE VIEW")
+                {
+                    if !self.is_at_end() && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier) || self.is_safe_keyword_as_identifier()) {
+                        let table = self.parse_table_ref()?;
+                        target = Some(Expression::Table(table));
+                    }
+                    break;
+                }
+
                 // Special handling for ENGINE: the next token is the engine name (case-preserved)
                 // followed by STATUS or MUTEX
-                let joined = this_parts.join(" ");
                 if joined == "ENGINE" {
                     // Parse engine name (case-preserved)
                     if !self.is_at_end() {
@@ -18614,6 +18650,12 @@ impl Parser {
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
         let name = Identifier::new(self.expect_identifier()?);
+
+        // ClickHouse: ON CLUSTER clause
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            let _ = self.parse_on_cluster_clause()?;
+            self.match_identifier("SYNC");
+        }
 
         Ok(Expression::DropDatabase(Box::new(DropDatabase {
             name,
@@ -22504,7 +22546,11 @@ impl Parser {
             self.expect(TokenType::LParen)?;
 
             // Check if this is a subquery EXISTS (SELECT, WITH, or FROM for DuckDB)
-            if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From) {
+            // ClickHouse: also handle EXISTS((SELECT ...)) with double parens
+            if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From)
+                || (self.check(TokenType::LParen)
+                    && self.peek_nth(1).map(|t| matches!(t.token_type, TokenType::Select | TokenType::With | TokenType::From)).unwrap_or(false))
+            {
                 let query = self.parse_statement()?;
                 self.expect(TokenType::RParen)?;
                 return Ok(Expression::Exists(Box::new(Exists {
@@ -25268,20 +25314,33 @@ impl Parser {
                 } else if self.match_token(TokenType::Comma) {
                     // Comma-separated syntax
                     let replacement = self.parse_expression()?;
-                    self.expect(TokenType::Comma)?;
-                    let from = self.parse_expression()?;
-                    let length = if self.match_token(TokenType::Comma) {
-                        Some(self.parse_expression()?)
+                    if self.match_token(TokenType::Comma) {
+                        let from = self.parse_expression()?;
+                        let length = if self.match_token(TokenType::Comma) {
+                            Some(self.parse_expression()?)
+                        } else {
+                            None
+                        };
+                        self.expect(TokenType::RParen)?;
+                        Ok(Expression::Overlay(Box::new(OverlayFunc {
+                            this,
+                            replacement,
+                            from,
+                            length,
+                        })))
                     } else {
-                        None
-                    };
-                    self.expect(TokenType::RParen)?;
-                    Ok(Expression::Overlay(Box::new(OverlayFunc {
-                        this,
-                        replacement,
-                        from,
-                        length,
-                    })))
+                        // Only 2 args - treat as generic function
+                        self.expect(TokenType::RParen)?;
+                        Ok(Expression::Function(Box::new(Function {
+                            name: name.to_string(),
+                            args: vec![this, replacement],
+                            distinct: false,
+                            trailing_comments: Vec::new(),
+                            use_bracket_syntax: false,
+                            no_parens: false,
+                            quoted: false,
+                        })))
+                    }
                 } else {
                     // Fallback to generic function
                     self.expect(TokenType::RParen)?;
