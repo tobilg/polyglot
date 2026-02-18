@@ -5254,9 +5254,12 @@ impl Parser {
             let expr = self.parse_expression()?;
 
             // ClickHouse: ORDER BY expr AS alias — allow AS alias before DESC/ASC
+            // But NOT AS SELECT/WITH which would be CREATE TABLE ... AS SELECT
             let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && self.check(TokenType::As)
                 && !self.check_next(TokenType::LParen)
+                && !self.check_next(TokenType::Select)
+                && !self.check_next(TokenType::With)
             {
                 self.advance(); // consume AS
                 let alias = self.expect_identifier_or_keyword_with_quoted()?;
@@ -10913,6 +10916,10 @@ impl Parser {
                         let check_expr = self.parse_expression()?;
                         self.expect(TokenType::RParen)?;
                         col_def.constraints.push(ColumnConstraint::Check(check_expr));
+                    } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                        // ClickHouse: CHECK expr without parens
+                        let check_expr = self.parse_or()?;
+                        col_def.constraints.push(ColumnConstraint::Check(check_expr));
                     }
                     col_def.constraint_order.push(ConstraintType::Check);
                 }
@@ -10928,6 +10935,11 @@ impl Parser {
                 if self.match_token(TokenType::LParen) {
                     let check_expr = self.parse_expression()?;
                     self.expect(TokenType::RParen)?;
+                    col_def.constraints.push(ColumnConstraint::Check(check_expr));
+                    col_def.constraint_order.push(ConstraintType::Check);
+                } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                    // ClickHouse: CHECK expr without parens
+                    let check_expr = self.parse_or()?;
                     col_def.constraints.push(ColumnConstraint::Check(check_expr));
                     col_def.constraint_order.push(ConstraintType::Check);
                 }
@@ -10955,9 +10967,9 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                 }
             } else if self.match_token(TokenType::Default) {
-                // ClickHouse: DEFAULT expressions can be complex (today(), a + 1, etc.)
+                // ClickHouse: DEFAULT expressions can be complex (today(), a + 1, zoneId == 1, etc.)
                 col_def.default = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
-                    self.parse_bitwise()?.or_else(|| Some(Expression::Null(Null)))
+                    Some(self.parse_or()?)
                 } else {
                     Some(self.parse_unary()?)
                 };
@@ -11105,11 +11117,11 @@ impl Parser {
             } else if self.check(TokenType::Materialized) && !self.check_next(TokenType::View) {
                 // ClickHouse: MATERIALIZED expr (but not MATERIALIZED VIEW)
                 self.advance(); // consume MATERIALIZED
-                let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                let expr = self.parse_or()?;
                 col_def.materialized_expr = Some(Box::new(expr));
             } else if self.match_identifier("ALIAS") {
                 // ClickHouse: ALIAS expr
-                let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                let expr = self.parse_or()?;
                 col_def.alias_expr = Some(Box::new(expr));
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.match_identifier("HIERARCHICAL") || self.match_identifier("IS_OBJECT_ID") || self.match_identifier("INJECTIVE"))
@@ -12350,10 +12362,17 @@ impl Parser {
                 Ok(TableConstraint::ForeignKey { name, columns, references: None, on_delete, on_update, modifiers })
             }
         } else if self.match_token(TokenType::Check) {
-            // CHECK (expression)
-            self.expect(TokenType::LParen)?;
-            let expression = self.parse_expression()?;
-            self.expect(TokenType::RParen)?;
+            // CHECK (expression) or ClickHouse: CHECK expression (without parens)
+            let expression = if self.match_token(TokenType::LParen) {
+                let expr = self.parse_expression()?;
+                self.expect(TokenType::RParen)?;
+                expr
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                self.parse_or()?
+            } else {
+                self.expect(TokenType::LParen)?;
+                unreachable!()
+            };
             let modifiers = self.parse_constraint_modifiers();
             Ok(TableConstraint::Check { name, expression, modifiers })
         } else if self.match_token(TokenType::Exclude) {
@@ -13444,7 +13463,7 @@ impl Parser {
                     let text_upper = self.peek().text.to_uppercase();
                     if matches!(text_upper.as_str(),
                         "DICTIONARY" | "USER" | "QUOTA" | "ROLE" | "ROW" | "POLICY" | "NAMED"
-                    ) || self.check(TokenType::Settings)
+                    ) || self.check(TokenType::Settings) || self.check(TokenType::Partition)
                     {
                         self.advance(); // consume keyword, previous() is now set
                         let mut tokens: Vec<(String, TokenType)> = vec![
@@ -24616,9 +24635,10 @@ impl Parser {
             // EXTRACT(field FROM expr) or EXTRACT(field, expr) function
             "EXTRACT" => {
                 // ClickHouse: EXTRACT used as a regular function with comma syntax (extract(haystack, pattern))
+                // Also handles extract(func(args), ...) where the first arg is a function call
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && (self.check(TokenType::Identifier) || self.check(TokenType::Var))
-                    && self.check_next(TokenType::Comma)
+                    && (self.check_next(TokenType::Comma) || self.check_next(TokenType::LParen))
                 {
                     let args = self.parse_function_arguments()?;
                     self.expect(TokenType::RParen)?;
@@ -29923,10 +29943,16 @@ impl Parser {
                         loop {
                             let val = self.expect_string()?;
                             values.push(val);
-                            // ClickHouse: optional = value assignment
+                            // ClickHouse: optional = value assignment (including negative numbers)
                             if self.match_token(TokenType::Eq) {
+                                let negative = self.match_token(TokenType::Dash);
                                 let num_token = self.advance();
-                                assignments.push(Some(num_token.text.clone()));
+                                let val = if negative {
+                                    format!("-{}", num_token.text)
+                                } else {
+                                    num_token.text.clone()
+                                };
+                                assignments.push(Some(val));
                             } else {
                                 assignments.push(None);
                             }
@@ -31993,10 +32019,12 @@ impl Parser {
 
     /// Expect a number
     fn expect_number(&mut self) -> Result<i64> {
+        let negative = self.match_token(TokenType::Dash);
         if self.check(TokenType::Number) {
             let text = self.advance().text;
-            text.parse::<i64>()
-                .map_err(|_| Error::parse(format!("Invalid number: {}", text)))
+            let val = text.parse::<i64>()
+                .map_err(|_| Error::parse(format!("Invalid number: {}", text)))?;
+            Ok(if negative { -val } else { val })
         } else {
             Err(Error::parse("Expected number"))
         }

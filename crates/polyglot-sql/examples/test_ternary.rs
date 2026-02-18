@@ -8,29 +8,22 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // LIMIT BY inside various subquery contexts
-    test("SELECT * FROM (SELECT * FROM t ORDER BY x LIMIT 1 BY y LIMIT 10) AS sub");
-    test("SELECT (SELECT x FROM t LIMIT 1 BY y)");
-    test("WITH t AS (SELECT * FROM s LIMIT 2 BY x LIMIT 5) SELECT * FROM t");
+    // CHECK constraint without parens
+    test("CREATE TABLE t (a UInt32, b UInt32, CONSTRAINT a_constraint CHECK a < 10) ENGINE = Memory");
+    test("CREATE TABLE t (URL String, CONSTRAINT is_censor CHECK domainWithoutWWW(URL) = 'censor.net') ENGINE = Null");
 
-    // LIMIT BY followed by OFFSET
-    test("SELECT * FROM t LIMIT 10 BY x LIMIT 5 OFFSET 3");
+    // EXTRACT as regular function
+    test("SELECT extract(toString(number), '10000000') FROM system.numbers");
 
-    // ORDER BY ... LIMIT BY
-    test("SELECT * FROM t ORDER BY a LIMIT 1 BY b LIMIT 10 OFFSET 0");
+    // Column defaults with == and complex expressions
+    test("CREATE TABLE t (a UInt64, test1 ALIAS zoneId == 1, test2 DEFAULT zoneId * 3, test3 MATERIALIZED zoneId * 5) ENGINE = MergeTree ORDER BY a");
 
-    // aggregate function with * as arg
-    test("SELECT ignore(*, col1, col2)");
+    // Enum with negative values
+    test("CREATE TABLE t (x Enum8('a' = -1000, 'b' = 0)) ENGINE = Memory");
 
-    // CAST(tuple AS type)
-    test("SELECT CAST((1, 'Hello', toDate('2016-01-01')) AS Tuple(Int32, String, Date))");
-    test("SELECT CAST((1, 2) AS String)");
+    // Decimal with negative scale
+    test("CREATE TABLE t (x DECIMAL(10, -2)) ENGINE = Memory");
 
-    // ClickHouse: EXPLAIN with options
-    test("EXPLAIN SYNTAX SELECT 1");
-    test("EXPLAIN AST SELECT 1");
-    test("EXPLAIN PIPELINE SELECT 1");
-
-    // Ternary inside CAST
-    test("CAST(number = 999999 ? NULL : number AS Nullable(UInt64))");
+    // DROP PARTITION
+    test("DROP PARTITION 201901");
 }
