@@ -4718,8 +4718,13 @@ impl Parser {
                 } else if self.match_token(TokenType::Using) {
                     // ClickHouse allows USING without parentheses
                     let has_parens = self.match_token(TokenType::LParen);
-                    // Use parse_using_column_list to handle qualified names like t1.col
-                    let cols = self.parse_using_column_list()?;
+                    // Handle empty USING ()
+                    let cols = if has_parens && self.check(TokenType::RParen) {
+                        Vec::new()
+                    } else {
+                        // Use parse_using_column_list to handle qualified names like t1.col
+                        self.parse_using_column_list()?
+                    };
                     if has_parens {
                         self.expect(TokenType::RParen)?;
                     }
@@ -12309,7 +12314,12 @@ impl Parser {
                 vec![col_name]
             } else {
                 self.expect(TokenType::LParen)?;
-                let cols = self.parse_index_identifier_list()?;
+                // ClickHouse: allow empty PRIMARY KEY ()
+                let cols = if self.check(TokenType::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_index_identifier_list()?
+                };
                 self.expect(TokenType::RParen)?;
                 cols
             };
@@ -15971,7 +15981,8 @@ impl Parser {
             if matches!(current.token_type,
                 TokenType::Like | TokenType::In | TokenType::From |
                 TokenType::Limit | TokenType::Semicolon | TokenType::Eof |
-                TokenType::Where | TokenType::For | TokenType::Offset) {
+                TokenType::Where | TokenType::For | TokenType::Offset |
+                TokenType::Settings) {
                 break;
             }
             // Handle comma-separated profile types (e.g., SHOW PROFILE BLOCK IO, PAGE FAULTS)
@@ -16372,6 +16383,11 @@ impl Parser {
         } else {
             Vec::new()
         };
+
+        // ClickHouse: SHOW ... SETTINGS key=val, key=val
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            self.parse_clickhouse_settings_clause()?;
+        }
 
         Ok(Expression::Show(Box::new(Show {
             this,
@@ -26027,7 +26043,11 @@ impl Parser {
 
             // GREATEST / LEAST - variadic comparison functions
             "GREATEST" | "LEAST" | "GREATEST_IGNORE_NULLS" | "LEAST_IGNORE_NULLS" => {
-                let args = self.parse_expression_list()?;
+                let args = if self.check(TokenType::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_expression_list()?
+                };
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Function(Box::new(Function {
                     name: name.to_string(),
@@ -43034,6 +43054,15 @@ impl Parser {
             return Ok(None);
         }
         Ok(None)
+    }
+
+    /// Helper to consume an optional ClickHouse SETTINGS clause
+    /// Used in SHOW, CHECK TABLE, and other ClickHouse statements
+    fn parse_clickhouse_settings_clause(&mut self) -> Result<()> {
+        if self.match_token(TokenType::Settings) {
+            let _ = self.parse_settings_property()?;
+        }
+        Ok(())
     }
 
     /// parse_settings_property - Parses SETTINGS property (ClickHouse)
