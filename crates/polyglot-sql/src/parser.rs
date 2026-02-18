@@ -1873,7 +1873,11 @@ impl Parser {
             let is_ch_keyword_func = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
                 && self.check_next(TokenType::LParen);
-            if !is_ch_keyword_func && (self.is_at_end()
+            // ClickHouse: `from` can be a column name; only treat as FROM keyword if not followed by comma/dot
+            let is_ch_from_as_column = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::From)
+                && (self.check_next(TokenType::Comma) || self.check_next(TokenType::Dot));
+            if !is_ch_keyword_func && !is_ch_from_as_column && (self.is_at_end()
                 || self.check(TokenType::From)
                 || self.check(TokenType::Where)
                 || self.check(TokenType::Into)
@@ -3790,7 +3794,8 @@ impl Parser {
                 };
             }
             } // close the else for AS (col1, col2) handling
-        } else if (self.check(TokenType::Var) && !self.check_keyword() && !self.check_identifier("MATCH_CONDITION")
+        } else if (self.check(TokenType::QuotedIdentifier)
+            || (self.check(TokenType::Var) && !self.check_keyword() && !self.check_identifier("MATCH_CONDITION")
                 && !(self.check_identifier("ARRAY") && self.check_next(TokenType::Join)
                      && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))
                 // TSQL: OPTION(LABEL = 'foo') is a query hint, not an alias
@@ -3799,7 +3804,7 @@ impl Parser {
                 && !(self.check_identifier("LOCK") && self.check_next(TokenType::In))
                 // ClickHouse: PARALLEL WITH is a statement separator, not a table alias
                 && !(self.check_identifier("PARALLEL") && self.check_next(TokenType::With)
-                     && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))))
+                     && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))))
             || self.is_command_keyword_as_alias()
             // ClickHouse: allow FIRST/LAST as implicit table aliases
             // (they're keywords used in NULLS FIRST/LAST but also valid as identifiers)
@@ -3818,6 +3823,7 @@ impl Parser {
             // Implicit alias (but not MATCH_CONDITION which is a join condition keyword)
             // Also allow command keywords (GET, PUT, etc.) and WINDOW (when not a clause) as implicit table aliases
             let is_keyword_alias = self.peek().token_type.is_keyword();
+            let is_quoted_alias = self.peek().token_type == TokenType::QuotedIdentifier;
             let alias = self.advance().text.clone();
             // Check for column aliases: t(c1, c2)
             // Use expect_identifier_or_keyword to allow keywords like KEY, INDEX, VALUE as column aliases
@@ -3840,37 +3846,40 @@ impl Parser {
             {
                 column_aliases = vec![Identifier::new("generate_series")];
             }
+            let make_alias_ident = |name: String| -> Identifier {
+                if is_quoted_alias { Identifier::quoted(name) } else { Identifier::new(name) }
+            };
             expr = match expr {
                 Expression::Table(mut t) => {
-                    t.alias = Some(Identifier::new(alias));
+                    t.alias = Some(make_alias_ident(alias));
                     t.alias_explicit_as = is_keyword_alias;
                     t.column_aliases = column_aliases;
                     Expression::Table(t)
                 }
                 Expression::Subquery(mut s) => {
-                    s.alias = Some(Identifier::new(alias));
+                    s.alias = Some(make_alias_ident(alias));
                     s.column_aliases = column_aliases;
                     Expression::Subquery(s)
                 }
                 Expression::Pivot(mut p) => {
-                    p.alias = Some(Identifier::new(alias));
+                    p.alias = Some(make_alias_ident(alias));
                     Expression::Pivot(p)
                 }
                 Expression::Unpivot(mut u) => {
-                    u.alias = Some(Identifier::new(alias));
+                    u.alias = Some(make_alias_ident(alias));
                     Expression::Unpivot(u)
                 }
                 Expression::MatchRecognize(mut mr) => {
-                    mr.alias = Some(Identifier::new(alias));
+                    mr.alias = Some(make_alias_ident(alias));
                     Expression::MatchRecognize(mr)
                 }
                 Expression::JoinedTable(mut jt) => {
-                    jt.alias = Some(Identifier::new(alias));
+                    jt.alias = Some(make_alias_ident(alias));
                     Expression::JoinedTable(jt)
                 }
                 _ => Expression::Alias(Box::new(Alias {
                     this: expr,
-                    alias: Identifier::new(alias),
+                    alias: make_alias_ident(alias),
                     column_aliases,
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
@@ -11103,8 +11112,12 @@ impl Parser {
     /// Parse a single column definition
     fn parse_column_def(&mut self) -> Result<ColumnDef> {
         // Column names can be keywords like 'end', 'truncate', 'view', etc.
-        // Use _with_quoted to preserve quoting information
-        let mut name = self.expect_identifier_or_safe_keyword_with_quoted()?;
+        // ClickHouse allows any keyword as column name (from, select, etc.)
+        let mut name = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            self.expect_identifier_or_keyword_with_quoted()?
+        } else {
+            self.expect_identifier_or_safe_keyword_with_quoted()?
+        };
         // ClickHouse: Nested column names like n.b for Nested() columns
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             while self.match_token(TokenType::Dot) {
@@ -24037,6 +24050,31 @@ impl Parser {
             }
         }
 
+        // ClickHouse: `from` can be a column name when followed by comma or dot
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::From)
+            && (self.check_next(TokenType::Comma) || self.check_next(TokenType::Dot))
+        {
+            let token = self.advance();
+            let name = token.text.clone();
+            if self.match_token(TokenType::Dot) {
+                // from.col qualified reference
+                let col_name = self.expect_identifier_or_keyword()?;
+                return Ok(Expression::Column(crate::expressions::Column {
+                    name: Identifier::new(col_name),
+                    table: Some(Identifier::new(name)),
+                    join_mark: false,
+                    trailing_comments: Vec::new(),
+                }));
+            }
+            return Ok(Expression::Column(crate::expressions::Column {
+                name: Identifier::new(name),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+            }));
+        }
+
         // Some keywords can be used as identifiers (column names, table names, etc.)
         // when they are "safe" keywords that don't affect query structure.
         // Structural keywords like FROM, WHERE, JOIN should NOT be usable as identifiers.
@@ -30396,11 +30434,16 @@ impl Parser {
 
         let base_type = match name.as_str() {
             "INT" | "INTEGER" => {
-                // MySQL allows INT(N) for display width
+                // MySQL allows INT(N) for display width; ClickHouse allows INT()
                 let length = if self.match_token(TokenType::LParen) {
-                    let n = self.expect_number()? as u32;
-                    self.expect(TokenType::RParen)?;
-                    Some(n)
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        None
+                    } else {
+                        let n = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Some(n)
+                    }
                 } else {
                     None
                 };
@@ -30408,11 +30451,16 @@ impl Parser {
                 Ok(DataType::Int { length, integer_spelling })
             }
             "BIGINT" => {
-                // MySQL allows BIGINT(N) for display width
+                // MySQL allows BIGINT(N) for display width; ClickHouse allows BIGINT()
                 let length = if self.match_token(TokenType::LParen) {
-                    let n = self.expect_number()? as u32;
-                    self.expect(TokenType::RParen)?;
-                    Some(n)
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        None
+                    } else {
+                        let n = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Some(n)
+                    }
                 } else {
                     None
                 };
@@ -30420,9 +30468,14 @@ impl Parser {
             }
             "SMALLINT" => {
                 let length = if self.match_token(TokenType::LParen) {
-                    let n = self.expect_number()? as u32;
-                    self.expect(TokenType::RParen)?;
-                    Some(n)
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        None
+                    } else {
+                        let n = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Some(n)
+                    }
                 } else {
                     None
                 };
@@ -30430,9 +30483,14 @@ impl Parser {
             }
             "TINYINT" => {
                 let length = if self.match_token(TokenType::LParen) {
-                    let n = self.expect_number()? as u32;
-                    self.expect(TokenType::RParen)?;
-                    Some(n)
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        None
+                    } else {
+                        let n = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Some(n)
+                    }
                 } else {
                     None
                 };
@@ -30600,10 +30658,26 @@ impl Parser {
             }
             "DATE" => Ok(DataType::Date),
             "TIME" => {
-                let precision = if self.match_token(TokenType::LParen) {
-                    let p = self.expect_number()? as u32;
+                // ClickHouse: Time('timezone') is a custom type with string arg
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::LParen)
+                    && self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1].token_type == TokenType::String
+                {
+                    self.advance(); // consume LParen
+                    let args = self.parse_custom_type_args_balanced()?;
                     self.expect(TokenType::RParen)?;
-                    Some(p)
+                    return Ok(DataType::Custom { name: format!("Time({})", args) });
+                }
+                let precision = if self.match_token(TokenType::LParen) {
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        None
+                    } else {
+                        let p = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Some(p)
+                    }
                 } else {
                     None
                 };
