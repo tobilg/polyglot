@@ -837,11 +837,14 @@ impl Parser {
             // DuckDB FROM-first syntax: FROM tbl = SELECT * FROM tbl
             TokenType::From => self.parse_from_first_query(),
             TokenType::LParen => {
-                // Check if this is a parenthesized query (SELECT, WITH, PIVOT, UNPIVOT, or FROM inside)
+                // Check if this is a parenthesized query (SELECT, WITH, PIVOT, UNPIVOT, FROM, or EXPLAIN inside)
                 // by looking ahead after the opening paren
+                let next_is_explain = self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1].token_type == TokenType::Var
+                    && self.tokens[self.current + 1].text.eq_ignore_ascii_case("EXPLAIN");
                 if self.check_next(TokenType::Select) || self.check_next(TokenType::With)
                     || self.check_next(TokenType::Pivot) || self.check_next(TokenType::Unpivot)
-                    || self.check_next(TokenType::From) {
+                    || self.check_next(TokenType::From) || next_is_explain {
                     // Parse parenthesized query: (SELECT ...) ORDER BY x LIMIT y OFFSET z
                     self.advance(); // consume (
                     let inner = self.parse_statement()?;
@@ -2282,7 +2285,8 @@ impl Parser {
                 }))
             } else if self.check(TokenType::Select) || self.check(TokenType::With)
                 || self.check(TokenType::Pivot) || self.check(TokenType::Unpivot)
-                || self.check(TokenType::From) || self.check(TokenType::Merge) {
+                || self.check(TokenType::From) || self.check(TokenType::Merge)
+                || (self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN")) {
                 let query = self.parse_statement()?;
                 self.expect(TokenType::RParen)?;
                 let trailing = self.previous_trailing_comments();
@@ -35102,12 +35106,12 @@ impl Parser {
             return Ok(None);
         }
 
-        // Parse the kind (e.g., HASHED, FLAT, CLICKHOUSE, etc.)
-        let kind = self.parse_id_var()?;
-        let kind_str = match &kind {
-            Some(Expression::Identifier(id)) => id.name.clone(),
-            Some(Expression::Var(v)) => v.this.clone(),
-            _ => String::new(),
+        // Parse the kind (e.g., HASHED, FLAT, CLICKHOUSE, CACHE, etc.)
+        // Accept Var, Identifier, or keyword tokens as the kind name
+        let kind_str = if self.is_identifier_token() || self.check_keyword() {
+            self.advance().text.clone()
+        } else {
+            String::new()
         };
         if kind_str.is_empty() {
             return Err(Error::parse("Expected dictionary property kind"));
@@ -39203,7 +39207,11 @@ impl Parser {
         }
 
         // Try to parse as subquery first
-        if self.check(TokenType::Select) || self.check(TokenType::With) {
+        // ClickHouse also allows (EXPLAIN ...) as subquery
+        if self.check(TokenType::Select) || self.check(TokenType::With)
+            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN"))
+        {
             let query = self.parse_statement()?;
             self.expect(TokenType::RParen)?;
             return Ok(Some(Expression::Subquery(Box::new(Subquery {
