@@ -676,7 +676,7 @@ impl Parser {
                 self.advance(); // consume command keyword
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse COMMAND statement"))
             }
-            TokenType::Rename if matches!(self.config.dialect, Some(crate::dialects::DialectType::Teradata)) => {
+            TokenType::Rename if matches!(self.config.dialect, Some(crate::dialects::DialectType::Teradata) | Some(crate::dialects::DialectType::ClickHouse)) => {
                 self.advance(); // consume RENAME
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse RENAME statement"))
             }
@@ -699,6 +699,10 @@ impl Parser {
             TokenType::Show => self.parse_show(),
             TokenType::Copy => self.parse_copy(),
             TokenType::Put => self.parse_put(),
+            TokenType::Kill if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume KILL
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse KILL statement"))
+            }
             TokenType::Kill => self.parse_kill(),
             TokenType::Execute => self.parse_execute(),
             TokenType::Declare => {
@@ -780,6 +784,12 @@ impl Parser {
                 } else {
                     self.parse_attach_detach(true)
                 }
+            }
+            // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH")
+                && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume DETACH
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse DETACH statement"))
             }
             // DuckDB: DETACH [DATABASE] [IF EXISTS] name
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH") => {
@@ -7724,6 +7734,13 @@ impl Parser {
             return self.parse_create_view(true, false, false, None, None, None, false);
         }
 
+        // ClickHouse: REPLACE TABLE -> treat like CREATE OR REPLACE TABLE
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Table)
+        {
+            return self.parse_create_table(true, false, leading_comments.clone(), None);
+        }
+
         // Otherwise, this is MySQL/SQLite REPLACE INTO statement - parse similarly to INSERT
         self.match_token(TokenType::Into);
 
@@ -12803,8 +12820,8 @@ impl Parser {
 
         // Optional column list with optional COMMENT and OPTIONS per column
         let columns = if self.check(TokenType::LParen) {
-            // For materialized views, try to parse as schema with typed columns
-            if materialized {
+            // For materialized views or ClickHouse views, try to parse as schema with typed columns
+            if materialized || matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
                 // Save position to backtrack if needed
                 let saved_pos = self.current;
 
@@ -21773,7 +21790,7 @@ impl Parser {
             if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
                 self.current -= 1;
                 if let Some(param) = self.parse_clickhouse_braced_parameter()? {
-                    return Ok(param);
+                    return self.maybe_parse_subscript(param);
                 }
                 // Not a ClickHouse query parameter, restore position after `{` for map/wildcard parsing.
                 self.current += 1;
@@ -22068,12 +22085,29 @@ impl Parser {
                 let expr = self.parse_expression()?;
 
                 // Handle aliasing of expression inside outer parens (e.g., ((a, b) AS c))
-                let result = if self.match_token(TokenType::As) {
+                let first_expr = if self.match_token(TokenType::As) {
                     let alias = self.expect_identifier()?;
                     Expression::Alias(Box::new(Alias::new(expr, Identifier::new(alias))))
                 } else {
                     expr
                 };
+
+                // Check for tuple of tuples: ((1, 2), (3, 4))
+                if self.match_token(TokenType::Comma) {
+                    let mut expressions = vec![first_expr];
+                    loop {
+                        let elem = self.parse_expression()?;
+                        expressions.push(elem);
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenType::RParen)?;
+                    let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
+                    return self.maybe_parse_subscript(tuple_expr);
+                }
+
+                let result = first_expr;
 
                 self.expect(TokenType::RParen)?;
                 // Check for set operations after parenthesized expression
@@ -24660,7 +24694,33 @@ impl Parser {
                 })))
             }
             "LOCATE" => {
+                // ClickHouse: locate() with zero args is valid in test queries
+                if self.check(TokenType::RParen) {
+                    self.advance();
+                    return Ok(Expression::Function(Box::new(Function {
+                        name: name.to_string(),
+                        args: vec![],
+                        distinct: false,
+                        trailing_comments: Vec::new(),
+                        use_bracket_syntax: false,
+                        no_parens: false,
+                        quoted: false,
+                    })));
+                }
                 let first = self.parse_expression()?;
+                // Allow single-arg locate for ClickHouse
+                if !self.check(TokenType::Comma) && self.check(TokenType::RParen) {
+                    self.advance();
+                    return Ok(Expression::Function(Box::new(Function {
+                        name: name.to_string(),
+                        args: vec![first],
+                        distinct: false,
+                        trailing_comments: Vec::new(),
+                        use_bracket_syntax: false,
+                        no_parens: false,
+                        quoted: false,
+                    })));
+                }
                 self.expect(TokenType::Comma)?;
                 let second = self.parse_expression()?;
                 let position = if self.match_token(TokenType::Comma) {
@@ -25961,12 +26021,16 @@ impl Parser {
                 self.expect(TokenType::Comma)?;
                 let second_arg = self.parse_expression()?;
                 // Third argument is optional (SQLite TIMEDIFF only takes 2 args)
-                let args = if self.match_token(TokenType::Comma) {
+                let mut args = if self.match_token(TokenType::Comma) {
                     let third_arg = self.parse_expression()?;
                     vec![first_arg, second_arg, third_arg]
                 } else {
                     vec![first_arg, second_arg]
                 };
+                // ClickHouse: optional 4th timezone argument for dateDiff
+                while self.match_token(TokenType::Comma) {
+                    args.push(self.parse_expression()?);
+                }
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Function(Box::new(Function {
                     name: name.to_string(),
@@ -26450,6 +26514,19 @@ impl Parser {
             // IF/IIF/IFF are conditional functions that get parsed into IfFunc
             // This allows proper dialect-specific generation (e.g., Exasol uses IF...THEN...ELSE...ENDIF)
             "IF" | "IIF" | "IFF" => {
+                // ClickHouse: if() with zero args is valid in test queries
+                if self.check(TokenType::RParen) {
+                    self.advance();
+                    return Ok(Expression::Function(Box::new(Function {
+                        name: name.to_string(),
+                        args: vec![],
+                        distinct: false,
+                        trailing_comments: Vec::new(),
+                        use_bracket_syntax: false,
+                        no_parens: false,
+                        quoted: false,
+                    })));
+                }
                 let args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
                 if args.len() >= 3 {
@@ -36978,6 +37055,19 @@ impl Parser {
     pub fn parse_if(&mut self) -> Result<Option<Expression>> {
         // Function style: IF(cond, true, false)
         if self.match_token(TokenType::LParen) {
+            // ClickHouse: if() with zero args is valid (used in test queries)
+            if self.check(TokenType::RParen) {
+                self.advance(); // consume RParen
+                return Ok(Some(Expression::Function(Box::new(Function {
+                    name: "IF".to_string(),
+                    args: vec![],
+                    distinct: false,
+                    trailing_comments: Vec::new(),
+                    use_bracket_syntax: false,
+                    no_parens: false,
+                    quoted: false,
+                }))));
+            }
             let args = self.parse_expression_list()?;
             self.expect(TokenType::RParen)?;
 
@@ -36992,6 +37082,16 @@ impl Parser {
                     condition: args[0].clone(),
                     true_value: args[1].clone(),
                     false_value: None,
+                }))));
+            } else if args.len() == 1 {
+                return Ok(Some(Expression::Function(Box::new(Function {
+                    name: "IF".to_string(),
+                    args,
+                    distinct: false,
+                    trailing_comments: Vec::new(),
+                    use_bracket_syntax: false,
+                    no_parens: false,
+                    quoted: false,
                 }))));
             } else {
                 return Err(Error::parse("IF function requires at least 2 arguments"));
