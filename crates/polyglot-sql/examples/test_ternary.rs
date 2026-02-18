@@ -2,24 +2,19 @@ use polyglot_sql::{parse, DialectType};
 
 fn test(sql: &str) {
     match parse(sql, DialectType::ClickHouse) {
-        Ok(_) => println!("OK: {}", &sql[..sql.len().min(120)]),
+        Ok(_exprs) => println!("OK: {}", &sql[..sql.len().min(120)]),
         Err(e) => println!("ERR: {} -> {}", &sql[..sql.len().min(120)], e),
     }
 }
 
 fn main() {
-    // AS alias inside function args
-    test("SELECT format('CSV' AS format, '1,2,3' AS format_value)");
-    test("SELECT arrayMap((x -> toString(x)) as lambda, [1,2,3])");
-    test("SELECT toTypeName(quantilesExactWeightedState(0.2, 0.4)(number + 1, 1) AS x)");
+    // GRANT role TO user
+    test("GRANT r1_01292, r2_01292 TO u1_01292, u2_01292, u3_01292, u4_01292, u5_01292, u6_01292");
+    test("ALTER USER u2_01292 DEFAULT ROLE ALL EXCEPT r2_01292");
+    test("REVOKE r1_01292, r2_01292 FROM u1_01292, u2_01292");
+    test("GRANT NONE TO test_user_01999 WITH REPLACE OPTION");
 
-    // SETTINGS in table function args
-    test("SELECT * FROM executable('', 'JSON', 'data String', SETTINGS max_command_execution_time=100)");
-    test("SELECT * FROM mysql('127.0.0.1:9004', 'default', 'atable', 'default', '', SETTINGS connect_timeout = 100)");
-
-    // ON CLUSTER
-    test("CREATE DATABASE IF NOT EXISTS test ON CLUSTER test_shard_localhost");
-
-    // USING (col AS alias)
-    test("SELECT * FROM system.one l INNER JOIN numbers(1) r USING (dummy AS number)");
+    // Complex GRANT with multiple targets
+    test("GRANT SELECT ON db1.table1 TO sqllt_user");
+    test("GRANT SELECT ON db1.table1, SELECT ON db2.table2, SELECT ON db3.table3, SELECT(col1) ON db4.table4 TO sqllt_user");
 }

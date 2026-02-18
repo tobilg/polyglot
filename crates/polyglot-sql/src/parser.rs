@@ -2015,7 +2015,10 @@ impl Parser {
                     && !self.check_text_seq(&["GROUP", "BY"])
                     && !self.check_text_seq(&["ORDER", "BY"])
                     // WINDOW is a clause boundary (named window definitions), not an alias.
-                    && !self.check(TokenType::Window) {
+                    && !self.check(TokenType::Window)
+                    // ClickHouse: PARALLEL WITH is a statement separator, not an alias.
+                    && !(self.check_identifier("PARALLEL") && self.check_next(TokenType::With)
+                        && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))) {
                     // Implicit alias (without AS) - allow Var tokens, QuotedIdentifiers, command keywords (like GET, PUT, etc.), and OVERLAPS
                     // But NOT when it's the Oracle BULK COLLECT INTO sequence
                     let alias_token = self.advance();
@@ -3749,7 +3752,10 @@ impl Parser {
                 // TSQL: OPTION(LABEL = 'foo') is a query hint, not an alias
                 && !(self.check_identifier("OPTION") && self.check_next(TokenType::LParen))
                 // MySQL: LOCK IN SHARE MODE is a locking clause, not an alias
-                && !(self.check_identifier("LOCK") && self.check_next(TokenType::In)))
+                && !(self.check_identifier("LOCK") && self.check_next(TokenType::In))
+                // ClickHouse: PARALLEL WITH is a statement separator, not a table alias
+                && !(self.check_identifier("PARALLEL") && self.check_next(TokenType::With)
+                     && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))))
             || self.is_command_keyword_as_alias()
             // ClickHouse: allow FIRST/LAST as implicit table aliases
             // (they're keywords used in NULLS FIRST/LAST but also valid as identifiers)
@@ -6471,6 +6477,18 @@ impl Parser {
             self.expect(TokenType::As)?;
             self.expect(TokenType::LParen)?;
 
+            // Parse optional base window name reference (e.g., w1 AS (w0 ORDER BY ...))
+            let window_name = if (self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
+                && !self.check(TokenType::Partition) && !self.check(TokenType::Order)
+                && self.peek_nth(1).map_or(true, |t| matches!(t.token_type,
+                    TokenType::Partition | TokenType::Order | TokenType::Rows
+                    | TokenType::Range | TokenType::Groups | TokenType::RParen | TokenType::Comma))
+            {
+                Some(self.expect_identifier()?)
+            } else {
+                None
+            };
+
             // Parse window specification
             let partition_by = if self.match_keywords(&[TokenType::Partition, TokenType::By]) {
                 Some(self.parse_expression_list()?)
@@ -6491,7 +6509,7 @@ impl Parser {
             windows.push(NamedWindow {
                 name: Identifier::new(name),
                 spec: Over {
-                    window_name: None,
+                    window_name: window_name.map(|n| Identifier::new(n)),
                     partition_by: partition_by.unwrap_or_default(),
                     order_by: order_by.map(|o| o.expressions).unwrap_or_default(),
                     frame,
@@ -17921,6 +17939,34 @@ impl Parser {
     fn parse_grant(&mut self) -> Result<Expression> {
         self.expect(TokenType::Grant)?;
 
+        // ClickHouse: GRANT can grant roles (no ON clause), grant privileges (has ON clause),
+        // or use complex syntax. If we see TO before ON, treat as command.
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            // Save position after GRANT keyword
+            let saved_pos = self.current;
+            // Scan ahead to see if we hit TO before ON (role grant) or ON first (privilege grant)
+            let mut depth = 0i32;
+            let mut found_on = false;
+            let mut found_to = false;
+            let mut i = self.current;
+            while i < self.tokens.len() && self.tokens[i].token_type != TokenType::Semicolon {
+                match self.tokens[i].token_type {
+                    TokenType::LParen => depth += 1,
+                    TokenType::RParen => depth -= 1,
+                    TokenType::On if depth == 0 => { found_on = true; break; }
+                    TokenType::To if depth == 0 => { found_to = true; break; }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if found_to && !found_on {
+                // This is a role grant (GRANT role1, role2 TO user1, ...) — parse as command
+                self.current = saved_pos;
+                return self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse GRANT statement"));
+            }
+            self.current = saved_pos;
+        }
+
         // Parse privileges (e.g., SELECT, INSERT, UPDATE)
         let privileges = self.parse_privileges()?;
 
@@ -17975,6 +18021,30 @@ impl Parser {
     /// REVOKE [GRANT OPTION FOR] <privileges> ON [<kind>] <object> FROM <principals> [CASCADE]
     fn parse_revoke(&mut self) -> Result<Expression> {
         self.expect(TokenType::Revoke)?;
+
+        // ClickHouse: REVOKE role FROM user (no ON clause) — parse as command
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            let saved_pos = self.current;
+            let mut depth = 0i32;
+            let mut found_on = false;
+            let mut found_from = false;
+            let mut i = self.current;
+            while i < self.tokens.len() && self.tokens[i].token_type != TokenType::Semicolon {
+                match self.tokens[i].token_type {
+                    TokenType::LParen => depth += 1,
+                    TokenType::RParen => depth -= 1,
+                    TokenType::On if depth == 0 => { found_on = true; break; }
+                    TokenType::From if depth == 0 => { found_from = true; break; }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if found_from && !found_on {
+                self.current = saved_pos;
+                return self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse REVOKE statement"));
+            }
+            self.current = saved_pos;
+        }
 
         // Check for GRANT OPTION FOR
         let grant_option = if self.check(TokenType::Grant) {
@@ -22511,8 +22581,19 @@ impl Parser {
                 })));
             }
 
-            // Check if this is a subquery (SELECT, WITH, or DuckDB FROM-first)
-            if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From) {
+            // Check if this is a subquery (SELECT, WITH, DuckDB FROM-first, or ClickHouse EXPLAIN)
+            let is_explain_subquery = self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+                && self.peek_nth(1).map_or(false, |t| {
+                    // EXPLAIN followed by statement/style keywords is a subquery
+                    matches!(t.token_type, TokenType::Select | TokenType::Insert | TokenType::Create
+                        | TokenType::Alter | TokenType::Drop | TokenType::Set | TokenType::System | TokenType::Table)
+                    || matches!(t.text.to_uppercase().as_str(),
+                        "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY")
+                    || (t.token_type == TokenType::Var && self.peek_nth(2).map_or(false, |t2| t2.token_type == TokenType::Eq))
+                });
+            if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From)
+                || is_explain_subquery
+            {
                 let query = self.parse_statement()?;
 
                 // Parse LIMIT/OFFSET that may appear after set operations INSIDE the parentheses
@@ -30881,9 +30962,25 @@ impl Parser {
             }
         }?;
 
+        // MySQL/ClickHouse: SIGNED/UNSIGNED modifier after integer types
+        // e.g., TINYINT UNSIGNED, SMALLINT SIGNED, INT UNSIGNED
+        let mut result_type = base_type;
+        if self.check_identifier("UNSIGNED") || self.check_identifier("SIGNED") {
+            let modifier = self.advance().text.to_uppercase();
+            let type_name = match &result_type {
+                DataType::TinyInt { .. } => Some("TINYINT"),
+                DataType::SmallInt { .. } => Some("SMALLINT"),
+                DataType::Int { .. } => Some("INT"),
+                DataType::BigInt { .. } => Some("BIGINT"),
+                _ => None,
+            };
+            if let Some(base_name) = type_name {
+                result_type = DataType::Custom { name: format!("{} {}", base_name, modifier) };
+            }
+        }
+
         // Materialize: handle postfix LIST syntax (INT LIST, INT LIST LIST LIST)
         let is_materialize = matches!(self.config.dialect, Some(crate::dialects::DialectType::Materialize));
-        let mut result_type = base_type;
         if is_materialize {
             while self.check_identifier("LIST") || self.check(TokenType::List) {
                 self.advance(); // consume LIST
