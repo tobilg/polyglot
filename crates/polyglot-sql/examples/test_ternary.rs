@@ -8,38 +8,28 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // DESC/DESCRIBE ... SETTINGS key=val, key=val
-    test("desc format(CSV, '1,\"String\"') settings schema_inference_hints='x UInt8', column_names_for_schema_inference='x, y'");
+    // INSERT ... FORMAT with inline data (should parse INSERT and stop before data)
+    test("INSERT INTO t FORMAT JSONEachRow {\"x\":1}");
+    test("INSERT INTO t FORMAT CSV 1,2,3");
 
-    // ALTER TABLE ... SETTINGS key=val, key=val
-    test("alter table t add column c Int64 settings mutations_sync=2, alter_sync=2");
+    // Empty IN()
+    test("SELECT * FROM t WHERE k2 IN ()");
 
-    // Keywords as identifiers: FROM
-    test("WITH 1 as from SELECT from, from + from");
-    test("SELECT from, val FROM test_date32_casts");
+    // Empty VALUES()
+    test("INSERT INTO t VALUES ()");
 
-    // Keywords as identifiers: GROUPING
-    test("SELECT grouping, item, runningAccumulate(state, grouping) FROM t");
+    // values as CTE name
+    test("WITH values AS (SELECT 1) SELECT * FROM values");
 
-    // Keywords as identifiers: DISTINCT
-    test("SELECT repeat(DISTINCT, 5) FROM (SELECT 'a' AS DISTINCT)");
+    // grouping as identifier (not GROUPING() function)
+    test("SELECT grouping, item FROM t");
 
-    // Keywords as identifiers: DIV, MOD
-    test("SELECT DIV FROM (SELECT 1 AS DIV)");
+    // floor with 3 args (ClickHouse allows arbitrary args)
+    test("SELECT floor(1, floor(NULL), 257)");
 
-    // Keywords as identifiers: EXCEPT in table name
-    test("CREATE TABLE array_except1 (a Array(Int32)) ENGINE=Memory");
+    // DISTINCT in second chained function call: func(5, 11111)(DISTINCT subdomain)
+    test("SELECT groupArraySample(5, 11111)(DISTINCT x) FROM t");
 
-    // Ternary operator
-    test("SELECT empty(x) ? 'yes' : 'no' FROM t");
-
-    // UNDROP TABLE
-    test("UNDROP TABLE t");
-
-    // Tuple element access with number: t.1
-    test("SELECT toDateTime(time.1) FROM t");
-
-    // COLUMNS transformer
-    test("SELECT * APPLY(toDate) FROM t");
-    test("SELECT COLUMNS('id|value') EXCEPT (id) FROM t");
+    // Backtick identifier without AS: SELECT 1 `DIV`
+    test("SELECT 1 `DIV`");
 }

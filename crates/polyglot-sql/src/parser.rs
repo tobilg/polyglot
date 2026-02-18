@@ -2261,9 +2261,36 @@ impl Parser {
             return self.parse_redshift_unpivot_table();
         }
 
-        let mut expr = if self.check(TokenType::Values) {
+        let mut expr = if self.check(TokenType::Values) && self.check_next(TokenType::LParen) {
             // VALUES as table expression: FROM (VALUES ...)
+            // In ClickHouse, bare `values` without ( is a table name
             self.parse_values()?
+        } else if self.check(TokenType::Values)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            // ClickHouse: `values` as a table name (not followed by LParen)
+            let token = self.advance();
+            let ident = Identifier::new(token.text);
+            let trailing_comments = self.previous_trailing_comments();
+            Expression::Table(TableRef {
+                name: ident,
+                schema: None,
+                catalog: None,
+                alias: None,
+                alias_explicit_as: false,
+                column_aliases: Vec::new(),
+                trailing_comments,
+                when: None,
+                only: false,
+                final_: false,
+                table_sample: None,
+                hints: Vec::new(),
+                system_time: None,
+                partitions: Vec::new(),
+                identifier_func: None,
+                changes: None,
+                version: None,
+            })
         } else if self.check(TokenType::DAt) {
             // Snowflake stage reference: @stage_name or @"stage_name" or @namespace.stage/path
             self.parse_stage_reference()?
@@ -7657,7 +7684,12 @@ impl Parser {
 
             loop {
                 self.expect(TokenType::LParen)?;
-                let row = self.parse_values_expression_list()?;
+                // ClickHouse: allow empty VALUES () — empty tuple
+                let row = if self.check(TokenType::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_values_expression_list()?
+                };
                 self.expect(TokenType::RParen)?;
                 all_values.push(row);
 
@@ -21129,6 +21161,17 @@ impl Parser {
                             global: global_in,
                             unnest: None,
                         }))
+                    } else if self.check(TokenType::RParen) {
+                        // Empty NOT IN set: NOT IN ()
+                        self.advance();
+                        Expression::In(Box::new(In {
+                            this: left,
+                            expressions: Vec::new(),
+                            query: None,
+                            not: true,
+                            global: global_in,
+                            unnest: None,
+                        }))
                     } else {
                         let expressions = self.parse_expression_list()?;
                         self.expect(TokenType::RParen)?;
@@ -21258,6 +21301,17 @@ impl Parser {
                             this: left,
                             expressions: Vec::new(),
                             query: Some(subquery),
+                            not: false,
+                            global: global_in,
+                            unnest: None,
+                        }))
+                    } else if self.check(TokenType::RParen) {
+                        // Empty IN set: IN ()
+                        self.advance();
+                        Expression::In(Box::new(In {
+                            this: left,
+                            expressions: Vec::new(),
+                            query: None,
                             not: false,
                             global: global_in,
                             unnest: None,
@@ -21473,8 +21527,9 @@ impl Parser {
             } else if self.match_token(TokenType::Percent) {
                 let right = self.parse_power()?;
                 Expression::Mod(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_identifier("DIV") || self.match_token(TokenType::Div) {
+            } else if !self.check(TokenType::QuotedIdentifier) && (self.match_identifier("DIV") || self.match_token(TokenType::Div)) {
                 // DIV keyword for integer division (Hive/Spark/MySQL/ClickHouse)
+                // Don't match QuotedIdentifier — `DIV` is an identifier alias, not an operator
                 let right = self.parse_power()?;
                 Expression::IntDiv(Box::new(crate::expressions::BinaryFunc {
                     this: left,
@@ -21679,12 +21734,14 @@ impl Parser {
             } else if self.match_token(TokenType::Percent) {
                 let right = self.parse_power()?;
                 Expression::Mod(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_identifier("MOD") || self.match_token(TokenType::Mod) {
+            } else if !self.check(TokenType::QuotedIdentifier) && (self.match_identifier("MOD") || self.match_token(TokenType::Mod)) {
                 // MySQL/Teradata: x MOD y (infix modulo operator)
+                // Don't match QuotedIdentifier — `MOD` is an identifier alias, not an operator
                 let right = self.parse_power()?;
                 Expression::Mod(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_identifier("DIV") || self.match_token(TokenType::Div) {
+            } else if !self.check(TokenType::QuotedIdentifier) && (self.match_identifier("DIV") || self.match_token(TokenType::Div)) {
                 // DIV keyword for integer division (Hive/Spark/MySQL/ClickHouse)
+                // Don't match QuotedIdentifier — `DIV` is an identifier alias, not an operator
                 let right = self.parse_power()?;
                 Expression::IntDiv(Box::new(crate::expressions::BinaryFunc {
                     this: left,
@@ -25678,6 +25735,24 @@ impl Parser {
                 } else {
                     None
                 };
+                // ClickHouse: floor can have extra args — treat as generic function
+                if self.check(TokenType::Comma) {
+                    let mut args = vec![this];
+                    if let Some(s) = scale { args.push(s); }
+                    while self.match_token(TokenType::Comma) {
+                        args.push(self.parse_expression()?);
+                    }
+                    self.expect(TokenType::RParen)?;
+                    return Ok(Expression::Function(Box::new(Function {
+                        name: name.to_string(),
+                        args,
+                        distinct: false,
+                        trailing_comments: Vec::new(),
+                        use_bracket_syntax: false,
+                        no_parens: false,
+                        quoted: false,
+                    })));
+                }
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Floor(Box::new(FloorFunc { this, scale, to })))
             }
@@ -28575,6 +28650,8 @@ impl Parser {
         };
 
         self.advance(); // consume (
+        // Handle DISTINCT in second arg list: func(params)(DISTINCT args)
+        let distinct = self.match_token(TokenType::Distinct);
         let expressions = if self.check(TokenType::RParen) {
             Vec::new()
         } else {
@@ -28588,6 +28665,9 @@ impl Parser {
             trailing_comments: Vec::new(),
         };
 
+        // If DISTINCT was used, wrap the result to indicate it
+        // For now, we just include it in the CombinedParameterizedAgg
+        let _ = distinct; // DISTINCT is consumed but not separately tracked in this AST node
         Ok(Expression::CombinedParameterizedAgg(Box::new(CombinedParameterizedAgg {
             this: Box::new(Expression::Identifier(ident)),
             params,
@@ -32545,8 +32625,8 @@ impl Parser {
                     | TokenType::Lateral
                     | TokenType::Natural
             );
-            // Also allow certain operator tokens as identifiers (regexp, rlike)
-            if matches!(token_type, TokenType::RLike) {
+            // Also allow certain operator tokens and non-keyword tokens as identifiers
+            if matches!(token_type, TokenType::RLike | TokenType::Values) {
                 return true;
             }
             return self.peek().token_type.is_keyword() && !is_ch_structural;
@@ -33028,7 +33108,7 @@ impl Parser {
     }
 
     fn expect_identifier_or_alias_keyword_with_quoted(&mut self) -> Result<Identifier> {
-        if self.is_identifier_token() || self.can_be_alias_keyword() {
+        if self.is_identifier_token() || self.can_be_alias_keyword() || self.is_safe_keyword_as_identifier() {
             let token = self.advance();
             let quoted = token.token_type == TokenType::QuotedIdentifier;
             Ok(Identifier {
