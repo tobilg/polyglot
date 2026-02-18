@@ -1873,11 +1873,11 @@ impl Parser {
             let is_ch_keyword_func = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
                 && self.check_next(TokenType::LParen);
-            // ClickHouse: `from` can be a column name; only treat as FROM keyword if not followed by comma/dot
-            let is_ch_from_as_column = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                && self.check(TokenType::From)
+            // ClickHouse: `from`/`except` can be column names; only treat as keywords if not followed by comma/dot
+            let is_ch_keyword_as_column = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::From) || self.check(TokenType::Except))
                 && (self.check_next(TokenType::Comma) || self.check_next(TokenType::Dot));
-            if !is_ch_keyword_func && !is_ch_from_as_column && (self.is_at_end()
+            if !is_ch_keyword_func && !is_ch_keyword_as_column && (self.is_at_end()
                 || self.check(TokenType::From)
                 || self.check(TokenType::Where)
                 || self.check(TokenType::Into)
@@ -2078,7 +2078,7 @@ impl Parser {
                     || self.check(TokenType::Limit)
                     || self.check(TokenType::Union)
                     || self.check(TokenType::Intersect)
-                    || (self.check(TokenType::Except) && !self.check_next(TokenType::LParen))
+                    || (self.check(TokenType::Except) && !self.check_next(TokenType::LParen) && !self.check_next(TokenType::Comma))
                     || self.check(TokenType::Semicolon)
                     || self.check(TokenType::RParen)
                     // SETTINGS/FORMAT only as boundaries when NOT followed by ( or [ (function/column ref)
@@ -7726,6 +7726,12 @@ impl Parser {
                     {
                         continue;
                     }
+                    break;
+                }
+                // ClickHouse: allow trailing comma after last tuple
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && !self.check(TokenType::LParen)
+                {
                     break;
                 }
             }
@@ -15411,6 +15417,12 @@ impl Parser {
                 });
 
                 if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+                // ClickHouse: allow trailing comma after last tuple
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && !self.check(TokenType::LParen)
+                {
                     break;
                 }
             }
@@ -24075,6 +24087,31 @@ impl Parser {
             }));
         }
 
+        // ClickHouse: `except` as identifier in expression context (set operations are handled at statement level)
+        // except(args) is already handled above in the MINUS/EXCEPT/INTERSECT function block
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Except)
+            && !self.check_next(TokenType::LParen)
+        {
+            let token = self.advance();
+            let name = token.text.clone();
+            if self.match_token(TokenType::Dot) {
+                let col_name = self.expect_identifier_or_keyword()?;
+                return Ok(Expression::Column(crate::expressions::Column {
+                    name: Identifier::new(col_name),
+                    table: Some(Identifier::new(name)),
+                    join_mark: false,
+                    trailing_comments: Vec::new(),
+                }));
+            }
+            return Ok(Expression::Column(crate::expressions::Column {
+                name: Identifier::new(name),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+            }));
+        }
+
         // Some keywords can be used as identifiers (column names, table names, etc.)
         // when they are "safe" keywords that don't affect query structure.
         // Structural keywords like FROM, WHERE, JOIN should NOT be usable as identifiers.
@@ -31812,6 +31849,14 @@ impl Parser {
             return Ok(None);
         }
 
+        // ClickHouse: ALIAS, EPHEMERAL, MATERIALIZED are column modifiers, not types
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.check_identifier("ALIAS") || self.check_identifier("EPHEMERAL")
+                || self.check(TokenType::Materialized))
+        {
+            return Ok(None);
+        }
+
         let saved_pos = self.current;
         match self.parse_data_type() {
             Ok(dt) => Ok(Some(dt)),
@@ -37526,6 +37571,32 @@ impl Parser {
                         col_def.constraint_order.push(ConstraintType::Path);
                     }
                     _ => {}
+                }
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_identifier("ALIAS")
+            {
+                // ClickHouse: ALIAS expr
+                let expr = self.parse_or()?;
+                col_def.alias_expr = Some(Box::new(expr));
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::Materialized) && !self.check_next(TokenType::View)
+            {
+                // ClickHouse: MATERIALIZED expr
+                self.advance(); // consume MATERIALIZED
+                let expr = self.parse_or()?;
+                col_def.materialized_expr = Some(Box::new(expr));
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_identifier("EPHEMERAL")
+            {
+                // ClickHouse: EPHEMERAL [expr]
+                if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) && !self.is_at_end()
+                    && !self.check_identifier("CODEC") && !self.check_identifier("TTL")
+                    && !self.check(TokenType::Comment)
+                {
+                    let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                    col_def.ephemeral = Some(Some(Box::new(expr)));
+                } else {
+                    col_def.ephemeral = Some(None);
                 }
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && self.check_identifier("CODEC")
