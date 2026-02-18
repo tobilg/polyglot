@@ -8,29 +8,18 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // SETTINGS in function calls
-    test("DESC format(JSONEachRow, '{}' SETTINGS schema_inference_hints='age UInt8')");
-    test("SELECT * FROM mysql('host', 'db', 'table', 'user', 'pass' SETTINGS connect_timeout=10)");
+    // AS alias inside function args
+    test("SELECT format('CSV' AS format, '1,2,3' AS format_value)");
+    test("SELECT arrayMap((x -> toString(x)) as lambda, [1,2,3])");
+    test("SELECT toTypeName(quantilesExactWeightedState(0.2, 0.4)(number + 1, 1) AS x)");
 
-    // IGNORE NULLS postfix
-    test("SELECT count(NULL) IGNORE NULLS");
-    test("SELECT any(x) RESPECT NULLS FROM t");
+    // SETTINGS in table function args
+    test("SELECT * FROM executable('', 'JSON', 'data String', SETTINGS max_command_execution_time=100)");
+    test("SELECT * FROM mysql('127.0.0.1:9004', 'default', 'atable', 'default', '', SETTINGS connect_timeout = 100)");
 
-    // Tuple index access
-    test("SELECT row.1, row.2 FROM t");
-    test("WITH (1,2) AS t SELECT t.1");
+    // ON CLUSTER
+    test("CREATE DATABASE IF NOT EXISTS test ON CLUSTER test_shard_localhost");
 
-    // DROP WORKLOAD/PROFILE
-    test("DROP WORKLOAD IF EXISTS production");
-    test("DROP PROFILE IF EXISTS s1");
-
-    // Qualified star with EXCEPT
-    test("SELECT system.detached_parts.* EXCEPT (bytes_on_disk, path) FROM system.detached_parts");
-    test("SELECT t.COLUMNS('^c') EXCEPT (col1, col2) FROM t");
-
-    // UNION ALL with WITH CTE
-    test("SELECT 1 UNION ALL WITH 2 AS x SELECT x");
-
-    // FLOAT(precision, scale) cast
-    test("SELECT inf::FLOAT(15,22)");
+    // USING (col AS alias)
+    test("SELECT * FROM system.one l INNER JOIN numbers(1) r USING (dummy AS number)");
 }

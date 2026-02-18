@@ -18655,6 +18655,9 @@ impl Parser {
             None
         };
 
+        // ClickHouse: ON CLUSTER clause
+        let _on_cluster = self.parse_on_cluster_clause()?;
+
         let mut options = Vec::new();
 
         // Parse database options
@@ -25690,6 +25693,8 @@ impl Parser {
             // e.g., PARSE_JSON('{}', wide_number_mode => 'exact')
             "JSON_ARRAY_LENGTH" | "JSON_KEYS" | "JSON_TYPE" | "TO_JSON" | "TYPEOF" | "TOTYPENAME" | "PARSE_JSON" => {
                 let this = self.parse_expression()?;
+                // ClickHouse: expr AS alias inside function args
+                let this = self.maybe_clickhouse_alias(this);
 
                 // Check for additional arguments (comma-separated, possibly named)
                 if self.match_token(TokenType::Comma) {
@@ -27607,6 +27612,10 @@ impl Parser {
         // ClickHouse: SETTINGS key=value, ... before closing paren in function calls
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.check(TokenType::Settings)
+            && self.current + 2 < self.tokens.len()
+            && (self.tokens[self.current + 1].token_type == TokenType::Var
+                || self.tokens[self.current + 1].token_type == TokenType::Identifier)
+            && self.tokens[self.current + 2].token_type == TokenType::Eq
         {
             self.advance(); // consume SETTINGS
             loop {
@@ -27746,6 +27755,18 @@ impl Parser {
         let mut args = Vec::new();
 
         loop {
+            // ClickHouse: SETTINGS key=value, ... terminates function args
+            // Only break if SETTINGS is followed by identifier = value pattern
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::Settings)
+                && self.current + 2 < self.tokens.len()
+                && (self.tokens[self.current + 1].token_type == TokenType::Var
+                    || self.tokens[self.current + 1].token_type == TokenType::Identifier)
+                && self.tokens[self.current + 2].token_type == TokenType::Eq
+            {
+                break; // will be consumed by SETTINGS handler after loop
+            }
+
             // ClickHouse: bare SELECT/WITH as function argument (e.g., view(SELECT 1), remote(..., view(SELECT ...)))
             if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.check(TokenType::Select) || self.check(TokenType::With))
@@ -27883,16 +27904,22 @@ impl Parser {
             };
 
             // Handle AS alias inside function arguments (e.g. ClickHouse: arrayJoin([1,2,3] AS src))
-            let arg = if self.check(TokenType::As)
+            let arg = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::As)
                 && !self.check_next(TokenType::RParen)
                 && !self.check_next(TokenType::Comma)
             {
-                // Look ahead to see if AS is followed by an identifier (alias), not a type
+                // Look ahead: AS followed by identifier/keyword, then ) or , means it's an alias
                 let next_idx = self.current + 1;
-                let is_alias = next_idx < self.tokens.len() && matches!(
+                let after_alias_idx = self.current + 2;
+                let is_alias_token = next_idx < self.tokens.len() && (matches!(
                     self.tokens[next_idx].token_type,
                     TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
-                );
+                ) || self.tokens[next_idx].token_type.is_keyword());
+                // Ensure the token AFTER the alias is ) or , (function arg boundary)
+                let is_alias = is_alias_token && after_alias_idx < self.tokens.len()
+                    && matches!(self.tokens[after_alias_idx].token_type,
+                        TokenType::RParen | TokenType::Comma);
                 if is_alias {
                     self.advance(); // consume AS
                     let alias_token = self.advance();
@@ -27948,6 +27975,10 @@ impl Parser {
         // ClickHouse: SETTINGS key=value, ... at end of function args before RParen
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.check(TokenType::Settings)
+            && self.current + 2 < self.tokens.len()
+            && (self.tokens[self.current + 1].token_type == TokenType::Var
+                || self.tokens[self.current + 1].token_type == TokenType::Identifier)
+            && self.tokens[self.current + 2].token_type == TokenType::Eq
         {
             self.advance(); // consume SETTINGS
             loop {
@@ -32750,6 +32781,15 @@ impl Parser {
             // Handle qualified names: table.column or schema.table.column
             // Keep only the final column name
             while self.match_token(TokenType::Dot) {
+                final_quoted = self.check(TokenType::QuotedIdentifier);
+                name = self.expect_identifier_or_safe_keyword()?;
+            }
+
+            // ClickHouse: USING (col AS alias) — consume optional AS alias
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_token(TokenType::As)
+            {
+                // Use the alias name instead
                 final_quoted = self.check(TokenType::QuotedIdentifier);
                 name = self.expect_identifier_or_safe_keyword()?;
             }
