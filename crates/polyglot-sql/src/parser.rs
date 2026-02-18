@@ -1272,6 +1272,17 @@ impl Parser {
         // Parse GROUP BY
         let group_by = if self.match_keywords(&[TokenType::Group, TokenType::By]) {
             Some(self.parse_group_by()?)
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::With) && self.check_next_identifier("TOTALS")
+        {
+            // ClickHouse: WITH TOTALS without GROUP BY
+            self.advance(); // consume WITH
+            self.advance(); // consume TOTALS
+            Some(GroupBy {
+                expressions: Vec::new(),
+                all: None,
+                totals: true,
+            })
         } else {
             None
         };
@@ -19817,6 +19828,7 @@ impl Parser {
             }
         }
 
+
         Ok(left)
     }
 
@@ -21933,6 +21945,12 @@ impl Parser {
             // Check for tuple (multiple expressions separated by commas)
             if self.match_token(TokenType::Comma) {
                 let mut expressions = vec![first_expr];
+                // ClickHouse: trailing comma creates single-element tuple, e.g., (1,)
+                if self.check(TokenType::RParen) {
+                    self.advance(); // consume )
+                    let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
+                    return self.maybe_parse_subscript(tuple_expr);
+                }
                 // Parse remaining tuple elements, each can have AS alias
                 loop {
                     let elem = self.parse_expression()?;
@@ -39319,6 +39337,7 @@ impl Parser {
 
         // Parse comma-separated expressions
         let mut expressions = Vec::new();
+        let mut trailing_comma = false;
         loop {
             match self.parse_expression() {
                 Ok(expr) => expressions.push(expr),
@@ -39327,9 +39346,19 @@ impl Parser {
             if !self.match_token(TokenType::Comma) {
                 break;
             }
+            // ClickHouse: trailing comma makes a single-element tuple, e.g., (1,)
+            if self.check(TokenType::RParen) {
+                trailing_comma = true;
+                break;
+            }
         }
 
         self.expect(TokenType::RParen)?;
+
+        // Single expression with trailing comma → tuple, e.g., (1,)
+        if trailing_comma && expressions.len() == 1 {
+            return Ok(Some(Expression::Tuple(Box::new(Tuple { expressions }))));
+        }
 
         // Single expression - return the unwrapped Paren
         if expressions.len() == 1 {
