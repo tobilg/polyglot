@@ -7321,6 +7321,25 @@ impl Parser {
             // DEFAULT VALUES: no values or query
             (Vec::new(), None)
         } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Format)
+            && self.peek_nth(1).is_some_and(|t| {
+                let upper = t.text.to_uppercase();
+                upper != "VALUES" && (t.token_type == TokenType::Var || t.token_type == TokenType::Identifier)
+            })
+        {
+            // ClickHouse: FORMAT <format_name> followed by raw data (CSV, JSON, TSV, etc.)
+            // Skip everything to next semicolon or end — the data is not SQL
+            self.advance(); // consume FORMAT
+            let format_name = self.advance().text.clone(); // consume format name
+            // Consume all remaining tokens until semicolon (raw data)
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                self.advance();
+            }
+            // Store as empty values with the format name in the query as a command
+            (Vec::new(), Some(Expression::Command(Box::new(crate::expressions::Command {
+                this: format!("FORMAT {}", format_name),
+            }))))
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.match_text_seq(&["FORMAT", "VALUES"])
         {
             let mut all_values = Vec::new();
@@ -21747,6 +21766,23 @@ impl Parser {
 
         // Parenthesized expression or subquery
         if self.match_token(TokenType::LParen) {
+            // Empty parens () — could be empty tuple or zero-param lambda () -> body
+            if self.check(TokenType::RParen) {
+                self.advance(); // consume )
+                // Check for lambda: () -> body
+                if self.match_token(TokenType::Arrow) || self.match_token(TokenType::FArrow) {
+                    let body = self.parse_expression()?;
+                    return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                        parameters: Vec::new(),
+                        body,
+                        colon: false,
+                        parameter_types: Vec::new(),
+                    })));
+                }
+                // Otherwise empty tuple
+                return Ok(Expression::Tuple(Box::new(Tuple { expressions: Vec::new() })));
+            }
+
             // Check if this is a VALUES expression inside parens: (VALUES ...)
             if self.check(TokenType::Values) {
                 let values = self.parse_values()?;
