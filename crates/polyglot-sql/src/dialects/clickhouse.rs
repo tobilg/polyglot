@@ -30,6 +30,9 @@ impl DialectImpl for ClickHouseDialect {
         config.string_escapes.push('\\');
         // ClickHouse supports # as single-line comment
         config.hash_comments = true;
+        // ClickHouse supports 0xDEADBEEF hex integer literals
+        config.hex_number_strings = true;
+        config.hex_string_is_integer_type = true;
         config
     }
 

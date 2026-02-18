@@ -744,10 +744,33 @@ impl Parser {
                 self.advance(); // consume CHECK
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse CHECK statement"))
             }
+            // ClickHouse: SETTINGS key=value, ... (standalone statement or after another statement)
+            TokenType::Settings if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume SETTINGS
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse SETTINGS statement"))
+            }
             // ClickHouse: SYSTEM STOP/START MERGES, etc.
             TokenType::System if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
                 self.advance(); // consume SYSTEM
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse SYSTEM statement"))
+            }
+            // ClickHouse: RENAME TABLE db.t1 TO db.t2 [, db.t3 TO db.t4 ...]
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("RENAME")
+                && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume RENAME
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse RENAME statement"))
+            }
+            // ClickHouse: OPTIMIZE TABLE t [FINAL] [DEDUPLICATE [BY ...]]
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("OPTIMIZE")
+                && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume OPTIMIZE
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse OPTIMIZE statement"))
+            }
+            // ClickHouse: SHOW ... (various SHOW commands beyond what's already handled)
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("EXISTS")
+                && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume EXISTS
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse EXISTS statement"))
             }
             // DuckDB: ATTACH [DATABASE] [IF NOT EXISTS] 'path' [AS alias] [(options)]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("ATTACH") => {
@@ -14597,6 +14620,17 @@ impl Parser {
         // Parse Hive PARTITION clause: PARTITION(key = value, ...)
         // parse_partition consumes the PARTITION keyword itself
         let partition = self.parse_partition()?;
+
+        // ClickHouse: TRUNCATE TABLE t SETTINGS key=value, ...
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) && self.match_token(TokenType::Settings) {
+            // Consume settings expressions (they're not stored in the AST for TRUNCATE)
+            loop {
+                let _ = self.parse_expression()?;
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
 
         Ok(Expression::Truncate(Box::new(Truncate {
             target,
