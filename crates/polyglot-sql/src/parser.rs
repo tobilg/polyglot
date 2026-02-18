@@ -2908,6 +2908,23 @@ impl Parser {
                     let semantic_view = self.parse_semantic_view()?;
                     self.expect(TokenType::RParen)?;
                     semantic_view
+                } else if (first_name.eq_ignore_ascii_case("view") || first_name.eq_ignore_ascii_case("merge"))
+                    && (self.check(TokenType::Select) || self.check(TokenType::With))
+                {
+                    // ClickHouse: view(SELECT ...) and merge(SELECT ...) table functions
+                    // contain a subquery as the argument
+                    let query = self.parse_statement()?;
+                    self.expect(TokenType::RParen)?;
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Function(Box::new(Function {
+                        name: first_name.to_string(),
+                        args: vec![query],
+                        distinct: false,
+                        trailing_comments,
+                        use_bracket_syntax: false,
+                        no_parens: false,
+                        quoted: false,
+                    }))
                 } else {
                     // Simple table function like UNNEST(), GAP_FILL(), etc.
                     let args = if self.check(TokenType::RParen) {
@@ -7293,6 +7310,30 @@ impl Parser {
             if self.peek_nth(1).map(|t| t.token_type == TokenType::Select || t.token_type == TokenType::With).unwrap_or(false) {
                 // This is a parenthesized subquery, not a column list
                 Vec::new()
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.peek_nth(1).map(|t| t.token_type == TokenType::Star).unwrap_or(false)
+            {
+                // ClickHouse: INSERT INTO t (*) or INSERT INTO t (* EXCEPT (col1, col2))
+                // Skip the entire column specification
+                self.advance(); // consume (
+                self.advance(); // consume *
+                // Skip EXCEPT (col1, col2) if present
+                if self.match_token(TokenType::Except) || self.match_identifier("EXCEPT") {
+                    if self.match_token(TokenType::LParen) {
+                        let mut depth = 1;
+                        while !self.is_at_end() && depth > 0 {
+                            if self.match_token(TokenType::LParen) {
+                                depth += 1;
+                            } else if self.match_token(TokenType::RParen) {
+                                depth -= 1;
+                            } else {
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+                Vec::new() // Treat as "all columns"
             } else {
                 self.advance(); // consume (
                 let cols = self.parse_identifier_list()?;
@@ -13890,7 +13931,14 @@ impl Parser {
                 // DROP [IF EXISTS] COLUMN [IF EXISTS] name [CASCADE]
                 // Check for IF EXISTS after COLUMN as well
                 let if_exists = if_exists || self.match_keywords(&[TokenType::If, TokenType::Exists]);
-                let name = self.expect_identifier_with_quoted()?;
+                let mut name = self.expect_identifier_with_quoted()?;
+                // ClickHouse: nested column names like n.ui8
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::Dot)
+                {
+                    let sub = self.expect_identifier_with_quoted()?;
+                    name.name = format!("{}.{}", name.name, sub.name);
+                }
                 let cascade = self.match_token(TokenType::Cascade);
                 Ok(AlterTableAction::DropColumn { name, if_exists, cascade })
             } else if self.match_token(TokenType::Constraint) {
@@ -13917,7 +13965,14 @@ impl Parser {
                 Ok(AlterTableAction::DropColumns { names })
             } else {
                 // DROP [IF EXISTS] name (implicit column) [CASCADE]
-                let name = self.expect_identifier_with_quoted()?;
+                let mut name = self.expect_identifier_with_quoted()?;
+                // ClickHouse: nested column names like n.ui8
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::Dot)
+                {
+                    let sub = self.expect_identifier_with_quoted()?;
+                    name.name = format!("{}.{}", name.name, sub.name);
+                }
                 let cascade = self.match_token(TokenType::Cascade);
                 Ok(AlterTableAction::DropColumn { name, if_exists, cascade })
             }
@@ -20976,6 +21031,9 @@ impl Parser {
         if self.match_token(TokenType::Dash) {
             let expr = self.parse_unary()?;
             Ok(Expression::Neg(Box::new(UnaryOp::new(expr))))
+        } else if self.match_token(TokenType::Plus) {
+            // Unary plus: +1, +expr — just return the inner expression (no-op)
+            self.parse_unary()
         } else if self.match_token(TokenType::Tilde) {
             let expr = self.parse_unary()?;
             Ok(Expression::BitwiseNot(Box::new(UnaryOp::new(expr))))
@@ -22894,6 +22952,21 @@ impl Parser {
                     }));
                     return self.maybe_parse_subscript(col_expr);
                 }
+                // ClickHouse: json.^path — the ^ prefix means "get all nested subcolumns"
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Caret)
+                {
+                    self.advance(); // consume ^
+                    let mut field_name = "^".to_string();
+                    if self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check_keyword() {
+                        field_name.push_str(&self.advance().text);
+                    }
+                    let col_expr = Expression::Dot(Box::new(DotAccess {
+                        this: Expression::Column(Column { name: ident, table: None, join_mark: false, trailing_comments: Vec::new() }),
+                        field: Identifier::new(field_name),
+                    }));
+                    return self.maybe_parse_subscript(col_expr);
+                }
                 // Allow keywords as column names (e.g., a.filter, x.update)
                 let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
 
@@ -23032,6 +23105,27 @@ impl Parser {
                     let star = self.parse_star_modifiers(Some(ident))?;
                     return Ok(Expression::Star(star));
                 }
+                // ClickHouse: json.^path — the ^ prefix means "get all nested subcolumns"
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Caret)
+                {
+                    self.advance(); // consume ^
+                    let mut field_name = "^".to_string();
+                    if self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check_keyword() {
+                        field_name.push_str(&self.advance().text);
+                    }
+                    let col = Expression::Dot(Box::new(DotAccess {
+                        this: Expression::Column(Column {
+                            name: Identifier::new(name),
+                            table: None,
+                            join_mark: false,
+                            trailing_comments: Vec::new(),
+                        }),
+                        field: Identifier::new(field_name),
+                    }));
+                    return self.maybe_parse_subscript(col);
+                }
+
                 // Allow keywords as column names
                 let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
 
@@ -27762,6 +27856,34 @@ impl Parser {
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
                         field: Identifier::new(field_name),
+                    }));
+                } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Caret)
+                {
+                    // ClickHouse: json.^path — the ^ prefix means "get all nested subcolumns"
+                    self.advance(); // consume ^
+                    // What follows should be an identifier path
+                    let mut field_name = "^".to_string();
+                    if self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check_keyword() {
+                        field_name.push_str(&self.advance().text);
+                    }
+                    expr = Expression::Dot(Box::new(DotAccess {
+                        this: expr,
+                        field: Identifier::new(field_name),
+                    }));
+                } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Colon)
+                {
+                    // ClickHouse: json.path.:Type — the : prefix means type cast on JSON path
+                    self.advance(); // consume :
+                    // Consume the type name
+                    let mut type_name = ":".to_string();
+                    if self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check_keyword() {
+                        type_name.push_str(&self.advance().text);
+                    }
+                    expr = Expression::Dot(Box::new(DotAccess {
+                        this: expr,
+                        field: Identifier::new(type_name),
                     }));
                 } else {
                     return Err(Error::parse("Expected field name after dot"));

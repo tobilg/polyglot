@@ -924,6 +924,7 @@ impl TokenType {
                 | TokenType::Pragma
                 | TokenType::Siblings
                 | TokenType::SerdeProperties
+                | TokenType::Order
         )
     }
 
