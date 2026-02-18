@@ -14216,9 +14216,31 @@ impl Parser {
             if self.match_token(TokenType::Column) {
                 // RENAME COLUMN [IF EXISTS] old TO new
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
-                let old_name = self.expect_identifier_with_quoted()?;
+                let mut old_name = self.expect_identifier_with_quoted()?;
+                // ClickHouse: nested column names like n.x
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::Dot)
+                {
+                    let field = self.expect_identifier_with_quoted()?;
+                    old_name = Identifier {
+                        name: format!("{}.{}", old_name.name, field.name),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                    };
+                }
                 self.expect(TokenType::To)?;
-                let new_name = self.expect_identifier_with_quoted()?;
+                let mut new_name = self.expect_identifier_with_quoted()?;
+                // ClickHouse: nested column names like n.y
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::Dot)
+                {
+                    let field = self.expect_identifier_with_quoted()?;
+                    new_name = Identifier {
+                        name: format!("{}.{}", new_name.name, field.name),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                    };
+                }
                 Ok(AlterTableAction::RenameColumn { old_name, new_name, if_exists })
             } else if self.match_token(TokenType::To) {
                 // RENAME TO new_table
@@ -15731,9 +15753,13 @@ impl Parser {
                 "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "QUERY" | "CURRENT" => {
                     self.advance();
                     let mut style_str = text_upper;
-                    // Handle multi-word: TABLE OVERRIDE, CURRENT TRANSACTION
+                    // Handle multi-word: TABLE OVERRIDE, CURRENT TRANSACTION, QUERY TREE
                     if style_str == "CURRENT" && self.check_identifier("TRANSACTION") {
                         style_str.push_str(" TRANSACTION");
+                        self.advance();
+                    }
+                    if style_str == "QUERY" && self.check_identifier("TREE") {
+                        style_str.push_str(" TREE");
                         self.advance();
                     }
                     Some(style_str)
@@ -23835,6 +23861,9 @@ impl Parser {
                     (None, false, false)
                 } else if self.match_token(TokenType::Star) {
                     (None, true, false)
+                } else if self.match_token(TokenType::All) {
+                    // COUNT(ALL expr) - ALL is the default, just consume it
+                    (Some(self.parse_expression()?), false, false)
                 } else if self.match_token(TokenType::Distinct) {
                     let first_expr = self.parse_expression()?;
                     // Check for multiple columns: COUNT(DISTINCT a, b, c)
@@ -24056,7 +24085,12 @@ impl Parser {
             "MEDIAN" | "MODE" | "FIRST" | "LAST" | "ANY_VALUE" |
             "APPROX_DISTINCT" | "APPROX_COUNT_DISTINCT" |
             "BIT_AND" | "BIT_OR" | "BIT_XOR" => {
-                let distinct = self.match_token(TokenType::Distinct);
+                let distinct = if self.match_token(TokenType::Distinct) {
+                    true
+                } else {
+                    self.match_token(TokenType::All); // ALL is the default, just consume it
+                    false
+                };
 
                 // MODE() can have zero arguments when used with WITHIN GROUP
                 // e.g., MODE() WITHIN GROUP (ORDER BY col)
@@ -24225,6 +24259,7 @@ impl Parser {
 
             // COUNT_IF / COUNTIF
             "COUNT_IF" | "COUNTIF" => {
+                let distinct = self.match_token(TokenType::Distinct);
                 let this = self.parse_expression()?;
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::Comma)
@@ -24242,7 +24277,7 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
                 let filter = self.parse_filter_clause()?;
-                Ok(Expression::CountIf(Box::new(AggFunc { ignore_nulls: None, this, distinct: false, filter, order_by: Vec::new(), having_max: None, name: Some(name.to_string()), limit: None })))
+                Ok(Expression::CountIf(Box::new(AggFunc { ignore_nulls: None, this, distinct, filter, order_by: Vec::new(), having_max: None, name: Some(name.to_string()), limit: None })))
             }
 
             // STRING_AGG - STRING_AGG([DISTINCT] expr [, separator] [ORDER BY order_list])
@@ -27353,6 +27388,9 @@ impl Parser {
             }
         } else if self.match_token(TokenType::Distinct) {
             (self.parse_function_arguments()?, true)
+        } else if is_known_agg && self.match_token(TokenType::All) {
+            // ALL is the default quantifier, just consume it
+            (self.parse_function_arguments()?, false)
         } else {
             (self.parse_function_arguments()?, false)
         };
@@ -29470,7 +29508,33 @@ impl Parser {
             raw_name.push('.');
             raw_name.push_str(&part);
         }
-        let name = raw_name.to_uppercase();
+        let mut name = raw_name.to_uppercase();
+
+        // SQL standard: NATIONAL CHAR/CHARACTER → NCHAR
+        if name == "NATIONAL" {
+            let next_upper = if !self.is_at_end() { self.peek().text.to_uppercase() } else { String::new() };
+            if next_upper == "CHAR" || next_upper == "CHARACTER" {
+                self.advance(); // consume CHAR/CHARACTER
+                name = "NCHAR".to_string();
+                // NATIONAL CHARACTER VARYING → NVARCHAR equivalent
+                if next_upper == "CHARACTER" && self.check_identifier("VARYING") {
+                    self.advance(); // consume VARYING
+                    let length = if self.match_token(TokenType::LParen) {
+                        if self.check(TokenType::RParen) {
+                            self.advance();
+                            None
+                        } else {
+                            let n = self.expect_number()? as u32;
+                            self.expect(TokenType::RParen)?;
+                            Some(n)
+                        }
+                    } else {
+                        None
+                    };
+                    return Ok(DataType::VarChar { length, parenthesized_length: false });
+                }
+            }
+        }
 
         let base_type = match name.as_str() {
             "INT" | "INTEGER" => {
@@ -31085,10 +31149,19 @@ impl Parser {
             if self.match_token(TokenType::LParen) {
                 // EXCLUDE (col1, col2) or EXCEPT (A.COL_1, B.COL_2)
                 loop {
-                    let col = self.expect_identifier()?;
+                    // ClickHouse: allow keywords like 'key', 'index' as column names in EXCEPT
+                    let col = if self.is_safe_keyword_as_identifier() {
+                        self.advance().text
+                    } else {
+                        self.expect_identifier()?
+                    };
                     // Handle qualified column names like A.COL_1
                     if self.match_token(TokenType::Dot) {
-                        let subcol = self.expect_identifier()?;
+                        let subcol = if self.is_safe_keyword_as_identifier() {
+                            self.advance().text
+                        } else {
+                            self.expect_identifier()?
+                        };
                         columns.push(Identifier::new(format!("{}.{}", col, subcol)));
                     } else {
                         columns.push(Identifier::new(col));
@@ -31100,7 +31173,11 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
             } else {
                 // EXCLUDE col (single column, Snowflake)
-                let col = self.expect_identifier()?;
+                let col = if self.is_safe_keyword_as_identifier() {
+                    self.advance().text
+                } else {
+                    self.expect_identifier()?
+                };
                 columns.push(Identifier::new(col));
             }
             except = Some(columns);
@@ -43243,6 +43320,14 @@ impl Parser {
             loop {
                 if let Some(id) = self.try_parse_identifier() {
                     columns.push(id);
+                } else if self.is_safe_keyword_as_identifier() {
+                    // ClickHouse: allow keywords like 'key' as column names in EXCEPT
+                    let token = self.advance();
+                    columns.push(Identifier {
+                        name: token.text,
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                    });
                 } else {
                     break;
                 }
