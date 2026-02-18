@@ -7119,6 +7119,9 @@ impl Parser {
         } else if self.check(TokenType::From) {
             // DuckDB FROM-first syntax without parentheses: ... UNION FROM t
             self.parse_from_first_query()
+        } else if self.check(TokenType::With) {
+            // WITH CTE as right-hand side of UNION/INTERSECT/EXCEPT
+            self.parse_statement()
         } else {
             self.parse_select()
         }
@@ -13580,6 +13583,7 @@ impl Parser {
                     let text_upper = self.peek().text.to_uppercase();
                     if matches!(text_upper.as_str(),
                         "DICTIONARY" | "USER" | "QUOTA" | "ROLE" | "ROW" | "POLICY" | "NAMED"
+                        | "WORKLOAD" | "RESOURCE" | "PROFILE"
                     ) || self.check(TokenType::Settings) || self.check(TokenType::Partition)
                     {
                         self.advance(); // consume keyword, previous() is now set
@@ -23592,6 +23596,16 @@ impl Parser {
                     return self.maybe_parse_subscript(col);
                 }
 
+                // Handle numeric field access: keyword.1, keyword.2 (ClickHouse tuple field access)
+                if self.check(TokenType::Number) {
+                    let field_name = self.advance().text;
+                    let col_expr = Expression::Dot(Box::new(DotAccess {
+                        this: Expression::Column(Column { name: Identifier::new(name), table: None, join_mark: false, trailing_comments: Vec::new() }),
+                        field: Identifier::new(field_name),
+                    }));
+                    return self.maybe_parse_subscript(col_expr);
+                }
+
                 // Allow keywords as column names
                 let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
 
@@ -24045,6 +24059,16 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 let filter = self.parse_filter_clause()?;
+                // Also check for IGNORE NULLS / RESPECT NULLS after the closing paren
+                let ignore_nulls = if ignore_nulls.is_some() {
+                    ignore_nulls
+                } else if self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]) {
+                    Some(true)
+                } else if self.match_keywords(&[TokenType::Respect, TokenType::Nulls]) {
+                    Some(false)
+                } else {
+                    None
+                };
                 Ok(Expression::Count(Box::new(CountFunc { this, star, distinct, filter, ignore_nulls, original_name: Some(name.to_string()) })))
             }
 
@@ -27580,6 +27604,26 @@ impl Parser {
             (None, Vec::new(), None)
         };
 
+        // ClickHouse: SETTINGS key=value, ... before closing paren in function calls
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Settings)
+        {
+            self.advance(); // consume SETTINGS
+            loop {
+                let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                    self.advance().text
+                } else {
+                    break;
+                };
+                if self.match_token(TokenType::Eq) {
+                    let _value = self.parse_primary()?;
+                }
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
         self.expect(TokenType::RParen)?;
         let trailing_comments = self.previous_trailing_comments();
 
@@ -27627,7 +27671,18 @@ impl Parser {
 
         let filter = self.parse_filter_clause()?;
 
-        if filter.is_some() || is_known_agg {
+        // Check for postfix IGNORE NULLS / RESPECT NULLS after RParen
+        let ignore_nulls = if ignore_nulls.is_some() {
+            ignore_nulls
+        } else if self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]) {
+            Some(true)
+        } else if self.match_keywords(&[TokenType::Respect, TokenType::Nulls]) {
+            Some(false)
+        } else {
+            None
+        };
+
+        if filter.is_some() || is_known_agg || ignore_nulls.is_some() {
             Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                 name: name.to_string(),
                 args,
@@ -27887,6 +27942,26 @@ impl Parser {
             // e.g., ROUND(SCALE => 1, EXPR => 2.25, , ROUNDING_MODE => 'HALF_TO_EVEN')
             while self.check(TokenType::Comma) {
                 self.advance();
+            }
+        }
+
+        // ClickHouse: SETTINGS key=value, ... at end of function args before RParen
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Settings)
+        {
+            self.advance(); // consume SETTINGS
+            loop {
+                let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                    self.advance().text
+                } else {
+                    break;
+                };
+                if self.match_token(TokenType::Eq) {
+                    let _value = self.parse_primary()?;
+                }
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
             }
         }
 
@@ -28437,26 +28512,42 @@ impl Parser {
             } else if self.match_token(TokenType::Dot) {
                 // Handle chained dot access (a.b.c.d)
                 if self.match_token(TokenType::Star) {
-                    // expr.* - struct field expansion
-                    // For simple columns, use Star with table. For complex expressions, use Dot with * field
-                    match &expr {
+                    // expr.* - struct field expansion with potential modifiers (EXCEPT, REPLACE, etc.)
+                    let table_name = match &expr {
                         Expression::Column(col) => {
-                            let table = col.table.clone().or_else(|| Some(col.name.clone()));
-                            expr = Expression::Star(Star {
-                                table,
-                                except: None,
-                                replace: None,
-                                rename: None,
-                                trailing_comments: Vec::new(),
-                            });
+                            if let Some(ref table) = col.table {
+                                Some(Identifier::new(format!("{}.{}", table.name, col.name.name)))
+                            } else {
+                                Some(col.name.clone())
+                            }
                         }
-                        _ => {
-                            // For complex expressions (like CAST, function calls), use Dot with * as field
-                            expr = Expression::Dot(Box::new(DotAccess {
-                                this: expr,
-                                field: Identifier::new("*"),
-                            }));
+                        Expression::Dot(d) => {
+                            fn dot_to_name_inner(expr: &Expression) -> String {
+                                match expr {
+                                    Expression::Column(col) => {
+                                        if let Some(ref table) = col.table {
+                                            format!("{}.{}", table.name, col.name.name)
+                                        } else {
+                                            col.name.name.clone()
+                                        }
+                                    }
+                                    Expression::Dot(d) => format!("{}.{}", dot_to_name_inner(&d.this), d.field.name),
+                                    _ => String::new(),
+                                }
+                            }
+                            Some(Identifier::new(dot_to_name_inner(&Expression::Dot(d.clone()))))
                         }
+                        _ => None,
+                    };
+                    if table_name.is_some() {
+                        let star = self.parse_star_modifiers(table_name)?;
+                        expr = Expression::Star(star);
+                    } else {
+                        // For complex expressions (like CAST, function calls), use Dot with * as field
+                        expr = Expression::Dot(Box::new(DotAccess {
+                            this: expr,
+                            field: Identifier::new("*"),
+                        }));
                     }
                 } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier) || self.check_keyword() {
                     let is_quoted = self.check(TokenType::QuotedIdentifier);
@@ -30817,14 +30908,19 @@ impl Parser {
             }
             // FLOAT with optional (precision)
             "FLOAT" | "REAL" | "BINARY_FLOAT" => {
-                let precision = if self.match_token(TokenType::LParen) {
+                let (precision, scale) = if self.match_token(TokenType::LParen) {
                     let n = Some(self.expect_number()? as u32);
+                    let s = if self.match_token(TokenType::Comma) {
+                        Some(self.expect_number()? as u32)
+                    } else {
+                        None
+                    };
                     self.expect(TokenType::RParen)?;
-                    n
+                    (n, s)
                 } else {
-                    None
+                    (None, None)
                 };
-                DataType::Float { precision, scale: None, real_spelling: name == "REAL" }
+                DataType::Float { precision, scale, real_spelling: name == "REAL" }
             }
             "BINARY_DOUBLE" => {
                 DataType::Double { precision: None, scale: None }
@@ -35067,9 +35163,43 @@ impl Parser {
             if result.is_none() {
                 break;
             }
+            // Handle .* (qualified star) with modifiers
+            if self.match_token(TokenType::Star) {
+                // Determine table name from the expression
+                let table_name = match &result {
+                    Some(Expression::Column(col)) if col.table.is_none() => {
+                        Some(col.name.clone())
+                    }
+                    Some(Expression::Dot(dot)) => {
+                        // For deep qualified names like schema.table.*, use the whole expression name
+                        fn dot_to_name(expr: &Expression) -> String {
+                            match expr {
+                                Expression::Column(col) => {
+                                    if let Some(ref table) = col.table {
+                                        format!("{}.{}", table.name, col.name.name)
+                                    } else {
+                                        col.name.name.clone()
+                                    }
+                                }
+                                Expression::Dot(d) => format!("{}.{}", dot_to_name(&d.this), d.field.name),
+                                _ => String::new(),
+                            }
+                        }
+                        Some(Identifier::new(dot_to_name(&Expression::Dot(dot.clone()))))
+                    }
+                    _ => None,
+                };
+                let star = self.parse_star_modifiers(table_name)?;
+                result = Some(Expression::Star(star));
+                break;
+            }
             // Parse the field identifier - use is_identifier_or_keyword_token to allow keywords
             // like "schema" as field names in dot access
-            if self.is_identifier_or_keyword_token() || self.check(TokenType::QuotedIdentifier) {
+            // ClickHouse: also allow numeric tuple index access like expr.1, expr.2
+            if self.is_identifier_or_keyword_token() || self.check(TokenType::QuotedIdentifier)
+                || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Number))
+            {
                 let token = self.advance();
                 let field_ident = Identifier {
                     name: token.text,

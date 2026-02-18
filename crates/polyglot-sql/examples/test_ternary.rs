@@ -8,31 +8,29 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // DIV keyword
-    test("SELECT number DIV 2, number FROM numbers(3)");
-    test("SELECT number MOD 2, number FROM numbers(3)");
+    // SETTINGS in function calls
+    test("DESC format(JSONEachRow, '{}' SETTINGS schema_inference_hints='age UInt8')");
+    test("SELECT * FROM mysql('host', 'db', 'table', 'user', 'pass' SETTINGS connect_timeout=10)");
 
-    // DESC format()
-    test("DESC format(Values, '(123)')");
-    test("DESCRIBE format(CSV, '1,2,3')");
+    // IGNORE NULLS postfix
+    test("SELECT count(NULL) IGNORE NULLS");
+    test("SELECT any(x) RESPECT NULLS FROM t");
 
-    // INSERT VALUES without commas between tuples
-    test("INSERT INTO t VALUES (1), (2) (3), (4)");
-    test("INSERT INTO t VALUES (1, 2, 3) (4, 5, 6)");
+    // Tuple index access
+    test("SELECT row.1, row.2 FROM t");
+    test("WITH (1,2) AS t SELECT t.1");
 
-    // INSERT FORMAT - raw data should be skipped
-    test("INSERT INTO t FORMAT JSONEachRow");
+    // DROP WORKLOAD/PROFILE
+    test("DROP WORKLOAD IF EXISTS production");
+    test("DROP PROFILE IF EXISTS s1");
 
-    // STALENESS in WITH FILL
-    test("SELECT a FROM t ORDER BY a WITH FILL STALENESS 3");
-    test("SELECT a FROM t ORDER BY a WITH FILL STALENESS INTERVAL 2 SECOND, b WITH FILL");
+    // Qualified star with EXCEPT
+    test("SELECT system.detached_parts.* EXCEPT (bytes_on_disk, path) FROM system.detached_parts");
+    test("SELECT t.COLUMNS('^c') EXCEPT (col1, col2) FROM t");
 
-    // EXCEPT STRICT
-    test("SELECT * EXCEPT STRICT i, j FROM t");
+    // UNION ALL with WITH CTE
+    test("SELECT 1 UNION ALL WITH 2 AS x SELECT x");
 
-    // table.* APPLY
-    test("SELECT t.* APPLY toString FROM t");
-
-    // LIMIT offset, count after LIMIT BY
-    test("SELECT * FROM t LIMIT 1 BY number LIMIT 5, 5");
+    // FLOAT(precision, scale) cast
+    test("SELECT inf::FLOAT(15,22)");
 }
