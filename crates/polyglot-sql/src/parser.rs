@@ -1601,12 +1601,35 @@ impl Parser {
             if matches!(self.config.dialect, Some(DialectType::ClickHouse)) {
                 let saved_pos = self.current;
                 if let Ok(expr) = self.parse_expression() {
-                    // Require AS <alias> to disambiguate from standard CTE syntax
-                    if self.match_token(TokenType::As) && self.is_identifier_or_keyword_token() {
+                    // Check if parse_expression already consumed the AS alias
+                    // (e.g., `(1, 2) AS a` gets parsed as Alias(Tuple, "a") by the tuple alias handler)
+                    let (inner_expr, alias_opt) = if let Expression::Alias(ref alias_box) = expr {
+                        (alias_box.this.clone(), Some(alias_box.alias.clone()))
+                    } else {
+                        (expr, None)
+                    };
+
+                    if let Some(alias) = alias_opt {
+                        // Expression already had AS alias consumed
+                        ctes.push(Cte {
+                            alias,
+                            this: inner_expr,
+                            columns: Vec::new(),
+                            materialized: None,
+                            key_expressions: Vec::new(),
+                            alias_first: false,
+                        });
+
+                        if self.match_token(TokenType::Comma) {
+                            continue;
+                        }
+                        break;
+                    } else if self.match_token(TokenType::As) && self.is_identifier_or_keyword_token() {
+                        // Require AS <alias> to disambiguate from standard CTE syntax
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
                         ctes.push(Cte {
                             alias,
-                            this: expr,
+                            this: inner_expr,
                             columns: Vec::new(),
                             materialized: None,
                             key_expressions: Vec::new(),
@@ -14874,17 +14897,18 @@ impl Parser {
         };
 
         // Parse the name (can be qualified like x.y)
-        let mut name = self.expect_identifier()?;
+        // Use expect_identifier_or_keyword_with_quoted because names like "default", "system" are valid
+        let mut ident = self.expect_identifier_or_keyword_with_quoted()?;
 
         // Handle qualified names like schema.table for USE SCHEMA x.y
         if self.match_token(TokenType::Dot) {
-            let second_part = self.expect_identifier()?;
-            name = format!("{}.{}", name, second_part);
+            let second_part = self.expect_identifier_or_keyword_with_quoted()?;
+            ident.name = format!("{}.{}", ident.name, second_part.name);
         }
 
         Ok(Expression::Use(Box::new(Use {
             kind,
-            this: Identifier::new(name),
+            this: ident,
         })))
     }
 
@@ -15583,8 +15607,13 @@ impl Parser {
         }
 
         // Parse target - could be a table name or a SELECT/INSERT/other statement
-        // ClickHouse: EXPLAIN can precede any statement (SELECT, INSERT, CREATE, etc.)
+        // ClickHouse: EXPLAIN/DESC can precede any statement or subquery
         let target = if self.check(TokenType::Select) || self.check(TokenType::With) {
+            self.parse_statement()?
+        } else if self.check(TokenType::LParen)
+            && self.peek_nth(1).map(|t| t.token_type == TokenType::Select || t.token_type == TokenType::With).unwrap_or(false)
+        {
+            // DESC (SELECT ...) — parenthesized subquery
             self.parse_statement()?
         } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && (self.check(TokenType::Insert) || self.check(TokenType::Create)
@@ -17573,11 +17602,20 @@ impl Parser {
     /// Parse a securable name (potentially dot-separated qualified name)
     /// e.g., "mydb.myschema.ADD5" -> Identifier("mydb.myschema.ADD5")
     fn parse_securable_name(&mut self) -> Result<Identifier> {
-        let first = self.expect_identifier_or_keyword()?;
+        // Accept * as a name part (e.g., GRANT ON *.* or GRANT ON db.*)
+        let first = if self.match_token(TokenType::Star) {
+            "*".to_string()
+        } else {
+            self.expect_identifier_or_keyword()?
+        };
         let mut parts = vec![first];
 
         while self.match_token(TokenType::Dot) {
-            let next = self.expect_identifier_or_keyword()?;
+            let next = if self.match_token(TokenType::Star) {
+                "*".to_string()
+            } else {
+                self.expect_identifier_or_keyword()?
+            };
             parts.push(next);
         }
 
@@ -21665,13 +21703,34 @@ impl Parser {
             }
 
             // Regular array - continue parsing elements
+            // ClickHouse allows AS aliases in array: [1 AS a, 2 AS b]
+            let first_expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::As) && !self.check_next(TokenType::RBracket)
+            {
+                self.advance(); // consume AS
+                let alias = self.expect_identifier()?;
+                Expression::Alias(Box::new(Alias::new(first_expr, Identifier::new(alias))))
+            } else {
+                first_expr
+            };
             let mut expressions = vec![first_expr];
             while self.match_token(TokenType::Comma) {
                 // Handle trailing comma
                 if self.check(TokenType::RBracket) {
                     break;
                 }
-                expressions.push(self.parse_expression()?);
+                let expr = self.parse_expression()?;
+                // ClickHouse: handle AS alias on array elements
+                let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::As) && !self.check_next(TokenType::RBracket)
+                {
+                    self.advance(); // consume AS
+                    let alias = self.expect_identifier()?;
+                    Expression::Alias(Box::new(Alias::new(expr, Identifier::new(alias))))
+                } else {
+                    expr
+                };
+                expressions.push(expr);
             }
             self.expect(TokenType::RBracket)?;
             return self.maybe_parse_subscript(Expression::ArrayFunc(Box::new(ArrayConstructor {
@@ -27089,6 +27148,18 @@ impl Parser {
         let mut args = Vec::new();
 
         loop {
+            // ClickHouse: bare SELECT/WITH as function argument (e.g., view(SELECT 1), remote(..., view(SELECT ...)))
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Select) || self.check(TokenType::With))
+            {
+                let query = self.parse_statement()?;
+                args.push(query);
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+                continue;
+            }
+
             // Check for TABLE ref or MODEL ref as function argument (BigQuery)
             // e.g., GAP_FILL(TABLE device_data, ...) or ML.PREDICT(MODEL mydataset.mymodel, ...)
             let is_table_or_model_arg = if !self.is_at_end() {
@@ -37745,7 +37816,10 @@ impl Parser {
         let start_index = self.current;
 
         // Check for DuckDB's LAMBDA keyword syntax: LAMBDA x : expr
-        if self.match_token(TokenType::Lambda) {
+        // ClickHouse doesn't use LAMBDA keyword — lambda is just a function name there
+        if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.match_token(TokenType::Lambda)
+        {
             // Parse lambda parameters (comma-separated identifiers)
             let mut params = Vec::new();
             loop {
