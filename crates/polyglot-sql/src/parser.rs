@@ -5267,7 +5267,8 @@ impl Parser {
 
         loop {
             // Check for GROUPING SETS, CUBE, ROLLUP
-            let expr = if self.match_identifier("GROUPING") && self.match_identifier("SETS") {
+            let expr = if self.check_identifier("GROUPING") && self.peek_nth(1).map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
+                && { self.advance(); self.advance(); true } {
                 // GROUPING SETS (...)
                 self.expect(TokenType::LParen)?;
                 let args = self.parse_grouping_sets_args()?;
@@ -5331,7 +5332,7 @@ impl Parser {
                 // Allow adjacent CUBE/ROLLUP/GROUPING SETS without comma separator
                 // e.g., GROUP BY CUBE(a) ROLLUP(b), GROUPING SETS((c, d))
                 if self.check(TokenType::Cube) || self.check(TokenType::Rollup)
-                    || self.check_identifier("GROUPING") {
+                    || (self.check_identifier("GROUPING") && self.peek_nth(1).map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))) {
                     continue;
                 }
                 break;
@@ -5371,7 +5372,8 @@ impl Parser {
 
         loop {
             // Check for nested GROUPING SETS, CUBE, ROLLUP
-            let expr = if self.match_identifier("GROUPING") && self.match_identifier("SETS") {
+            let expr = if self.check_identifier("GROUPING") && self.peek_nth(1).map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
+                && { self.advance(); self.advance(); true } {
                 // Nested GROUPING SETS (...)
                 self.expect(TokenType::LParen)?;
                 let inner_args = self.parse_grouping_sets_args()?;
@@ -25262,6 +25264,13 @@ impl Parser {
                 } else {
                     Some(self.parse_expression()?)
                 };
+
+                // ClickHouse: NTILE can have extra args (e.g., ntile(3, 2)) — skip them
+                while matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::Comma)
+                {
+                    let _ = self.parse_expression()?;
+                }
 
                 // DuckDB allows: NTILE(n ORDER BY col) OVER (...)
                 let order_by = if self.match_token(TokenType::Order) {

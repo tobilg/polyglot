@@ -8,36 +8,22 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // grouping as identifier
-    test("SELECT grouping, item, runningAccumulate(state, grouping) FROM (SELECT 1 AS grouping, 2 AS item, sumState(3) AS state)");
+    // GROUP BY grouping (grouping as column name)
+    test("SELECT 1 FROM t GROUP BY grouping");
+    test("SELECT grouping FROM t GROUP BY grouping, item ORDER BY grouping, item");
 
-    // overlay as regular function
-    test("SELECT overlay('Spark SQL', '_', 6)");
-    test("SELECT overlay('hello', 'world', 2, 3, 'extra')");
+    // GROUPING SETS should still work
+    test("SELECT 1 FROM t GROUP BY GROUPING SETS ((a), (b))");
 
-    // ORDER BY () empty tuple
-    test("CREATE TABLE t (c0 String) ENGINE = MergeTree() ORDER BY ()");
+    // ntile with multiple args
+    test("SELECT ntile(3, 2) OVER (ORDER BY a)");
 
-    // key as identifier in INDEX
-    test("CREATE TABLE data (key String, INDEX idx key TYPE bloom_filter) ENGINE = MergeTree ORDER BY key");
+    // EXTRACT with comma-separated args
+    test("SELECT extract(year, date_col) FROM t");
 
-    // CAST(expr, 'Type') form
-    test("SELECT CAST(123, 'String')");
-    test("SELECT CAST(123, 'Str' || 'ing')");
+    // * IS NOT NULL
+    test("SELECT * IS NOT NULL FROM t");
 
-    // EXPLAIN (parenthesized query)
-    test("EXPLAIN (SELECT 1 UNION ALL SELECT 2)");
-
-    // FORMAT data after INSERT (should consume the rest as raw data)
-    test("INSERT INTO test FORMAT JSONEachRow {\"x\": 1}");
-
-    // hex float literals
-    test("SELECT 0x1p10");
-    test("SELECT 0x1.fp10");
-
-    // negative tuple index
-    test("SELECT (1, 2, 3).-1");
-
-    // FROM SELECT syntax
-    test("FROM numbers(1) SELECT number");
+    // INDEX with expression in CREATE TABLE
+    test("CREATE TABLE t (c0 Int, PROJECTION p (SELECT c0 ORDER BY c0), INDEX idx c0 TYPE bloom_filter) ENGINE = MergeTree ORDER BY c0");
 }
