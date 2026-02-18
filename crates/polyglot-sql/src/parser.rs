@@ -561,6 +561,19 @@ impl Parser {
         while !self.is_at_end() {
             statements.push(self.parse_statement()?);
 
+            // ClickHouse: consume trailing FORMAT <name> after any statement
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::Format)
+            {
+                self.advance(); // consume FORMAT
+                // Accept any identifier/keyword/Null as format name
+                if self.check(TokenType::Null) {
+                    self.advance();
+                } else if self.is_identifier_token() || self.check_keyword() {
+                    self.advance();
+                }
+            }
+
             // Consume optional semicolon
             self.match_token(TokenType::Semicolon);
         }
@@ -1599,7 +1612,13 @@ impl Parser {
                 }
 
                 if format.is_none() && self.match_token(TokenType::Format) {
-                    let ident = self.expect_identifier_or_keyword_with_quoted()?;
+                    // ClickHouse: FORMAT Null is valid (Null is a keyword token, not an identifier)
+                    let ident = if self.check(TokenType::Null) {
+                        let text = self.advance().text;
+                        Identifier::new(text)
+                    } else {
+                        self.expect_identifier_or_keyword_with_quoted()?
+                    };
                     format = Some(Expression::Identifier(ident));
                     continue;
                 }
@@ -1969,7 +1988,9 @@ impl Parser {
                     )
                     // GROUP BY / ORDER BY are clause boundaries, not aliases.
                     && !self.check_text_seq(&["GROUP", "BY"])
-                    && !self.check_text_seq(&["ORDER", "BY"]) {
+                    && !self.check_text_seq(&["ORDER", "BY"])
+                    // WINDOW is a clause boundary (named window definitions), not an alias.
+                    && !self.check(TokenType::Window) {
                     // Implicit alias (without AS) - allow Var tokens, QuotedIdentifiers, command keywords (like GET, PUT, etc.), and OVERLAPS
                     // But NOT when it's the Oracle BULK COLLECT INTO sequence
                     let alias_token = self.advance();
@@ -7551,6 +7572,16 @@ impl Parser {
         } else if self.match_token(TokenType::Values) {
             let mut all_values = Vec::new();
 
+            // ClickHouse: INSERT INTO t VALUES; — empty VALUES (clientError expected)
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Semicolon) || self.is_at_end())
+            {
+                // Return empty INSERT as Command to avoid needing all Insert fields
+                return Ok(Expression::Command(Box::new(crate::expressions::Command {
+                    this: "INSERT INTO VALUES".to_string(),
+                })));
+            }
+
             loop {
                 self.expect(TokenType::LParen)?;
                 let row = self.parse_values_expression_list()?;
@@ -7863,6 +7894,30 @@ impl Parser {
             && self.check(TokenType::Table)
         {
             return self.parse_create_table(true, false, leading_comments.clone(), None);
+        }
+
+        // ClickHouse: REPLACE DICTIONARY -> consume as Command
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.check(TokenType::Dictionary) || self.check_identifier("DICTIONARY"))
+        {
+            let mut parts = vec!["REPLACE".to_string()];
+            let mut paren_depth = 0i32;
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                let token = self.advance();
+                if token.token_type == TokenType::LParen { paren_depth += 1; }
+                if token.token_type == TokenType::RParen { paren_depth -= 1; }
+                let text = if token.token_type == TokenType::String {
+                    format!("'{}'", token.text)
+                } else if token.token_type == TokenType::QuotedIdentifier {
+                    format!("\"{}\"", token.text)
+                } else {
+                    token.text.clone()
+                };
+                parts.push(text);
+            }
+            return Ok(Expression::Command(Box::new(crate::expressions::Command {
+                this: parts.join(" "),
+            })));
         }
 
         // Otherwise, this is MySQL/SQLite REPLACE INTO statement - parse similarly to INSERT
@@ -11105,8 +11160,10 @@ impl Parser {
                 let encoding = self.expect_identifier_or_keyword()?;
                 col_def.encoding = Some(encoding);
                 col_def.constraint_order.push(ConstraintType::Encode);
-            } else if self.match_token(TokenType::Format) {
-                // Teradata: FORMAT 'pattern'
+            } else if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_token(TokenType::Format)
+            {
+                // Teradata: FORMAT 'pattern' (not ClickHouse — FORMAT there is statement-level)
                 let format_str = self.expect_string()?;
                 col_def.format = Some(format_str);
             } else if self.match_identifier("TITLE") {
@@ -11215,9 +11272,9 @@ impl Parser {
                 let expr = self.parse_or()?;
                 col_def.materialized_expr = Some(Box::new(expr));
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                && (self.match_identifier("HIERARCHICAL") || self.match_identifier("IS_OBJECT_ID") || self.match_identifier("INJECTIVE"))
+                && (self.match_identifier("HIERARCHICAL") || self.match_identifier("IS_OBJECT_ID") || self.match_identifier("INJECTIVE") || self.match_identifier("BIDIRECTIONAL"))
             {
-                // ClickHouse dictionary column attributes: HIERARCHICAL, IS_OBJECT_ID, INJECTIVE
+                // ClickHouse dictionary column attributes: HIERARCHICAL, IS_OBJECT_ID, INJECTIVE, BIDIRECTIONAL
                 // These are flag-like attributes with no value, just skip them
             } else if self.match_identifier("TTL") {
                 // ClickHouse: TTL expr
@@ -13356,6 +13413,34 @@ impl Parser {
         } else if clustered.as_ref().is_some_and(|c| c.contains("COLUMNSTORE")) {
             // COLUMNSTORE indexes don't require a column list
             Vec::new()
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            // ClickHouse: CREATE INDEX idx ON table expr TYPE minmax GRANULARITY 1
+            // No parentheses around the expression — consume to semicolon as Command
+            let mut parts = vec![
+                "CREATE".to_string(),
+                if unique { "UNIQUE INDEX".to_string() } else { "INDEX".to_string() },
+                name.name.clone(),
+                "ON".to_string(),
+            ];
+            // Rebuild table name
+            if let Some(ref s) = table.schema {
+                parts.push(format!("{}.{}", s.name, table.name.name));
+            } else {
+                parts.push(table.name.name.clone());
+            }
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                let token = self.advance();
+                if token.token_type == TokenType::String {
+                    parts.push(format!("'{}'", token.text));
+                } else if token.token_type == TokenType::QuotedIdentifier {
+                    parts.push(format!("\"{}\"", token.text));
+                } else {
+                    parts.push(token.text.clone());
+                }
+            }
+            return Ok(Expression::Command(Box::new(crate::expressions::Command {
+                this: parts.join(" "),
+            })));
         } else {
             self.expect(TokenType::LParen)?;
             let cols = self.parse_index_columns()?;
@@ -20674,7 +20759,24 @@ impl Parser {
             } else if self.match_token(TokenType::Is) {
                 let not = self.match_token(TokenType::Not);
                 if self.match_token(TokenType::Null) {
-                    Expression::IsNull(Box::new(IsNull { this: left, not, postfix_form: false }))
+                    let expr = Expression::IsNull(Box::new(IsNull { this: left, not, postfix_form: false }));
+                    // ClickHouse: IS NULL :: Type — handle :: cast after IS NULL
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && self.check(TokenType::DColon)
+                    {
+                        self.advance(); // consume ::
+                        let data_type = self.parse_data_type_for_cast()?;
+                        Expression::Cast(Box::new(Cast {
+                            this: expr,
+                            to: data_type,
+                            trailing_comments: Vec::new(),
+                            double_colon_syntax: true,
+                            format: None,
+                            default: None,
+                        }))
+                    } else {
+                        expr
+                    }
                 } else if self.match_token(TokenType::True) {
                     // IS TRUE / IS NOT TRUE
                     Expression::IsTrue(Box::new(IsTrueFalse { this: left, not }))
@@ -28118,6 +28220,19 @@ impl Parser {
             expr
         };
 
+        // ClickHouse: IGNORE NULLS / RESPECT NULLS modifier after function call (before OVER)
+        // This handles cases like: func(args) IGNORE NULLS OVER w
+        // and parametric aggregates: func(params)(args) IGNORE NULLS
+        let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.match_keywords(&[TokenType::Ignore, TokenType::Nulls])
+                || self.match_keywords(&[TokenType::Respect, TokenType::Nulls]))
+        {
+            // Consume the modifier — we don't need to store it for transpilation
+            expr
+        } else {
+            expr
+        };
+
         // Check for KEEP clause (Oracle: aggregate KEEP (DENSE_RANK FIRST|LAST ORDER BY ...))
         let keep = if self.match_token(TokenType::Keep) {
             Some(self.parse_keep_clause()?)
@@ -28675,6 +28790,16 @@ impl Parser {
                         this: expr,
                         field: Identifier::new(type_name),
                     }));
+                } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Dash) && self.peek_nth(1).is_some_and(|t| t.token_type == TokenType::Number)
+                {
+                    // ClickHouse: tuple.-1 — negative tuple index
+                    self.advance(); // consume -
+                    let num = self.advance().text;
+                    expr = Expression::Dot(Box::new(DotAccess {
+                        this: expr,
+                        field: Identifier::new(format!("-{}", num)),
+                    }));
                 } else {
                     return Err(Error::parse("Expected field name after dot"));
                 }
@@ -28957,6 +29082,17 @@ impl Parser {
                 } else {
                     (false, false)
                 };
+                // ClickHouse/SQL: COLLATE 'collation' in window ORDER BY
+                if self.match_token(TokenType::Collate) {
+                    // Consume collation name (string or identifier)
+                    if self.check(TokenType::String) {
+                        self.advance();
+                    } else if self.check(TokenType::QuotedIdentifier) {
+                        self.advance();
+                    } else {
+                        let _ = self.expect_identifier_or_keyword();
+                    }
+                }
                 let nulls_first = if self.match_token(TokenType::Nulls) {
                     if self.match_token(TokenType::First) {
                         Some(true)
@@ -30374,6 +30510,14 @@ impl Parser {
             // OBJECT(field1 type1, field2 type2, ...) - Snowflake structured object type
             "OBJECT" => {
                 if self.match_token(TokenType::LParen) {
+                    // ClickHouse: Object('json') — string literal argument
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && self.check(TokenType::String)
+                    {
+                        let arg = self.advance().text;
+                        self.expect(TokenType::RParen)?;
+                        return Ok(DataType::Custom { name: format!("Object('{}')", arg) });
+                    }
                     let mut fields = Vec::new();
                     if !self.check(TokenType::RParen) {
                         loop {
@@ -30753,7 +30897,20 @@ impl Parser {
             "DOUBLE" => {
                 // Handle DOUBLE PRECISION
                 let _ = self.match_identifier("PRECISION");
-                DataType::Double { precision: None, scale: None }
+                // ClickHouse/SQL: DOUBLE(precision) or DOUBLE(precision, scale)
+                let (precision, scale) = if self.match_token(TokenType::LParen) {
+                    let p = Some(self.expect_number()? as u32);
+                    let s = if self.match_token(TokenType::Comma) {
+                        Some(self.expect_number()? as u32)
+                    } else {
+                        None
+                    };
+                    self.expect(TokenType::RParen)?;
+                    (p, s)
+                } else {
+                    (None, None)
+                };
+                DataType::Double { precision, scale }
             }
             "CHARACTER" | "CHAR" | "NCHAR" => {
                 // Handle CHARACTER VARYING / CHAR VARYING
@@ -36883,6 +37040,28 @@ impl Parser {
                     }
                     _ => {}
                 }
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check_identifier("CODEC")
+            {
+                // ClickHouse: CODEC(LZ4HC(9), ZSTD, DELTA)
+                self.advance(); // consume CODEC
+                self.expect(TokenType::LParen)?;
+                let start = self.current;
+                let mut depth = 1;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::LParen) { depth += 1; }
+                    if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                    self.advance();
+                }
+                let codec_text = self.tokens_to_sql(start, self.current);
+                self.expect(TokenType::RParen)?;
+                col_def.codec = Some(codec_text);
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_identifier("TTL")
+            {
+                // ClickHouse: TTL expr
+                let expr = self.parse_expression()?;
+                col_def.ttl_expr = Some(Box::new(expr));
             } else {
                 break;
             }
