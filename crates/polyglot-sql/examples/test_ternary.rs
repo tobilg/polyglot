@@ -8,34 +8,24 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // PASTE JOIN
-    test("SELECT 1 FROM t0 PASTE JOIN (SELECT 1 c0) tx PASTE JOIN t0 t1 GROUP BY tx.c0");
+    // REGEXP/RLIKE as column name
+    test("CREATE TABLE t (id UInt64, regexp String) ENGINE=TinyLog");
+    test("SELECT regexp FROM t");
 
-    // WITH in subquery of CREATE VIEW
-    test("CREATE VIEW v AS (WITH RECURSIVE 42 as ttt SELECT ttt)");
-    test("CREATE MATERIALIZED VIEW v TO dst AS (WITH (SELECT 1) AS x SELECT x)");
+    // EXISTS as column name in UPDATE SET
+    test("UPDATE t SET exists = 1 WHERE 1");
 
-    // SHOW CREATE ROLE/POLICY/QUOTA with multiple names / ON clause
-    test("SHOW CREATE ROLE r1, r2");
-    test("SHOW CREATE QUOTA q1, q2");
-    test("SHOW CREATE SETTINGS PROFILE s1, s2");
-    test("SHOW CREATE ROW POLICY p1 ON db.table");
-    test("SHOW CREATE POLICY p1 ON db.table");
+    // TABLE as identifier after dot in INSERT INTO
+    test("INSERT INTO test_01676.table (x) VALUES (2)");
 
-    // SET DEFAULT ROLE
-    test("SET DEFAULT ROLE ALL EXCEPT r1 TO u1");
+    // ALTER TABLE multi-action with MODIFY SETTING commas
+    test("ALTER TABLE t ADD COLUMN Data2 UInt64, MODIFY SETTING check_delay_period=5, check_delay_period=10, check_delay_period=15");
 
-    // grouping as identifier
-    test("SELECT grouping, item FROM (SELECT number % 6 AS grouping, number AS item FROM system.numbers LIMIT 30)");
+    // ALTER TABLE ADD COLUMN and then ADD INDEX
+    test("ALTER TABLE t ADD COLUMN c Int64, ADD INDEX idx c TYPE minmax GRANULARITY 1");
 
-    // ALTER TABLE multi-action
-    test("ALTER TABLE t ADD COLUMN c Int64, MODIFY SETTING check_delay=5");
-
-    // ALTER TABLE STATISTICS
-    test("ALTER TABLE tab ADD STATISTICS f64, f32 TYPE tdigest, uniq");
-    test("ALTER TABLE tab DROP STATISTICS f64, f32");
-
-    // sum(ALL number)
-    test("SELECT sum(ALL number) FROM numbers(10)");
-    test("SELECT repeat(ALL, 5) FROM (SELECT 'a' AS ALL)");
+    // MODIFY STATISTICS
+    test("ALTER TABLE tab MODIFY STATISTICS f64, f32 TYPE tdigest, uniq");
+    test("ALTER TABLE tab CLEAR STATISTICS f64, f32");
+    test("ALTER TABLE tab MATERIALIZE STATISTICS f64, f32");
 }

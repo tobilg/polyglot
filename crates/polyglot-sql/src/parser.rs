@@ -7430,7 +7430,7 @@ impl Parser {
         // Handle qualified table names like a.b
         let table = if self.match_token(TokenType::Dot) {
             let schema = table_name;
-            let name = self.expect_identifier_with_quoted()?;
+            let name = self.expect_identifier_or_keyword_with_quoted()?;
             let trailing_comments = self.previous_trailing_comments();
             TableRef {
                 name,
@@ -8332,9 +8332,10 @@ impl Parser {
         let mut set = Vec::new();
         loop {
             // Column can be qualified for multi-table UPDATE (e.g., a.id = 1)
-            let mut col_ident = self.expect_identifier_with_quoted()?;
+            // Use safe keyword variant to allow keywords like 'exists' as column names (ClickHouse)
+            let mut col_ident = self.expect_identifier_or_safe_keyword_with_quoted()?;
             while self.match_token(TokenType::Dot) {
-                let part = self.expect_identifier_with_quoted()?;
+                let part = self.expect_identifier_or_safe_keyword_with_quoted()?;
                 // For qualified columns, preserve both parts
                 col_ident = Identifier {
                     name: format!("{}.{}", col_ident.name, part.name),
@@ -14021,6 +14022,13 @@ impl Parser {
                     if last_was_add_column && !self.check(TokenType::Add)
                         && !self.check(TokenType::Drop) && !self.check(TokenType::Alter)
                         && !self.check(TokenType::Rename) && !self.check(TokenType::Set)
+                        && !self.check_identifier("MODIFY") && !self.check(TokenType::Delete)
+                        && !self.check(TokenType::Update) && !self.check_identifier("DETACH")
+                        && !self.check_identifier("ATTACH") && !self.check_identifier("FREEZE")
+                        && !self.check_identifier("CLEAR") && !self.check_identifier("MATERIALIZE")
+                        && !self.check(TokenType::Comment) && !self.check(TokenType::Replace)
+                        && !self.check_identifier("MOVE") && !self.check_identifier("REMOVE")
+                        && !self.check_identifier("APPLY")
                     {
                         // Parse additional column definition
                         self.match_token(TokenType::Column); // optional COLUMN keyword
@@ -14665,10 +14673,12 @@ impl Parser {
             // These are ClickHouse-specific and have richer syntax than MySQL MODIFY COLUMN.
             // Consume all ClickHouse MODIFY actions as Raw.
             if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                // MODIFY SETTING uses commas between settings (not action separators)
+                let is_setting = self.check(TokenType::Settings) || self.check_identifier("SETTING");
                 let mut tokens: Vec<(String, TokenType)> = vec![("MODIFY".to_string(), TokenType::Var)];
                 let mut paren_depth = 0i32;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    if self.check(TokenType::Comma) && paren_depth == 0 && !is_setting { break; }
                     let token = self.advance();
                     if token.token_type == TokenType::LParen { paren_depth += 1; }
                     if token.token_type == TokenType::RParen { paren_depth -= 1; }
@@ -32513,6 +32523,10 @@ impl Parser {
                     | TokenType::Lateral
                     | TokenType::Natural
             );
+            // Also allow certain operator tokens as identifiers (regexp, rlike)
+            if matches!(token_type, TokenType::RLike) {
+                return true;
+            }
             return self.peek().token_type.is_keyword() && !is_ch_structural;
         }
         // If it's a keyword but NOT structural, it's safe to use as identifier
