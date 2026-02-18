@@ -1923,8 +1923,9 @@ impl Parser {
                                     | Some(crate::dialects::DialectType::Hive)
                             ))
                     )
-                    // GROUP BY is a clause boundary, not an alias.
-                    && !self.check_text_seq(&["GROUP", "BY"]) {
+                    // GROUP BY / ORDER BY are clause boundaries, not aliases.
+                    && !self.check_text_seq(&["GROUP", "BY"])
+                    && !self.check_text_seq(&["ORDER", "BY"]) {
                     // Implicit alias (without AS) - allow Var tokens, QuotedIdentifiers, command keywords (like GET, PUT, etc.), and OVERLAPS
                     // But NOT when it's the Oracle BULK COLLECT INTO sequence
                     let alias_token = self.advance();
@@ -29788,6 +29789,10 @@ impl Parser {
                 Ok(DataType::VarBit { length })
             }
             "BINARY" => {
+                // SQL standard: BINARY LARGE OBJECT → BLOB
+                if self.match_identifier("LARGE") && self.match_identifier("OBJECT") {
+                    return Ok(DataType::Blob);
+                }
                 // Handle BINARY VARYING (SQL standard for VARBINARY)
                 if self.match_identifier("VARYING") {
                     let length = if self.match_token(TokenType::LParen) {
