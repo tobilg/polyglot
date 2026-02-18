@@ -8,22 +8,19 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // GROUP BY grouping (grouping as column name)
-    test("SELECT 1 FROM t GROUP BY grouping");
-    test("SELECT grouping FROM t GROUP BY grouping, item ORDER BY grouping, item");
+    // Double semicolons
+    test("SELECT 1;; -- comment");
 
-    // GROUPING SETS should still work
+    // INDEX in MV schema
+    test("CREATE MATERIALIZED VIEW mv (key String, INDEX idx key TYPE bloom_filter GRANULARITY 1) ENGINE = MergeTree ORDER BY key AS SELECT * FROM data");
+
+    // PROJECTION in schema
+    test("CREATE MATERIALIZED VIEW mv (key String, PROJECTION p (SELECT uniqCombined(key))) ENGINE = MergeTree ORDER BY key AS SELECT * FROM data");
+
+    // PROJECTION with INDEX in CREATE TABLE (03460)
+    test("CREATE TABLE t (region String, INDEX i1 region TYPE bloom_filter, PROJECTION region_proj (SELECT region ORDER BY region)) ENGINE = MergeTree ORDER BY region");
+
+    // Grouping still works
+    test("SELECT 1 FROM t GROUP BY grouping, item ORDER BY grouping");
     test("SELECT 1 FROM t GROUP BY GROUPING SETS ((a), (b))");
-
-    // ntile with multiple args
-    test("SELECT ntile(3, 2) OVER (ORDER BY a)");
-
-    // EXTRACT with comma-separated args
-    test("SELECT extract(year, date_col) FROM t");
-
-    // * IS NOT NULL
-    test("SELECT * IS NOT NULL FROM t");
-
-    // INDEX with expression in CREATE TABLE
-    test("CREATE TABLE t (c0 Int, PROJECTION p (SELECT c0 ORDER BY c0), INDEX idx c0 TYPE bloom_filter) ENGINE = MergeTree ORDER BY c0");
 }

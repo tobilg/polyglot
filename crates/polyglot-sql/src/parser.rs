@@ -584,8 +584,8 @@ impl Parser {
                 continue;
             }
 
-            // Consume optional semicolon
-            self.match_token(TokenType::Semicolon);
+            // Consume optional semicolons (ClickHouse allows multiple like `;;`)
+            while self.match_token(TokenType::Semicolon) {}
         }
 
         Ok(statements)
@@ -36383,6 +36383,73 @@ impl Parser {
         // Try REFERENCES (inline foreign key)
         if self.match_texts(&["REFERENCES"]) {
             return self.parse_references();
+        }
+
+        // ClickHouse: INDEX name expr TYPE type_name [GRANULARITY n]
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.match_token(TokenType::Index)
+        {
+            let name = self.expect_identifier_or_keyword_with_quoted()?;
+            let expression = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+            let index_type = if self.match_token(TokenType::Type) {
+                if let Some(func) = self.parse_function()? {
+                    Some(Box::new(func))
+                } else if !self.is_at_end() {
+                    let type_name = self.advance().text.clone();
+                    if self.check(TokenType::LParen) {
+                        self.advance();
+                        let mut args = Vec::new();
+                        if !self.check(TokenType::RParen) {
+                            args.push(self.parse_expression()?);
+                            while self.match_token(TokenType::Comma) {
+                                args.push(self.parse_expression()?);
+                            }
+                        }
+                        self.expect(TokenType::RParen)?;
+                        Some(Box::new(Expression::Function(Box::new(Function::new(type_name, args)))))
+                    } else {
+                        Some(Box::new(Expression::Identifier(Identifier::new(type_name))))
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let _granularity = if self.match_identifier("GRANULARITY") {
+                let _ = self.parse_expression()?;
+                true
+            } else {
+                false
+            };
+            // Return as a raw SQL expression preserving the INDEX definition
+            let mut sql = format!("INDEX {} ", name.name);
+            if let Some(ref idx_type) = index_type {
+                sql.push_str(&format!("{} TYPE {} ", expression, idx_type));
+            }
+            return Ok(Some(Expression::Raw(Raw { sql: sql.trim().to_string() })));
+        }
+
+        // ClickHouse: PROJECTION name (SELECT ...)
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check_identifier("PROJECTION")
+        {
+            self.advance(); // consume PROJECTION
+            let name = self.expect_identifier_or_keyword_with_quoted()?;
+            // Parse the projection body
+            if self.match_token(TokenType::LParen) {
+                let mut depth = 1i32;
+                let start = self.current;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::LParen) { depth += 1; }
+                    if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                    self.advance();
+                }
+                let body_sql = self.tokens_to_sql(start, self.current);
+                self.expect(TokenType::RParen)?;
+                return Ok(Some(Expression::Raw(Raw { sql: format!("PROJECTION {} ({})", name.name, body_sql) })));
+            }
+            return Ok(Some(Expression::Raw(Raw { sql: format!("PROJECTION {}", name.name) })));
         }
 
         Ok(None)
