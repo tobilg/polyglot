@@ -1289,15 +1289,26 @@ impl Parser {
         let group_by = if self.match_keywords(&[TokenType::Group, TokenType::By]) {
             Some(self.parse_group_by()?)
         } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-            && self.check(TokenType::With) && self.check_next_identifier("TOTALS")
+            && self.check(TokenType::With)
+            && (self.check_next_identifier("TOTALS") || self.check_next(TokenType::Rollup) || self.check_next(TokenType::Cube))
         {
-            // ClickHouse: WITH TOTALS without GROUP BY
+            // ClickHouse: WITH TOTALS/ROLLUP/CUBE without GROUP BY
             self.advance(); // consume WITH
-            self.advance(); // consume TOTALS
+            let totals = self.match_identifier("TOTALS");
+            let mut expressions = Vec::new();
+            if self.match_token(TokenType::Rollup) {
+                expressions.push(Expression::Rollup(Box::new(Rollup { expressions: Vec::new() })));
+            } else if self.match_token(TokenType::Cube) {
+                expressions.push(Expression::Cube(Box::new(Cube { expressions: Vec::new() })));
+            }
+            // Check for chained WITH TOTALS after WITH ROLLUP/CUBE
+            if !totals && self.check(TokenType::With) && self.check_next_identifier("TOTALS") {
+                self.advance(); self.advance();
+            }
             Some(GroupBy {
-                expressions: Vec::new(),
+                expressions,
                 all: None,
-                totals: true,
+                totals,
             })
         } else {
             None
@@ -3661,6 +3672,10 @@ impl Parser {
                 // MySQL: LOCK IN SHARE MODE is a locking clause, not an alias
                 && !(self.check_identifier("LOCK") && self.check_next(TokenType::In)))
             || self.is_command_keyword_as_alias()
+            // ClickHouse: allow FIRST/LAST as implicit table aliases
+            // (they're keywords used in NULLS FIRST/LAST but also valid as identifiers)
+            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::First) || self.check(TokenType::Last)))
             // PIVOT/UNPIVOT can be table aliases when not followed by clause-starting tokens
             || (self.check(TokenType::Pivot) && !self.check_next(TokenType::LParen))
             || (self.check(TokenType::Unpivot) && !self.is_unpivot_clause_start())
@@ -13696,7 +13711,14 @@ impl Parser {
                             Some(ColumnPosition::First)
                         } else if self.match_token(TokenType::After) {
                             let after_col = self.expect_identifier()?;
-                            Some(ColumnPosition::After(Identifier::new(after_col)))
+                            // ClickHouse: AFTER n.a (dotted nested column name)
+                            let after_name = if self.match_token(TokenType::Dot) {
+                                let field = self.expect_identifier()?;
+                                format!("{}.{}", after_col, field)
+                            } else {
+                                after_col
+                            };
+                            Some(ColumnPosition::After(Identifier::new(after_name)))
                         } else {
                             None
                         };
@@ -14036,7 +14058,14 @@ impl Parser {
                         Some(ColumnPosition::First)
                     } else if self.match_token(TokenType::After) {
                         let after_col = self.expect_identifier()?;
-                        Some(ColumnPosition::After(Identifier::new(after_col)))
+                        // ClickHouse: AFTER n.a (dotted nested column name)
+                        let after_name = if self.match_token(TokenType::Dot) {
+                            let field = self.expect_identifier()?;
+                            format!("{}.{}", after_col, field)
+                        } else {
+                            after_col
+                        };
+                        Some(ColumnPosition::After(Identifier::new(after_name)))
                     } else {
                         None
                     };
@@ -22300,6 +22329,10 @@ impl Parser {
                     };
                     expressions.push(elem_with_alias);
                     if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                    // ClickHouse: trailing comma in multi-element tuple, e.g., (1, 2,)
+                    if self.check(TokenType::RParen) {
                         break;
                     }
                 }
