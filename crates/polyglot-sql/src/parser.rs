@@ -2063,8 +2063,25 @@ impl Parser {
                 break;
             }
 
-            // Handle trailing comma
-            if self.config.allow_trailing_commas && self.check_from_keyword() {
+            // Handle trailing comma (ClickHouse supports trailing commas in SELECT)
+            if (self.config.allow_trailing_commas
+                || matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))
+                && (self.check_from_keyword()
+                    || self.check(TokenType::Where)
+                    || self.check(TokenType::GroupBy)
+                    || self.check(TokenType::Having)
+                    || self.check(TokenType::Order)
+                    || self.check(TokenType::Limit)
+                    || self.check(TokenType::Union)
+                    || self.check(TokenType::Intersect)
+                    || (self.check(TokenType::Except) && !self.check_next(TokenType::LParen))
+                    || self.check(TokenType::Semicolon)
+                    || self.check(TokenType::RParen)
+                    // SETTINGS/FORMAT only as boundaries when NOT followed by ( or [ (function/column ref)
+                    || (self.check(TokenType::Settings) && !self.check_next(TokenType::LParen) && !self.check_next(TokenType::LBracket))
+                    || (self.check(TokenType::Format) && !self.check_next(TokenType::LParen))
+                    || self.is_at_end())
+            {
                 break;
             }
         }

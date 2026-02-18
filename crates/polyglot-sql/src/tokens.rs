@@ -1459,7 +1459,12 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() {
             let c = self.peek();
             match c {
-                ' ' | '\t' | '\r' | '\n' => {
+                ' ' | '\t' | '\r' | '\n'
+                | '\u{00A0}' // non-breaking space
+                | '\u{2000}'..='\u{200B}' // various Unicode spaces + zero-width space
+                | '\u{3000}' // ideographic (full-width) space
+                | '\u{FEFF}' // BOM / zero-width no-break space
+                => {
                     self.advance();
                 }
                 '-' if self.peek_next() == '-' => {
@@ -1792,6 +1797,30 @@ impl<'a> TokenizerState<'a> {
             self.advance();
             self.add_token(token_type);
             return Ok(());
+        }
+
+        // Unicode minus (U+2212) → treat as regular minus
+        if c == '\u{2212}' {
+            self.advance();
+            self.add_token(TokenType::Dash);
+            return Ok(());
+        }
+
+        // Unicode fraction slash (U+2044) → treat as regular slash
+        if c == '\u{2044}' {
+            self.advance();
+            self.add_token(TokenType::Slash);
+            return Ok(());
+        }
+
+        // Unicode curly/smart quotes → treat as regular string quotes
+        if c == '\u{2018}' || c == '\u{2019}' {
+            // Left/right single quotation marks → scan as string with matching end
+            return self.scan_unicode_quoted_string(c);
+        }
+        if c == '\u{201C}' || c == '\u{201D}' {
+            // Left/right double quotation marks → scan as quoted identifier
+            return self.scan_unicode_quoted_identifier(c);
         }
 
         // Must be an identifier or keyword
@@ -2222,6 +2251,39 @@ impl<'a> TokenizerState<'a> {
         Ok(())
     }
 
+    /// Scan a string delimited by Unicode curly single quotes (U+2018/U+2019)
+    fn scan_unicode_quoted_string(&mut self, open_quote: char) -> Result<()> {
+        self.advance(); // Opening curly quote
+        let start = self.current;
+        // Accept either left or right single quote as closing
+        while !self.is_at_end() && self.peek() != '\u{2018}' && self.peek() != '\u{2019}' && self.peek() != '\'' {
+            self.advance();
+        }
+        let value: String = self.chars[start..self.current].iter().collect();
+        if !self.is_at_end() {
+            self.advance(); // Closing quote
+        }
+        let _ = open_quote;
+        self.add_token_with_text(TokenType::String, value);
+        Ok(())
+    }
+
+    /// Scan an identifier delimited by Unicode curly double quotes (U+201C/U+201D)
+    fn scan_unicode_quoted_identifier(&mut self, open_quote: char) -> Result<()> {
+        self.advance(); // Opening curly quote
+        let start = self.current;
+        while !self.is_at_end() && self.peek() != '\u{201C}' && self.peek() != '\u{201D}' && self.peek() != '"' {
+            self.advance();
+        }
+        let value: String = self.chars[start..self.current].iter().collect();
+        if !self.is_at_end() {
+            self.advance(); // Closing quote
+        }
+        let _ = open_quote;
+        self.add_token_with_text(TokenType::QuotedIdentifier, value);
+        Ok(())
+    }
+
     fn scan_number(&mut self) -> Result<()> {
         // Check for 0x/0X hex number prefix (SQLite-style)
         if self.config.hex_number_strings && self.peek() == '0' && !self.is_at_end() {
@@ -2230,9 +2292,12 @@ impl<'a> TokenizerState<'a> {
                 // Advance past '0' and 'x'/'X'
                 self.advance();
                 self.advance();
-                // Collect hex digits
+                // Collect hex digits (allow underscores as separators, e.g., 0xbad_cafe)
                 let hex_start = self.current;
-                while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                while !self.is_at_end() && (self.peek().is_ascii_hexdigit() || self.peek() == '_') {
+                    if self.peek() == '_' && !self.peek_next().is_ascii_hexdigit() {
+                        break;
+                    }
                     self.advance();
                 }
                 if self.current > hex_start {
@@ -2965,12 +3030,11 @@ mod tests {
     fn test_unrecognized_character() {
         let tokenizer = Tokenizer::default();
 
-        // Test that unrecognized characters don't cause infinite loops
+        // Unicode curly quotes are now handled as string delimiters
         let result = tokenizer.tokenize("SELECT \u{2018}hello\u{2019}");
-        // Should return an error for the smart quote, not hang
-        assert!(result.is_err(), "Should error on unrecognized character, got: {:?}", result);
+        assert!(result.is_ok(), "Curly quotes should be tokenized as strings");
 
-        // Unicode bullet character
+        // Unicode bullet character should still error
         let result = tokenizer.tokenize("SELECT • FROM t");
         assert!(result.is_err());
     }

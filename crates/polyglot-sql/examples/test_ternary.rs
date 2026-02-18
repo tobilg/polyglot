@@ -1,35 +1,34 @@
 use polyglot_sql::{parse, DialectType};
-
-fn test(sql: &str) {
-    match parse(sql, DialectType::ClickHouse) {
-        Ok(_exprs) => println!("OK: {}", &sql[..sql.len().min(120)]),
-        Err(e) => println!("ERR: {} -> {}", &sql[..sql.len().min(120)], e),
-    }
-}
+use std::fs;
 
 fn main() {
-    // INSERT ... FORMAT with inline data (should parse INSERT and stop before data)
-    test("INSERT INTO t FORMAT JSONEachRow {\"x\":1}");
-    test("INSERT INTO t FORMAT CSV 1,2,3");
-
-    // Empty IN()
-    test("SELECT * FROM t WHERE k2 IN ()");
-
-    // Empty VALUES()
-    test("INSERT INTO t VALUES ()");
-
-    // values as CTE name
-    test("WITH values AS (SELECT 1) SELECT * FROM values");
-
-    // grouping as identifier (not GROUPING() function)
-    test("SELECT grouping, item FROM t");
-
-    // floor with 3 args (ClickHouse allows arbitrary args)
-    test("SELECT floor(1, floor(NULL), 257)");
-
-    // DISTINCT in second chained function call: func(5, 11111)(DISTINCT subdomain)
-    test("SELECT groupArraySample(5, 11111)(DISTINCT x) FROM t");
-
-    // Backtick identifier without AS: SELECT 1 `DIV`
-    test("SELECT 1 `DIV`");
+    let files = [
+        "../ClickHouse/tests/queries/0_stateless/01623_constraints_column_swap.sql",
+        "../ClickHouse/tests/queries/0_stateless/01275_parallel_mv.gen.sql",
+        "../ClickHouse/tests/queries/0_stateless/01686_rocksdb.sql",
+        "../ClickHouse/tests/queries/0_stateless/03279_join_choose_build_table.sql",
+    ];
+    for file in &files {
+        let content = match fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => { println!("SKIP {}: {}", file, e); continue; }
+        };
+        let fname = file.rsplit('/').next().unwrap();
+        // Binary search: try parsing progressively more of the file
+        let stmts: Vec<&str> = content.split(';').collect();
+        let mut good = 0;
+        for i in 1..=stmts.len() {
+            let partial: String = stmts[..i].join(";");
+            if parse(&partial, DialectType::ClickHouse).is_err() {
+                let failing_stmt = stmts[i-1].trim();
+                println!("ERR: {} at stmt #{}: {}", fname, i,
+                    &failing_stmt[..failing_stmt.len().min(200)]);
+                break;
+            }
+            good = i;
+        }
+        if good == stmts.len() {
+            println!("OK: {}", fname);
+        }
+    }
 }
