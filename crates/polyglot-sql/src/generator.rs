@@ -14573,6 +14573,8 @@ impl Generator {
             (IntervalUnit::Millisecond, true) => self.write_keyword("MILLISECONDS"),
             (IntervalUnit::Microsecond, false) => self.write_keyword("MICROSECOND"),
             (IntervalUnit::Microsecond, true) => self.write_keyword("MICROSECONDS"),
+            (IntervalUnit::Nanosecond, false) => self.write_keyword("NANOSECOND"),
+            (IntervalUnit::Nanosecond, true) => self.write_keyword("NANOSECONDS"),
         }
     }
 

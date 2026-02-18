@@ -12138,7 +12138,10 @@ impl Parser {
             };
 
             let actual_name = if name.is_none() && !self.check(TokenType::LParen) {
-                if self.is_identifier_token() || self.check(TokenType::QuotedIdentifier) {
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                    // ClickHouse: PRIMARY KEY col (without parentheses)
+                    None
+                } else if self.is_identifier_token() || self.check(TokenType::QuotedIdentifier) {
                     Some(self.expect_identifier_with_quoted()?)
                 } else if self.check(TokenType::String) && matches!(self.config.dialect, Some(crate::dialects::DialectType::MySQL)) {
                     // MySQL: double-quoted strings can be used as constraint names
@@ -12151,9 +12154,19 @@ impl Parser {
             } else {
                 name.clone()
             };
-            self.expect(TokenType::LParen)?;
-            let columns = self.parse_index_identifier_list()?;
-            self.expect(TokenType::RParen)?;
+            // ClickHouse: PRIMARY KEY col without parens — parse single column
+            let columns = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && !self.check(TokenType::LParen)
+                && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
+            {
+                let col_name = self.expect_identifier_or_keyword_with_quoted()?;
+                vec![col_name]
+            } else {
+                self.expect(TokenType::LParen)?;
+                let cols = self.parse_index_identifier_list()?;
+                self.expect(TokenType::RParen)?;
+                cols
+            };
             // Parse optional INCLUDE (columns)
             let include_columns = if self.match_identifier("INCLUDE") {
                 self.expect(TokenType::LParen)?;
@@ -12386,6 +12399,18 @@ impl Parser {
                 with_params,
                 using_index_tablespace,
                 modifiers,
+            })
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check_identifier("ASSUME")
+        {
+            // ClickHouse: CONSTRAINT name ASSUME expression
+            // Used for query optimization assumptions — store as CHECK constraint
+            self.advance(); // consume ASSUME
+            let expr = self.parse_expression()?;
+            Ok(TableConstraint::Check {
+                name,
+                expression: expr,
+                modifiers: Default::default(),
             })
         } else {
             Err(Error::parse("Expected PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, or EXCLUDE"))
@@ -23826,7 +23851,7 @@ impl Parser {
                     });
                 }
 
-                let first_arg = self.parse_expression()?;
+                let first_arg = self.parse_expression_with_clickhouse_alias()?;
 
                 // Check if there are more arguments (multi-arg scalar function like MAX(a, b))
                 if self.match_token(TokenType::Comma) {
@@ -24691,7 +24716,7 @@ impl Parser {
             // Lower._sql_names = ['LOWER', 'LCASE']
             // Python SQLGlot normalizes LCASE -> LOWER
             "LOWER" | "LCASE" => {
-                let this = self.parse_expression()?;
+                let this = self.parse_expression_with_clickhouse_alias()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Lower(Box::new(UnaryFunc::new(this))))
             }
@@ -24699,7 +24724,7 @@ impl Parser {
             // Upper._sql_names = ['UPPER', 'UCASE']
             // Python SQLGlot normalizes UCASE -> UPPER
             "UPPER" | "UCASE" => {
-                let this = self.parse_expression()?;
+                let this = self.parse_expression_with_clickhouse_alias()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Upper(Box::new(UnaryFunc::new(this))))
             }
@@ -24784,7 +24809,7 @@ impl Parser {
 
             // Abs (no aliases in SQLGlot)
             "ABS" => {
-                let this = self.parse_expression()?;
+                let this = self.parse_expression_with_clickhouse_alias()?;
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Abs(Box::new(UnaryFunc::new(this))))
             }
@@ -27142,6 +27167,45 @@ impl Parser {
         }
     }
 
+    /// Check for an AS alias after an expression in ClickHouse function arg context.
+    fn maybe_clickhouse_alias(&mut self, expr: Expression) -> Expression {
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::As)
+            && !self.check_next(TokenType::RParen)
+            && !self.check_next(TokenType::Comma)
+        {
+            let next_idx = self.current + 1;
+            let is_alias = next_idx < self.tokens.len() && matches!(
+                self.tokens[next_idx].token_type,
+                TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
+            );
+            if is_alias {
+                self.advance(); // consume AS
+                let alias_token = self.advance();
+                let alias_name = Identifier {
+                    name: alias_token.text.clone(),
+                    quoted: alias_token.token_type == TokenType::QuotedIdentifier,
+                    trailing_comments: Vec::new(),
+                };
+                return Expression::Alias(Box::new(crate::expressions::Alias {
+                    this: expr,
+                    alias: alias_name,
+                    column_aliases: Vec::new(),
+                    pre_alias_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                }));
+            }
+        }
+        expr
+    }
+
+    /// Parse an expression, then check for AS alias in ClickHouse function arg context.
+    /// ClickHouse allows: func(expr AS alias, ...) where AS creates a named alias inside function args.
+    fn parse_expression_with_clickhouse_alias(&mut self) -> Result<Expression> {
+        let expr = self.parse_expression()?;
+        Ok(self.maybe_clickhouse_alias(expr))
+    }
+
     /// Parse function arguments, handling named arguments (name => value, name := value)
     /// and TABLE/MODEL prefixed arguments (BigQuery)
     fn parse_function_arguments(&mut self) -> Result<Vec<Expression>> {
@@ -27746,11 +27810,13 @@ impl Parser {
 
                 // Special case: MAP[...] constructor syntax
                 // Check if expr is a MAP identifier
-                let is_map_constructor = match &expr {
-                    Expression::Column(col) => col.name.name.to_uppercase() == "MAP" && col.table.is_none(),
-                    Expression::Identifier(id) => id.name.to_uppercase() == "MAP",
-                    _ => false,
-                };
+                // ClickHouse: map[key] is always subscript access, not a MAP constructor
+                let is_map_constructor = !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && match &expr {
+                        Expression::Column(col) => col.name.name.to_uppercase() == "MAP" && col.table.is_none(),
+                        Expression::Identifier(id) => id.name.to_uppercase() == "MAP",
+                        _ => false,
+                    };
 
                 if is_map_constructor {
                     let is_materialize = matches!(self.config.dialect, Some(crate::dialects::DialectType::Materialize));
@@ -28535,6 +28601,7 @@ impl Parser {
             "YEAR" | "YEARS" | "MONTH" | "MONTHS" | "DAY" | "DAYS"
             | "HOUR" | "HOURS" | "MINUTE" | "MINUTES" | "SECOND" | "SECONDS"
             | "MILLISECOND" | "MILLISECONDS" | "MICROSECOND" | "MICROSECONDS"
+            | "NANOSECOND" | "NANOSECONDS"
             | "WEEK" | "WEEKS" | "QUARTER" | "QUARTERS"
         )
     }
@@ -28622,6 +28689,8 @@ impl Parser {
             "MILLISECONDS" => Some((IntervalUnit::Millisecond, true)),
             "MICROSECOND" => Some((IntervalUnit::Microsecond, false)),
             "MICROSECONDS" => Some((IntervalUnit::Microsecond, true)),
+            "NANOSECOND" => Some((IntervalUnit::Nanosecond, false)),
+            "NANOSECONDS" => Some((IntervalUnit::Nanosecond, true)),
             "QUARTER" => Some((IntervalUnit::Quarter, false)),
             "QUARTERS" => Some((IntervalUnit::Quarter, true)),
             "WEEK" => Some((IntervalUnit::Week, false)),
@@ -31939,7 +32008,14 @@ impl Parser {
             // Allow keywords as identifiers in identifier lists (e.g., CTE column aliases)
             // Check if it's a quoted identifier before consuming
             let quoted = self.check(TokenType::QuotedIdentifier);
-            let name = self.expect_identifier_or_safe_keyword()?;
+            let mut name = self.expect_identifier_or_safe_keyword()?;
+            // ClickHouse: handle dotted names in identifier lists (e.g., INSERT INTO t (n.a, n.b))
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                while self.match_token(TokenType::Dot) {
+                    let sub = self.expect_identifier_or_safe_keyword()?;
+                    name = format!("{}.{}", name, sub);
+                }
+            }
             let trailing_comments = self.previous_trailing_comments();
             identifiers.push(Identifier {
                 name,
@@ -40547,7 +40623,10 @@ impl Parser {
         let mut args: Vec<Expression> = Vec::new();
 
         match self.parse_bitwise() {
-            Ok(Some(expr)) => args.push(expr),
+            Ok(Some(expr)) => {
+                let expr = self.maybe_clickhouse_alias(expr);
+                args.push(expr);
+            },
             Ok(None) => return Ok(None),
             Err(e) => return Err(e),
         }
@@ -40556,6 +40635,7 @@ impl Parser {
         if self.match_token(TokenType::In) {
             match self.parse_bitwise() {
                 Ok(Some(haystack)) => {
+                    let haystack = self.maybe_clickhouse_alias(haystack);
                     return Ok(Some(Expression::StrPosition(Box::new(StrPosition {
                         this: Box::new(haystack),
                         substr: Some(Box::new(args.remove(0))),
@@ -40571,7 +40651,10 @@ impl Parser {
         // Parse comma-separated additional arguments
         while self.match_token(TokenType::Comma) {
             match self.parse_bitwise() {
-                Ok(Some(expr)) => args.push(expr),
+                Ok(Some(expr)) => {
+                    let expr = self.maybe_clickhouse_alias(expr);
+                    args.push(expr);
+                },
                 Ok(None) => break,
                 Err(e) => return Err(e),
             }
@@ -40895,23 +40978,51 @@ impl Parser {
                 let order_by = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::LParen)
                 {
-                    let mut exprs = Vec::new();
-                    exprs.push(self.parse_expression()?);
-                    while self.match_token(TokenType::Comma) {
-                        exprs.push(self.parse_expression()?);
-                    }
-                    self.expect(TokenType::RParen)?;
-                    let order_expr = if exprs.len() == 1 {
-                        Expression::Paren(Box::new(Paren {
-                            this: exprs.remove(0),
-                            trailing_comments: Vec::new(),
-                        }))
+                    // ClickHouse: ORDER BY (col1 [ASC|DESC], col2 [ASC|DESC], ...)
+                    // or ORDER BY () for no ordering
+                    if self.check(TokenType::RParen) {
+                        self.advance();
+                        OrderBy {
+                            expressions: vec![Ordered::asc(Expression::Tuple(Box::new(Tuple { expressions: Vec::new() })))],
+                            siblings: false,
+                        }
                     } else {
-                        Expression::Tuple(Box::new(Tuple { expressions: exprs }))
-                    };
-                    OrderBy {
-                        expressions: vec![Ordered::asc(order_expr)],
-                        siblings: false,
+                        let mut ordered_exprs = Vec::new();
+                        loop {
+                            let expr = self.parse_expression()?;
+                            let desc = if self.match_token(TokenType::Desc) {
+                                true
+                            } else {
+                                self.match_token(TokenType::Asc);
+                                false
+                            };
+                            let nulls_first = if self.match_token(TokenType::Nulls) {
+                                if self.match_identifier("FIRST") {
+                                    Some(true)
+                                } else if self.match_identifier("LAST") {
+                                    Some(false)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            ordered_exprs.push(Ordered {
+                                this: expr,
+                                desc,
+                                nulls_first,
+                                explicit_asc: !desc && self.check(TokenType::Asc),
+                                with_fill: None,
+                            });
+                            if !self.match_token(TokenType::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(TokenType::RParen)?;
+                        OrderBy {
+                            expressions: ordered_exprs,
+                            siblings: false,
+                        }
                     }
                 } else {
                     self.parse_order_by()?

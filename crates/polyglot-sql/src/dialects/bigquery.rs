@@ -347,6 +347,7 @@ impl DialectImpl for BigQueryDialect {
                     Some(crate::expressions::IntervalUnit::Second) => "SECOND",
                     Some(crate::expressions::IntervalUnit::Millisecond) => "MILLISECOND",
                     Some(crate::expressions::IntervalUnit::Microsecond) => "MICROSECOND",
+                    Some(crate::expressions::IntervalUnit::Nanosecond) => "NANOSECOND",
                     None => "DAY",
                 };
                 let unit = Expression::Identifier(crate::expressions::Identifier {

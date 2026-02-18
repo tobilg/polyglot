@@ -12938,6 +12938,7 @@ impl Dialect {
                                     crate::expressions::IntervalUnit::Second => "SECOND",
                                     crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
                                     crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+                                    crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND",
                                 }
                             }
                             _ => "",
@@ -18652,6 +18653,7 @@ impl Dialect {
             crate::expressions::IntervalUnit::Second => "SECOND".to_string(),
             crate::expressions::IntervalUnit::Millisecond => "MILLISECOND".to_string(),
             crate::expressions::IntervalUnit::Microsecond => "MICROSECOND".to_string(),
+            crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND".to_string(),
         }
     }
 

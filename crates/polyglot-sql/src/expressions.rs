@@ -3825,6 +3825,7 @@ pub enum IntervalUnit {
     Second,
     Millisecond,
     Microsecond,
+    Nanosecond,
 }
 
 /// SQL Command (COMMIT, ROLLBACK, BEGIN, etc.)

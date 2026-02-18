@@ -28,6 +28,7 @@ fn interval_unit_to_str(unit: &IntervalUnit) -> String {
         IntervalUnit::Second => "SECOND".to_string(),
         IntervalUnit::Millisecond => "MILLISECOND".to_string(),
         IntervalUnit::Microsecond => "MICROSECOND".to_string(),
+        IntervalUnit::Nanosecond => "NANOSECOND".to_string(),
     }
 }
 
