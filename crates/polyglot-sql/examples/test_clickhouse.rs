@@ -122,9 +122,11 @@ fn main() {
             println!("Error: {}", err);
         }
 
-        if errors.len() > 30 {
-            println!();
-            println!("... and {} more errors", errors.len() - 30);
+        // Print failing filenames list
+        println!();
+        println!("=== Failing files ===");
+        for (file, _, err) in &errors {
+            println!("  {} -> {}", file, err);
         }
     }
 }
