@@ -10983,6 +10983,17 @@ impl Parser {
                 let codec_text = self.tokens_to_sql(start, self.current);
                 self.expect(TokenType::RParen)?;
                 col_def.codec = Some(codec_text);
+            } else if self.match_identifier("STATISTICS") {
+                // ClickHouse: STATISTICS(tdigest, minmax, uniq, ...)
+                self.expect(TokenType::LParen)?;
+                let mut depth = 1;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::LParen) { depth += 1; }
+                    if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                    self.advance();
+                }
+                self.expect(TokenType::RParen)?;
+                // Statistics info is stored but we don't need it for transpilation
             } else if self.match_identifier("EPHEMERAL") {
                 // ClickHouse: EPHEMERAL [expr]
                 // EPHEMERAL can optionally be followed by an expression
