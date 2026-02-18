@@ -1819,26 +1819,28 @@ impl Parser {
                 let star_trailing_comments = self.previous_trailing_comments();
                 let star = self.parse_star_modifiers_with_comments(None, star_trailing_comments)?;
                 let mut star_expr = Expression::Star(star);
-                // ClickHouse: * APPLY(func) or * APPLY func column transformer
+                // ClickHouse: * APPLY(func) or * APPLY func or * APPLY(x -> expr) column transformer
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
                     while self.check(TokenType::Apply) {
                         self.advance(); // consume APPLY
-                        let func_name = if self.match_token(TokenType::LParen) {
-                            let name = self.expect_identifier_or_keyword()?;
+                        let apply_expr = if self.match_token(TokenType::LParen) {
+                            // Could be APPLY(func_name) or APPLY(x -> expr)
+                            let expr = self.parse_expression()?;
                             self.expect(TokenType::RParen)?;
-                            name
+                            expr
                         } else {
-                            // APPLY func (no parens)
-                            self.expect_identifier_or_keyword()?
-                        };
-                        star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
-                            this: Box::new(star_expr),
-                            expression: Box::new(Expression::Column(Column {
-                                name: Identifier::new(func_name),
+                            // APPLY func (no parens) - just a function name
+                            let name = self.expect_identifier_or_keyword()?;
+                            Expression::Column(Column {
+                                name: Identifier::new(name),
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
-                            })),
+                            })
+                        };
+                        star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
+                            this: Box::new(star_expr),
+                            expression: Box::new(apply_expr),
                         }));
                     }
                 }
@@ -11177,6 +11179,20 @@ impl Parser {
                 // ClickHouse: TTL expr
                 let expr = self.parse_expression()?;
                 col_def.ttl_expr = Some(Box::new(expr));
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::Settings)
+            {
+                // ClickHouse: SETTINGS (key = value, ...) on column definition
+                self.advance(); // consume SETTINGS
+                if self.match_token(TokenType::LParen) {
+                    let mut depth = 1i32;
+                    while !self.is_at_end() && depth > 0 {
+                        if self.check(TokenType::LParen) { depth += 1; }
+                        if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                        self.advance();
+                    }
+                    self.expect(TokenType::RParen)?;
+                }
             } else {
                 // Skip unknown column modifiers (DEFERRABLE, CHARACTER SET, etc.)
                 // to allow parsing to continue
@@ -23928,6 +23944,22 @@ impl Parser {
                     }
                 } else {
                     let first_expr = self.parse_expression()?;
+                    // ClickHouse: consume optional AS alias inside function args (e.g., count(NULL AS a))
+                    let first_expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && self.check(TokenType::As)
+                    {
+                        self.advance(); // consume AS
+                        let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                        Expression::Alias(Box::new(Alias {
+                            this: first_expr,
+                            alias,
+                            column_aliases: Vec::new(),
+                            pre_alias_comments: Vec::new(),
+                            trailing_comments: Vec::new(),
+                        }))
+                    } else {
+                        first_expr
+                    };
                     // Check for multiple arguments (rare but possible)
                     if self.match_token(TokenType::Comma) {
                         let mut args = vec![first_expr];
@@ -27689,6 +27721,16 @@ impl Parser {
                         self.parse_expression()?
                     }
                 }
+                // ClickHouse: simple lambda without type annotation: ident -> body
+                else if self.match_token(TokenType::Arrow) {
+                    let body = self.parse_expression()?;
+                    Expression::Lambda(Box::new(LambdaExpr {
+                        parameters: vec![Identifier::new(ident_name)],
+                        body,
+                        colon: false,
+                        parameter_types: Vec::new(),
+                    }))
+                }
                 // Check for named argument separator (=> is FArrow)
                 else if self.match_token(TokenType::FArrow) {
                     // name => value
@@ -31208,8 +31250,11 @@ impl Parser {
             if self.match_token(TokenType::LParen) {
                 // EXCLUDE (col1, col2) or EXCEPT (A.COL_1, B.COL_2)
                 loop {
-                    // ClickHouse: allow keywords like 'key', 'index' as column names in EXCEPT
-                    let col = if self.is_safe_keyword_as_identifier() {
+                    // ClickHouse: allow string literals in EXCEPT ('col_regex')
+                    // and keywords like 'key', 'index' as column names
+                    let col = if self.check(TokenType::String) {
+                        self.advance().text
+                    } else if self.is_safe_keyword_as_identifier() {
                         self.advance().text
                     } else {
                         self.expect_identifier()?
@@ -31231,8 +31276,10 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
             } else {
-                // EXCLUDE col (single column, Snowflake)
-                let col = if self.is_safe_keyword_as_identifier() {
+                // EXCLUDE col (single column, Snowflake) or EXCEPT 'regex' (ClickHouse)
+                let col = if self.check(TokenType::String) {
+                    self.advance().text
+                } else if self.is_safe_keyword_as_identifier() {
                     self.advance().text
                 } else {
                     self.expect_identifier()?
@@ -32358,6 +32405,12 @@ impl Parser {
             if !self.match_token(TokenType::Comma) {
                 break;
             }
+            // ClickHouse: allow trailing comma before RParen in expression lists
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::RParen)
+            {
+                break;
+            }
         }
 
         Ok(expressions)
@@ -32495,6 +32548,12 @@ impl Parser {
             });
 
             if !self.match_token(TokenType::Comma) {
+                break;
+            }
+            // ClickHouse: allow trailing comma before RParen in identifier lists
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::RParen)
+            {
                 break;
             }
         }
@@ -44688,6 +44747,9 @@ impl Parser {
                 this
             };
 
+            // ClickHouse: parse per-clause WHERE (e.g., TTL d DELETE WHERE cond, d2 DELETE WHERE cond2)
+            // Consume the WHERE clause attached to this TTL action
+            let _clause_where = self.parse_where()?;
             expressions.push(action);
 
             if !self.match_token(TokenType::Comma) {
@@ -44695,7 +44757,7 @@ impl Parser {
             }
         }
 
-        // Parse optional WHERE clause
+        // Parse optional top-level WHERE clause (for backwards compatibility)
         let where_ = self.parse_where()?.map(Box::new);
 
         // Parse optional GROUP BY
