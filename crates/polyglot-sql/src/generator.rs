@@ -3823,6 +3823,7 @@ impl Generator {
             }
             JoinKind::Array => self.write_keyword("ARRAY JOIN"),
             JoinKind::LeftArray => self.write_keyword("LEFT ARRAY JOIN"),
+            JoinKind::Paste => self.write_keyword("PASTE JOIN"),
         }
         }
 

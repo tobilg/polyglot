@@ -4872,9 +4872,9 @@ impl Parser {
         self.check(TokenType::Cross) ||
         self.check(TokenType::Natural) ||
         self.check(TokenType::Outer) ||
-        // ClickHouse: ARRAY JOIN, GLOBAL JOIN, ALL JOIN, ANY JOIN
+        // ClickHouse: ARRAY JOIN, GLOBAL JOIN, ALL JOIN, ANY JOIN, PASTE JOIN
         (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) &&
-            (self.check_identifier("ARRAY") || self.check_identifier("GLOBAL") || self.check(TokenType::All) || self.check(TokenType::Any)))
+            (self.check_identifier("ARRAY") || self.check_identifier("GLOBAL") || self.check(TokenType::All) || self.check(TokenType::Any) || self.check_identifier("PASTE")))
     }
 
     /// Try to parse a JOIN kind
@@ -4948,6 +4948,13 @@ impl Parser {
                 self.advance(); // consume ARRAY
                 // JOIN will be consumed by caller
                 return Some((array_kind, true, false, false, None));
+            }
+
+            // ClickHouse: PASTE JOIN (positional join, no ON/USING)
+            if self.check_identifier("PASTE") && self.check_next(TokenType::Join) {
+                self.advance(); // consume PASTE
+                // JOIN will be consumed by caller
+                return Some((JoinKind::Paste, true, false, false, None));
             }
 
             if global || strictness.is_some() || kind.is_some() {
@@ -13409,9 +13416,13 @@ impl Parser {
         let query = if self.check(TokenType::With) {
             self.parse_statement()?
         } else if query_parenthesized {
-            // Handle (SELECT ...) - parenthesized query
+            // Handle (SELECT ...) or (WITH ... SELECT ...) - parenthesized query
             self.advance(); // consume (
-            let inner = self.parse_select()?;
+            let inner = if self.check(TokenType::With) {
+                self.parse_statement()?
+            } else {
+                self.parse_select()?
+            };
             self.expect(TokenType::RParen)?;
             inner
         } else {
@@ -14177,14 +14188,18 @@ impl Parser {
         if self.match_token(TokenType::Add) {
             // ClickHouse: ADD INDEX idx expr TYPE minmax GRANULARITY 1
             // ClickHouse: ADD PROJECTION name (SELECT ...)
+            // ClickHouse: ADD STATISTICS col1, col2 TYPE tdigest, uniq
             // These have different syntax from MySQL ADD INDEX, so consume as Raw
             if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                && (self.check(TokenType::Index) || self.check_identifier("PROJECTION"))
+                && (self.check(TokenType::Index) || self.check_identifier("PROJECTION")
+                    || self.check_identifier("STATISTICS"))
             {
+                let is_statistics = self.check_identifier("STATISTICS");
                 let mut tokens: Vec<(String, TokenType)> = vec![("ADD".to_string(), TokenType::Add)];
                 let mut paren_depth = 0i32;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    // STATISTICS uses commas internally (col1, col2 TYPE t1, t2), don't break at comma
+                    if self.check(TokenType::Comma) && paren_depth == 0 && !is_statistics { break; }
                     let token = self.advance();
                     if token.token_type == TokenType::LParen { paren_depth += 1; }
                     if token.token_type == TokenType::RParen { paren_depth -= 1; }
@@ -14391,10 +14406,11 @@ impl Parser {
                 && (self.check(TokenType::Index) || self.check_identifier("PROJECTION")
                     || self.check_identifier("STATISTICS") || self.check_identifier("DETACHED"))
             {
+                let is_statistics = self.check_identifier("STATISTICS");
                 let mut tokens: Vec<(String, TokenType)> = vec![("DROP".to_string(), TokenType::Drop)];
                 let mut paren_depth = 0i32;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    if self.check(TokenType::Comma) && paren_depth == 0 && !is_statistics { break; }
                     let token = self.advance();
                     if token.token_type == TokenType::LParen { paren_depth += 1; }
                     if token.token_type == TokenType::RParen { paren_depth -= 1; }
@@ -16241,8 +16257,17 @@ impl Parser {
                 TokenType::Like | TokenType::In | TokenType::From |
                 TokenType::Limit | TokenType::Semicolon | TokenType::Eof |
                 TokenType::Where | TokenType::For | TokenType::Offset |
-                TokenType::Settings) {
-                break;
+                TokenType::Settings)
+            {
+                // ClickHouse: SHOW CREATE SETTINGS PROFILE - don't stop at SETTINGS
+                if current.token_type == TokenType::Settings
+                    && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && this_parts.join(" ") == "CREATE"
+                {
+                    // Fall through to process SETTINGS as part of the type name
+                } else {
+                    break;
+                }
             }
             // Handle comma-separated profile types (e.g., SHOW PROFILE BLOCK IO, PAGE FAULTS)
             // Append comma to the last part to preserve spacing
@@ -16361,6 +16386,26 @@ impl Parser {
                     break;
                 }
 
+                // ClickHouse: SHOW CREATE ROLE/PROFILE/QUOTA/ROW POLICY/POLICY with multi-name or ON clause
+                // These have complex syntax (comma-separated names, ON db.table) - consume as raw text
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && (matches!(joined.as_str(), "CREATE ROLE" | "CREATE QUOTA"
+                        | "CREATE SETTINGS PROFILE" | "CREATE PROFILE"
+                        | "CREATE ROW POLICY" | "CREATE POLICY"
+                        | "CREATE USER")
+                    || matches!(joined.as_str(), "SHOW CREATE ROLE" | "SHOW CREATE QUOTA"
+                        | "SHOW CREATE SETTINGS PROFILE" | "SHOW CREATE PROFILE"
+                        | "SHOW CREATE ROW POLICY" | "SHOW CREATE POLICY"
+                        | "SHOW CREATE USER"))
+                {
+                    let mut parts = Vec::new();
+                    while !self.is_at_end() && self.peek().token_type != TokenType::Semicolon {
+                        parts.push(self.advance().text.clone());
+                    }
+                    target = Some(Expression::Identifier(Identifier::new(parts.join(" "))));
+                    break;
+                }
+
                 // ClickHouse: SHOW CREATE <qualified_name> (without TABLE/VIEW keyword)
                 // e.g., SHOW CREATE INFORMATION_SCHEMA.COLUMNS
                 if joined == "CREATE"
@@ -16368,7 +16413,8 @@ impl Parser {
                     && !self.is_at_end()
                     && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
                     && !matches!(self.peek().text.to_uppercase().as_str(),
-                        "TABLE" | "VIEW" | "DICTIONARY" | "DATABASE" | "MATERIALIZED" | "LIVE" | "TEMPORARY")
+                        "TABLE" | "VIEW" | "DICTIONARY" | "DATABASE" | "MATERIALIZED" | "LIVE" | "TEMPORARY"
+                        | "ROLE" | "QUOTA" | "POLICY" | "PROFILE" | "USER" | "ROW" | "SETTINGS")
                 {
                     let table = self.parse_table_ref()?;
                     target = Some(Expression::Table(table));
@@ -18347,6 +18393,19 @@ impl Parser {
         self.expect(TokenType::Set)?;
 
         let mut items = Vec::new();
+
+        // ClickHouse: SET DEFAULT ROLE ... TO user - parse as command
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Default)
+        {
+            let mut parts = vec!["SET".to_string()];
+            while !self.is_at_end() && self.peek().token_type != TokenType::Semicolon {
+                parts.push(self.advance().text.clone());
+            }
+            return Ok(Expression::Command(Box::new(crate::expressions::Command {
+                this: parts.join(" "),
+            })));
+        }
 
         // Teradata: SET QUERY_BAND = ... [UPDATE] [FOR scope]
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::Teradata))

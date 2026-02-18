@@ -3002,6 +3002,8 @@ pub enum JoinKind {
     // ClickHouse ARRAY JOIN
     Array,
     LeftArray,
+    // ClickHouse PASTE JOIN (positional join)
+    Paste,
 }
 
 impl Default for JoinKind {
