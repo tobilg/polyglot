@@ -32,6 +32,7 @@ pub mod tokens;
 pub mod transforms;
 pub mod traversal;
 pub mod trie;
+pub mod validation;
 
 pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
@@ -155,6 +156,7 @@ pub use traversal::{
     TreeContext,
 };
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
+pub use validation::{FunctionCatalog, FunctionSignature};
 
 /// Transpile SQL from one dialect to another.
 ///
@@ -261,7 +263,15 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
                     )]);
                 }
             }
-            ValidationResult::success()
+
+            // Dialect-specific function validation (non-blocking warnings)
+            let mut result = ValidationResult::success();
+            let function_warnings =
+                validation::dialect_validate_functions(&expressions, dialect);
+            for w in function_warnings {
+                result.add_error(w);
+            }
+            result
         }
         Err(e) => {
             let error = match &e {
