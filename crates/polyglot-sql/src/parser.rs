@@ -29155,7 +29155,18 @@ impl Parser {
                 };
                 Ok(DataType::Interval { unit, to })
             }
-            "JSON" => Ok(DataType::Json),
+            "JSON" => {
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.match_token(TokenType::LParen)
+                {
+                    // ClickHouse: JSON(subcolumn_specs) e.g. JSON(a String, b UInt32) or JSON(max_dynamic_paths=8)
+                    let args = self.parse_custom_type_args_balanced()?;
+                    self.expect(TokenType::RParen)?;
+                    Ok(DataType::Custom { name: format!("JSON({})", args) })
+                } else {
+                    Ok(DataType::Json)
+                }
+            }
             "JSONB" => Ok(DataType::JsonB),
             "UUID" => Ok(DataType::Uuid),
             "BLOB" => Ok(DataType::Blob),
@@ -29598,6 +29609,11 @@ impl Parser {
                     let element_type = self.parse_data_type()?;
                     self.expect_gt()?;
                     DataType::Array { element_type: Box::new(element_type), dimension: None }
+                } else if self.match_token(TokenType::LParen) {
+                    // ClickHouse: Array(Type) syntax with parentheses
+                    let element_type = self.parse_data_type_for_cast()?;
+                    self.expect(TokenType::RParen)?;
+                    DataType::Array { element_type: Box::new(element_type), dimension: None }
                 } else {
                     DataType::Custom { name }
                 }
@@ -29957,14 +29973,20 @@ impl Parser {
                 let base = self.convert_name_to_type(&name)?;
                 // ClickHouse: consume parenthesized args for custom types like DateTime('UTC'),
                 // LowCardinality(String), Variant(String, UInt64), JSON(max_dynamic_paths=8)
-                if matches!(base, DataType::Custom { .. })
-                    && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.check(TokenType::LParen)
+                    && (matches!(base, DataType::Custom { .. } | DataType::Json | DataType::JsonB))
                 {
                     self.advance(); // consume (
                     let args = self.parse_custom_type_args_balanced()?;
                     self.expect(TokenType::RParen)?;
-                    DataType::Custom { name: format!("{}({})", name, args) }
+                    let base_name = match &base {
+                        DataType::Json => "JSON".to_string(),
+                        DataType::JsonB => "JSONB".to_string(),
+                        DataType::Custom { name } => name.clone(),
+                        _ => unreachable!(),
+                    };
+                    DataType::Custom { name: format!("{}({})", base_name, args) }
                 } else {
                     base
                 }
