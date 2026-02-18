@@ -8,22 +8,42 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // CHECK constraint without parens
-    test("CREATE TABLE t (a UInt32, b UInt32, CONSTRAINT a_constraint CHECK a < 10) ENGINE = Memory");
-    test("CREATE TABLE t (URL String, CONSTRAINT is_censor CHECK domainWithoutWWW(URL) = 'censor.net') ENGINE = Null");
+    // ALTER TABLE MODIFY SETTING
+    test("ALTER TABLE t MODIFY SETTING aaa=123");
+    test("ALTER TABLE t RESET SETTING aaa");
 
-    // EXTRACT as regular function
-    test("SELECT extract(toString(number), '10000000') FROM system.numbers");
+    // ARRAY JOIN with semicolon (empty)
+    test("SELECT x FROM t ARRAY JOIN arr AS a");
 
-    // Column defaults with == and complex expressions
-    test("CREATE TABLE t (a UInt64, test1 ALIAS zoneId == 1, test2 DEFAULT zoneId * 3, test3 MATERIALIZED zoneId * 5) ENGINE = MergeTree ORDER BY a");
+    // union as table name (keywords as identifiers)
+    test("DROP TABLE IF EXISTS union");
+    test("SELECT * FROM union ORDER BY test");
 
-    // Enum with negative values
-    test("CREATE TABLE t (x Enum8('a' = -1000, 'b' = 0)) ENGINE = Memory");
+    // EXPRESSION in dictionary CREATE
+    test("CREATE DICTIONARY dict (key UInt64, val String EXPRESSION toString(key)) PRIMARY KEY key SOURCE(CLICKHOUSE(TABLE 'tab')) LAYOUT(FLAT()) LIFETIME(0)");
 
-    // Decimal with negative scale
-    test("CREATE TABLE t (x DECIMAL(10, -2)) ENGINE = Memory");
+    // insert into with SELECT without parens
+    test("insert into t values(1), (100)");
 
-    // DROP PARTITION
-    test("DROP PARTITION 201901");
+    // SELECT with modulo
+    test("SELECT number FROM numbers(10) LIMIT (number % 2)");
+
+    // WITH FILL
+    test("SELECT * FROM t ORDER BY x WITH FILL FROM 0 TO 10 STEP 1");
+
+    // REFRESH MATERIALIZED VIEW
+    test("CREATE MATERIALIZED VIEW v0 REFRESH AFTER 1 SECOND APPEND TO t0 AS SELECT 1");
+
+    // DIV operator
+    test("SELECT 10 DIV 3");
+
+    // LARGE OBJECT type
+    test("SELECT CAST(x AS CHARACTER LARGE OBJECT)");
+
+    // EXCEPT/INTERSECT after subquery
+    test("SELECT 1 EXCEPT SELECT 2");
+    test("SELECT 1 INTERSECT SELECT 2");
+
+    // Double-colon cast
+    test("SELECT x::UInt64 FROM t");
 }

@@ -2586,7 +2586,12 @@ impl Parser {
             || (self.check(TokenType::Pivot) && !self.check_next(TokenType::LParen))
             || (self.check(TokenType::Unpivot) && !self.check_next(TokenType::LParen))
             // ClickHouse: braced query parameters as table names {db:Identifier}.table
-            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) && self.check(TokenType::LBrace)) {
+            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) && self.check(TokenType::LBrace))
+            // ClickHouse: allow union/except/intersect as table names when not followed by ALL/DISTINCT/SELECT/(
+            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Union) || self.check(TokenType::Except) || self.check(TokenType::Intersect))
+                && !self.check_next(TokenType::All) && !self.check_next(TokenType::Distinct)
+                && !self.check_next(TokenType::Select) && !self.check_next(TokenType::LParen)) {
             // Table name - could be simple, qualified, or table function
             // Also allow safe keywords (like 'table', 'view', 'case', 'all', etc.) as table names
             // BigQuery: also allows numeric table parts and hyphenated identifiers
@@ -11124,6 +11129,13 @@ impl Parser {
                 let expr = self.parse_or()?;
                 col_def.alias_expr = Some(Box::new(expr));
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check_identifier("EXPRESSION")
+            {
+                // ClickHouse dictionary column: EXPRESSION expr
+                self.advance(); // consume EXPRESSION
+                let expr = self.parse_or()?;
+                col_def.materialized_expr = Some(Box::new(expr));
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.match_identifier("HIERARCHICAL") || self.match_identifier("IS_OBJECT_ID") || self.match_identifier("INJECTIVE"))
             {
                 // ClickHouse dictionary column attributes: HIERARCHICAL, IS_OBJECT_ID, INJECTIVE
@@ -13002,8 +13014,26 @@ impl Parser {
         };
 
         // Doris: REFRESH COMPLETE/AUTO ON MANUAL/COMMIT/SCHEDULE [EVERY n UNIT] [STARTS 'datetime']
+        // ClickHouse: REFRESH AFTER interval / REFRESH EVERY interval [OFFSET interval] [RANDOMIZE FOR interval] [APPEND]
         let refresh = if self.match_token(TokenType::Refresh) {
-            Some(Box::new(self.parse_refresh_trigger_property()?))
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                // ClickHouse REFRESH syntax: consume tokens until AS/POPULATE/TO/ENGINE or end
+                while !self.is_at_end()
+                    && !self.check(TokenType::As)
+                    && !self.check_identifier("POPULATE")
+                    && !self.check_identifier("TO")
+                    && !self.check_identifier("APPEND")
+                    && !self.check_identifier("ENGINE")
+                    && !self.check(TokenType::Semicolon)
+                {
+                    self.advance();
+                }
+                // Consume APPEND if present (REFRESH ... APPEND TO target)
+                let _ = self.match_identifier("APPEND");
+                None
+            } else {
+                Some(Box::new(self.parse_refresh_trigger_property()?))
+            }
         } else {
             None
         };
@@ -29467,6 +29497,10 @@ impl Parser {
             "BOOLEAN" | "BOOL" => Ok(DataType::Boolean),
             "CHAR" | "CHARACTER" | "NCHAR" => {
                 let is_nchar = name == "NCHAR";
+                // SQL standard: CHARACTER LARGE OBJECT → CLOB/TEXT
+                if self.match_identifier("LARGE") && self.match_identifier("OBJECT") {
+                    return Ok(DataType::Text);
+                }
                 // Check for VARYING to convert to VARCHAR (SQL standard: CHAR VARYING, CHARACTER VARYING)
                 if self.match_identifier("VARYING") {
                     let length = if self.match_token(TokenType::LParen) {
