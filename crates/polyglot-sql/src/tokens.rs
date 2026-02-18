@@ -900,6 +900,7 @@ impl TokenType {
                 | TokenType::Seed
                 | TokenType::Namespace
                 | TokenType::Authorization
+                | TokenType::Order
                 | TokenType::Restart
                 | TokenType::Before
                 | TokenType::Instead

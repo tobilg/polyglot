@@ -1430,6 +1430,11 @@ impl Parser {
             (None, None)
         };
 
+        // WITH TIES after LIMIT (ClickHouse, DuckDB)
+        if limit.is_some() {
+            let _ = self.match_keywords(&[TokenType::With, TokenType::Ties]);
+        }
+
         // Parse OFFSET (if not already parsed from MySQL LIMIT syntax)
         // Standard SQL syntax: OFFSET n [ROW|ROWS]
         // Some dialects (Presto/Trino) support: OFFSET n LIMIT m
@@ -2565,7 +2570,9 @@ impl Parser {
             || self.is_mysql_numeric_identifier()
             // PIVOT/UNPIVOT can be table names when not followed by (
             || (self.check(TokenType::Pivot) && !self.check_next(TokenType::LParen))
-            || (self.check(TokenType::Unpivot) && !self.check_next(TokenType::LParen)) {
+            || (self.check(TokenType::Unpivot) && !self.check_next(TokenType::LParen))
+            // ClickHouse: braced query parameters as table names {db:Identifier}.table
+            || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) && self.check(TokenType::LBrace)) {
             // Table name - could be simple, qualified, or table function
             // Also allow safe keywords (like 'table', 'view', 'case', 'all', etc.) as table names
             // BigQuery: also allows numeric table parts and hyphenated identifiers
@@ -5094,6 +5101,18 @@ impl Parser {
                 self.parse_expression()?
             };
 
+            // ClickHouse: GROUP BY expr AS alias
+            let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::As)
+                && !self.check_next(TokenType::LParen)
+            {
+                self.advance(); // consume AS
+                let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                Expression::Alias(Box::new(Alias::new(expr, alias)))
+            } else {
+                expr
+            };
+
             expressions.push(expr);
 
             if !self.match_token(TokenType::Comma) {
@@ -5219,6 +5238,18 @@ impl Parser {
 
         loop {
             let expr = self.parse_expression()?;
+
+            // ClickHouse: ORDER BY expr AS alias — allow AS alias before DESC/ASC
+            let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::As)
+                && !self.check_next(TokenType::LParen)
+            {
+                self.advance(); // consume AS
+                let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                Expression::Alias(Box::new(Alias::new(expr, alias)))
+            } else {
+                expr
+            };
 
             let (desc, explicit_asc) = if self.match_token(TokenType::Desc) {
                 (true, false)
@@ -10754,7 +10785,18 @@ impl Parser {
     fn parse_column_def(&mut self) -> Result<ColumnDef> {
         // Column names can be keywords like 'end', 'truncate', 'view', etc.
         // Use _with_quoted to preserve quoting information
-        let name = self.expect_identifier_or_safe_keyword_with_quoted()?;
+        let mut name = self.expect_identifier_or_safe_keyword_with_quoted()?;
+        // ClickHouse: Nested column names like n.b for Nested() columns
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            while self.match_token(TokenType::Dot) {
+                let sub = self.expect_identifier_or_safe_keyword_with_quoted()?;
+                name = Identifier {
+                    name: format!("{}.{}", name.name, sub.name),
+                    quoted: name.quoted,
+                    trailing_comments: sub.trailing_comments,
+                };
+            }
+        }
 
         // TSQL computed columns have no data type: column_name AS (expression) [PERSISTED]
         // Check if AS follows immediately (no data type)
@@ -12951,6 +12993,11 @@ impl Parser {
         let mut table_properties = Vec::new();
         if materialized && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             self.parse_clickhouse_table_properties(&mut table_properties)?;
+        }
+
+        // ClickHouse: POPULATE keyword before AS in materialized views
+        if materialized && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            let _ = self.match_identifier("POPULATE");
         }
 
         // AS is optional - some dialects (e.g., Presto) allow SELECT without AS
@@ -29103,6 +29150,20 @@ impl Parser {
         }
 
         self.expect(TokenType::As)?;
+
+        // ClickHouse: CAST(expr AS alias AS Type) — inner alias before type
+        // If the next token is an identifier followed by AS, treat it as an alias
+        let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
+            && self.peek_nth(1).map_or(false, |t| t.token_type == TokenType::As)
+        {
+            let alias = self.expect_identifier_or_keyword_with_quoted()?;
+            self.expect(TokenType::As)?;
+            Expression::Alias(Box::new(Alias::new(expr, alias)))
+        } else {
+            expr
+        };
+
         // Teradata: CAST(x AS FORMAT 'fmt') (no explicit type)
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::Teradata))
             && self.match_token(TokenType::Format)
@@ -32070,6 +32131,10 @@ impl Parser {
             expressions.push(expr_with_alias);
 
             if !self.match_token(TokenType::Comma) {
+                break;
+            }
+            // ClickHouse: trailing comma in VALUES, e.g., (1, 2, 3,)
+            if self.check(TokenType::RParen) {
                 break;
             }
         }
@@ -41148,9 +41213,18 @@ impl Parser {
                         properties.push(pk);
                     }
                 } else if let Some(expr) = self.parse_field()? {
+                    // ClickHouse DICTIONARY: PRIMARY KEY key, val (comma-separated without parens)
+                    let mut exprs = vec![expr];
+                    while self.match_token(TokenType::Comma) {
+                        if let Some(next_expr) = self.parse_field()? {
+                            exprs.push(next_expr);
+                        } else {
+                            break;
+                        }
+                    }
                     properties.push(Expression::PrimaryKey(Box::new(PrimaryKey {
                         this: None,
-                        expressions: vec![expr],
+                        expressions: exprs,
                         options: Vec::new(),
                         include: None,
                     })));
