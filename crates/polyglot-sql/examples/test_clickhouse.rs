@@ -114,8 +114,8 @@ fn main() {
         }
 
         println!();
-        println!("=== First 30 errors ===");
-        for (i, (file, stmt, err)) in errors.iter().take(30).enumerate() {
+        println!("=== All errors ===");
+        for (i, (file, stmt, err)) in errors.iter().enumerate() {
             println!();
             println!("--- Error #{} in {} ---", i + 1, file);
             println!("SQL: {}", stmt);

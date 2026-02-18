@@ -909,14 +909,35 @@ impl Parser {
                     self.parse_query_modifiers(result)
                 } else if self.check_next(TokenType::LParen) {
                     // Nested parentheses - could be ((SELECT...)) or ((a, b))
-                    // Let parse_expression handle it for proper tuple/alias support
-                    let expr = self.parse_expression()?;
+                    // For deeply nested queries like (((SELECT 1) UNION SELECT 1) UNION SELECT 1),
+                    // recurse into parse_statement to handle the inner parenthesized query with set ops
+                    self.advance(); // consume (
+                    let inner = self.parse_statement()?;
+                    // Check for set operations inside the outer parens
+                    let result = self.parse_set_operation(inner)?;
+                    self.expect(TokenType::RParen)?;
+                    let subquery = Expression::Subquery(Box::new(Subquery {
+                        this: result,
+                        alias: None,
+                        column_aliases: Vec::new(),
+                        order_by: None,
+                        limit: None,
+                        offset: None,
+                        distribute_by: None,
+                        sort_by: None,
+                        cluster_by: None,
+                        lateral: false,
+                        modifiers_inside: false,
+                        trailing_comments: Vec::new(),
+                    }));
+                    // Check for set operations after the outer parenthesized query
+                    let result = self.parse_set_operation(subquery)?;
                     let pre_alias_comments = self.previous_trailing_comments();
                     if self.match_token(TokenType::As) {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
                         let trailing_comments = self.previous_trailing_comments();
                         Ok(Expression::Alias(Box::new(Alias {
-                            this: expr,
+                            this: result,
                             alias,
                             column_aliases: Vec::new(),
                             pre_alias_comments,
@@ -925,7 +946,7 @@ impl Parser {
                     } else {
                         // Check for LIMIT/OFFSET after parenthesized expression
                         // e.g., ((SELECT 1)) LIMIT 1
-                        self.parse_query_modifiers(expr)
+                        self.parse_query_modifiers(result)
                     }
                 } else {
                     // Regular parenthesized expression like (a, b) or (x)
@@ -1839,14 +1860,9 @@ impl Parser {
                             self.expect(TokenType::RParen)?;
                             expr
                         } else {
-                            // APPLY func (no parens) - just a function name
-                            let name = self.expect_identifier_or_keyword()?;
-                            Expression::Column(Column {
-                                name: Identifier::new(name),
-                                table: None,
-                                join_mark: false,
-                                trailing_comments: Vec::new(),
-                            })
+                            // APPLY func or APPLY x -> expr (no parens)
+                            // Parse as expression to handle lambdas
+                            self.parse_expression()?
                         };
                         star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
                             this: Box::new(star_expr),
@@ -10556,7 +10572,7 @@ impl Parser {
                 col_def.constraint_order.push(ConstraintType::Null);
             } else if self.match_token(TokenType::Constraint) {
                 // Inline CONSTRAINT name ... for this column
-                let constraint_name = self.expect_identifier()?;
+                let constraint_name = self.expect_identifier_or_safe_keyword()?;
                 if self.match_keywords(&[TokenType::Not, TokenType::Null]) {
                     col_def.nullable = Some(false);
                     col_def.not_null_constraint_name = Some(constraint_name);
@@ -12284,8 +12300,8 @@ impl Parser {
     fn parse_table_constraint(&mut self) -> Result<TableConstraint> {
         // Optional constraint name
         let name = if self.match_token(TokenType::Constraint) {
-            // Use expect_identifier_with_quoted to preserve quoting (e.g., "pk_mytable" -> [pk_mytable] in TSQL)
-            Some(self.expect_identifier_with_quoted()?)
+            // Use safe keyword version to accept keywords as constraint names (e.g., CONSTRAINT identity CHECK ...)
+            Some(self.expect_identifier_or_safe_keyword_with_quoted()?)
         } else {
             None
         };
@@ -12340,6 +12356,18 @@ impl Parser {
                 // ClickHouse: allow empty PRIMARY KEY ()
                 let cols = if self.check(TokenType::RParen) {
                     Vec::new()
+                } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                    // ClickHouse: PRIMARY KEY(v1, gcd(v1, v2)) - expressions allowed
+                    let mut exprs = Vec::new();
+                    loop {
+                        let expr = self.parse_expression()?;
+                        let name = self.expression_to_sql(&expr);
+                        exprs.push(Identifier::new(name));
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    exprs
                 } else {
                     self.parse_index_identifier_list()?
                 };
@@ -14302,12 +14330,12 @@ impl Parser {
                     };
                 }
                 self.expect(TokenType::To)?;
-                let mut new_name = self.expect_identifier_with_quoted()?;
+                let mut new_name = self.expect_identifier_or_safe_keyword_with_quoted()?;
                 // ClickHouse: nested column names like n.y
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::Dot)
                 {
-                    let field = self.expect_identifier_with_quoted()?;
+                    let field = self.expect_identifier_or_safe_keyword_with_quoted()?;
                     new_name = Identifier {
                         name: format!("{}.{}", new_name.name, field.name),
                         quoted: false,
@@ -20278,20 +20306,23 @@ impl Parser {
 
         // ClickHouse: APPLY(func) column transformer
         // e.g., COLUMNS('pattern') APPLY(toString) APPLY(length)
+        // Also: APPLY func (no parens), APPLY(x -> expr) (lambda)
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
-            while self.check(TokenType::Apply) && self.check_next(TokenType::LParen) {
+            while self.check(TokenType::Apply) {
                 self.advance(); // consume APPLY
-                self.advance(); // consume (
-                let func_name = self.expect_identifier_or_keyword()?;
-                self.expect(TokenType::RParen)?;
+                let apply_expr = if self.match_token(TokenType::LParen) {
+                    // Could be APPLY(func_name) or APPLY(x -> expr)
+                    let expr = self.parse_expression()?;
+                    self.expect(TokenType::RParen)?;
+                    expr
+                } else {
+                    // APPLY func or APPLY x -> expr (no parens)
+                    // Parse as expression to handle lambdas
+                    self.parse_expression()?
+                };
                 left = Expression::Apply(Box::new(crate::expressions::Apply {
                     this: Box::new(left),
-                    expression: Box::new(Expression::Column(Column {
-                        name: Identifier::new(func_name),
-                        table: None,
-                        join_mark: false,
-                        trailing_comments: Vec::new(),
-                    })),
+                    expression: Box::new(apply_expr),
                 }));
             }
         }
@@ -29051,8 +29082,8 @@ impl Parser {
             }
         } else {
             // <expr> PRECEDING | FOLLOWING (standard syntax)
-            // Use parse_unary to handle negative numbers like -1 PRECEDING
-            let expr = self.parse_unary()?;
+            // Use parse_addition to handle expressions like 1 + 1 PRECEDING
+            let expr = self.parse_addition()?;
             if self.match_token(TokenType::Preceding) {
                 let text = self.tokens[self.current - 1].text.clone();
                 Ok((WindowFrameBound::Preceding(Box::new(expr)), Some(text)))
@@ -29595,7 +29626,21 @@ impl Parser {
         while self.match_token(TokenType::When) {
             let condition = self.parse_expression()?;
             self.expect(TokenType::Then)?;
-            let result = self.parse_expression()?;
+            let mut result = self.parse_expression()?;
+            // ClickHouse: CASE WHEN x THEN 1 as alias WHEN y THEN alias / 2 END
+            // Aliases can appear in CASE THEN expressions
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_token(TokenType::As)
+            {
+                let alias = self.expect_identifier_or_keyword()?;
+                result = Expression::Alias(Box::new(Alias {
+                    this: result,
+                    alias: Identifier::new(alias),
+                    column_aliases: Vec::new(),
+                    pre_alias_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                }));
+            }
             whens.push((condition, result));
         }
 
@@ -30410,12 +30455,20 @@ impl Parser {
             "ENUM" => {
                 // ENUM('RED', 'GREEN', 'BLUE') - DuckDB enum type
                 // ClickHouse: Enum('hello' = 1, 'world' = 2)
+                // ClickHouse also allows NULL in enum: Enum('a', 'b', NULL)
                 if self.match_token(TokenType::LParen) {
                     let mut values = Vec::new();
                     let mut assignments = Vec::new();
                     if !self.check(TokenType::RParen) {
                         loop {
-                            let val = self.expect_string()?;
+                            let val = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                                && self.check(TokenType::Null)
+                            {
+                                self.advance();
+                                "NULL".to_string()
+                            } else {
+                                self.expect_string()?
+                            };
                             values.push(val);
                             // ClickHouse: optional = value assignment (including negative numbers)
                             if self.match_token(TokenType::Eq) {
@@ -31497,18 +31550,34 @@ impl Parser {
 
         // Parse REPLACE clause
         if self.match_token(TokenType::Replace) {
+            // ClickHouse: REPLACE STRICT is optional modifier
+            let _ = self.match_text_seq(&["STRICT"]);
             let mut replacements = Vec::new();
-            self.expect(TokenType::LParen)?;
-            loop {
-                let expr = self.parse_expression()?;
-                self.expect(TokenType::As)?;
-                let alias = self.expect_identifier()?;
-                replacements.push(Alias::new(expr, Identifier::new(alias)));
-                if !self.match_token(TokenType::Comma) {
-                    break;
+            if self.match_token(TokenType::LParen) {
+                loop {
+                    let expr = self.parse_expression()?;
+                    self.expect(TokenType::As)?;
+                    let alias = self.expect_identifier_or_keyword()?;
+                    replacements.push(Alias::new(expr, Identifier::new(alias)));
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
                 }
+                self.expect(TokenType::RParen)?;
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                // ClickHouse: REPLACE [STRICT] expr AS name, ... (without parens)
+                loop {
+                    let expr = self.parse_expression()?;
+                    self.expect(TokenType::As)?;
+                    let alias = self.expect_identifier_or_keyword()?;
+                    replacements.push(Alias::new(expr, Identifier::new(alias)));
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+            } else {
+                return Err(Error::parse("Expected LParen after REPLACE"));
             }
-            self.expect(TokenType::RParen)?;
             replace = Some(replacements);
         }
 
