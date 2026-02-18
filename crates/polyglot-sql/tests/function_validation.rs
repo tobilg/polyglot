@@ -73,23 +73,45 @@ fn test_typed_variants_no_warnings() {
 }
 
 #[test]
-fn test_case_insensitive_lookup() {
-    // toDate exists — TODATE should also match
+fn test_case_sensitive_function_wrong_case() {
+    // toDate is case-sensitive — TODATE should produce W003
     let result = validate(
         "SELECT TODATE('2023-01-01')",
         DialectType::ClickHouse,
     );
     assert!(result.valid);
-    let func_warnings: Vec<_> = result
+    let warnings: Vec<_> = result
         .errors
         .iter()
-        .filter(|e| e.code == "W001" || e.code == "W002")
+        .filter(|e| e.code == "W003")
         .collect();
     assert!(
-        func_warnings.is_empty(),
-        "Expected case-insensitive match, got warnings: {:?}",
-        func_warnings
+        !warnings.is_empty(),
+        "Expected W003 warning for wrong casing of toDate, got: {:?}",
+        result.errors
     );
+    assert!(warnings[0].message.contains("toDate"));
+}
+
+#[test]
+fn test_case_insensitive_function_any_case() {
+    // floor is case-insensitive — FLOOR, Floor, floor should all be fine
+    for sql in &[
+        "SELECT floor(1.5)",
+        "SELECT FLOOR(1.5)",
+        "SELECT Floor(1.5)",
+    ] {
+        let result = validate(sql, DialectType::ClickHouse);
+        let func_warnings: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.code == "W001" || e.code == "W002" || e.code == "W003")
+            .collect();
+        assert!(
+            func_warnings.is_empty(),
+            "Expected no warnings for '{sql}', got: {func_warnings:?}"
+        );
+    }
 }
 
 #[test]
@@ -103,7 +125,7 @@ fn test_non_clickhouse_dialect_no_validation() {
     let func_warnings: Vec<_> = result
         .errors
         .iter()
-        .filter(|e| e.code == "W001" || e.code == "W002")
+        .filter(|e| e.code.starts_with("W"))
         .collect();
     assert!(
         func_warnings.is_empty(),
