@@ -107,7 +107,7 @@ def main():
 
     # Read all functions
     functions: list[dict] = []
-    aliases: list[tuple[str, str]] = []  # (alias_name, target_name)
+    aliases: list[tuple[str, str, bool]] = []  # (alias_name, target_name, case_insensitive)
 
     with open(JSONL_PATH) as f:
         header = json.loads(f.readline())  # column names
@@ -120,8 +120,10 @@ def main():
             alias_to = row[ALIAS_TO]
             syntax = row[SYNTAX].strip()
 
+            case_insensitive = row[CASE_INSENSITIVE] == 1
+
             if alias_to:
-                aliases.append((name, alias_to))
+                aliases.append((name, alias_to, case_insensitive))
                 continue
 
             min_args, max_args = parse_arity_from_syntax(syntax)
@@ -129,6 +131,7 @@ def main():
             functions.append({
                 "name": name,
                 "is_aggregate": is_agg,
+                "case_insensitive": case_insensitive,
                 "min_args": min_args,
                 "max_args": max_args,
             })
@@ -178,33 +181,37 @@ def main():
         name = func["name"]
         min_a = func["min_args"]
         max_a = func["max_args"]
+        ci = func["case_insensitive"]
+        ci_suffix = ".ci()" if ci else ""
 
         if max_a is None:
-            lines.append(f'    cat.register(FunctionSignature::variadic("{name}", {min_a}));')
+            lines.append(f'    cat.register(FunctionSignature::variadic("{name}", {min_a}){ci_suffix});')
         elif min_a == max_a:
-            lines.append(f'    cat.register(FunctionSignature::fixed("{name}", {min_a}));')
+            lines.append(f'    cat.register(FunctionSignature::fixed("{name}", {min_a}){ci_suffix});')
         else:
-            lines.append(f'    cat.register(FunctionSignature::new("{name}", {min_a}, Some({max_a})));')
+            lines.append(f'    cat.register(FunctionSignature::new("{name}", {min_a}, Some({max_a})){ci_suffix});')
 
     # Add aliases
     if aliases:
         lines.append("")
         lines.append("    // Aliases")
         aliases.sort(key=lambda a: a[0].lower())
-        for alias_name, target_name in aliases:
+        for alias_name, target_name, alias_ci in aliases:
             target = func_by_name.get(target_name.upper())
             if target:
                 min_a = target["min_args"]
                 max_a = target["max_args"]
+                ci_suffix = ".ci()" if alias_ci else ""
                 if max_a is None:
-                    lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", {min_a}));')
+                    lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", {min_a}){ci_suffix});')
                 elif min_a == max_a:
-                    lines.append(f'    cat.register(FunctionSignature::fixed("{alias_name}", {min_a}));')
+                    lines.append(f'    cat.register(FunctionSignature::fixed("{alias_name}", {min_a}){ci_suffix});')
                 else:
-                    lines.append(f'    cat.register(FunctionSignature::new("{alias_name}", {min_a}, Some({max_a})));')
+                    lines.append(f'    cat.register(FunctionSignature::new("{alias_name}", {min_a}, Some({max_a})){ci_suffix});')
             else:
                 # Target not found — register permissively
-                lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", 0)); // alias of unknown: {target_name}')
+                ci_suffix = ".ci()" if alias_ci else ""
+                lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", 0){ci_suffix}); // alias of unknown: {target_name}')
 
     lines.append("")
     lines.append("    cat")

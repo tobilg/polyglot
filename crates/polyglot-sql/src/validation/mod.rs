@@ -21,6 +21,9 @@ pub struct FunctionSignature {
     pub min_args: usize,
     /// Maximum number of arguments. `None` means variadic (no upper bound).
     pub max_args: Option<usize>,
+    /// Whether this function name is case-insensitive.
+    /// When `false`, the function name must match `canonical_name` exactly.
+    pub case_insensitive: bool,
 }
 
 impl FunctionSignature {
@@ -29,6 +32,7 @@ impl FunctionSignature {
             canonical_name: canonical_name.to_string(),
             min_args,
             max_args,
+            case_insensitive: false,
         }
     }
 
@@ -40,6 +44,12 @@ impl FunctionSignature {
     /// Variadic function with minimum args but no maximum.
     pub fn variadic(canonical_name: &str, min_args: usize) -> Self {
         Self::new(canonical_name, min_args, None)
+    }
+
+    /// Mark this function as case-insensitive.
+    pub fn ci(mut self) -> Self {
+        self.case_insensitive = true;
+        self
     }
 
     /// Check if the given arg count is valid.
@@ -99,11 +109,18 @@ impl FunctionCatalog {
 
     /// Look up a function, falling back to combinator suffix stripping.
     ///
-    /// Returns `Some(sig)` for direct matches, `None` with `is_combinator=true`
-    /// for combinator-derived functions, or `None` with `is_combinator=false`
-    /// for truly unknown functions.
+    /// Returns:
+    /// - `Found(sig)` — exact or case-insensitive match
+    /// - `WrongCase(sig)` — uppercase match but case-sensitive function with wrong casing
+    /// - `Combinator` — valid aggregate combinator form (e.g., `sumIf`)
+    /// - `Unknown` — not found at all
     pub fn lookup_or_combinator(&self, name: &str) -> LookupResult<'_> {
         if let Some(sig) = self.lookup(name) {
+            // Check case sensitivity: if function is case-sensitive,
+            // the input must match the canonical name exactly.
+            if !sig.case_insensitive && name != sig.canonical_name {
+                return LookupResult::WrongCase(sig);
+            }
             return LookupResult::Found(sig);
         }
 
@@ -133,6 +150,7 @@ impl FunctionCatalog {
 
 pub enum LookupResult<'a> {
     Found(&'a FunctionSignature),
+    WrongCase(&'a FunctionSignature),
     Combinator,
     Unknown,
 }
@@ -204,6 +222,16 @@ fn check_function_call(
 ) {
     match catalog.lookup_or_combinator(name) {
         LookupResult::Found(sig) => check_arity(sig, arg_count, warnings),
+        LookupResult::WrongCase(sig) => {
+            warnings.push(ValidationError::warning(
+                format!(
+                    "Function '{}' has incorrect casing, expected '{}'",
+                    name, sig.canonical_name
+                ),
+                "W003",
+            ));
+            check_arity(sig, arg_count, warnings);
+        }
         LookupResult::Combinator => {} // valid combinator form, skip arity check
         LookupResult::Unknown => {
             warnings.push(ValidationError::warning(
@@ -238,19 +266,52 @@ mod tests {
 
     fn test_catalog() -> FunctionCatalog {
         let mut cat = FunctionCatalog::new();
-        cat.register(FunctionSignature::fixed("toDate", 1));
-        cat.register(FunctionSignature::new("round", 1, Some(2)));
-        cat.register(FunctionSignature::variadic("concat", 1));
+        cat.register(FunctionSignature::fixed("toDate", 1)); // case-sensitive
+        cat.register(FunctionSignature::new("round", 1, Some(2)).ci()); // case-insensitive
+        cat.register(FunctionSignature::variadic("concat", 1).ci()); // case-insensitive
         cat
     }
 
     #[test]
-    fn test_lookup_case_insensitive() {
+    fn test_lookup_finds_by_uppercase() {
         let cat = test_catalog();
         assert!(cat.lookup("toDate").is_some());
-        assert!(cat.lookup("TODATE").is_some());
+        assert!(cat.lookup("TODATE").is_some()); // lookup is always case-insensitive
         assert!(cat.lookup("todate").is_some());
         assert!(cat.lookup("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_wrong_case_on_sensitive_function() {
+        let cat = test_catalog();
+        // toDate is case-sensitive — wrong case should produce WrongCase
+        assert!(matches!(
+            cat.lookup_or_combinator("TODATE"),
+            LookupResult::WrongCase(_)
+        ));
+        // Exact case should produce Found
+        assert!(matches!(
+            cat.lookup_or_combinator("toDate"),
+            LookupResult::Found(_)
+        ));
+    }
+
+    #[test]
+    fn test_case_insensitive_function_any_case() {
+        let cat = test_catalog();
+        // round is case-insensitive — any case should produce Found
+        assert!(matches!(
+            cat.lookup_or_combinator("round"),
+            LookupResult::Found(_)
+        ));
+        assert!(matches!(
+            cat.lookup_or_combinator("ROUND"),
+            LookupResult::Found(_)
+        ));
+        assert!(matches!(
+            cat.lookup_or_combinator("Round"),
+            LookupResult::Found(_)
+        ));
     }
 
     #[test]
