@@ -1783,7 +1783,11 @@ impl Parser {
             // Check if we're at end of select list (empty list case for TSQL TOP)
             // This allows queries like "SELECT TOP 10 PERCENT" with no columns
             // Also check for Oracle BULK COLLECT INTO sequence
-            if self.is_at_end()
+            // ClickHouse: minus() is tokenized as Except but should be treated as function
+            let is_ch_keyword_func = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
+                && self.check_next(TokenType::LParen);
+            if !is_ch_keyword_func && (self.is_at_end()
                 || self.check(TokenType::From)
                 || self.check(TokenType::Where)
                 || self.check(TokenType::Into)
@@ -1793,7 +1797,7 @@ impl Parser {
                 || self.check(TokenType::Order)
                 || self.check(TokenType::Limit)
                 || self.check(TokenType::Semicolon)
-                || self.check_text_seq(&["BULK", "COLLECT", "INTO"])
+                || self.check_text_seq(&["BULK", "COLLECT", "INTO"]))
             {
                 break;
             }
@@ -23061,6 +23065,32 @@ impl Parser {
         // When followed by ( in expression context, treat as function call.
         if self.check(TokenType::Insert) && self.check_next(TokenType::LParen) {
             let token = self.advance(); // consume INSERT
+            self.advance(); // consume LParen
+            let args = if self.check(TokenType::RParen) {
+                Vec::new()
+            } else {
+                self.parse_function_arguments()?
+            };
+            self.expect(TokenType::RParen)?;
+            let func = Expression::Function(Box::new(Function {
+                name: token.text.clone(),
+                args,
+                distinct: false,
+                trailing_comments: Vec::new(),
+                use_bracket_syntax: false,
+                no_parens: false,
+                quoted: false,
+            }));
+            return self.maybe_parse_over(func);
+        }
+
+        // ClickHouse: MINUS/EXCEPT/INTERSECT as function names (e.g., minus(a, b))
+        // MINUS is tokenized as TokenType::Except (Oracle alias), but ClickHouse has minus() function
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
+            && self.check_next(TokenType::LParen)
+        {
+            let token = self.advance(); // consume keyword
             self.advance(); // consume LParen
             let args = if self.check(TokenType::RParen) {
                 Vec::new()
