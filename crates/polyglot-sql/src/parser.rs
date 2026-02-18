@@ -26002,6 +26002,20 @@ impl Parser {
             // OVERLAY function - SQL standard syntax
             // OVERLAY(string PLACING replacement FROM position [FOR length])
             // Also supports comma-separated: OVERLAY(string, replacement, position [, length])
+            // ClickHouse: treat as regular function (any number of comma-separated args)
+            "OVERLAY" if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                let args = self.parse_function_arguments()?;
+                self.expect(TokenType::RParen)?;
+                Ok(Expression::Function(Box::new(Function {
+                    name: name.to_string(),
+                    args,
+                    distinct: false,
+                    trailing_comments: Vec::new(),
+                    use_bracket_syntax: false,
+                    no_parens: false,
+                    quoted: false,
+                })))
+            }
             "OVERLAY" => {
                 let this = self.parse_expression()?;
 
@@ -30290,13 +30304,8 @@ impl Parser {
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.match_token(TokenType::Comma)
         {
-            let type_expr = if self.check(TokenType::String) {
-                let type_str = self.expect_string()?;
-                Expression::Literal(Literal::String(type_str))
-            } else {
-                // Allow any expression as the type argument (e.g., if(...))
-                self.parse_expression()?
-            };
+            // Parse as expression to handle concat and other operations: CAST(x, 'Str' || 'ing')
+            let type_expr = self.parse_expression()?;
             self.expect(TokenType::RParen)?;
             let _trailing_comments = self.previous_trailing_comments();
             return Ok(Expression::CastToStrType(Box::new(CastToStrType {
