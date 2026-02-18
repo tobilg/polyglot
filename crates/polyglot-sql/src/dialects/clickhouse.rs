@@ -22,8 +22,8 @@ impl DialectImpl for ClickHouseDialect {
         // ClickHouse uses double quotes and backticks for identifiers
         config.identifiers.insert('"', '"');
         config.identifiers.insert('`', '`');
-        // ClickHouse does NOT support nested comments
-        config.nested_comments = false;
+        // ClickHouse supports nested comments
+        config.nested_comments = true;
         // ClickHouse allows identifiers to start with digits
         config.identifiers_can_start_with_digit = true;
         // ClickHouse uses backslash escaping in strings

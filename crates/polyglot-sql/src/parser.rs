@@ -574,6 +574,16 @@ impl Parser {
                 }
             }
 
+            // ClickHouse: PARALLEL WITH between statements (multi-statement execution)
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check_identifier("PARALLEL")
+                && self.check_next(TokenType::With)
+            {
+                self.advance(); // consume PARALLEL
+                self.advance(); // consume WITH
+                continue;
+            }
+
             // Consume optional semicolon
             self.match_token(TokenType::Semicolon);
         }
@@ -1719,6 +1729,21 @@ impl Parser {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
                         ctes.push(Cte {
                             alias,
+                            this: inner_expr,
+                            columns: Vec::new(),
+                            materialized: None,
+                            key_expressions: Vec::new(),
+                            alias_first: false,
+                        });
+
+                        if self.match_token(TokenType::Comma) {
+                            continue;
+                        }
+                        break;
+                    } else if self.check(TokenType::Select) || self.check(TokenType::Comma) {
+                        // ClickHouse: WITH expr SELECT ... (unaliased expression in CTE)
+                        ctes.push(Cte {
+                            alias: Identifier::new(format!("{}", inner_expr)),
                             this: inner_expr,
                             columns: Vec::new(),
                             materialized: None,
@@ -5151,6 +5176,29 @@ impl Parser {
             return Ok(GroupBy { expressions, all, totals: false });
         }
 
+        // GROUP BY ALL WITH ROLLUP/CUBE/TOTALS — skip expression parsing, go straight to modifiers
+        if all.is_some() && self.check(TokenType::With)
+            && (self.check_next(TokenType::Cube) || self.check_next(TokenType::Rollup) || self.check_next_identifier("TOTALS"))
+        {
+            let mut totals = false;
+            // Process WITH ROLLUP/CUBE
+            if self.check_next(TokenType::Cube) || self.check_next(TokenType::Rollup) {
+                self.advance(); // consume WITH
+                if self.match_token(TokenType::Cube) {
+                    expressions.push(Expression::Cube(Box::new(Cube { expressions: Vec::new() })));
+                } else if self.match_token(TokenType::Rollup) {
+                    expressions.push(Expression::Rollup(Box::new(Rollup { expressions: Vec::new() })));
+                }
+            }
+            // Check for WITH TOTALS (possibly chained after ROLLUP/CUBE)
+            if self.check(TokenType::With) && self.check_next_identifier("TOTALS") {
+                self.advance(); // WITH
+                self.advance(); // TOTALS
+                totals = true;
+            }
+            return Ok(GroupBy { expressions, all, totals });
+        }
+
         loop {
             // Check for GROUPING SETS, CUBE, ROLLUP
             let expr = if self.match_identifier("GROUPING") && self.match_identifier("SETS") {
@@ -7890,10 +7938,12 @@ impl Parser {
         }
 
         // ClickHouse: REPLACE TABLE -> treat like CREATE OR REPLACE TABLE
+        // Also handle REPLACE TEMPORARY TABLE
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-            && self.check(TokenType::Table)
+            && (self.check(TokenType::Table) || self.check(TokenType::Temporary))
         {
-            return self.parse_create_table(true, false, leading_comments.clone(), None);
+            let temporary = self.match_token(TokenType::Temporary);
+            return self.parse_create_table(true, temporary, leading_comments.clone(), None);
         }
 
         // ClickHouse: REPLACE DICTIONARY -> consume as Command
@@ -8531,6 +8581,17 @@ impl Parser {
             }
         }
 
+        // ClickHouse: IN PARTITION 'partition_id' clause before WHERE
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::In)
+            && self.peek_nth(1).is_some_and(|t| t.text.eq_ignore_ascii_case("PARTITION"))
+        {
+            self.advance(); // consume IN
+            self.advance(); // consume PARTITION
+            // Consume partition expression (string or identifier)
+            let _partition = self.parse_primary()?;
+        }
+
         // Parse OUTPUT clause (TSQL) - may have been parsed early (before FROM)
         let output = if early_output.is_some() {
             early_output
@@ -8852,6 +8913,29 @@ impl Parser {
             return self.parse_create_table_partition_of(name, if_not_exists, temporary, or_replace, table_modifier, leading_comments);
         }
 
+        // ClickHouse: EMPTY AS source_table — create empty table from source
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check_identifier("EMPTY")
+        {
+            if self.check_next(TokenType::As) {
+                self.advance(); // consume EMPTY
+                self.advance(); // consume AS
+                // Consume rest as Command
+                let start = self.current;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    self.advance();
+                }
+                let rest_sql = self.tokens_to_sql(start, self.current);
+                let mut prefix = String::from("CREATE TABLE");
+                if if_not_exists { prefix.push_str(" IF NOT EXISTS"); }
+                prefix.push(' ');
+                prefix.push_str(&name.name.name);
+                prefix.push_str(" EMPTY AS ");
+                prefix.push_str(&rest_sql);
+                return Ok(Expression::Raw(Raw { sql: prefix }));
+            }
+        }
+
         // Handle [SHALLOW | DEEP] CLONE source_table [AT(...) | BEFORE(...)]
         // Databricks/Delta Lake uses SHALLOW CLONE / DEEP CLONE
         // Snowflake uses just CLONE (which is equivalent to DEEP CLONE)
@@ -8865,6 +8949,10 @@ impl Parser {
         let is_copy = self.check(TokenType::Copy) && !self.check_next_identifier("GRANTS");
         if self.check_identifier("CLONE") || is_copy {
             self.advance(); // consume CLONE or COPY
+            // ClickHouse: CLONE AS source_table (AS is part of the syntax, not an alias)
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                let _ = self.match_token(TokenType::As);
+            }
             let source = self.parse_table_ref()?;
             // Parse optional AT or BEFORE time travel clause
             // Note: BEFORE is a keyword token, AT is an identifier
@@ -14402,7 +14490,7 @@ impl Parser {
             if self.match_token(TokenType::Column) {
                 // RENAME COLUMN [IF EXISTS] old TO new
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
-                let mut old_name = self.expect_identifier_with_quoted()?;
+                let mut old_name = self.expect_identifier_or_safe_keyword_with_quoted()?;
                 // ClickHouse: nested column names like n.x
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::Dot)
@@ -16252,6 +16340,20 @@ impl Parser {
                         let table = self.parse_table_ref()?;
                         target = Some(Expression::Table(table));
                     }
+                    break;
+                }
+
+                // ClickHouse: SHOW CREATE <qualified_name> (without TABLE/VIEW keyword)
+                // e.g., SHOW CREATE INFORMATION_SCHEMA.COLUMNS
+                if joined == "CREATE"
+                    && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && !self.is_at_end()
+                    && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
+                    && !matches!(self.peek().text.to_uppercase().as_str(),
+                        "TABLE" | "VIEW" | "DICTIONARY" | "DATABASE" | "MATERIALIZED" | "LIVE" | "TEMPORARY")
+                {
+                    let table = self.parse_table_ref()?;
+                    target = Some(Expression::Table(table));
                     break;
                 }
 
@@ -22750,6 +22852,14 @@ impl Parser {
         }
 
         // EXISTS - either subquery predicate EXISTS(SELECT ...) or Hive array function EXISTS(array, lambda)
+        // ClickHouse: EXISTS without ( is a column name/identifier
+        if self.check(TokenType::Exists)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && !self.check_next(TokenType::LParen)
+        {
+            let tok = self.advance();
+            return Ok(Expression::Identifier(Identifier::new(tok.text)));
+        }
         if self.match_token(TokenType::Exists) {
             self.expect(TokenType::LParen)?;
 
@@ -29824,16 +29934,22 @@ impl Parser {
             expr
         };
 
-        // ClickHouse: CAST(expr, 'type_string') syntax with comma instead of AS
+        // ClickHouse: CAST(expr, 'type_string') or CAST(expr, expression) syntax with comma instead of AS
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.match_token(TokenType::Comma)
         {
-            let type_str = self.expect_string()?;
+            let type_expr = if self.check(TokenType::String) {
+                let type_str = self.expect_string()?;
+                Expression::Literal(Literal::String(type_str))
+            } else {
+                // Allow any expression as the type argument (e.g., if(...))
+                self.parse_expression()?
+            };
             self.expect(TokenType::RParen)?;
             let _trailing_comments = self.previous_trailing_comments();
             return Ok(Expression::CastToStrType(Box::new(CastToStrType {
                 this: Box::new(expr),
-                to: Some(Box::new(Expression::Literal(Literal::String(type_str)))),
+                to: Some(Box::new(type_expr)),
             })));
         }
 
@@ -36607,6 +36723,14 @@ impl Parser {
         // Prefer id/var first for dictionary bounds to avoid function-keyword ambiguity
         // such as `MIN discount_start_date MAX discount_end_date`.
         let parse_bound = |parser: &mut Parser| -> Result<Option<Expression>> {
+            // Handle negative numbers: -1, -100, etc.
+            if parser.check(TokenType::Dash)
+                && parser.peek_nth(1).is_some_and(|t| t.token_type == TokenType::Number)
+            {
+                parser.advance(); // consume -
+                let num = parser.advance().text.clone();
+                return Ok(Some(Expression::Literal(Literal::Number(format!("-{}", num)))));
+            }
             if let Some(id) = parser.parse_id_var()? {
                 return Ok(Some(id));
             }
