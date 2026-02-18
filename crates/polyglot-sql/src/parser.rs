@@ -10933,6 +10933,11 @@ impl Parser {
                 // ClickHouse: ALIAS expr
                 let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
                 col_def.alias_expr = Some(Box::new(expr));
+            } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.match_identifier("HIERARCHICAL") || self.match_identifier("IS_OBJECT_ID") || self.match_identifier("INJECTIVE"))
+            {
+                // ClickHouse dictionary column attributes: HIERARCHICAL, IS_OBJECT_ID, INJECTIVE
+                // These are flag-like attributes with no value, just skip them
             } else if self.match_identifier("TTL") {
                 // ClickHouse: TTL expr
                 let expr = self.parse_expression()?;
@@ -21173,6 +21178,12 @@ impl Parser {
             return Ok(this);
         }
 
+        // ClickHouse uses : as part of the ternary operator (condition ? true : false)
+        // Skip JSON path extraction for ClickHouse to avoid consuming the ternary separator
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            return Ok(this);
+        }
+
         // Only apply colon JSON path parsing to identifiers, columns, and function results
         // This prevents {'key': 'value'} object literals from being misinterpreted
         let is_valid_json_path_base = matches!(
@@ -21846,7 +21857,8 @@ impl Parser {
                 } else {
                     set_result
                 };
-                return Ok(result);
+                // Allow postfix operators on subquery expressions (e.g., (SELECT 1, 2).1 for tuple element access)
+                return self.maybe_parse_subscript(result);
             }
 
             // Check if this starts with another paren that might be a subquery
@@ -21980,7 +21992,8 @@ impl Parser {
                     tuple_expr
                 };
 
-                return Ok(result);
+                // Allow postfix operators on tuple expressions (e.g., ('a', 'b').1 for tuple element access)
+                return self.maybe_parse_subscript(result);
             }
 
             self.expect(TokenType::RParen)?;
@@ -33953,6 +33966,24 @@ impl Parser {
                 }))));
             }
             return Ok(None);
+        }
+
+        // ClickHouse dictionary column attributes: HIERARCHICAL, IS_OBJECT_ID, INJECTIVE
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            if self.match_texts(&["HIERARCHICAL", "IS_OBJECT_ID", "INJECTIVE"]) {
+                let attr_name = self.previous().text.to_uppercase();
+                return Ok(Some(Expression::Property(Box::new(crate::expressions::Property {
+                    this: Box::new(Expression::Identifier(Identifier::new(attr_name))),
+                    value: None,
+                }))));
+            }
+            // ClickHouse EXPRESSION expr and ALIAS expr (dictionary column attributes)
+            if self.match_texts(&["EXPRESSION"]) {
+                let expr = self.parse_expression()?;
+                return Ok(Some(Expression::DefaultColumnConstraint(Box::new(DefaultColumnConstraint {
+                    this: Box::new(expr),
+                }))));
+            }
         }
 
         // GENERATED ... AS IDENTITY
