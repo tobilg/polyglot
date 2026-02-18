@@ -925,6 +925,7 @@ impl TokenType {
                 | TokenType::Pragma
                 | TokenType::Siblings
                 | TokenType::SerdeProperties
+                | TokenType::RLike
         )
     }
 
@@ -1470,6 +1471,10 @@ impl<'a> TokenizerState<'a> {
                 '-' if self.peek_next() == '-' => {
                     self.scan_line_comment();
                 }
+                '/' if self.peek_next() == '/' && self.config.hash_comments => {
+                    // ClickHouse: // single-line comments (same dialects that support # comments)
+                    self.scan_double_slash_comment();
+                }
                 '/' if self.peek_next() == '*' => {
                     // Check if this is a hint comment /*+ ... */
                     if self.current + 2 < self.size && self.chars[self.current + 2] == '+' {
@@ -1490,6 +1495,22 @@ impl<'a> TokenizerState<'a> {
 
     fn scan_hash_line_comment(&mut self) {
         self.advance(); // #
+        let start = self.current;
+        while !self.is_at_end() && self.peek() != '\n' {
+            self.advance();
+        }
+        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment_text = comment.trim().to_string();
+        if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
+        } else {
+            self.comments.push(comment_text);
+        }
+    }
+
+    fn scan_double_slash_comment(&mut self) {
+        self.advance(); // /
+        self.advance(); // /
         let start = self.current;
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();

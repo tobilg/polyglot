@@ -11426,14 +11426,22 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
                 // Statistics info is stored but we don't need it for transpilation
             } else if self.match_identifier("EPHEMERAL") {
-                // ClickHouse: EPHEMERAL [expr]
-                // EPHEMERAL can optionally be followed by an expression
+                // ClickHouse: EPHEMERAL [expr] [type]
+                // EPHEMERAL can optionally be followed by an expression, then optionally a data type
                 if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) && !self.is_at_end()
                     && !self.check_identifier("CODEC") && !self.check_identifier("TTL")
                     && !self.check(TokenType::Comment)
                 {
                     let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
                     col_def.ephemeral = Some(Some(Box::new(expr)));
+                    // ClickHouse: type can follow EPHEMERAL expression (e.g., b EPHEMERAL 'a' String)
+                    if col_def.no_type && !self.check(TokenType::Comma) && !self.check(TokenType::RParen)
+                        && !self.is_at_end() && !self.check_identifier("CODEC") && !self.check_identifier("TTL")
+                        && !self.check(TokenType::Comment)
+                    {
+                        col_def.data_type = self.parse_data_type()?;
+                        col_def.no_type = false;
+                    }
                 } else {
                     col_def.ephemeral = Some(None);
                 }
@@ -23792,10 +23800,10 @@ impl Parser {
             return self.maybe_parse_over(func);
         }
 
-        // ClickHouse: MINUS/EXCEPT/INTERSECT as function names (e.g., minus(a, b))
-        // MINUS is tokenized as TokenType::Except (Oracle alias), but ClickHouse has minus() function
+        // ClickHouse: MINUS/EXCEPT/INTERSECT/REGEXP as function names (e.g., minus(a, b), REGEXP('^db'))
+        // MINUS is tokenized as TokenType::Except (Oracle alias), REGEXP as TokenType::RLike
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-            && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
+            && (self.check(TokenType::Except) || self.check(TokenType::Intersect) || self.check(TokenType::RLike))
             && self.check_next(TokenType::LParen)
         {
             let token = self.advance(); // consume keyword
