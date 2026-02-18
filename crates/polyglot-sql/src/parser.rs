@@ -770,6 +770,12 @@ impl Parser {
                 self.advance(); // consume OPTIMIZE
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse OPTIMIZE statement"))
             }
+            // ClickHouse: EXISTS [TEMPORARY] TABLE/DATABASE/DICTIONARY ...
+            TokenType::Exists if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && !self.check_next(TokenType::LParen) => {
+                self.advance(); // consume EXISTS
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse EXISTS statement"))
+            }
             // ClickHouse: SHOW ... (various SHOW commands beyond what's already handled)
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("EXISTS")
                 && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
@@ -1473,6 +1479,14 @@ impl Parser {
             Some(expressions)
         } else {
             None
+        };
+
+        // ClickHouse: second LIMIT after LIMIT BY (LIMIT n BY expr LIMIT m)
+        let limit = if limit_by.is_some() && self.match_token(TokenType::Limit) {
+            let expr = self.parse_expression()?;
+            Some(Limit { this: expr, percent: false })
+        } else {
+            limit
         };
 
         // Parse FETCH FIRST/NEXT clause
@@ -22259,6 +22273,7 @@ impl Parser {
                 // Check for optional alias on the whole tuple
                 // But NOT when AS is followed by a type constructor like Tuple(a Int8, ...)
                 // which would be part of a CAST expression: CAST((1, 2) AS Tuple(a Int8, b Int16))
+                // Also NOT when AS is followed by a type name then ) like: CAST((1, 2) AS String)
                 let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
                 let result = if self.check(TokenType::As) {
                     // Look ahead: AS + identifier + ( → likely a type, not an alias
@@ -22269,7 +22284,13 @@ impl Parser {
                             || self.tokens[after_as].token_type == TokenType::Var
                             || self.tokens[after_as].token_type == TokenType::Nullable)
                         && self.tokens[after_ident].token_type == TokenType::LParen;
-                    if is_type_constructor {
+                    // Check if AS is followed by identifier/keyword then ), indicating CAST(tuple AS Type)
+                    let is_cast_type = after_ident < self.tokens.len()
+                        && (self.tokens[after_as].token_type == TokenType::Identifier
+                            || self.tokens[after_as].token_type == TokenType::Var
+                            || self.tokens[after_as].token_type.is_keyword())
+                        && self.tokens[after_ident].token_type == TokenType::RParen;
+                    if is_type_constructor || is_cast_type {
                         tuple_expr
                     } else {
                         self.advance(); // consume AS
@@ -27192,7 +27213,13 @@ impl Parser {
                 // e.g., COLUMNS(* EXCLUDE (empid, dept))
                 self.advance(); // consume *
                 let star = self.parse_star_modifiers(None)?;
-                (vec![Expression::Star(star)], false)
+                let mut args = vec![Expression::Star(star)];
+                // ClickHouse: func(*, col1, col2) — star followed by more args
+                if self.match_token(TokenType::Comma) {
+                    let rest = self.parse_function_arguments()?;
+                    args.extend(rest);
+                }
+                (args, false)
             }
         } else if self.match_token(TokenType::Distinct) {
             (self.parse_function_arguments()?, true)
@@ -29135,6 +29162,26 @@ impl Parser {
         // as an alias (e.g. CAST((1, 2) AS Tuple(a Int8, b Int16)))
         // Python sqlglot uses _parse_disjunction() here, which is equivalent.
         let expr = self.parse_or()?;
+
+        // ClickHouse: ternary operator inside CAST: CAST(cond ? true_val : false_val AS Type)
+        let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.match_token(TokenType::Parameter)
+        {
+            let true_value = self.parse_or()?;
+            let false_value = if self.match_token(TokenType::Colon) {
+                self.parse_or()?
+            } else {
+                Expression::Null(Null)
+            };
+            Expression::IfFunc(Box::new(IfFunc {
+                original_name: None,
+                condition: expr,
+                true_value,
+                false_value: Some(false_value),
+            }))
+        } else {
+            expr
+        };
 
         // ClickHouse: CAST(expr, 'type_string') syntax with comma instead of AS
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))

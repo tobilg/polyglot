@@ -8,25 +8,29 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // WITH TOTALS without GROUP BY
-    test("SELECT count() FROM t WITH TOTALS");
-    test("SELECT 1 GROUP BY 1 WITH TOTALS");
+    // LIMIT BY inside various subquery contexts
+    test("SELECT * FROM (SELECT * FROM t ORDER BY x LIMIT 1 BY y LIMIT 10) AS sub");
+    test("SELECT (SELECT x FROM t LIMIT 1 BY y)");
+    test("WITH t AS (SELECT * FROM s LIMIT 2 BY x LIMIT 5) SELECT * FROM t");
 
-    // Trailing comma in tuples
-    test("SELECT (1,)");
-    test("SELECT toTypeName((1,)), (1,)");
+    // LIMIT BY followed by OFFSET
+    test("SELECT * FROM t LIMIT 10 BY x LIMIT 5 OFFSET 3");
 
-    // AS alias inside function args
-    test("SELECT lower('aaa' as str) = str");
-    test("SELECT position('' as h, '' as n)");
+    // ORDER BY ... LIMIT BY
+    test("SELECT * FROM t ORDER BY a LIMIT 1 BY b LIMIT 10 OFFSET 0");
 
-    // AS alias inside array literals
-    test("SELECT has([0 as x], x)");
+    // aggregate function with * as arg
+    test("SELECT ignore(*, col1, col2)");
 
-    // CREATE TABLE AS SELECT
-    test("CREATE TABLE t (x String) ENGINE = MergeTree ORDER BY x AS SELECT 'Hello'");
+    // CAST(tuple AS type)
+    test("SELECT CAST((1, 'Hello', toDate('2016-01-01')) AS Tuple(Int32, String, Date))");
+    test("SELECT CAST((1, 2) AS String)");
 
-    // Existing working features
-    test("SELECT 1");
-    test("SELECT 1 ? 2 : 3");
+    // ClickHouse: EXPLAIN with options
+    test("EXPLAIN SYNTAX SELECT 1");
+    test("EXPLAIN AST SELECT 1");
+    test("EXPLAIN PIPELINE SELECT 1");
+
+    // Ternary inside CAST
+    test("CAST(number = 999999 ? NULL : number AS Nullable(UInt64))");
 }
