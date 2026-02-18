@@ -8,24 +8,38 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // REGEXP/RLIKE as column name
-    test("CREATE TABLE t (id UInt64, regexp String) ENGINE=TinyLog");
-    test("SELECT regexp FROM t");
+    // DESC/DESCRIBE ... SETTINGS key=val, key=val
+    test("desc format(CSV, '1,\"String\"') settings schema_inference_hints='x UInt8', column_names_for_schema_inference='x, y'");
 
-    // EXISTS as column name in UPDATE SET
-    test("UPDATE t SET exists = 1 WHERE 1");
+    // ALTER TABLE ... SETTINGS key=val, key=val
+    test("alter table t add column c Int64 settings mutations_sync=2, alter_sync=2");
 
-    // TABLE as identifier after dot in INSERT INTO
-    test("INSERT INTO test_01676.table (x) VALUES (2)");
+    // Keywords as identifiers: FROM
+    test("WITH 1 as from SELECT from, from + from");
+    test("SELECT from, val FROM test_date32_casts");
 
-    // ALTER TABLE multi-action with MODIFY SETTING commas
-    test("ALTER TABLE t ADD COLUMN Data2 UInt64, MODIFY SETTING check_delay_period=5, check_delay_period=10, check_delay_period=15");
+    // Keywords as identifiers: GROUPING
+    test("SELECT grouping, item, runningAccumulate(state, grouping) FROM t");
 
-    // ALTER TABLE ADD COLUMN and then ADD INDEX
-    test("ALTER TABLE t ADD COLUMN c Int64, ADD INDEX idx c TYPE minmax GRANULARITY 1");
+    // Keywords as identifiers: DISTINCT
+    test("SELECT repeat(DISTINCT, 5) FROM (SELECT 'a' AS DISTINCT)");
 
-    // MODIFY STATISTICS
-    test("ALTER TABLE tab MODIFY STATISTICS f64, f32 TYPE tdigest, uniq");
-    test("ALTER TABLE tab CLEAR STATISTICS f64, f32");
-    test("ALTER TABLE tab MATERIALIZE STATISTICS f64, f32");
+    // Keywords as identifiers: DIV, MOD
+    test("SELECT DIV FROM (SELECT 1 AS DIV)");
+
+    // Keywords as identifiers: EXCEPT in table name
+    test("CREATE TABLE array_except1 (a Array(Int32)) ENGINE=Memory");
+
+    // Ternary operator
+    test("SELECT empty(x) ? 'yes' : 'no' FROM t");
+
+    // UNDROP TABLE
+    test("UNDROP TABLE t");
+
+    // Tuple element access with number: t.1
+    test("SELECT toDateTime(time.1) FROM t");
+
+    // COLUMNS transformer
+    test("SELECT * APPLY(toDate) FROM t");
+    test("SELECT COLUMNS('id|value') EXCEPT (id) FROM t");
 }

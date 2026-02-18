@@ -11396,18 +11396,19 @@ impl Parser {
                 col_def.ttl_expr = Some(Box::new(expr));
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && self.check(TokenType::Settings)
+                && self.check_next(TokenType::LParen)
             {
                 // ClickHouse: SETTINGS (key = value, ...) on column definition
+                // Only match parenthesized form; non-parenthesized SETTINGS is statement-level
                 self.advance(); // consume SETTINGS
-                if self.match_token(TokenType::LParen) {
-                    let mut depth = 1i32;
-                    while !self.is_at_end() && depth > 0 {
-                        if self.check(TokenType::LParen) { depth += 1; }
-                        if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
-                        self.advance();
-                    }
-                    self.expect(TokenType::RParen)?;
+                self.expect(TokenType::LParen)?;
+                let mut depth = 1i32;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::LParen) { depth += 1; }
+                    if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                    self.advance();
                 }
+                self.expect(TokenType::RParen)?;
             } else {
                 // Skip unknown column modifiers (DEFERRABLE, CHARACTER SET, etc.)
                 // to allow parsing to continue
@@ -14108,6 +14109,15 @@ impl Parser {
                     }
                 }
 
+                // ClickHouse: consume optional trailing SETTINGS clause
+                // e.g., ALTER TABLE t ADD COLUMN c Int64 SETTINGS mutations_sync=2, alter_sync=2
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Settings)
+                {
+                    self.advance(); // consume SETTINGS
+                    let _ = self.parse_settings_property()?;
+                }
+
                 Ok(Expression::AlterTable(Box::new(AlterTable {
                     name,
                     actions,
@@ -16212,6 +16222,15 @@ impl Parser {
         } else {
             None
         };
+
+        // ClickHouse: consume optional SETTINGS clause after target
+        // e.g., DESC format(CSV, '...') SETTINGS key='val', key2='val2'
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::Settings)
+        {
+            self.advance(); // consume SETTINGS
+            let _ = self.parse_settings_property()?;
+        }
 
         // Parse optional post-target properties like type=stage (non-ClickHouse)
         if properties.is_empty() {
@@ -23085,7 +23104,7 @@ impl Parser {
                 return self.maybe_parse_over(func_expr);
             }
             // Fallback to TIME as identifier/type - preserve original case
-            return Ok(Expression::Identifier(Identifier::new(original_text)));
+            return self.maybe_parse_subscript(Expression::Identifier(Identifier::new(original_text)));
         }
 
         // TIMESTAMP literal: TIMESTAMP '2024-01-15 10:30:00' or TIMESTAMP function: TIMESTAMP(expr)
@@ -27968,7 +27987,10 @@ impl Parser {
                 }
                 (args, false)
             }
-        } else if self.match_token(TokenType::Distinct) {
+        } else if self.check(TokenType::Distinct) && !self.check_next(TokenType::Comma) && !self.check_next(TokenType::RParen) {
+            // DISTINCT as aggregate modifier: func(DISTINCT expr)
+            // Not when followed by comma or rparen — then DISTINCT is used as an identifier value
+            self.advance(); // consume DISTINCT
             (self.parse_function_arguments()?, true)
         } else if is_known_agg && self.match_token(TokenType::All) {
             // ALL is the default quantifier, just consume it
