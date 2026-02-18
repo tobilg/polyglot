@@ -8348,6 +8348,8 @@ pub struct WithFill {
     #[serde(default)]
     pub step: Option<Box<Expression>>,
     #[serde(default)]
+    pub staleness: Option<Box<Expression>>,
+    #[serde(default)]
     pub interpolate: Option<Box<Expression>>,
 }
 

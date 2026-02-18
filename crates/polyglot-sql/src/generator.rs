@@ -31174,6 +31174,13 @@ impl Generator {
             self.generate_expression(step)?;
         }
 
+        if let Some(staleness) = &e.staleness {
+            self.write_space();
+            self.write_keyword("STALENESS");
+            self.write_space();
+            self.generate_expression(staleness)?;
+        }
+
         if let Some(interpolate) = &e.interpolate {
             self.write_space();
             self.write_keyword("INTERPOLATE");

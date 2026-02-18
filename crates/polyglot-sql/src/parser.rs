@@ -1493,11 +1493,21 @@ impl Parser {
         };
 
         // ClickHouse: second LIMIT after LIMIT BY (LIMIT n BY expr LIMIT m)
-        let limit = if limit_by.is_some() && self.match_token(TokenType::Limit) {
-            let expr = self.parse_expression()?;
-            Some(Limit { this: expr, percent: false })
+        // Also supports LIMIT offset, count syntax
+        let (limit, offset) = if limit_by.is_some() && self.match_token(TokenType::Limit) {
+            let first_expr = self.parse_expression()?;
+            if self.match_token(TokenType::Comma) {
+                // LIMIT offset, count
+                let count_expr = self.parse_expression()?;
+                (
+                    Some(Limit { this: count_expr, percent: false }),
+                    Some(Offset { this: first_expr, rows: None }),
+                )
+            } else {
+                (Some(Limit { this: first_expr, percent: false }), offset)
+            }
         } else {
-            limit
+            (limit, offset)
         };
 
         // Parse FETCH FIRST/NEXT clause
@@ -5342,6 +5352,12 @@ impl Parser {
                 } else {
                     None
                 };
+                // ClickHouse: STALENESS [INTERVAL] expr
+                let staleness = if self.match_text_seq(&["STALENESS"]) {
+                    Some(Box::new(self.parse_addition()?))
+                } else {
+                    None
+                };
                 let interpolate = if self.match_text_seq(&["INTERPOLATE"]) {
                     if self.match_token(TokenType::LParen) {
                         // Parse INTERPOLATE items: identifier [AS expression], ...
@@ -5379,7 +5395,7 @@ impl Parser {
                 } else {
                     None
                 };
-                Some(Box::new(WithFill { from_, to, step, interpolate }))
+                Some(Box::new(WithFill { from_, to, step, staleness, interpolate }))
             } else {
                 None
             };
@@ -7523,6 +7539,12 @@ impl Parser {
                 all_values.push(row);
 
                 if !self.match_token(TokenType::Comma) {
+                    // ClickHouse: allow tuples without commas: VALUES (1) (2) (3)
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && self.check(TokenType::LParen)
+                    {
+                        continue;
+                    }
                     break;
                 }
             }
@@ -15906,6 +15928,12 @@ impl Parser {
                 || self.check(TokenType::Set) || self.check(TokenType::System))
         {
             self.parse_statement()?
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
+            && self.peek_nth(1).map(|t| t.token_type) == Some(TokenType::LParen)
+        {
+            // ClickHouse: DESC format(Values, '(123)') — function call as target
+            self.parse_expression()?
         } else {
             // Parse as table reference
             let table = self.parse_table_ref()?;
@@ -21045,8 +21073,8 @@ impl Parser {
             } else if self.match_token(TokenType::Percent) {
                 let right = self.parse_power()?;
                 Expression::Mod(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_token(TokenType::Div) {
-                // DIV keyword for integer division (Hive/Spark/MySQL)
+            } else if self.match_identifier("DIV") || self.match_token(TokenType::Div) {
+                // DIV keyword for integer division (Hive/Spark/MySQL/ClickHouse)
                 let right = self.parse_power()?;
                 Expression::IntDiv(Box::new(crate::expressions::BinaryFunc {
                     this: left,
@@ -21255,8 +21283,8 @@ impl Parser {
                 // MySQL/Teradata: x MOD y (infix modulo operator)
                 let right = self.parse_power()?;
                 Expression::Mod(Box::new(BinaryOp::new(left, right)))
-            } else if self.match_token(TokenType::Div) {
-                // DIV keyword for integer division (Hive/Spark/MySQL)
+            } else if self.match_identifier("DIV") || self.match_token(TokenType::Div) {
+                // DIV keyword for integer division (Hive/Spark/MySQL/ClickHouse)
                 let right = self.parse_power()?;
                 Expression::IntDiv(Box::new(crate::expressions::BinaryFunc {
                     this: left,
@@ -31287,6 +31315,8 @@ impl Parser {
 
         // Parse EXCLUDE / EXCEPT clause
         if self.match_token(TokenType::Exclude) || self.match_token(TokenType::Except) {
+            // ClickHouse: EXCEPT STRICT col1, col2 (STRICT is optional modifier)
+            let _ = self.match_text_seq(&["STRICT"]);
             let mut columns = Vec::new();
             if self.match_token(TokenType::LParen) {
                 // EXCLUDE (col1, col2) or EXCEPT (A.COL_1, B.COL_2)
@@ -31317,15 +31347,23 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
             } else {
-                // EXCLUDE col (single column, Snowflake) or EXCEPT 'regex' (ClickHouse)
-                let col = if self.check(TokenType::String) {
-                    self.advance().text
-                } else if self.is_safe_keyword_as_identifier() {
-                    self.advance().text
-                } else {
-                    self.expect_identifier()?
-                };
-                columns.push(Identifier::new(col));
+                // EXCLUDE col (single column, Snowflake) or EXCEPT col1, col2 (ClickHouse)
+                // or EXCEPT 'regex' (ClickHouse)
+                loop {
+                    let col = if self.check(TokenType::String) {
+                        self.advance().text
+                    } else if self.is_safe_keyword_as_identifier() {
+                        self.advance().text
+                    } else {
+                        self.expect_identifier()?
+                    };
+                    columns.push(Identifier::new(col));
+                    if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        || !self.match_token(TokenType::Comma)
+                    {
+                        break;
+                    }
+                }
             }
             except = Some(columns);
         }
@@ -40083,6 +40121,11 @@ impl Parser {
             } else {
                 None
             };
+            let staleness = if self.match_text_seq(&["STALENESS"]) {
+                Some(Box::new(self.parse_addition()?))
+            } else {
+                None
+            };
             let interpolate = if self.match_text_seq(&["INTERPOLATE"]) {
                 if self.match_token(TokenType::LParen) {
                     let exprs = self.parse_expression_list()?;
@@ -40098,7 +40141,7 @@ impl Parser {
             } else {
                 None
             };
-            Some(Box::new(WithFill { from_, to, step, interpolate }))
+            Some(Box::new(WithFill { from_, to, step, staleness, interpolate }))
         } else {
             None
         };
@@ -40119,7 +40162,7 @@ impl Parser {
             return Ok(Some(Expression::Ordered(Box::new(ordered))));
         }
         if self.match_text_seq(&["NULLS", "FIRST"]) {
-            return Ok(Some(Expression::WithFill(Box::new(WithFill { from_: None, to: None, step: None, interpolate: None }))));
+            return Ok(Some(Expression::WithFill(Box::new(WithFill { from_: None, to: None, step: None, staleness: None, interpolate: None }))));
         }
         if self.match_text_seq(&["NULLS", "LAST"]) {
             // Matched: NULLS LAST
