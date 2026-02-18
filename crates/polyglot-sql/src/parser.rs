@@ -7429,26 +7429,24 @@ impl Parser {
                 // This is a parenthesized subquery, not a column list
                 Vec::new()
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                && self.peek_nth(1).map(|t| t.token_type == TokenType::Star).unwrap_or(false)
+                && {
+                    // ClickHouse: INSERT INTO t (*), t(* EXCEPT ...), t(table.* EXCEPT ...), t(COLUMNS('pattern') EXCEPT ...)
+                    let peek1 = self.peek_nth(1).map(|t| t.token_type);
+                    peek1 == Some(TokenType::Star)
+                        || (peek1 == Some(TokenType::Var)
+                            && self.peek_nth(2).map(|t| t.token_type) == Some(TokenType::Dot)
+                            && self.peek_nth(3).map(|t| t.token_type) == Some(TokenType::Star))
+                        || (peek1 == Some(TokenType::Var)
+                            && self.peek_nth(1).map(|t| t.text.to_uppercase() == "COLUMNS").unwrap_or(false))
+                }
             {
-                // ClickHouse: INSERT INTO t (*) or INSERT INTO t (* EXCEPT (col1, col2))
-                // Skip the entire column specification
+                // Consume balanced parens and skip entire column specification
                 self.advance(); // consume (
-                self.advance(); // consume *
-                // Skip EXCEPT (col1, col2) if present
-                if self.match_token(TokenType::Except) || self.match_identifier("EXCEPT") {
-                    if self.match_token(TokenType::LParen) {
-                        let mut depth = 1;
-                        while !self.is_at_end() && depth > 0 {
-                            if self.match_token(TokenType::LParen) {
-                                depth += 1;
-                            } else if self.match_token(TokenType::RParen) {
-                                depth -= 1;
-                            } else {
-                                self.advance();
-                            }
-                        }
-                    }
+                let mut depth = 1i32;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::LParen) { depth += 1; }
+                    if self.check(TokenType::RParen) { depth -= 1; if depth == 0 { break; } }
+                    self.advance();
                 }
                 self.expect(TokenType::RParen)?;
                 Vec::new() // Treat as "all columns"
@@ -15887,10 +15885,20 @@ impl Parser {
         // ClickHouse: EXPLAIN/DESC can precede any statement or subquery
         let target = if self.check(TokenType::Select) || self.check(TokenType::With) {
             self.parse_statement()?
-        } else if self.check(TokenType::LParen)
-            && self.peek_nth(1).map(|t| t.token_type == TokenType::Select || t.token_type == TokenType::With).unwrap_or(false)
-        {
-            // DESC (SELECT ...) — parenthesized subquery
+        } else if self.check(TokenType::LParen) && {
+            // Look through nested parens for SELECT/WITH
+            let mut depth = 0usize;
+            let mut found_select = false;
+            for i in 0..20 {
+                match self.peek_nth(i).map(|t| t.token_type) {
+                    Some(TokenType::LParen) => depth += 1,
+                    Some(TokenType::Select) | Some(TokenType::With) if depth > 0 => { found_select = true; break; }
+                    _ => break,
+                }
+            }
+            found_select
+        } {
+            // DESC (((SELECT ...))) — deeply nested parenthesized subquery
             self.parse_statement()?
         } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && (self.check(TokenType::Insert) || self.check(TokenType::Create)
@@ -24205,7 +24213,20 @@ impl Parser {
                     return Ok(match upper_name {
                         "MODE" => Expression::Mode(Box::new(agg)),
                         _ => {
-                            return Err(Error::parse(format!("{} cannot have zero arguments", upper_name)));
+                            // ClickHouse: allow zero-arg aggregates (server will validate)
+                            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                                Expression::Function(Box::new(Function {
+                                    name: name.to_string(),
+                                    args: Vec::new(),
+                                    distinct: false,
+                                    trailing_comments: Vec::new(),
+                                    use_bracket_syntax: false,
+                                    no_parens: false,
+                                    quoted: false,
+                                }))
+                            } else {
+                                return Err(Error::parse(format!("{} cannot have zero arguments", upper_name)));
+                            }
                         }
                     });
                 }
