@@ -8,19 +8,15 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // Double semicolons
-    test("SELECT 1;; -- comment");
+    // timestamp in ORDER BY with fill
+    test("select * from ts order by sensor_id, timestamp with fill from 6 to 10");
 
-    // INDEX in MV schema
-    test("CREATE MATERIALIZED VIEW mv (key String, INDEX idx key TYPE bloom_filter GRANULARITY 1) ENGINE = MergeTree ORDER BY key AS SELECT * FROM data");
+    // using ts as column name instead
+    test("select * from ts order by sensor_id, ts with fill from 6 to 10");
 
-    // PROJECTION in schema
-    test("CREATE MATERIALIZED VIEW mv (key String, PROJECTION p (SELECT uniqCombined(key))) ENGINE = MergeTree ORDER BY key AS SELECT * FROM data");
+    // using just timestamp
+    test("select * from ts order by timestamp with fill from 6 to 10");
 
-    // PROJECTION with INDEX in CREATE TABLE (03460)
-    test("CREATE TABLE t (region String, INDEX i1 region TYPE bloom_filter, PROJECTION region_proj (SELECT region ORDER BY region)) ENGINE = MergeTree ORDER BY region");
-
-    // Grouping still works
-    test("SELECT 1 FROM t GROUP BY grouping, item ORDER BY grouping");
-    test("SELECT 1 FROM t GROUP BY GROUPING SETS ((a), (b))");
+    // fix replace.from
+    test("INSERT INTO t (tag_id, replace.from) SELECT 1, 2");
 }

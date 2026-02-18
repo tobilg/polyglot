@@ -23271,7 +23271,10 @@ impl Parser {
                 return self.maybe_parse_over(func_expr);
             }
             // Check for TIMESTAMP WITH TIME ZONE (no precision) as data type
-            if self.check(TokenType::With) || self.check_keyword_text("WITHOUT") {
+            // Use lookahead to verify WITH is followed by TIME (not WITH FILL, WITH TOTALS, etc.)
+            if (self.check(TokenType::With) && self.peek_nth(1).map_or(false, |t| t.text.eq_ignore_ascii_case("TIME")))
+                || self.check_keyword_text("WITHOUT")
+            {
                 let timezone = if self.match_token(TokenType::With) {
                     self.match_keyword("TIME");
                     self.match_keyword("ZONE");
@@ -33516,10 +33519,11 @@ impl Parser {
             let quoted = self.check(TokenType::QuotedIdentifier);
             let mut name = self.expect_identifier_or_safe_keyword()?;
             // ClickHouse: handle dotted names in identifier lists (e.g., INSERT INTO t (n.a, n.b))
+            // Use keyword_with_quoted to allow any keyword after dot (e.g., replace.from)
             if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
                 while self.match_token(TokenType::Dot) {
-                    let sub = self.expect_identifier_or_safe_keyword()?;
-                    name = format!("{}.{}", name, sub);
+                    let sub_id = self.expect_identifier_or_keyword_with_quoted()?;
+                    name = format!("{}.{}", name, sub_id.name);
                 }
             }
             let trailing_comments = self.previous_trailing_comments();
