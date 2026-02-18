@@ -8723,6 +8723,14 @@ impl Parser {
         // Parse table name
         let name = self.parse_table_ref()?;
 
+        // ClickHouse: UUID 'xxx' clause after table name
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check_identifier("UUID")
+        {
+            self.advance(); // consume UUID
+            let _ = self.advance(); // consume UUID string value
+        }
+
         // ClickHouse: ON CLUSTER clause
         let on_cluster = self.parse_on_cluster_clause()?;
 
@@ -12904,6 +12912,14 @@ impl Parser {
         let if_not_exists = self.match_keywords(&[TokenType::If, TokenType::Not, TokenType::Exists]);
 
         let name = self.parse_table_ref()?;
+
+        // ClickHouse: UUID 'xxx' clause after view name
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check_identifier("UUID")
+        {
+            self.advance(); // consume UUID
+            let _ = self.advance(); // consume UUID string value
+        }
 
         // ClickHouse: ON CLUSTER clause (after view name)
         let on_cluster = self.parse_on_cluster_clause()?;
