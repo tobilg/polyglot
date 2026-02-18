@@ -739,6 +739,11 @@ impl Parser {
                 self.advance(); // consume PRINT
                 self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse PRINT statement"))
             }
+            // ClickHouse: CHECK TABLE t [PARTITION p] [SETTINGS ...]
+            TokenType::Check if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume CHECK
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse CHECK statement"))
+            }
             // ClickHouse: SYSTEM STOP/START MERGES, etc.
             TokenType::System if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
                 self.advance(); // consume SYSTEM
@@ -13546,6 +13551,30 @@ impl Parser {
     /// Parse ALTER TABLE action
     fn parse_alter_action(&mut self) -> Result<AlterTableAction> {
         if self.match_token(TokenType::Add) {
+            // ClickHouse: ADD INDEX idx expr TYPE minmax GRANULARITY 1
+            // ClickHouse: ADD PROJECTION name (SELECT ...)
+            // These have different syntax from MySQL ADD INDEX, so consume as Raw
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Index) || self.check_identifier("PROJECTION"))
+            {
+                let mut tokens: Vec<(String, TokenType)> = vec![("ADD".to_string(), TokenType::Add)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen { paren_depth += 1; }
+                    if token.token_type == TokenType::RParen { paren_depth -= 1; }
+                    let text = if token.token_type == TokenType::QuotedIdentifier {
+                        format!("\"{}\"", token.text)
+                    } else if token.token_type == TokenType::String {
+                        format!("'{}'", token.text)
+                    } else {
+                        token.text.clone()
+                    };
+                    tokens.push((text, token.token_type));
+                }
+                return Ok(AlterTableAction::Raw { sql: self.join_command_tokens(tokens) });
+            }
             // ADD CONSTRAINT or ADD COLUMN or ADD INDEX
             if self.match_token(TokenType::Constraint) {
                 // ADD CONSTRAINT name ...
@@ -13725,6 +13754,30 @@ impl Parser {
                 }
             }
         } else if self.match_token(TokenType::Drop) {
+            // ClickHouse: DROP INDEX idx, DROP PROJECTION name, DROP STATISTICS, etc.
+            // These have different syntax from MySQL, so consume as Raw
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && (self.check(TokenType::Index) || self.check_identifier("PROJECTION")
+                    || self.check_identifier("STATISTICS") || self.check_identifier("DETACHED"))
+            {
+                let mut tokens: Vec<(String, TokenType)> = vec![("DROP".to_string(), TokenType::Drop)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen { paren_depth += 1; }
+                    if token.token_type == TokenType::RParen { paren_depth -= 1; }
+                    let text = if token.token_type == TokenType::QuotedIdentifier {
+                        format!("\"{}\"", token.text)
+                    } else if token.token_type == TokenType::String {
+                        format!("'{}'", token.text)
+                    } else {
+                        token.text.clone()
+                    };
+                    tokens.push((text, token.token_type));
+                }
+                return Ok(AlterTableAction::Raw { sql: self.join_command_tokens(tokens) });
+            }
             // Handle IF EXISTS before determining what to drop
             let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
 
@@ -13924,6 +13977,29 @@ impl Parser {
                 Ok(AlterTableAction::AlterColumn { name, action, use_modify_keyword: false })
             }
         } else if self.match_identifier("MODIFY") {
+            // ClickHouse: MODIFY ORDER BY, MODIFY SETTING, MODIFY TTL, MODIFY QUERY,
+            // MODIFY COLUMN name type [DEFAULT|MATERIALIZED|ALIAS] [CODEC] [TTL] [COMMENT], etc.
+            // These are ClickHouse-specific and have richer syntax than MySQL MODIFY COLUMN.
+            // Consume all ClickHouse MODIFY actions as Raw.
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                let mut tokens: Vec<(String, TokenType)> = vec![("MODIFY".to_string(), TokenType::Var)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 { break; }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen { paren_depth += 1; }
+                    if token.token_type == TokenType::RParen { paren_depth -= 1; }
+                    let text = if token.token_type == TokenType::QuotedIdentifier {
+                        format!("\"{}\"", token.text)
+                    } else if token.token_type == TokenType::String {
+                        format!("'{}'", token.text)
+                    } else {
+                        token.text.clone()
+                    };
+                    tokens.push((text, token.token_type));
+                }
+                return Ok(AlterTableAction::Raw { sql: self.join_command_tokens(tokens) });
+            }
             // MODIFY COLUMN (MySQL syntax for altering column type)
             self.match_token(TokenType::Column); // optional COLUMN keyword
             let name = Identifier::new(self.expect_identifier()?);
@@ -35062,7 +35138,12 @@ impl Parser {
                             expressions: vec![k, v],
                         })));
                 }
-                if !self.match_token(TokenType::Comma) {
+                // ClickHouse dict properties are space-separated, not comma-separated
+                // e.g. SOURCE(CLICKHOUSE(HOST 'localhost' PORT tcpPort() DB 'test'))
+                // Accept optional comma but don't require it
+                self.match_token(TokenType::Comma);
+                // Break if we see RParen (end of settings)
+                if self.check(TokenType::RParen) {
                     break;
                 }
             }
