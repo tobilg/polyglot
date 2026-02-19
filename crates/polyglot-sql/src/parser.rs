@@ -465,6 +465,10 @@ pub struct Parser {
     config: ParserConfig,
     /// Original source SQL (used for preserving exact text in Command expressions)
     source: Option<String>,
+    /// Comments captured by parse_comparison when no comparison operator follows.
+    /// These are leading comments from the first token of an expression that need
+    /// to be placed by the caller (e.g., after an alias, or after an AND operand).
+    pending_leading_comments: Vec<String>,
 }
 
 /// Configuration for the SQL [`Parser`].
@@ -491,6 +495,7 @@ impl Parser {
             current: 0,
             config: ParserConfig::default(),
             source: None,
+            pending_leading_comments: Vec::new(),
         }
     }
 
@@ -501,6 +506,7 @@ impl Parser {
             current: 0,
             config,
             source: None,
+            pending_leading_comments: Vec::new(),
         }
     }
 
@@ -514,6 +520,7 @@ impl Parser {
             current: 0,
             config,
             source: Some(source),
+            pending_leading_comments: Vec::new(),
         }
     }
 
@@ -559,10 +566,24 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
-            statements.push(self.parse_statement()?);
+            let mut stmt = self.parse_statement()?;
+
+            // Before consuming the semicolon, capture its leading comments
+            // and attach them to the statement (e.g., SELECT foo\n/* comment */\n;)
+            if self.check(TokenType::Semicolon) {
+                let semi_comments = self.current_leading_comments();
+                if !semi_comments.is_empty() {
+                    stmt = Expression::Annotated(Box::new(Annotated {
+                        this: stmt,
+                        trailing_comments: semi_comments,
+                    }));
+                }
+            }
 
             // Consume optional semicolon
             self.match_token(TokenType::Semicolon);
+
+            statements.push(stmt);
         }
 
         Ok(statements)
@@ -929,6 +950,9 @@ impl Parser {
                 // Capture any comments between expression and AS keyword
                 let pre_alias_comments = self.previous_trailing_comments();
                 if self.match_token(TokenType::As) {
+                    // Capture comments from AS token (e.g., AS /* foo */ (a, b, c))
+                    // These go into trailing_comments (after the alias), not pre_alias_comments
+                    let as_comments = self.previous_trailing_comments();
                     // Check for tuple alias: AS ("a", "b", ...)
                     if self.match_token(TokenType::LParen) {
                         let mut column_aliases = Vec::new();
@@ -940,7 +964,8 @@ impl Parser {
                             }
                         }
                         self.expect(TokenType::RParen)?;
-                        let trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = as_comments;
+                        trailing_comments.extend(self.previous_trailing_comments());
                         Ok(Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias: Identifier::empty(),
@@ -950,7 +975,10 @@ impl Parser {
                         })))
                     } else {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        let trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = self.previous_trailing_comments();
+                        // If there were leading comments on the expression (from a separate line),
+                        // add them as trailing comments after the alias
+                        trailing_comments.extend(leading_comments.iter().cloned());
                         Ok(Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias,
@@ -1227,7 +1255,7 @@ impl Parser {
         };
 
         // Parse WHERE clause
-        let where_clause = if self.match_token(TokenType::Where) {
+        let mut where_clause = if self.match_token(TokenType::Where) {
             Some(Where {
                 this: self.parse_expression()?,
             })
@@ -1239,16 +1267,26 @@ impl Parser {
         let connect = self.parse_connect()?;
 
         // Parse GROUP BY
-        let group_by = if self.match_keywords(&[TokenType::Group, TokenType::By]) {
-            Some(self.parse_group_by()?)
+        let group_by = if self.check(TokenType::Group) {
+            let group_comments = self.current_leading_comments();
+            if self.match_keywords(&[TokenType::Group, TokenType::By]) {
+                let mut gb = self.parse_group_by()?;
+                gb.comments = group_comments;
+                Some(gb)
+            } else {
+                None
+            }
         } else {
             None
         };
 
         // Parse HAVING
-        let having = if self.match_token(TokenType::Having) {
+        let having = if self.check(TokenType::Having) {
+            let having_comments = self.current_leading_comments();
+            self.advance(); // consume HAVING
             Some(Having {
                 this: self.parse_expression()?,
+                comments: having_comments,
             })
         } else {
             None
@@ -1311,18 +1349,43 @@ impl Parser {
         };
 
         // Parse ORDER BY or ORDER SIBLINGS BY (Oracle) - comes after SORT BY
-        let order_by = if self.match_keywords(&[TokenType::Order, TokenType::Siblings, TokenType::By]) {
-            // ORDER SIBLINGS BY (Oracle hierarchical queries)
-            Some(self.parse_order_by_with_siblings(true)?)
-        } else if self.match_keywords(&[TokenType::Order, TokenType::By]) {
-            Some(self.parse_order_by()?)
+        let order_by = if self.check(TokenType::Order) {
+            let order_comments = self.current_leading_comments();
+            if self.match_keywords(&[TokenType::Order, TokenType::Siblings, TokenType::By]) {
+                // ORDER SIBLINGS BY (Oracle hierarchical queries)
+                let mut ob = self.parse_order_by_with_siblings(true)?;
+                ob.comments = order_comments;
+                Some(ob)
+            } else if self.match_keywords(&[TokenType::Order, TokenType::By]) {
+                let mut ob = self.parse_order_by()?;
+                ob.comments = order_comments;
+                Some(ob)
+            } else {
+                None
+            }
         } else {
             None
         };
 
         // Parse LIMIT (supports MySQL syntax: LIMIT offset, count)
         // DuckDB supports: LIMIT 10 PERCENT or LIMIT 10%
+        // Capture trailing comments from the token before LIMIT (e.g., WHERE condition's last token)
+        // These comments should be emitted after the LIMIT value, not before LIMIT.
+        let pre_limit_comments = if self.check(TokenType::Limit) {
+            let mut comments = self.previous_trailing_comments();
+            // Also capture leading comments on the LIMIT token (comments on a separate line before LIMIT)
+            comments.extend(self.current_leading_comments());
+            comments
+        } else {
+            Vec::new()
+        };
         let (limit, offset) = if self.match_token(TokenType::Limit) {
+            // Clear the pre-LIMIT comments from the WHERE condition expression to avoid duplication
+            if !pre_limit_comments.is_empty() {
+                if let Some(ref mut w) = where_clause {
+                    Self::clear_rightmost_trailing_comments(&mut w.this);
+                }
+            }
             // First try parse_unary to check for PERCENT/% modifier.
             // This avoids parse_expression consuming % as the modulo operator.
             let saved_pos = self.current;
@@ -1367,12 +1430,12 @@ impl Parser {
                 let second_expr = self.parse_expression()?;
                 // First expression is offset, second is count
                 (
-                    Some(Limit { this: second_expr, percent: false }),
+                    Some(Limit { this: second_expr, percent: false, comments: pre_limit_comments.clone() }),
                     Some(Offset { this: first_expr, rows: None }),
                 )
             } else {
                 // Standard: LIMIT count [PERCENT]
-                (Some(Limit { this: first_expr, percent: has_percent }), None)
+                (Some(Limit { this: first_expr, percent: has_percent, comments: pre_limit_comments }), None)
             }
         } else {
             (None, None)
@@ -1394,7 +1457,7 @@ impl Parser {
             // Check for LIMIT after OFFSET (Presto/Trino syntax: OFFSET n LIMIT m)
             let limit = if limit.is_none() && self.match_token(TokenType::Limit) {
                 let limit_expr = self.parse_expression()?;
-                Some(Limit { this: limit_expr, percent: false })
+                Some(Limit { this: limit_expr, percent: false , comments: Vec::new() })
             } else {
                 limit
             };
@@ -1569,6 +1632,7 @@ impl Parser {
                             materialized: None,
                             key_expressions: Vec::new(),
                             alias_first: false,
+                            comments: Vec::new(),
                         });
 
                         if self.match_token(TokenType::Comma) {
@@ -1607,7 +1671,13 @@ impl Parser {
             };
 
             // AS is optional (Snowflake allows WITH t (SELECT ...) without AS)
-            self.match_token(TokenType::As);
+            let cte_comments = if self.match_token(TokenType::As) {
+                // Capture trailing comments from the AS token
+                // e.g., "WITH a AS /* comment */ (...)" -> comment goes after alias
+                self.previous_trailing_comments()
+            } else {
+                Vec::new()
+            };
 
             // Check for MATERIALIZED or NOT MATERIALIZED
             let materialized = if self.match_token(TokenType::Materialized) {
@@ -1630,11 +1700,25 @@ impl Parser {
                 materialized,
                 key_expressions,
                 alias_first: true,
+                comments: cte_comments,
             });
 
             if !self.match_token(TokenType::Comma) {
+                // Check for WITH merging: WITH a AS (...) WITH b AS (...) -> merged
+                // If the next token is WITH (not followed by nothing), continue parsing CTEs
+                if self.check(TokenType::With) {
+                    self.advance(); // consume the redundant WITH keyword
+                    // Check if this WITH is also RECURSIVE
+                    if self.match_token(TokenType::Recursive) && !recursive {
+                        // If second WITH is RECURSIVE but first wasn't, ignore (keep non-recursive)
+                    }
+                    continue; // continue the loop to parse more CTEs
+                }
                 break;
             }
+            // WI-14f: Skip redundant WITH keyword after comma in CTE list
+            // e.g., WITH a AS (SELECT 1), WITH b AS (SELECT 2) SELECT *
+            self.match_token(TokenType::With);
         }
 
         // Parse optional SEARCH/CYCLE clause for recursive CTEs (PostgreSQL)
@@ -1644,6 +1728,29 @@ impl Parser {
 
         // Parse the main query
         let mut main_query = self.parse_statement()?;
+
+        // Unwrap parenthesized wrappers to find the inner SELECT
+        // (matching Python sqlglot: while isinstance(this, Subquery) and this.is_wrapper)
+        loop {
+            match main_query {
+                Expression::Paren(paren) => {
+                    main_query = paren.this;
+                }
+                Expression::Subquery(ref sub) if sub.alias.is_none()
+                    && sub.order_by.is_none()
+                    && sub.limit.is_none()
+                    && sub.offset.is_none() =>
+                {
+                    // Unwrap Subquery wrapper (parenthesized query without modifiers)
+                    if let Expression::Subquery(sub) = main_query {
+                        main_query = sub.this;
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
 
         // Attach WITH to the main query
         let with_clause = With { ctes, recursive, leading_comments, search };
@@ -1730,6 +1837,9 @@ impl Parser {
                 }
                 expressions.push(star_expr);
             } else {
+                // Capture leading comments from the first token before parsing
+                // These are comments on a separate line before the expression
+                let leading_comments = self.current_leading_comments();
                 let expr = self.parse_expression()?;
                 // Capture comments between expression and potential AS
                 let pre_alias_comments = self.previous_trailing_comments();
@@ -1769,6 +1879,9 @@ impl Parser {
                         expr
                     }
                 } else if self.match_token(TokenType::As) {
+                    // Capture comments from AS token (e.g., AS /* foo */ (a, b, c))
+                    // These go into trailing_comments (after the alias), not pre_alias_comments
+                    let as_comments = self.previous_trailing_comments();
                     // Check for column aliases: AS (col1, col2) - used by POSEXPLODE etc.
                     if self.match_token(TokenType::LParen) {
                         let mut column_aliases = Vec::new();
@@ -1785,7 +1898,8 @@ impl Parser {
                             }
                         }
                         self.match_token(TokenType::RParen);
-                        let trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = as_comments;
+                        trailing_comments.extend(self.previous_trailing_comments());
                         Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias: Identifier::new(String::new()),
@@ -1797,7 +1911,16 @@ impl Parser {
                         // Allow keywords as aliases (e.g., SELECT 1 AS filter)
                         // Use _with_quoted to preserve quoted alias
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        let trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = self.previous_trailing_comments();
+                        // If parse_comparison stored pending leading comments (no comparison
+                        // followed), use those. Otherwise use the leading_comments we captured
+                        // before parse_expression(). Both come from the same token, so we
+                        // only add one set to avoid duplication.
+                        if !self.pending_leading_comments.is_empty() {
+                            trailing_comments.extend(self.pending_leading_comments.drain(..));
+                        } else {
+                            trailing_comments.extend(leading_comments.iter().cloned());
+                        }
                         Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias,
@@ -1860,6 +1983,12 @@ impl Parser {
                             trailing_comments: pre_alias_comments,
                         }))
                     }
+                } else if !leading_comments.is_empty() {
+                    // Wrap in Annotated to preserve leading comments as trailing comments
+                    Expression::Annotated(Box::new(Annotated {
+                        this: expr,
+                        trailing_comments: leading_comments,
+                    }))
                 } else {
                     expr
                 };
@@ -1928,14 +2057,14 @@ impl Parser {
                     break;
                 }
             }
-            Some(GroupBy { expressions: groups, all: None, totals: false })
+            Some(GroupBy { expressions: groups, all: None, totals: false, comments: Vec::new() })
         } else {
             None
         };
 
         // Parse HAVING
         let having = if self.match_token(TokenType::Having) {
-            Some(Having { this: self.parse_expression()? })
+            Some(Having { this: self.parse_expression()?, comments: Vec::new() })
         } else {
             None
         };
@@ -1951,7 +2080,7 @@ impl Parser {
         // Parse LIMIT
         let limit = if self.match_token(TokenType::Limit) {
             let first_expr = self.parse_expression()?;
-            Some(Limit { this: first_expr, percent: false })
+            Some(Limit { this: first_expr, percent: false , comments: Vec::new() })
         } else {
             None
         };
@@ -2378,7 +2507,7 @@ impl Parser {
                     self.expect(TokenType::By)?;
                     let order_by = self.parse_order_by()?;
                     let limit = if self.match_token(TokenType::Limit) {
-                        Some(Limit { this: self.parse_expression()?, percent: false })
+                        Some(Limit { this: self.parse_expression()?, percent: false , comments: Vec::new() })
                     } else {
                         None
                     };
@@ -2404,7 +2533,7 @@ impl Parser {
                 } else if self.check(TokenType::Limit) || self.check(TokenType::Offset) {
                     // LIMIT/OFFSET without ORDER BY
                     let limit = if self.match_token(TokenType::Limit) {
-                        Some(Limit { this: self.parse_expression()?, percent: false })
+                        Some(Limit { this: self.parse_expression()?, percent: false , comments: Vec::new() })
                     } else {
                         None
                     };
@@ -2969,6 +3098,7 @@ impl Parser {
                         index: None,
                         style: ParameterStyle::Brace,
                         quoted: false,
+                        string_quoted: false,
                         expression: None,
                     }))
                 } else {
@@ -2999,6 +3129,7 @@ impl Parser {
                     index: None,
                     style: ParameterStyle::DollarBrace,
                     quoted: false,
+                    string_quoted: false,
                     expression,
                 }))
             } else {
@@ -3225,7 +3356,15 @@ impl Parser {
         }
 
         // Check for MySQL PARTITION(p0, p1, ...) clause
-        if self.match_token(TokenType::Partition) {
+        // Only supported by MySQL-compatible dialects (not generic dialect)
+        let supports_partition_selection = matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::MySQL)
+            | Some(crate::dialects::DialectType::SingleStore)
+            | Some(crate::dialects::DialectType::Doris)
+            | Some(crate::dialects::DialectType::StarRocks)
+        );
+        if supports_partition_selection && self.match_token(TokenType::Partition) {
             if self.match_token(TokenType::LParen) {
                 let mut partitions = Vec::new();
                 loop {
@@ -3540,6 +3679,14 @@ impl Parser {
             // PIVOT/UNPIVOT can be table aliases when not followed by clause-starting tokens
             || (self.check(TokenType::Pivot) && !self.check_next(TokenType::LParen))
             || (self.check(TokenType::Unpivot) && !self.is_unpivot_clause_start())
+            // PARTITION can be a table alias when the dialect doesn't support partition selection
+            || (self.check(TokenType::Partition) && !matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::MySQL)
+                | Some(crate::dialects::DialectType::SingleStore)
+                | Some(crate::dialects::DialectType::Doris)
+                | Some(crate::dialects::DialectType::StarRocks)
+            ))
             || (self.check(TokenType::Window) && {
                 // WINDOW can be a table alias if NOT followed by an identifier (window definition)
                 let next_pos = self.current + 1;
@@ -3935,6 +4082,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: None,
+                is_field: false,
             })))
         } else {
             // Bare identifier: FOR foo IN y_enum (no parentheses)
@@ -3948,6 +4096,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: None,
+                is_field: true,
             })))
         }
     }
@@ -4509,125 +4658,164 @@ impl Parser {
     /// - The rightmost ON applies to the rightmost unconditioned JOIN
     fn parse_joins(&mut self) -> Result<Vec<Join>> {
         let mut joins = Vec::new();
+        let mut nesting_group: usize = 0;
 
-        // Phase 1: Parse all JOINs with optional inline ON/USING conditions
-        while let Some((kind, needs_join_keyword, use_inner_keyword, use_outer_keyword, join_hint)) = self.try_parse_join_kind() {
-            if needs_join_keyword {
-                self.expect(TokenType::Join)?;
-            }
+        // Loop: Phase 1 (parse JOINs) + Phase 2 (assign deferred conditions)
+        // After phase 2, if there are more JOIN keywords, continue with another round
+        loop {
+            let joins_before = joins.len();
 
-            // ClickHouse: ARRAY JOIN uses expressions, not table references
-            let table = if matches!(kind, JoinKind::Array | JoinKind::LeftArray) {
-                let mut items = Vec::new();
-                loop {
-                    let expr = self.parse_expression()?;
-                    let item = if self.match_token(TokenType::As) {
-                        let alias_name = self.expect_identifier_or_safe_keyword()?;
-                        Expression::Alias(Box::new(Alias {
-                            this: expr,
-                            alias: Identifier::new(alias_name),
-                            column_aliases: Vec::new(),
-                            pre_alias_comments: Vec::new(),
-                            trailing_comments: Vec::new(),
-                        }))
+            // Phase 1: Parse all JOINs with optional inline ON/USING conditions
+            loop {
+                let pos_before_join_kind = self.current;
+                let join_kind_result = self.try_parse_join_kind();
+                let (kind, needs_join_keyword, use_inner_keyword, use_outer_keyword, join_hint) = match join_kind_result {
+                    Some(r) => r,
+                    None => break,
+                };
+                // Collect comments from all tokens consumed by try_parse_join_kind:
+                // - Leading comments on the first token (comments on a separate line before the join)
+                // - Trailing comments between join keywords (e.g., INNER /* comment */ JOIN)
+                let mut join_comments = Vec::new();
+                // Capture leading comments from the first token of the join kind
+                if pos_before_join_kind < self.tokens.len() {
+                    join_comments.extend(self.tokens[pos_before_join_kind].comments.iter().cloned());
+                }
+                for i in pos_before_join_kind..self.current {
+                    if i < self.tokens.len() {
+                        join_comments.extend(self.tokens[i].trailing_comments.iter().cloned());
+                    }
+                }
+                if needs_join_keyword {
+                    self.expect(TokenType::Join)?;
+                }
+
+                // ClickHouse: ARRAY JOIN uses expressions, not table references
+                let table = if matches!(kind, JoinKind::Array | JoinKind::LeftArray) {
+                    let mut items = Vec::new();
+                    loop {
+                        let expr = self.parse_expression()?;
+                        let item = if self.match_token(TokenType::As) {
+                            let alias_name = self.expect_identifier_or_safe_keyword()?;
+                            Expression::Alias(Box::new(Alias {
+                                this: expr,
+                                alias: Identifier::new(alias_name),
+                                column_aliases: Vec::new(),
+                                pre_alias_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }))
+                        } else {
+                            expr
+                        };
+                        items.push(item);
+                        if !self.match_token(TokenType::Comma) { break; }
+                    }
+                    if items.len() == 1 {
+                        items.pop().unwrap()
                     } else {
-                        expr
-                    };
-                    items.push(item);
-                    if !self.match_token(TokenType::Comma) { break; }
-                }
-                if items.len() == 1 {
-                    items.pop().unwrap()
+                        Expression::Tuple(Box::new(Tuple { expressions: items }))
+                    }
                 } else {
-                    Expression::Tuple(Box::new(Tuple { expressions: items }))
-                }
-            } else {
-                self.parse_table_expression()?
-            };
+                    self.parse_table_expression()?
+                };
 
-            // Try to parse inline MATCH_CONDITION/ON/USING (only if not followed by another JOIN)
-            // We need to peek ahead to see if there's another JOIN keyword coming
-            let has_match_condition = self.check_identifier("MATCH_CONDITION");
-            let has_inline_condition = self.check(TokenType::On) || self.check(TokenType::Using) || has_match_condition;
-            let next_is_join = self.check_join_keyword();
+                // Try to parse inline MATCH_CONDITION/ON/USING (only if not followed by another JOIN)
+                // We need to peek ahead to see if there's another JOIN keyword coming
+                let has_match_condition = self.check_identifier("MATCH_CONDITION");
+                let has_inline_condition = self.check(TokenType::On) || self.check(TokenType::Using) || has_match_condition;
+                let next_is_join = self.check_join_keyword();
 
-            // Parse MATCH_CONDITION first (Snowflake ASOF JOIN can have MATCH_CONDITION before ON)
-            let match_condition = if has_match_condition && !next_is_join {
-                if self.match_identifier("MATCH_CONDITION") {
-                    self.expect(TokenType::LParen)?;
-                    let condition = self.parse_expression()?;
-                    self.expect(TokenType::RParen)?;
-                    Some(condition)
+                // Parse MATCH_CONDITION first (Snowflake ASOF JOIN can have MATCH_CONDITION before ON)
+                let match_condition = if has_match_condition && !next_is_join {
+                    if self.match_identifier("MATCH_CONDITION") {
+                        self.expect(TokenType::LParen)?;
+                        let condition = self.parse_expression()?;
+                        self.expect(TokenType::RParen)?;
+                        Some(condition)
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            let (on, using) = if (has_inline_condition || match_condition.is_some()) && !self.check_join_keyword() {
-                // Parse inline condition only if there's no more JOINs following
+                let (on, using) = if (has_inline_condition || match_condition.is_some()) && !self.check_join_keyword() {
+                    // Parse inline condition only if there's no more JOINs following
+                    if self.match_token(TokenType::On) {
+                        (Some(self.parse_expression()?), Vec::new())
+                    } else if self.match_token(TokenType::Using) {
+                        // ClickHouse allows USING without parentheses
+                        let has_parens = self.match_token(TokenType::LParen);
+                        // Use parse_using_column_list to handle qualified names like t1.col
+                        let cols = self.parse_using_column_list()?;
+                        if has_parens {
+                            self.expect(TokenType::RParen)?;
+                        }
+                        (None, cols)
+                    } else {
+                        (None, Vec::new())
+                    }
+                } else {
+                    (None, Vec::new())
+                };
+
+                joins.push(Join {
+                    this: table,
+                    on,
+                    using,
+                    kind,
+                    use_inner_keyword,
+                    use_outer_keyword,
+                    deferred_condition: false,
+                    join_hint,
+                    match_condition,
+                    pivots: Vec::new(),
+                    comments: join_comments,
+                    nesting_group,
+                });
+            }
+
+            // Phase 2: Assign deferred ON/USING conditions to unconditioned joins (right-to-left)
+            // Only consider joins from the current batch (joins_before..)
+            let unconditioned: Vec<usize> = joins[joins_before..].iter()
+                .enumerate()
+                .filter(|(_, j)| j.on.is_none() && j.using.is_empty())
+                .map(|(i, _)| joins_before + i)
+                .collect();
+
+            let mut idx = unconditioned.len();
+            while idx > 0 {
                 if self.match_token(TokenType::On) {
-                    (Some(self.parse_expression()?), Vec::new())
+                    idx -= 1;
+                    let join_idx = unconditioned[idx];
+                    joins[join_idx].on = Some(self.parse_expression()?);
+                    joins[join_idx].deferred_condition = true;
                 } else if self.match_token(TokenType::Using) {
-                    // ClickHouse allows USING without parentheses
+                    idx -= 1;
+                    let join_idx = unconditioned[idx];
                     let has_parens = self.match_token(TokenType::LParen);
                     // Use parse_using_column_list to handle qualified names like t1.col
-                    let cols = self.parse_using_column_list()?;
+                    // It extracts only the column part (e.g., t1.col -> col)
+                    joins[join_idx].using = self.parse_using_column_list()?;
                     if has_parens {
                         self.expect(TokenType::RParen)?;
                     }
-                    (None, cols)
+                    joins[join_idx].deferred_condition = true;
                 } else {
-                    (None, Vec::new())
+                    break;
                 }
-            } else {
-                (None, Vec::new())
-            };
+            }
 
-            joins.push(Join {
-                this: table,
-                on,
-                using,
-                kind,
-                use_inner_keyword,
-                use_outer_keyword,
-                deferred_condition: false,
-                join_hint,
-                match_condition,
-                pivots: Vec::new(),
-            });
-        }
-
-        // Phase 2: Assign deferred ON/USING conditions to unconditioned joins (right-to-left)
-        // Collect indices of joins that don't have conditions yet
-        let unconditioned: Vec<usize> = joins.iter()
-            .enumerate()
-            .filter(|(_, j)| j.on.is_none() && j.using.is_empty())
-            .map(|(i, _)| i)
-            .collect();
-
-        let mut idx = unconditioned.len();
-        while idx > 0 {
-            if self.match_token(TokenType::On) {
-                idx -= 1;
-                let join_idx = unconditioned[idx];
-                joins[join_idx].on = Some(self.parse_expression()?);
-                joins[join_idx].deferred_condition = true;
-            } else if self.match_token(TokenType::Using) {
-                idx -= 1;
-                let join_idx = unconditioned[idx];
-                let has_parens = self.match_token(TokenType::LParen);
-                // Use parse_using_column_list to handle qualified names like t1.col
-                // It extracts only the column part (e.g., t1.col -> col)
-                joins[join_idx].using = self.parse_using_column_list()?;
-                if has_parens {
-                    self.expect(TokenType::RParen)?;
-                }
-                joins[join_idx].deferred_condition = true;
-            } else {
+            // If no new joins were parsed in this round, we're done
+            if joins.len() == joins_before {
                 break;
             }
+
+            // If there are more JOIN keywords after deferred conditions, continue with another round
+            if !self.check_join_keyword() {
+                break;
+            }
+            nesting_group += 1;
         }
 
         Ok(joins)
@@ -4945,7 +5133,7 @@ impl Parser {
         // should return early (e.g., Snowflake's "GROUP BY ALL" without column list).
         // But in Presto/Trino, ALL/DISTINCT can be followed by CUBE/ROLLUP expressions.
         if all.is_some() && self.is_at_query_modifier_or_end() {
-            return Ok(GroupBy { expressions, all, totals: false });
+            return Ok(GroupBy { expressions, all, totals: false, comments: Vec::new() });
         }
 
         loop {
@@ -5033,7 +5221,7 @@ impl Parser {
             false
         };
 
-        Ok(GroupBy { expressions, all, totals })
+        Ok(GroupBy { expressions, all, totals, comments: Vec::new() })
     }
 
     /// Parse GROUPING SETS arguments which can include tuples like (x, y), nested GROUPING SETS, CUBE, ROLLUP
@@ -5212,9 +5400,14 @@ impl Parser {
             if !self.match_token(TokenType::Comma) {
                 break;
             }
+
+            // Handle trailing comma: if at end of input or semicolon, break
+            if self.is_at_end() || self.check(TokenType::Semicolon) {
+                break;
+            }
         }
 
-        Ok(OrderBy { expressions, siblings })
+        Ok(OrderBy { expressions, siblings, comments: Vec::new() })
     }
 
     /// Parse query modifiers (ORDER BY, LIMIT, OFFSET, DISTRIBUTE BY, SORT BY, CLUSTER BY) for parenthesized queries
@@ -5274,6 +5467,7 @@ impl Parser {
             Some(Limit {
                 this: self.parse_expression()?,
                 percent: false,
+                comments: Vec::new(),
             })
         } else {
             None
@@ -6637,6 +6831,24 @@ impl Parser {
         // Pattern: SELECT ... [INNER|LEFT|RIGHT|FULL] UNION/INTERSECT/EXCEPT ...
         let (side, kind) = self.parse_set_operation_side_kind();
 
+        // Capture leading comments from the set operation keyword token (e.g., /*x*/ before UNION).
+        // These comments appeared on a new line between the left SELECT and the set operation keyword.
+        let set_op_leading_comments = if self.check(TokenType::Union) || self.check(TokenType::Intersect) || self.check(TokenType::Except) {
+            self.current_leading_comments()
+        } else {
+            Vec::new()
+        };
+
+        // Wrap left expression with comments if needed
+        let left = if !set_op_leading_comments.is_empty() {
+            Expression::Annotated(Box::new(Annotated {
+                this: left,
+                trailing_comments: set_op_leading_comments,
+            }))
+        } else {
+            left
+        };
+
         if self.match_token(TokenType::Union) {
             let all = self.match_token(TokenType::All);
             let distinct = if !all { self.match_token(TokenType::Distinct) } else { false };
@@ -7912,6 +8124,8 @@ impl Parser {
                 join_hint: None,
                 match_condition: None,
                 pivots: Vec::new(),
+                comments: Vec::new(),
+                nesting_group: 0,
             });
         }
 
@@ -8379,7 +8593,12 @@ impl Parser {
                     self.advance(); // consume TABLE
                     return self.parse_create_function(or_replace, temporary, true);
                 }
-                self.parse_create_table(or_replace, temporary, leading_comments, table_modifier.as_deref())
+                let modifier = if materialized {
+                    Some("MATERIALIZED")
+                } else {
+                    table_modifier.as_deref()
+                };
+                self.parse_create_table(or_replace, temporary, leading_comments, modifier)
             }
             TokenType::Dictionary => {
                 self.parse_create_table(or_replace, temporary, leading_comments, Some("DICTIONARY"))
@@ -8413,7 +8632,7 @@ impl Parser {
             TokenType::Database => self.parse_create_database(),
             TokenType::Function => self.parse_create_function(or_replace, temporary, false),
             TokenType::Procedure => self.parse_create_procedure(or_replace),
-            TokenType::Sequence => self.parse_create_sequence(temporary),
+            TokenType::Sequence => self.parse_create_sequence(temporary, or_replace),
             TokenType::Trigger => self.parse_create_trigger(or_replace, false),
             TokenType::Constraint => {
                 self.advance(); // consume CONSTRAINT
@@ -8495,7 +8714,7 @@ impl Parser {
 
         let is_special_modifier = matches!(
             table_modifier,
-            Some("DYNAMIC" | "ICEBERG" | "EXTERNAL" | "HYBRID" | "UNLOGGED" | "DICTIONARY")
+            Some("DYNAMIC" | "ICEBERG" | "EXTERNAL" | "HYBRID" | "UNLOGGED" | "DICTIONARY" | "MATERIALIZED")
         ) || (table_modifier.is_some() && matches!(self.config.dialect, Some(crate::dialects::DialectType::Teradata)));
         let is_clickhouse = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse));
 
@@ -13066,10 +13285,12 @@ impl Parser {
 
     /// Parse DROP statement
     fn parse_drop(&mut self) -> Result<Expression> {
+        // Capture leading comments from the DROP token (e.g., "-- comment\nDROP TABLE ...")
+        let leading_comments = self.current_leading_comments();
         self.expect(TokenType::Drop)?;
 
         match self.peek().token_type {
-            TokenType::Table => self.parse_drop_table(),
+            TokenType::Table => self.parse_drop_table(leading_comments),
             TokenType::View => self.parse_drop_view(false),
             TokenType::Materialized => {
                 self.advance(); // consume MATERIALIZED
@@ -13126,7 +13347,7 @@ impl Parser {
     }
 
     /// Parse DROP TABLE
-    fn parse_drop_table(&mut self) -> Result<Expression> {
+    fn parse_drop_table(&mut self, leading_comments: Vec<String>) -> Result<Expression> {
         self.expect(TokenType::Table)?;
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
@@ -13162,6 +13383,7 @@ impl Parser {
             cascade,
             cascade_constraints,
             purge,
+            leading_comments,
         })))
     }
 
@@ -14310,6 +14532,9 @@ impl Parser {
             TruncateTarget::Table
         };
 
+        // Parse optional IF EXISTS
+        let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
+
         // Parse first table with optional ONLY modifier
         let has_only = self.match_token(TokenType::Only);
         let mut table = self.parse_table_ref()?;
@@ -14386,6 +14611,7 @@ impl Parser {
 
         Ok(Expression::Truncate(Box::new(Truncate {
             target,
+            if_exists,
             table,
             on_cluster,
             cascade,
@@ -15556,6 +15782,7 @@ impl Parser {
             Some(Box::new(Limit {
                 this: self.parse_expression()?,
                 percent: false,
+                comments: Vec::new(),
             }))
         } else {
             None
@@ -18634,7 +18861,7 @@ impl Parser {
     }
 
     /// Parse CREATE SEQUENCE statement
-    fn parse_create_sequence(&mut self, temporary: bool) -> Result<Expression> {
+    fn parse_create_sequence(&mut self, temporary: bool, or_replace: bool) -> Result<Expression> {
         self.expect(TokenType::Sequence)?;
 
         let if_not_exists = self.match_keywords(&[TokenType::If, TokenType::Not, TokenType::Exists]);
@@ -18644,6 +18871,8 @@ impl Parser {
             name,
             if_not_exists,
             temporary,
+            or_replace,
+            as_type: None,
             increment: None,
             minvalue: None,
             maxvalue: None,
@@ -18651,10 +18880,19 @@ impl Parser {
             cache: None,
             cycle: false,
             owned_by: None,
+            owned_by_none: false,
             order: None,
             comment: None,
+            sharing: None,
+            scale_modifier: None,
+            shard_modifier: None,
             property_order: Vec::new(),
         };
+
+        // Parse optional AS <type> clause (e.g., AS SMALLINT, AS BIGINT)
+        if self.match_token(TokenType::As) {
+            seq.as_type = Some(self.parse_data_type()?);
+        }
 
         // Parse sequence options
         // Handle optional WITH keyword before options (Snowflake: WITH START = n INCREMENT = n)
@@ -18679,12 +18917,18 @@ impl Parser {
             } else if self.match_keywords(&[TokenType::No, TokenType::Minvalue]) {
                 seq.minvalue = Some(SequenceBound::None);
                 seq.property_order.push(SeqPropKind::Minvalue);
+            } else if self.match_identifier("NOMINVALUE") {
+                seq.minvalue = Some(SequenceBound::None);
+                seq.property_order.push(SeqPropKind::NoMinvalueWord);
             } else if self.match_token(TokenType::Maxvalue) {
                 seq.maxvalue = Some(SequenceBound::Value(self.parse_signed_integer()?));
                 seq.property_order.push(SeqPropKind::Maxvalue);
             } else if self.match_keywords(&[TokenType::No, TokenType::Maxvalue]) {
                 seq.maxvalue = Some(SequenceBound::None);
                 seq.property_order.push(SeqPropKind::Maxvalue);
+            } else if self.match_identifier("NOMAXVALUE") {
+                seq.maxvalue = Some(SequenceBound::None);
+                seq.property_order.push(SeqPropKind::NoMaxvalueWord);
             } else if self.match_token(TokenType::Start) {
                 self.match_token(TokenType::With);
                 self.match_token(TokenType::Eq); // Snowflake uses = instead of WITH
@@ -18693,30 +18937,48 @@ impl Parser {
             } else if self.match_token(TokenType::Cache) {
                 seq.cache = Some(self.parse_signed_integer()?);
                 seq.property_order.push(SeqPropKind::Cache);
+            } else if self.match_identifier("NOCACHE") {
+                // Oracle: NOCACHE (single word)
+                seq.property_order.push(SeqPropKind::NoCacheWord);
             } else if self.match_token(TokenType::Cycle) {
                 seq.cycle = true;
                 seq.property_order.push(SeqPropKind::Cycle);
             } else if self.match_token(TokenType::NoCycle) {
+                // NOCYCLE keyword token - preserve as single word
                 seq.cycle = false;
-                seq.property_order.push(SeqPropKind::NoCycle);
-            } else if self.match_token(TokenType::No) && self.match_token(TokenType::Cycle) {
-                // DuckDB: NO CYCLE (two words)
-                seq.cycle = false;
-                seq.property_order.push(SeqPropKind::NoCycle);
+                seq.property_order.push(SeqPropKind::NoCycleWord);
+            } else if self.match_token(TokenType::No) {
+                // Two-word NO forms
+                if self.match_token(TokenType::Cycle) {
+                    seq.cycle = false;
+                    seq.property_order.push(SeqPropKind::NoCycle);
+                } else if self.match_token(TokenType::Cache) || self.match_identifier("CACHE") {
+                    seq.property_order.push(SeqPropKind::NoCache);
+                } else if self.match_token(TokenType::Minvalue) {
+                    seq.minvalue = Some(SequenceBound::None);
+                    seq.property_order.push(SeqPropKind::Minvalue);
+                } else if self.match_token(TokenType::Maxvalue) {
+                    seq.maxvalue = Some(SequenceBound::None);
+                    seq.property_order.push(SeqPropKind::Maxvalue);
+                } else {
+                    // Unexpected token after NO
+                    break;
+                }
             } else if self.match_token(TokenType::Owned) {
                 self.expect(TokenType::By)?;
                 if self.match_identifier("NONE") {
                     seq.owned_by = None;
+                    seq.owned_by_none = true;
                 } else {
                     seq.owned_by = Some(self.parse_table_ref()?);
                 }
                 seq.property_order.push(SeqPropKind::OwnedBy);
             } else if self.match_token(TokenType::Order) {
-                // Snowflake: ORDER option
+                // Snowflake/Oracle: ORDER option
                 seq.order = Some(true);
                 seq.property_order.push(SeqPropKind::Order);
             } else if self.match_identifier("NOORDER") {
-                // Snowflake: NOORDER option
+                // Snowflake/Oracle: NOORDER option
                 seq.order = Some(false);
                 seq.property_order.push(SeqPropKind::NoOrder);
             } else if self.match_token(TokenType::Comment) || self.match_identifier("COMMENT") {
@@ -18725,6 +18987,44 @@ impl Parser {
                 let comment_val = self.expect(TokenType::String)?;
                 seq.comment = Some(comment_val.text.clone());
                 seq.property_order.push(SeqPropKind::Comment);
+            } else if self.match_identifier("SHARING") {
+                // Oracle: SHARING=value
+                self.expect(TokenType::Eq)?;
+                let val = self.expect_identifier_or_keyword()?;
+                seq.sharing = Some(val);
+                seq.property_order.push(SeqPropKind::Sharing);
+            } else if self.match_identifier("NOKEEP") {
+                seq.property_order.push(SeqPropKind::NoKeep);
+            } else if self.match_token(TokenType::Keep) || self.match_identifier("KEEP") {
+                seq.property_order.push(SeqPropKind::Keep);
+            } else if self.match_identifier("SCALE") {
+                let modifier = if self.match_identifier("EXTEND") {
+                    "EXTEND".to_string()
+                } else if self.match_identifier("NOEXTEND") {
+                    "NOEXTEND".to_string()
+                } else {
+                    String::new()
+                };
+                seq.scale_modifier = Some(modifier);
+                seq.property_order.push(SeqPropKind::Scale);
+            } else if self.match_identifier("NOSCALE") {
+                seq.property_order.push(SeqPropKind::NoScale);
+            } else if self.match_identifier("SHARD") {
+                let modifier = if self.match_identifier("EXTEND") {
+                    "EXTEND".to_string()
+                } else if self.match_identifier("NOEXTEND") {
+                    "NOEXTEND".to_string()
+                } else {
+                    String::new()
+                };
+                seq.shard_modifier = Some(modifier);
+                seq.property_order.push(SeqPropKind::Shard);
+            } else if self.match_identifier("NOSHARD") {
+                seq.property_order.push(SeqPropKind::NoShard);
+            } else if self.match_identifier("SESSION") {
+                seq.property_order.push(SeqPropKind::Session);
+            } else if self.match_identifier("GLOBAL") {
+                seq.property_order.push(SeqPropKind::Global);
             } else {
                 break;
             }
@@ -19510,9 +19810,44 @@ impl Parser {
     fn parse_or(&mut self) -> Result<Expression> {
         let mut left = self.parse_xor()?;
 
-        while self.match_token(TokenType::Or) {
-            let right = self.parse_xor()?;
-            left = Expression::Or(Box::new(BinaryOp::new(left, right)));
+        while self.check(TokenType::Or) {
+            let mut all_comments = self.previous_trailing_comments();
+            // Also capture leading comments on the OR token (comments on a separate line before OR)
+            all_comments.extend(self.current_leading_comments());
+            self.advance(); // consume OR
+            all_comments.extend(self.previous_trailing_comments());
+            // Clear trailing_comments from left expression to avoid duplication
+            if !all_comments.is_empty() {
+                Self::clear_rightmost_trailing_comments(&mut left);
+            }
+            // Filter out empty/whitespace-only comments
+            all_comments.retain(|c| !c.trim().is_empty());
+            // Split: block comments go before operator, line comments go after
+            let mut left_comments = Vec::new();
+            let mut operator_comments = Vec::new();
+            for comment in all_comments {
+                if comment.starts_with("/*") {
+                    left_comments.push(comment);
+                } else {
+                    operator_comments.push(comment);
+                }
+            }
+            let mut right = self.parse_xor()?;
+            // If parse_comparison stored pending leading comments, attach them
+            if !self.pending_leading_comments.is_empty() {
+                let pending = self.pending_leading_comments.drain(..).collect::<Vec<_>>();
+                right = Expression::Annotated(Box::new(Annotated {
+                    this: right,
+                    trailing_comments: pending,
+                }));
+            }
+            left = Expression::Or(Box::new(BinaryOp {
+                left,
+                right,
+                left_comments,
+                operator_comments,
+                trailing_comments: Vec::new(),
+            }));
         }
 
         Ok(left)
@@ -19538,9 +19873,51 @@ impl Parser {
     fn parse_and(&mut self) -> Result<Expression> {
         let mut left = self.parse_not()?;
 
-        while self.match_token(TokenType::And) {
-            let right = self.parse_not()?;
-            left = Expression::And(Box::new(BinaryOp::new(left, right)));
+        while self.check(TokenType::And) {
+            // Capture comments from the token before AND (left operand's last token)
+            let mut all_comments = self.previous_trailing_comments();
+            // Also capture leading comments on the AND token (comments on a separate line before AND)
+            all_comments.extend(self.current_leading_comments());
+            self.advance(); // consume AND
+            // Also capture any trailing comments on the AND token itself
+            all_comments.extend(self.previous_trailing_comments());
+            // Clear trailing_comments from left expression to avoid duplication
+            if !all_comments.is_empty() {
+                Self::clear_rightmost_trailing_comments(&mut left);
+            }
+            // Filter out empty/whitespace-only comments (e.g., bare "--" with no content)
+            all_comments.retain(|c| !c.trim().is_empty());
+            // Split comments: block comments (/*...*/) go BEFORE the operator (left_comments),
+            // line comments (raw text from --) go AFTER the operator (operator_comments).
+            // This matches Python sqlglot's behavior where inline block comments stay
+            // in-place and line comments shift to after the operator.
+            let mut left_comments = Vec::new();
+            let mut operator_comments = Vec::new();
+            for comment in all_comments {
+                if comment.starts_with("/*") {
+                    left_comments.push(comment);
+                } else {
+                    operator_comments.push(comment);
+                }
+            }
+            let mut right = self.parse_not()?;
+            // If parse_comparison stored pending leading comments (comments before
+            // the right operand's first token with no comparison following),
+            // attach them as trailing_comments on the right expression.
+            if !self.pending_leading_comments.is_empty() {
+                let pending = self.pending_leading_comments.drain(..).collect::<Vec<_>>();
+                right = Expression::Annotated(Box::new(Annotated {
+                    this: right,
+                    trailing_comments: pending,
+                }));
+            }
+            left = Expression::And(Box::new(BinaryOp {
+                left,
+                right,
+                left_comments,
+                operator_comments,
+                trailing_comments: Vec::new(),
+            }));
         }
 
         Ok(left)
@@ -19558,7 +19935,54 @@ impl Parser {
 
     /// Parse comparison expressions
     fn parse_comparison(&mut self) -> Result<Expression> {
+        // Capture leading comments from the first token before parsing the left side.
+        // If a comparison operator follows, these are placed after the left operand.
+        let pre_left_comments = self.current_leading_comments();
         let mut left = self.parse_bitwise_or()?;
+
+        // Only attach pre-left comments when a comparison operator follows.
+        // When no comparison follows (e.g., in SELECT list expressions or AND operands),
+        // the comments are returned to the caller by being accessible via the
+        // `comparison_pre_left_comments` field, so they can be placed appropriately
+        // (e.g., after an alias name, or after the expression in an AND chain).
+        let has_comparison_op = self.check(TokenType::Eq)
+            || self.check(TokenType::Neq)
+            || self.check(TokenType::Lt)
+            || self.check(TokenType::Gt)
+            || self.check(TokenType::Lte)
+            || self.check(TokenType::Gte)
+            || self.check(TokenType::Is)
+            || self.check(TokenType::In)
+            || self.check(TokenType::Not)
+            || self.check(TokenType::Between)
+            || self.check(TokenType::Like)
+            || self.check(TokenType::ILike)
+            || self.check(TokenType::RLike)
+            || self.check(TokenType::SimilarTo);
+
+        if !pre_left_comments.is_empty() {
+            if has_comparison_op {
+                // Comparison follows: attach comments between left operand and operator
+                match &mut left {
+                    Expression::Column(col) => {
+                        col.trailing_comments.extend(pre_left_comments);
+                    }
+                    Expression::Identifier(id) => {
+                        id.trailing_comments.extend(pre_left_comments);
+                    }
+                    _ => {
+                        left = Expression::Annotated(Box::new(Annotated {
+                            this: left,
+                            trailing_comments: pre_left_comments,
+                        }));
+                    }
+                }
+            } else {
+                // No comparison operator: store comments for the caller to use.
+                // Save them as "pending" comments that the caller can retrieve.
+                self.pending_leading_comments = pre_left_comments;
+            }
+        }
 
         loop {
             let mut global_in = false;
@@ -19592,7 +20016,8 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Eq(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Eq(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::Neq) {
                 // Check for ANY/ALL subquery
@@ -19616,7 +20041,8 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Neq(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Neq(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::Lt) {
                 // Check for ANY/ALL subquery
@@ -19640,7 +20066,8 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Lt(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Lt(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::Lte) {
                 // Check for ANY/ALL subquery
@@ -19664,7 +20091,8 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Lte(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Lte(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::Gt) {
                 // Check for ANY/ALL subquery
@@ -19688,7 +20116,8 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Gt(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Gt(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::Gte) {
                 // Check for ANY/ALL subquery
@@ -19712,12 +20141,14 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    Expression::Gte(Box::new(BinaryOp::new(left, right)))
+                    let trailing_comments = self.previous_trailing_comments();
+                    Expression::Gte(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
                 }
             } else if self.match_token(TokenType::NullsafeEq) {
                 // <=> (MySQL NULL-safe equality)
                 let right = self.parse_bitwise_or()?;
-                Expression::NullSafeEq(Box::new(BinaryOp::new(left, right)))
+                let trailing_comments = self.previous_trailing_comments();
+                Expression::NullSafeEq(Box::new(BinaryOp { left, right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments }))
             } else if self.check_identifier("SOUNDS") && self.check_next(TokenType::Like) {
                 // MySQL SOUNDS LIKE: expr SOUNDS LIKE expr -> SOUNDEX(expr) = SOUNDEX(expr)
                 self.advance(); // consume SOUNDS
@@ -19846,7 +20277,7 @@ impl Parser {
                     flag: None,
                 }));
                 Expression::Not(Box::new(UnaryOp::new(regexp_expr)))
-            } else if self.match_token(TokenType::Is) {
+            } else if self.check(TokenType::Is) && !self.is_last_expression_token(TokenType::Is) && self.match_token(TokenType::Is) {
                 let not = self.match_token(TokenType::Not);
                 if self.match_token(TokenType::Null) {
                     Expression::IsNull(Box::new(IsNull { this: left, not, postfix_form: false }))
@@ -19929,6 +20360,7 @@ impl Parser {
                             not: true,
                             global: global_in,
                             unnest: Some(Box::new(unnest_expr)),
+                            is_field: false,
                         }))
                     } else {
                     self.expect(TokenType::LParen)?;
@@ -19942,6 +20374,7 @@ impl Parser {
                             not: true,
                             global: global_in,
                             unnest: None,
+                            is_field: false,
                         }))
                     } else {
                         let expressions = self.parse_expression_list()?;
@@ -19953,10 +20386,19 @@ impl Parser {
                             not: true,
                             global: global_in,
                             unnest: None,
+                            is_field: false,
                         }))
                     }
                     }
                 } else if self.match_token(TokenType::Between) {
+                    // Check for SYMMETRIC/ASYMMETRIC qualifier
+                    let symmetric = if self.match_texts(&["SYMMETRIC"]) {
+                        Some(true)
+                    } else if self.match_texts(&["ASYMMETRIC"]) {
+                        Some(false)
+                    } else {
+                        None
+                    };
                     let low = self.parse_bitwise_or()?;
                     self.expect(TokenType::And)?;
                     let high = self.parse_bitwise_or()?;
@@ -19965,6 +20407,7 @@ impl Parser {
                         low,
                         high,
                         not: true,
+                        symmetric,
                     }))
                 } else if self.check_identifier("SOUNDS") && self.check_next(TokenType::Like) {
                     // MySQL NOT SOUNDS LIKE: expr NOT SOUNDS LIKE expr -> NOT SOUNDEX(expr) = SOUNDEX(expr)
@@ -20049,6 +20492,7 @@ impl Parser {
                         not: false,
                         global: global_in,
                         unnest: Some(Box::new(unnest_expr)),
+                        is_field: false,
                     }))
                 } else if self.match_token(TokenType::LParen) {
                     // Standard IN (list) or IN (subquery)
@@ -20064,6 +20508,7 @@ impl Parser {
                             not: false,
                             global: global_in,
                             unnest: None,
+                            is_field: false,
                         }))
                     } else {
                         let expressions = self.parse_expression_list()?;
@@ -20075,6 +20520,7 @@ impl Parser {
                             not: false,
                             global: global_in,
                             unnest: None,
+                            is_field: false,
                         }))
                     }
                 } else {
@@ -20087,9 +20533,18 @@ impl Parser {
                         not: false,
                         global: global_in,
                         unnest: None,
+                        is_field: true,
                     }))
                 }
             } else if self.match_token(TokenType::Between) {
+                // Check for SYMMETRIC/ASYMMETRIC qualifier
+                let symmetric = if self.match_texts(&["SYMMETRIC"]) {
+                    Some(true)
+                } else if self.match_texts(&["ASYMMETRIC"]) {
+                    Some(false)
+                } else {
+                    None
+                };
                 let low = self.parse_bitwise_or()?;
                 self.expect(TokenType::And)?;
                 let high = self.parse_bitwise_or()?;
@@ -20098,6 +20553,7 @@ impl Parser {
                     low,
                     high,
                     not: false,
+                    symmetric,
                 }))
             } else if self.match_token(TokenType::Adjacent) {
                 let right = self.parse_bitwise_or()?;
@@ -20210,6 +20666,18 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
 
+                // Collect any inline comments (e.g., /* foo */) between OPERATOR() and the RHS
+                // Try trailing comments of the RParen (previous token) first,
+                // then leading comments of the next token
+                let mut comments = if self.current > 0 {
+                    std::mem::take(&mut self.tokens[self.current - 1].trailing_comments)
+                } else {
+                    Vec::new()
+                };
+                if comments.is_empty() && !self.is_at_end() {
+                    comments = std::mem::take(&mut self.tokens[self.current].comments);
+                }
+
                 // Parse the right-hand side expression
                 let right = self.parse_bitwise_or()?;
 
@@ -20217,6 +20685,7 @@ impl Parser {
                     this: Box::new(left),
                     operator: Some(Box::new(Expression::Identifier(Identifier::new(op_text)))),
                     expression: Box::new(right),
+                    comments,
                 }))
             } else {
                 return Ok(left);
@@ -20329,6 +20798,12 @@ impl Parser {
                     operator_comments,
                     trailing_comments,
                 }))
+            } else if self.match_token(TokenType::DQMark) {
+                let right = self.parse_at_time_zone()?;
+                Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
+                    expressions: vec![left, right],
+                    original_name: None,
+                }))
             } else {
                 return Ok(left);
             };
@@ -20431,6 +20906,12 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                }))
+            } else if self.match_token(TokenType::DQMark) {
+                let right = self.parse_at_time_zone()?;
+                Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
+                    expressions: vec![left, right],
+                    original_name: None,
                 }))
             } else {
                 return Ok(left);
@@ -20616,9 +21097,92 @@ impl Parser {
         }))))
     }
 
+    /// Try to parse type shorthand CAST: INT 1, VARCHAR 'x', STRING 'x', TEXT 'y', etc.
+    /// In generic mode (no dialect), a type keyword followed by a literal becomes CAST(literal AS type).
+    /// This matches Python sqlglot's `_parse_types()` behavior.
+    fn try_parse_type_shorthand_cast(&mut self) -> Result<Option<Expression>> {
+        // Only apply in generic mode
+        let is_generic = self.config.dialect.is_none() || matches!(self.config.dialect, Some(crate::dialects::DialectType::Generic));
+        if !is_generic {
+            return Ok(None);
+        }
+
+        let start_pos = self.current;
+
+        // Check if current token is a type keyword
+        if !self.is_type_keyword() {
+            return Ok(None);
+        }
+
+        // Don't apply if the type keyword is followed by a left paren (function call)
+        // or is not followed by a literal
+        if self.current + 1 >= self.tokens.len() {
+            return Ok(None);
+        }
+
+        let next_type = self.tokens[self.current + 1].token_type;
+        // The value after the type keyword must be a literal (number or string)
+        if !matches!(next_type, TokenType::Number | TokenType::String) {
+            return Ok(None);
+        }
+
+        // Get the type name
+        let type_token = self.advance();
+        let type_name = type_token.text.to_uppercase();
+
+        // Parse the data type
+        let data_type = match type_name.as_str() {
+            "INT" | "INTEGER" => DataType::Int { length: None, integer_spelling: type_name == "INTEGER" },
+            "BIGINT" => DataType::BigInt { length: None },
+            "SMALLINT" => DataType::SmallInt { length: None },
+            "TINYINT" => DataType::TinyInt { length: None },
+            "FLOAT" => DataType::Float { precision: None, scale: None, real_spelling: false },
+            "DOUBLE" => DataType::Double { precision: None, scale: None },
+            "DECIMAL" | "NUMERIC" => DataType::Decimal { precision: None, scale: None },
+            "REAL" => DataType::Float { precision: None, scale: None, real_spelling: true },
+            "VARCHAR" => DataType::VarChar { length: None, parenthesized_length: false },
+            "CHAR" => DataType::Char { length: None },
+            "TEXT" | "STRING" => DataType::Text,
+            "BOOLEAN" | "BOOL" => DataType::Boolean,
+            "BINARY" => DataType::Binary { length: None },
+            "VARBINARY" => DataType::VarBinary { length: None },
+            _ => {
+                // Unknown type, backtrack
+                self.current = start_pos;
+                return Ok(None);
+            }
+        };
+
+        // Parse the literal value
+        let value = if self.check(TokenType::String) {
+            let tok = self.advance();
+            Expression::Literal(Literal::String(tok.text.clone()))
+        } else if self.check(TokenType::Number) {
+            let tok = self.advance();
+            Expression::Literal(Literal::Number(tok.text.clone()))
+        } else {
+            self.current = start_pos;
+            return Ok(None);
+        };
+
+        // Create the Cast expression
+        Ok(Some(Expression::Cast(Box::new(Cast {
+            this: value,
+            to: data_type,
+            trailing_comments: Vec::new(),
+            double_colon_syntax: false,
+            format: None,
+            default: None,
+        }))))
+    }
+
     /// Parse unary expressions
     fn parse_unary(&mut self) -> Result<Expression> {
-        if self.match_token(TokenType::Dash) {
+        if self.match_token(TokenType::Plus) {
+            // Unary plus is a no-op - just parse the inner expression
+            // This handles +++1 -> 1, +-1 -> -1, etc.
+            self.parse_unary()
+        } else if self.match_token(TokenType::Dash) {
             let expr = self.parse_unary()?;
             Ok(Expression::Neg(Box::new(UnaryOp::new(expr))))
         } else if self.match_token(TokenType::Tilde) {
@@ -20691,6 +21255,11 @@ impl Parser {
             // PostgreSQL allows type name followed by string literal as a cast shorthand
             if let Some(type_literal) = self.try_parse_type_literal()? {
                 return self.parse_postfix_operators(type_literal);
+            }
+            // Try to parse type shorthand CAST: INT 1, VARCHAR 'x', STRING 'x', TEXT 'y', etc.
+            // In generic mode, type keyword followed by literal -> CAST(literal AS type)
+            if let Some(type_cast) = self.try_parse_type_shorthand_cast()? {
+                return self.parse_postfix_operators(type_cast);
             }
             let expr = self.parse_primary()?;
             // Handle postfix exclamation mark for Snowflake model attribute syntax: model!PREDICT(...)
@@ -21405,6 +21974,9 @@ impl Parser {
 
         // Parenthesized expression or subquery
         if self.match_token(TokenType::LParen) {
+            // Capture comments from the ( token (e.g., "(/* comment */ 1)")
+            let lparen_comments = self.previous_trailing_comments();
+
             // Check if this is a VALUES expression inside parens: (VALUES ...)
             if self.check(TokenType::Values) {
                 let values = self.parse_values()?;
@@ -21432,7 +22004,7 @@ impl Parser {
                 // Parse LIMIT/OFFSET that may appear after set operations INSIDE the parentheses
                 // e.g., (SELECT 1 EXCEPT (SELECT 2) LIMIT 1)
                 let limit = if self.match_token(TokenType::Limit) {
-                    Some(Limit { this: self.parse_expression()?, percent: false })
+                    Some(Limit { this: self.parse_expression()?, percent: false , comments: Vec::new() })
                 } else {
                     None
                 };
@@ -21495,7 +22067,7 @@ impl Parser {
                         None
                     };
                     let limit_after = if self.match_token(TokenType::Limit) {
-                        Some(Limit { this: self.parse_expression()?, percent: false })
+                        Some(Limit { this: self.parse_expression()?, percent: false , comments: Vec::new() })
                     } else {
                         None
                     };
@@ -21544,6 +22116,8 @@ impl Parser {
                 };
 
                 self.expect(TokenType::RParen)?;
+                let mut nested_paren_comments = lparen_comments.clone();
+                nested_paren_comments.extend(self.previous_trailing_comments());
                 // Check for set operations after parenthesized expression
                 if self.check(TokenType::Union) || self.check(TokenType::Intersect)
                    || self.check(TokenType::Except) {
@@ -21560,7 +22134,7 @@ impl Parser {
                             None
                         };
                         let limit = if self.match_token(TokenType::Limit) {
-                            Some(Limit { this: self.parse_expression()?, percent: false })
+                            Some(Limit { this: self.parse_expression()?, percent: false , comments: Vec::new() })
                         } else {
                             None
                         };
@@ -21586,7 +22160,7 @@ impl Parser {
                         })));
                     }
                 }
-                return self.maybe_parse_over(Expression::Paren(Box::new(Paren { this: result, trailing_comments: Vec::new() })));
+                return self.maybe_parse_over(Expression::Paren(Box::new(Paren { this: result, trailing_comments: nested_paren_comments })));
             }
 
             let expr = self.parse_expression()?;
@@ -21639,17 +22213,20 @@ impl Parser {
 
                 // Check for optional alias on the whole tuple
                 // But NOT when AS is followed by a type constructor like Tuple(a Int8, ...)
-                // which would be part of a CAST expression: CAST((1, 2) AS Tuple(a Int8, b Int16))
+                // or STRUCT<a TINYINT, ...> which would be part of a CAST expression
                 let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
                 let result = if self.check(TokenType::As) {
-                    // Look ahead: AS + identifier + ( → likely a type, not an alias
+                    // Look ahead: AS + type_keyword + ( or < → likely a type, not an alias
                     let after_as = self.current + 1;
                     let after_ident = self.current + 2;
                     let is_type_constructor = after_ident < self.tokens.len()
                         && (self.tokens[after_as].token_type == TokenType::Identifier
                             || self.tokens[after_as].token_type == TokenType::Var
-                            || self.tokens[after_as].token_type == TokenType::Nullable)
-                        && self.tokens[after_ident].token_type == TokenType::LParen;
+                            || self.tokens[after_as].token_type == TokenType::Nullable
+                            || self.tokens[after_as].token_type == TokenType::Struct
+                            || self.tokens[after_as].token_type == TokenType::Array)
+                        && (self.tokens[after_ident].token_type == TokenType::LParen
+                            || self.tokens[after_ident].token_type == TokenType::Lt);
                     if is_type_constructor {
                         tuple_expr
                     } else {
@@ -21665,6 +22242,9 @@ impl Parser {
             }
 
             self.expect(TokenType::RParen)?;
+            // Combine comments from ( and ) tokens
+            let mut paren_comments = lparen_comments.clone();
+            paren_comments.extend(self.previous_trailing_comments());
 
             // Check for lambda expression: (x) -> body or single identifier case
             if self.match_token(TokenType::Arrow) {
@@ -21680,7 +22260,7 @@ impl Parser {
                 return Ok(Expression::Lambda(Box::new(LambdaExpr { parameters, body, colon: false, parameter_types: Vec::new() })));
             }
 
-            return self.maybe_parse_over(Expression::Paren(Box::new(Paren { this: first_expr, trailing_comments: Vec::new() })));
+            return self.maybe_parse_over(Expression::Paren(Box::new(Paren { this: first_expr, trailing_comments: paren_comments })));
         }
 
         // NULL
@@ -21776,6 +22356,17 @@ impl Parser {
             let original_text = token.text.clone();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
+                if self.config.dialect.is_none() {
+                    // Generic (no dialect): DATE 'literal' -> CAST('literal' AS DATE)
+                    return Ok(Expression::Cast(Box::new(Cast {
+                        this: Expression::Literal(Literal::String(str_token.text)),
+                        to: DataType::Date,
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                    })));
+                }
                 return Ok(Expression::Literal(Literal::Date(str_token.text)));
             }
             // Check for DATE() function call
@@ -21811,46 +22402,79 @@ impl Parser {
             let original_text = token.text.clone();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
+                if self.config.dialect.is_none() {
+                    // Generic (no dialect): TIMESTAMP 'literal' -> CAST('literal' AS TIMESTAMP)
+                    return Ok(Expression::Cast(Box::new(Cast {
+                        this: Expression::Literal(Literal::String(str_token.text)),
+                        to: DataType::Timestamp { precision: None, timezone: false },
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                    })));
+                }
+                // Dialect-specific: keep as Literal::Timestamp for dialect transforms
                 return Ok(Expression::Literal(Literal::Timestamp(str_token.text)));
             }
-            // Check for TIMESTAMP(n) WITH TIME ZONE or TIMESTAMP WITH TIME ZONE data type
+            // Check for TIMESTAMP(n) WITH/WITHOUT TIME ZONE or TIMESTAMP(n) 'literal' as data type
             // This is a data type, not a function call
             if self.check(TokenType::LParen) {
-                // Look ahead to see if this is TIMESTAMP(number) WITH TIME ZONE (data type)
+                // Look ahead to see if this is TIMESTAMP(number) WITH/WITHOUT/String (data type)
                 // vs TIMESTAMP(expr) (function call)
                 let is_data_type = self.check_next(TokenType::Number) && {
-                    // Check if after (number) there's WITH or WITHOUT
+                    // Check if after (number) there's WITH, WITHOUT, or String literal
                     let mut lookahead = self.current + 2;
                     // Skip the number
                     while lookahead < self.tokens.len() && self.tokens[lookahead].token_type == TokenType::RParen {
                         lookahead += 1;
                         break;
                     }
-                    // Check for WITH or WITHOUT after the closing paren
+                    // Check for WITH, WITHOUT, or String after the closing paren
                     lookahead < self.tokens.len() &&
                         (self.tokens[lookahead].token_type == TokenType::With ||
-                         self.tokens[lookahead].text.to_uppercase() == "WITHOUT")
+                         self.tokens[lookahead].text.to_uppercase() == "WITHOUT" ||
+                         self.tokens[lookahead].token_type == TokenType::String)
                 };
 
                 if is_data_type {
-                    // Parse as data type: TIMESTAMP(precision) WITH/WITHOUT TIME ZONE
+                    // Parse as data type: TIMESTAMP(precision) [WITH/WITHOUT TIME ZONE] ['literal']
                     self.advance(); // consume (
                     let precision = Some(self.expect_number()? as u32);
                     self.expect(TokenType::RParen)?;
 
-                    let timezone = if self.match_token(TokenType::With) {
-                        self.match_keyword("TIME");
-                        self.match_keyword("ZONE");
-                        true
+                    let data_type = if self.match_token(TokenType::With) {
+                        if self.match_token(TokenType::Local) {
+                            // WITH LOCAL TIME ZONE -> TIMESTAMPLTZ
+                            self.match_keyword("TIME");
+                            self.match_keyword("ZONE");
+                            DataType::Custom { name: format!("TIMESTAMPLTZ({})", precision.unwrap()) }
+                        } else {
+                            self.match_keyword("TIME");
+                            self.match_keyword("ZONE");
+                            DataType::Timestamp { precision, timezone: true }
+                        }
                     } else if self.match_keyword("WITHOUT") {
                         self.match_keyword("TIME");
                         self.match_keyword("ZONE");
-                        false
+                        DataType::Timestamp { precision, timezone: false }
                     } else {
-                        false
+                        DataType::Timestamp { precision, timezone: false }
                     };
 
-                    return Ok(Expression::DataType(DataType::Timestamp { precision, timezone }));
+                    // Check for following string literal -> wrap in CAST
+                    if self.check(TokenType::String) {
+                        let str_token = self.advance();
+                        return Ok(Expression::Cast(Box::new(Cast {
+                            this: Expression::Literal(Literal::String(str_token.text)),
+                            to: data_type,
+                            trailing_comments: Vec::new(),
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                        })));
+                    }
+
+                    return Ok(Expression::DataType(data_type));
                 }
 
                 // Otherwise parse as function call
@@ -21858,20 +22482,41 @@ impl Parser {
                 let func_expr = self.parse_typed_function(&original_text, "TIMESTAMP", false)?;
                 return self.maybe_parse_over(func_expr);
             }
-            // Check for TIMESTAMP WITH TIME ZONE (no precision) as data type
+            // Check for TIMESTAMP WITH/WITHOUT TIME ZONE (no precision) as data type
             if self.check(TokenType::With) || self.check_keyword_text("WITHOUT") {
-                let timezone = if self.match_token(TokenType::With) {
-                    self.match_keyword("TIME");
-                    self.match_keyword("ZONE");
-                    true
+                let data_type = if self.match_token(TokenType::With) {
+                    if self.match_token(TokenType::Local) {
+                        // WITH LOCAL TIME ZONE -> TIMESTAMPLTZ
+                        self.match_keyword("TIME");
+                        self.match_keyword("ZONE");
+                        DataType::Custom { name: "TIMESTAMPLTZ".to_string() }
+                    } else {
+                        self.match_keyword("TIME");
+                        self.match_keyword("ZONE");
+                        DataType::Timestamp { precision: None, timezone: true }
+                    }
                 } else if self.match_keyword("WITHOUT") {
                     self.match_keyword("TIME");
                     self.match_keyword("ZONE");
-                    false
+                    DataType::Timestamp { precision: None, timezone: false }
                 } else {
-                    false
+                    DataType::Timestamp { precision: None, timezone: false }
                 };
-                return Ok(Expression::DataType(DataType::Timestamp { precision: None, timezone }));
+
+                // Check for following string literal -> wrap in CAST
+                if self.check(TokenType::String) {
+                    let str_token = self.advance();
+                    return Ok(Expression::Cast(Box::new(Cast {
+                        this: Expression::Literal(Literal::String(str_token.text)),
+                        to: data_type,
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                    })));
+                }
+
+                return Ok(Expression::DataType(data_type));
             }
             // Fallback to TIMESTAMP as identifier/type - preserve original case
             return Ok(Expression::Identifier(Identifier::new(original_text)));
@@ -22725,19 +23370,32 @@ impl Parser {
                 index: None,
                 style: ParameterStyle::DoubleAt,
                 quoted: false,
+                string_quoted: false,
                 expression: None,
             })));
         }
 
-        // @ user variable/parameter: @x, @"x"
+        // @ user variable/parameter: @x, @"x", @JOIN, @'foo'
         if self.match_token(TokenType::DAt) {
-            // Get the variable name - can be identifier or quoted identifier
-            let (name, quoted) = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                (self.advance().text, false)
+            // Get the variable name - can be identifier, quoted identifier, keyword, or string
+            let (name, quoted, string_quoted) = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
+                (self.advance().text, false, false)
             } else if self.check(TokenType::QuotedIdentifier) {
                 // Quoted identifier like @"x"
                 let token = self.advance();
-                (token.text, true)
+                (token.text, true, false)
+            } else if self.check(TokenType::String) {
+                // String-quoted like @'foo'
+                let token = self.advance();
+                (token.text, false, true)
+            } else if self.check(TokenType::Number) {
+                // Numeric like @1
+                let token = self.advance();
+                (token.text, false, false)
+            } else if self.peek().token_type.is_keyword() {
+                // Keyword used as variable name like @JOIN
+                let token = self.advance();
+                (token.text, false, false)
             } else {
                 return Err(Error::parse("Expected variable name after @"));
             };
@@ -22746,6 +23404,7 @@ impl Parser {
                 index: None,
                 style: ParameterStyle::At,
                 quoted,
+                string_quoted,
                 expression: None,
             })));
         }
@@ -22761,6 +23420,7 @@ impl Parser {
                     index: Some(index),
                     style: ParameterStyle::Dollar,
                     quoted: false,
+                    string_quoted: false,
                     expression: None,
                 }));
                 // Check for JSON path access: $1:name or dot access: $1.c1
@@ -22783,6 +23443,7 @@ impl Parser {
                         index: Some(index),
                         style: ParameterStyle::Colon,
                         quoted: false,
+                        string_quoted: false,
                         expression: None,
                     })));
                 }
@@ -22796,6 +23457,7 @@ impl Parser {
                     index: None,
                     style: ParameterStyle::Colon,
                     quoted: false,
+                    string_quoted: false,
                     expression: None,
                 })));
             } else {
@@ -22828,6 +23490,7 @@ impl Parser {
                         index: None,
                         style: ParameterStyle::DollarBrace,
                         quoted: false,
+                        string_quoted: false,
                         expression,
                     })));
                 } else {
@@ -22844,6 +23507,7 @@ impl Parser {
                         index: Some(index),
                         style: ParameterStyle::Dollar,
                         quoted: false,
+                        string_quoted: false,
                         expression: None,
                     }));
                     // Check for JSON path access: $1:name or $1:name:subname
@@ -22862,6 +23526,7 @@ impl Parser {
                     index: None,
                     style: ParameterStyle::Dollar,
                     quoted: false,
+                    string_quoted: false,
                     expression: None,
                 })));
             }
@@ -22886,6 +23551,7 @@ impl Parser {
                         index: None,
                         style: ParameterStyle::Percent,
                         quoted: false,
+                        string_quoted: false,
                         expression: None,
                     })));
                 } else {
@@ -22900,6 +23566,7 @@ impl Parser {
                     index: None,
                     style: ParameterStyle::Percent,
                     quoted: false,
+                    string_quoted: false,
                     expression: None,
                 })));
             }
@@ -23049,6 +23716,20 @@ impl Parser {
     /// Parse a typed function call (after the opening paren)
     /// Following Python SQLGlot pattern: match all function aliases to typed expressions
     fn parse_typed_function(&mut self, name: &str, upper_name: &str, quoted: bool) -> Result<Expression> {
+        // Handle internal function rewrites (sqlglot internal functions that map to CAST)
+        if upper_name == "TIME_TO_TIME_STR" {
+            let arg = self.parse_expression()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(Expression::Cast(Box::new(Cast {
+                this: arg,
+                to: DataType::Text,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+            })));
+        }
+
         // Handle typed functions - all aliases map to the same typed expression
         // Generator TRANSFORMS will output dialect-specific names
         match upper_name {
@@ -23203,7 +23884,7 @@ impl Parser {
                         // Now check for LIMIT/OFFSET modifiers outside the inner parens
                         let limit = if self.match_token(TokenType::Limit) {
                             let expr = self.parse_expression()?;
-                            Some(Limit { this: expr, percent: false })
+                            Some(Limit { this: expr, percent: false , comments: Vec::new() })
                         } else {
                             None
                         };
@@ -23448,6 +24129,7 @@ impl Parser {
 
             // COUNT_IF / COUNTIF
             "COUNT_IF" | "COUNTIF" => {
+                let distinct = self.match_token(TokenType::Distinct);
                 let this = self.parse_expression()?;
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::Comma)
@@ -23465,7 +24147,7 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
                 let filter = self.parse_filter_clause()?;
-                Ok(Expression::CountIf(Box::new(AggFunc { ignore_nulls: None, this, distinct: false, filter, order_by: Vec::new(), having_max: None, name: Some(name.to_string()), limit: None })))
+                Ok(Expression::CountIf(Box::new(AggFunc { ignore_nulls: None, this, distinct, filter, order_by: Vec::new(), having_max: None, name: Some(name.to_string()), limit: None })))
             }
 
             // STRING_AGG - STRING_AGG([DISTINCT] expr [, separator] [ORDER BY order_list])
@@ -24536,8 +25218,20 @@ impl Parser {
                     quoted: false,
                 })))
             }
+            // ARRAY_INTERSECT is variadic (accepts 2+ args)
+            "ARRAY_INTERSECT" => {
+                let mut expressions = vec![self.parse_expression()?];
+                while self.match_token(TokenType::Comma) {
+                    expressions.push(self.parse_expression()?);
+                }
+                self.expect(TokenType::RParen)?;
+                Ok(Expression::ArrayIntersect(Box::new(VarArgFunc {
+                    expressions,
+                    original_name: Some(name.to_string()),
+                })))
+            }
             "ARRAY_CONTAINS" | "ARRAY_POSITION" | "ARRAY_APPEND" | "ARRAY_PREPEND" |
-            "ARRAY_INTERSECT" | "ARRAY_UNION" | "ARRAY_EXCEPT" | "ARRAY_REMOVE" => {
+            "ARRAY_UNION" | "ARRAY_EXCEPT" | "ARRAY_REMOVE" => {
                 let this = self.parse_expression()?;
                 self.expect(TokenType::Comma)?;
                 let expression = self.parse_expression()?;
@@ -24548,7 +25242,6 @@ impl Parser {
                     "ARRAY_POSITION" => Expression::ArrayPosition(Box::new(func)),
                     "ARRAY_APPEND" => Expression::ArrayAppend(Box::new(func)),
                     "ARRAY_PREPEND" => Expression::ArrayPrepend(Box::new(func)),
-                    "ARRAY_INTERSECT" => Expression::ArrayIntersect(Box::new(func)),
                     "ARRAY_UNION" => Expression::ArrayUnion(Box::new(func)),
                     "ARRAY_EXCEPT" => Expression::ArrayExcept(Box::new(func)),
                     "ARRAY_REMOVE" => Expression::ArrayRemove(Box::new(func)),
@@ -24929,6 +25622,7 @@ impl Parser {
                         Some(Box::new(Expression::OrderBy(Box::new(OrderBy {
                             expressions: order_exprs,
                             siblings: false,
+                            comments: Vec::new(),
                         }))))
                     } else {
                         None
@@ -25852,6 +26546,15 @@ impl Parser {
             }
 
             // Null handling functions
+            "COALESCE" => {
+                // COALESCE(a, b, ...) -> Expression::Coalesce
+                let args = self.parse_expression_list()?;
+                self.expect(TokenType::RParen)?;
+                Ok(Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
+                    original_name: None,
+                    expressions: args,
+                })))
+            }
             "IFNULL" => {
                 // IFNULL(a, b) normalizes to COALESCE(a, b) but preserves original name
                 let args = self.parse_expression_list()?;
@@ -25935,7 +26638,7 @@ impl Parser {
             "IF" | "IIF" | "IFF" => {
                 let args = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
-                if args.len() >= 3 {
+                if args.len() == 3 {
                     Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
                         original_name: Some(upper_name.to_string()),
                         condition: args[0].clone(),
@@ -25951,15 +26654,7 @@ impl Parser {
                         false_value: None,
                     })))
                 } else {
-                    Ok(Expression::Function(Box::new(Function {
-                        name: name.to_string(),
-                        args,
-                        distinct: false,
-                        trailing_comments: Vec::new(),
-                        use_bracket_syntax: false,
-                    no_parens: false,
-                    quoted: false,
-                    })))
+                    Err(Error::parse("IF function requires 2 or 3 arguments"))
                 }
             }
 
@@ -26925,7 +27620,9 @@ impl Parser {
         };
 
         // Check for KEEP clause (Oracle: aggregate KEEP (DENSE_RANK FIRST|LAST ORDER BY ...))
-        let keep = if self.match_token(TokenType::Keep) {
+        // Only if KEEP is followed by LPAREN - otherwise KEEP is used as an alias
+        let keep = if self.check(TokenType::Keep) && self.check_next(TokenType::LParen) {
+            self.advance(); // consume KEEP
             Some(self.parse_keep_clause()?)
         } else {
             None
@@ -27883,7 +28580,7 @@ impl Parser {
                 || self.check(TokenType::In) || self.check(TokenType::Like) || self.check(TokenType::ILike)
                 || self.check(TokenType::Between) || self.check(TokenType::Then) || self.check(TokenType::Else)
                 || self.check(TokenType::When) || self.check(TokenType::End) || self.check(TokenType::Comma)
-                || self.check(TokenType::RParen) {
+                || self.check(TokenType::RParen) || self.check(TokenType::DColon) {
                 // INTERVAL is used as identifier
                 self.current = start_pos;
                 return Ok(None);
@@ -27947,7 +28644,78 @@ impl Parser {
         }
 
         // Now parse the optional unit
-        let unit = self.try_parse_interval_unit()?;
+        let mut unit = self.try_parse_interval_unit()?;
+
+        // Split compound interval strings like '1 day' into value '1' and unit DAY
+        // This matches Python sqlglot's INTERVAL_STRING_RE behavior
+        // Only apply in generic mode -- dialects like PostgreSQL preserve compound strings
+        let is_generic = self.config.dialect.is_none() || matches!(self.config.dialect, Some(crate::dialects::DialectType::Generic));
+        let value = if unit.is_none() && is_generic {
+            if let Some(Expression::Literal(Literal::String(ref s))) = value {
+                let trimmed = s.trim();
+                // Match pattern: optional negative sign, digits (optional decimal), space(s), alpha unit
+                let mut split_pos = None;
+                let mut found_space = false;
+                let bytes = trimmed.as_bytes();
+                let mut i = 0;
+                // Skip optional negative sign
+                if i < bytes.len() && bytes[i] == b'-' {
+                    i += 1;
+                }
+                // Expect digits
+                let digit_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > digit_start {
+                    // Optional decimal part
+                    if i < bytes.len() && bytes[i] == b'.' {
+                        i += 1;
+                        while i < bytes.len() && bytes[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                    }
+                    // Expect whitespace
+                    let space_start = i;
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    if i > space_start {
+                        found_space = true;
+                        split_pos = Some(i);
+                    }
+                }
+                if found_space {
+                    if let Some(pos) = split_pos {
+                        let unit_text = &trimmed[pos..];
+                        // Verify it's all alpha
+                        if !unit_text.is_empty() && unit_text.chars().all(|c| c.is_ascii_alphabetic()) {
+                            let num_part = trimmed[..pos].trim_end().to_string();
+                            let unit_upper = unit_text.to_uppercase();
+                            // Try to parse as interval unit
+                            if let Some(parsed_unit) = Self::parse_interval_unit_from_string(&unit_upper) {
+                                // Check if the original text had an 'S' suffix (plural)
+                                let is_plural = unit_text.to_uppercase().ends_with('S');
+                                unit = Some(IntervalUnitSpec::Simple { unit: parsed_unit, use_plural: is_plural });
+                                Some(Expression::Literal(Literal::String(num_part)))
+                            } else {
+                                value
+                            }
+                        } else {
+                            value
+                        }
+                    } else {
+                        value
+                    }
+                } else {
+                    value
+                }
+            } else {
+                value
+            }
+        } else {
+            value
+        };
 
         // Convert number literals to string literals in intervals (canonical form).
         // Most dialects support INTERVAL '5' DAY, so we normalize to this form
@@ -28064,6 +28832,29 @@ impl Parser {
 
         // No unit found
         Ok(None)
+    }
+
+    /// Parse an interval unit from a string (used for splitting compound interval strings)
+    fn parse_interval_unit_from_string(s: &str) -> Option<IntervalUnit> {
+        // Strip trailing 'S' for plural forms
+        let base = if s.ends_with('S') && s.len() > 1 {
+            &s[..s.len() - 1]
+        } else {
+            s
+        };
+        match base {
+            "YEAR" => Some(IntervalUnit::Year),
+            "MONTH" => Some(IntervalUnit::Month),
+            "DAY" => Some(IntervalUnit::Day),
+            "HOUR" => Some(IntervalUnit::Hour),
+            "MINUTE" => Some(IntervalUnit::Minute),
+            "SECOND" => Some(IntervalUnit::Second),
+            "MILLISECOND" => Some(IntervalUnit::Millisecond),
+            "MICROSECOND" => Some(IntervalUnit::Microsecond),
+            "QUARTER" => Some(IntervalUnit::Quarter),
+            "WEEK" => Some(IntervalUnit::Week),
+            _ => None,
+        }
     }
 
     /// Try to parse a simple interval unit (YEAR, MONTH, etc.) - returns (unit, is_plural)
@@ -28371,6 +29162,8 @@ impl Parser {
     /// Parse CASE expression
     fn parse_case(&mut self) -> Result<Expression> {
         self.expect(TokenType::Case)?;
+        // Capture trailing comments from the CASE keyword (e.g., CASE /* test */ WHEN ...)
+        let case_comments = self.previous_trailing_comments();
 
         // Check for simple CASE (CASE expr WHEN ...)
         let operand = if !self.check(TokenType::When) {
@@ -28399,6 +29192,7 @@ impl Parser {
             operand,
             whens,
             else_,
+            comments: case_comments,
         })))
     }
 
@@ -28697,8 +29491,9 @@ impl Parser {
                         let charset = self.expect_identifier_or_keyword()?;
                         return Ok(DataType::CharacterSet { name: charset });
                     }
-                    // For TSQL: preserve NCHAR as Custom DataType so TSQL target can output NCHAR
-                    if is_nchar && matches!(self.config.dialect, Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric)) {
+                    // Preserve NCHAR as Custom DataType so target dialects can map it properly
+                    // (Oracle keeps NCHAR, TSQL keeps NCHAR, others map to CHAR)
+                    if is_nchar {
                         let name = if let Some(len) = length {
                             format!("NCHAR({})", len)
                         } else {
@@ -28711,11 +29506,13 @@ impl Parser {
             }
             "VARCHAR" | "NVARCHAR" => {
                 let is_nvarchar = name == "NVARCHAR";
-                let is_tsql_dialect = matches!(self.config.dialect, Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric));
                 if self.match_token(TokenType::LParen) {
                     // Allow empty parens like NVARCHAR() - treat as no length specified
                     if self.check(TokenType::RParen) {
                         self.advance(); // consume RParen
+                        if is_nvarchar {
+                            return Ok(DataType::Custom { name: "NVARCHAR".to_string() });
+                        }
                         Ok(DataType::VarChar { length: None, parenthesized_length: false })
                     } else if self.check_identifier("MAX") {
                         // TSQL: VARCHAR(MAX) / NVARCHAR(MAX)
@@ -28731,20 +29528,29 @@ impl Parser {
                             self.expect(TokenType::RParen)?;
                         }
                         self.expect(TokenType::RParen)?;
-                        // For TSQL: preserve NVARCHAR as Custom DataType
-                        if is_nvarchar && is_tsql_dialect {
+                        // Preserve NVARCHAR as Custom DataType so target dialects can map properly
+                        if is_nvarchar {
                             return Ok(DataType::Custom { name: format!("NVARCHAR({})", n) });
                         }
                         Ok(DataType::VarChar { length: Some(n), parenthesized_length })
                     }
                 } else {
-                    if is_nvarchar && is_tsql_dialect {
+                    if is_nvarchar {
                         return Ok(DataType::Custom { name: "NVARCHAR".to_string() });
                     }
                     Ok(DataType::VarChar { length: None, parenthesized_length: false })
                 }
             }
-            "TEXT" | "NTEXT" => Ok(DataType::Text),
+            "TEXT" | "NTEXT" => {
+                // TEXT(n) - optional length parameter
+                if self.match_token(TokenType::LParen) {
+                    let n = self.expect_number()? as u32;
+                    self.expect(TokenType::RParen)?;
+                    Ok(DataType::TextWithLength { length: n })
+                } else {
+                    Ok(DataType::Text)
+                }
+            }
             "STRING" => {
                 // BigQuery STRING(n) - parameterized string with max length
                 let length = if self.match_token(TokenType::LParen) {
@@ -29679,7 +30485,16 @@ impl Parser {
             }
             // For simple types, use convert_name_to_type to get proper DataType variants
             // This ensures VARCHAR becomes DataType::VarChar, not DataType::Custom
-            _ => self.convert_name_to_type(&name)?
+            // For user-defined types in generic mode, preserve original case from raw_name
+            _ => {
+                let dt = self.convert_name_to_type(&name)?;
+                if matches!(dt, DataType::Custom { .. }) && self.config.dialect.is_none() {
+                    // Preserve original case for user-defined types in generic mode
+                    DataType::Custom { name: raw_name.to_string() }
+                } else {
+                    dt
+                }
+            }
         };
 
         // Materialize: handle postfix LIST syntax (INT LIST, INT LIST LIST LIST)
@@ -30271,6 +31086,34 @@ impl Parser {
         }
     }
 
+    /// Clear trailing_comments from the rightmost leaf of an expression tree.
+    /// Used by parse_and/parse_or to avoid comment duplication: when the same comment
+    /// is captured both in an expression's trailing_comments (during parse_primary) and
+    /// in a BinaryOp's operator_comments (during parse_and/parse_or), we clear the
+    /// expression's copy since the operator_comments position (after AND/OR) is correct.
+    fn clear_rightmost_trailing_comments(expr: &mut Expression) {
+        match expr {
+            Expression::Column(col) => col.trailing_comments.clear(),
+            Expression::And(op) | Expression::Or(op) => {
+                Self::clear_rightmost_trailing_comments(&mut op.right);
+            }
+            Expression::Not(op) => {
+                Self::clear_rightmost_trailing_comments(&mut op.this);
+            }
+            // For comparison ops, the rightmost is the right operand
+            Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op) |
+            Expression::Lte(op) | Expression::Gt(op) | Expression::Gte(op) |
+            Expression::Add(op) | Expression::Sub(op) | Expression::Mul(op) |
+            Expression::Div(op) => {
+                Self::clear_rightmost_trailing_comments(&mut op.right);
+            }
+            // For other expressions, trailing_comments might be stored differently
+            // We don't need to handle all variants, just the common ones that appear
+            // as operands in AND/OR expressions
+            _ => {}
+        }
+    }
+
     /// Get leading comments from the current token (comments that appeared before it)
     fn current_leading_comments(&self) -> Vec<String> {
         if !self.is_at_end() {
@@ -30638,6 +31481,25 @@ impl Parser {
         );
         // If it's a keyword but NOT structural, it's safe to use as identifier
         self.peek().token_type.is_keyword() && !is_structural
+    }
+
+    /// Check if a token at current position is the last meaningful token in an expression context.
+    /// This is used to detect when a keyword like IS or KEEP should be treated as an alias
+    /// instead of an operator keyword.
+    fn is_last_expression_token(&self, _token_type: TokenType) -> bool {
+        // Check if the token after the current one is end-of-input or a clause boundary
+        let next_idx = self.current + 1;
+        if next_idx >= self.tokens.len() {
+            return true; // at end of input
+        }
+        let next_type = self.tokens[next_idx].token_type;
+        // Clause boundaries that indicate the current token is the last in the expression
+        matches!(next_type,
+            TokenType::From | TokenType::Where | TokenType::GroupBy |
+            TokenType::OrderBy | TokenType::Having | TokenType::Limit |
+            TokenType::Union | TokenType::Intersect | TokenType::Except |
+            TokenType::Semicolon | TokenType::RParen | TokenType::Comma
+        )
     }
 
     /// Check if current token is a type keyword (for lambda type annotations)
@@ -35985,7 +36847,7 @@ impl Parser {
         }
         // Parse the condition expression
         let condition = self.parse_expression()?;
-        Ok(Some(Expression::Having(Box::new(Having { this: condition }))))
+        Ok(Some(Expression::Having(Box::new(Having { this: condition, comments: Vec::new() }))))
     }
 
     /// parse_having_max - Implemented from Python _parse_having_max
@@ -36231,7 +37093,7 @@ impl Parser {
             let args = self.parse_expression_list()?;
             self.expect(TokenType::RParen)?;
 
-            if args.len() >= 3 {
+            if args.len() == 3 {
                 return Ok(Some(Expression::IfFunc(Box::new(IfFunc { original_name: None,
                     condition: args[0].clone(),
                     true_value: args[1].clone(),
@@ -36244,7 +37106,7 @@ impl Parser {
                     false_value: None,
                 }))));
             } else {
-                return Err(Error::parse("IF function requires at least 2 arguments"));
+                return Err(Error::parse("IF function requires 2 or 3 arguments"));
             }
         }
 
@@ -36275,6 +37137,7 @@ impl Parser {
                             cascade: false,
                             cascade_constraints: false,
                             purge: false,
+                            leading_comments: Vec::new(),
                         }))));
                     }
                 }
@@ -36577,6 +37440,8 @@ impl Parser {
                     join_hint: None,
                     match_condition: None,
                     pivots: Vec::new(),
+                    comments: Vec::new(),
+                    nesting_group: 0,
                 }))));
             }
             return Ok(None);
@@ -36585,6 +37450,14 @@ impl Parser {
         // Try to parse join kind (INNER, LEFT, RIGHT, FULL, CROSS, etc.)
         let saved_pos = self.current;
         if let Some((kind, needs_join_keyword, use_inner_keyword, use_outer_keyword, join_hint)) = self.try_parse_join_kind() {
+            // Collect comments from tokens consumed by try_parse_join_kind
+            let mut join_comments = Vec::new();
+            for i in saved_pos..self.current {
+                if i < self.tokens.len() {
+                    join_comments.extend(self.tokens[i].trailing_comments.iter().cloned());
+                }
+            }
+
             // If kind requires JOIN keyword, expect it
             if needs_join_keyword && !self.match_token(TokenType::Join) {
                 self.current = saved_pos;
@@ -36620,6 +37493,8 @@ impl Parser {
                 join_hint,
                 match_condition: None,
                 pivots: Vec::new(),
+                comments: join_comments,
+                nesting_group: 0,
             }))));
         }
 
@@ -36638,6 +37513,8 @@ impl Parser {
                 join_hint: None,
                 match_condition: None,
                 pivots: Vec::new(),
+                comments: Vec::new(),
+                nesting_group: 0,
             }))));
         }
 
@@ -37315,7 +38192,7 @@ impl Parser {
         }
         // Parse the limit expression (usually a number)
         let limit_expr = self.parse_expression()?;
-        Ok(Some(Expression::Limit(Box::new(Limit { this: limit_expr, percent: false }))))
+        Ok(Some(Expression::Limit(Box::new(Limit { this: limit_expr, percent: false , comments: Vec::new() }))))
     }
 
     /// parse_limit_by - Implemented from Python _parse_limit_by
@@ -37852,15 +38729,47 @@ impl Parser {
                 // INSERT action - use Tuple to represent it
                 let mut elements = vec![Expression::Var(Box::new(Var { this: "INSERT".to_string() }))];
 
+                // Spark/Databricks: INSERT * (insert all columns)
+                if self.match_token(TokenType::Star) {
+                    elements.push(Expression::Star(crate::expressions::Star {
+                        table: None, except: None, replace: None, rename: None,
+                        trailing_comments: Vec::new(),
+                    }));
+                } else
                 // Parse column list (optional)
                 if self.match_token(TokenType::LParen) {
                     let mut columns: Vec<Expression> = Vec::new();
-                    if let Some(col) = self.parse_id_var()? {
-                        columns.push(col);
-                        while self.match_token(TokenType::Comma) {
-                            if let Some(next_col) = self.parse_id_var()? {
-                                columns.push(next_col);
-                            }
+                    loop {
+                        if let Some(col) = self.parse_id_var()? {
+                            // Handle qualified column references (e.g., target.a)
+                            let col = if self.match_token(TokenType::Dot) {
+                                if let Expression::Identifier(table_ident) = col {
+                                    if let Some(col_expr) = self.parse_id_var()? {
+                                        if let Expression::Identifier(col_ident) = col_expr {
+                                            Expression::Column(Column {
+                                                name: col_ident,
+                                                table: Some(table_ident),
+                                                join_mark: false,
+                                                trailing_comments: Vec::new(),
+                                            })
+                                        } else {
+                                            col_expr
+                                        }
+                                    } else {
+                                        return Err(Error::parse("Expected column name after dot in MERGE INSERT"));
+                                    }
+                                } else {
+                                    col
+                                }
+                            } else {
+                                col
+                            };
+                            columns.push(col);
+                        } else {
+                            break;
+                        }
+                        if !self.match_token(TokenType::Comma) {
+                            break;
                         }
                     }
                     self.match_token(TokenType::RParen);
@@ -37887,7 +38796,13 @@ impl Parser {
                 // UPDATE action - use Tuple to represent SET assignments
                 let mut elements = vec![Expression::Var(Box::new(Var { this: "UPDATE".to_string() }))];
 
-                if self.match_token(TokenType::Set) {
+                // Spark/Databricks: UPDATE * (update all columns)
+                if self.match_token(TokenType::Star) {
+                    elements.push(Expression::Star(crate::expressions::Star {
+                        table: None, except: None, replace: None, rename: None,
+                        trailing_comments: Vec::new(),
+                    }));
+                } else if self.match_token(TokenType::Set) {
                     // Parse col = value assignments manually
                     let mut assignments: Vec<Expression> = Vec::new();
                     loop {
@@ -38657,6 +39572,7 @@ impl Parser {
                 this: Box::new(result.unwrap_or_else(|| Expression::Null(Null))),
                 operator: Some(Box::new(Expression::Identifier(Identifier::new(op_text)))),
                 expression: Box::new(rhs),
+                comments: Vec::new(),
             })));
 
             // Check if there's another OPERATOR keyword
@@ -38690,7 +39606,7 @@ impl Parser {
             }
         }
 
-        Ok(Some(Expression::OrderBy(Box::new(OrderBy { expressions, siblings: false }))))
+        Ok(Some(Expression::OrderBy(Box::new(OrderBy { expressions, siblings: false, comments: Vec::new() }))))
     }
 
     /// parse_ordered_item - Parse a single ORDER BY item (expr [ASC|DESC] [NULLS FIRST|LAST])
@@ -38848,6 +39764,7 @@ impl Parser {
                 index: None,
                 style: ParameterStyle::Colon,
                 quoted: false,
+                string_quoted: false,
                 expression: None,
             }))));
         }
@@ -39699,6 +40616,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: None,
+                is_field: false,
             }))))
         } else {
             // Parse as a field reference: IN field_name
@@ -39716,6 +40634,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: None,
+                is_field: true,
             }))))
         }
     }
@@ -39759,6 +40678,7 @@ impl Parser {
                 index: None,
                 style: ParameterStyle::Colon,
                 quoted: false,
+                string_quoted: false,
                 expression: None,
             }))));
         }
@@ -39843,6 +40763,7 @@ impl Parser {
             index: None,
             style: ParameterStyle::Brace,
             quoted: false,
+            string_quoted: false,
             expression: Some(kind),
         }))))
     }
@@ -40220,6 +41141,7 @@ impl Parser {
                     OrderBy {
                         expressions: vec![Ordered::asc(order_expr)],
                         siblings: false,
+                        comments: Vec::new(),
                     }
                 } else {
                     self.parse_order_by()?
@@ -40529,6 +41451,15 @@ impl Parser {
             None => return Ok(None),
         };
 
+        // Check for SYMMETRIC/ASYMMETRIC qualifier
+        let symmetric = if self.match_texts(&["SYMMETRIC"]) {
+            Some(true)
+        } else if self.match_texts(&["ASYMMETRIC"]) {
+            Some(false)
+        } else {
+            None
+        };
+
         let low = self.parse_bitwise()?;
         if low.is_none() {
             return Ok(Some(this_expr));
@@ -40548,6 +41479,7 @@ impl Parser {
             low: low.unwrap(),
             high: high.unwrap(),
             not: negate,
+            symmetric,
         }))))
     }
 
@@ -40571,6 +41503,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: Some(Box::new(unnest_expr)),
+                is_field: false,
             }))));
         }
 
@@ -40586,6 +41519,7 @@ impl Parser {
                     not: false,
                     global: false,
                     unnest: None,
+                    is_field: true,
                 }))));
             }
             return Ok(Some(this_expr));
@@ -40602,6 +41536,7 @@ impl Parser {
                 not: false,
                 global: false,
                 unnest: None,
+                is_field: false,
             }))));
         }
 
@@ -40616,6 +41551,7 @@ impl Parser {
             not: false,
             global: false,
             unnest: None,
+            is_field: false,
         }))))
     }
 
@@ -41764,6 +42700,7 @@ impl Parser {
                             not: false,
                             global: false,
                             unnest: None,
+                            is_field: false,
                         }));
                     }
                 }
@@ -44944,6 +45881,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_comment_before_limit() {
+        let sql = "SELECT a FROM b WHERE foo AND bla\n-- comment 3\nLIMIT 10";
+        let result = Parser::parse_sql(sql).unwrap();
+        let output = crate::Generator::sql(&result[0]).unwrap();
+        assert_eq!(output, "SELECT a FROM b WHERE foo AND bla LIMIT 10 /* comment 3 */");
+    }
+
+    #[test]
     fn test_parse_simple_select() {
         let result = Parser::parse_sql("SELECT 1").unwrap();
         assert_eq!(result.len(), 1);
@@ -45446,14 +46391,18 @@ mod tests {
 
     #[test]
     fn test_parse_date_literals() {
-        // DATE literal
+        // DATE literal (generic mode normalizes to CAST)
         let result = Parser::parse_sql("SELECT DATE '2024-01-15'").unwrap();
         let select = result[0].as_select().unwrap();
         match &select.expressions[0] {
-            Expression::Literal(Literal::Date(d)) => {
-                assert_eq!(d, "2024-01-15");
+            Expression::Cast(cast) => {
+                match &cast.this {
+                    Expression::Literal(Literal::String(s)) => assert_eq!(s, "2024-01-15"),
+                    other => panic!("Expected String literal in Cast, got {:?}", other),
+                }
+                assert!(matches!(cast.to, DataType::Date));
             }
-            other => panic!("Expected Date literal, got {:?}", other),
+            other => panic!("Expected Cast expression, got {:?}", other),
         }
 
         // TIME literal
@@ -45466,14 +46415,18 @@ mod tests {
             _ => panic!("Expected Time literal"),
         }
 
-        // TIMESTAMP literal
+        // TIMESTAMP literal -> CAST in generic mode
         let result = Parser::parse_sql("SELECT TIMESTAMP '2024-01-15 10:30:00'").unwrap();
         let select = result[0].as_select().unwrap();
         match &select.expressions[0] {
-            Expression::Literal(Literal::Timestamp(ts)) => {
-                assert_eq!(ts, "2024-01-15 10:30:00");
+            Expression::Cast(cast) => {
+                match &cast.this {
+                    Expression::Literal(Literal::String(s)) => assert_eq!(s, "2024-01-15 10:30:00"),
+                    other => panic!("Expected String literal inside Cast, got {:?}", other),
+                }
+                assert!(matches!(&cast.to, DataType::Timestamp { precision: None, timezone: false }));
             }
-            _ => panic!("Expected Timestamp literal"),
+            _ => panic!("Expected Cast expression for TIMESTAMP literal"),
         }
     }
 
@@ -46128,5 +47081,102 @@ mod clickhouse_parser_regression_tests {
         let sql = "CREATE TABLE t (a String, b String, c UInt64, PROJECTION p1 (SELECT a, sum(c) GROUP BY a, b), PROJECTION p2 (SELECT b, sum(c) GROUP BY b)) ENGINE=MergeTree()";
         let result = crate::dialects::Dialect::get(DialectType::ClickHouse).parse(sql);
         assert!(result.is_ok(), "Parse error: {:?}", result.err());
+    }
+
+    /// ClickHouse ternary operator AST structure tests.
+    /// Ported from Python sqlglot: tests/dialects/test_clickhouse.py::test_ternary (lines 765-778).
+    /// Verifies that `x ? (y ? 1 : 2) : 3` parses into nested IfFunc nodes
+    /// with the correct AST shape.
+    #[test]
+    fn test_clickhouse_ternary_ast_structure() {
+        use crate::expressions::Expression;
+
+        let result = crate::parse_one("x ? (y ? 1 : 2) : 3", DialectType::ClickHouse);
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+        let ternary = result.unwrap();
+
+        // Root should be IfFunc
+        let if_func = match &ternary {
+            Expression::IfFunc(f) => f,
+            other => panic!("Expected IfFunc, got {:?}", std::mem::discriminant(other)),
+        };
+
+        // this (condition) should be Column "x"
+        assert!(
+            matches!(&if_func.condition, Expression::Column(_)),
+            "Expected condition to be Column, got {:?}",
+            std::mem::discriminant(&if_func.condition)
+        );
+
+        // true branch should be Paren
+        assert!(
+            matches!(&if_func.true_value, Expression::Paren(_)),
+            "Expected true_value to be Paren, got {:?}",
+            std::mem::discriminant(&if_func.true_value)
+        );
+
+        // false branch should be Literal
+        let false_value = if_func.false_value.as_ref().expect("Expected false_value");
+        assert!(
+            matches!(false_value, Expression::Literal(_)),
+            "Expected false_value to be Literal, got {:?}",
+            std::mem::discriminant(false_value)
+        );
+
+        // Inside the Paren, the nested ternary should also be IfFunc
+        let inner_paren = match &if_func.true_value {
+            Expression::Paren(p) => p,
+            _ => unreachable!(),
+        };
+        let nested_if = match &inner_paren.this {
+            Expression::IfFunc(f) => f,
+            other => panic!("Expected nested IfFunc, got {:?}", std::mem::discriminant(other)),
+        };
+
+        // Nested condition should be Column "y"
+        assert!(
+            matches!(&nested_if.condition, Expression::Column(_)),
+            "Expected nested condition to be Column, got {:?}",
+            std::mem::discriminant(&nested_if.condition)
+        );
+
+        // Nested true should be Literal 1
+        assert!(
+            matches!(&nested_if.true_value, Expression::Literal(_)),
+            "Expected nested true_value to be Literal, got {:?}",
+            std::mem::discriminant(&nested_if.true_value)
+        );
+
+        // Nested false should be Literal 2
+        let nested_false = nested_if.false_value.as_ref().expect("Expected nested false_value");
+        assert!(
+            matches!(nested_false, Expression::Literal(_)),
+            "Expected nested false_value to be Literal, got {:?}",
+            std::mem::discriminant(nested_false)
+        );
+    }
+
+    /// Verify that `a AND b ? 1 : 2` has And as the ternary condition
+    /// (AND binds tighter than ?).
+    /// Ported from Python sqlglot: test_clickhouse.py line 778.
+    #[test]
+    fn test_clickhouse_ternary_and_precedence() {
+        use crate::expressions::Expression;
+
+        let result = crate::parse_one("a and b ? 1 : 2", DialectType::ClickHouse);
+        assert!(result.is_ok(), "Parse error: {:?}", result.err());
+        let ternary = result.unwrap();
+
+        let if_func = match &ternary {
+            Expression::IfFunc(f) => f,
+            other => panic!("Expected IfFunc, got {:?}", std::mem::discriminant(other)),
+        };
+
+        // The condition should be And (not just Column "b")
+        assert!(
+            matches!(&if_func.condition, Expression::And(_)),
+            "Expected condition to be And, got {:?}",
+            std::mem::discriminant(&if_func.condition)
+        );
     }
 }

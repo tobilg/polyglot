@@ -566,6 +566,7 @@ impl Simplifier {
             operand: case.operand.map(|e| self.simplify_once(e)),
             whens: new_whens,
             else_: case.else_.map(|e| self.simplify_once(e)),
+            comments: Vec::new(),
         }))
     }
 

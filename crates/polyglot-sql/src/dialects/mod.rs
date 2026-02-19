@@ -1747,6 +1747,23 @@ impl Dialect {
         generator.generate(expr)
     }
 
+    /// Generate SQL from an expression with source dialect info (for transpilation)
+    pub fn generate_with_source(&self, expr: &Expression, source: DialectType) -> Result<String> {
+        let mut config = self.get_config_for_expr(expr);
+        config.source_dialect = Some(source);
+        let mut generator = Generator::with_config(config);
+        generator.generate(expr)
+    }
+
+    /// Generate SQL from an expression with pretty printing and source dialect info
+    pub fn generate_pretty_with_source(&self, expr: &Expression, source: DialectType) -> Result<String> {
+        let mut config = self.get_config_for_expr(expr);
+        config.pretty = true;
+        config.source_dialect = Some(source);
+        let mut generator = Generator::with_config(config);
+        generator.generate(expr)
+    }
+
     /// Generate SQL from an expression with forced identifier quoting (identify=True)
     pub fn generate_with_identify(&self, expr: &Expression) -> Result<String> {
         let mut config = self.get_config_for_expr(expr);
@@ -1792,16 +1809,20 @@ impl Dialect {
 
         match self.dialect_type {
             // MySQL doesn't support QUALIFY, DISTINCT ON, FULL OUTER JOIN
+            // MySQL doesn't natively support GENERATE_DATE_ARRAY (expand to recursive CTE)
             DialectType::MySQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_full_outer_join(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
+                let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
                 Ok(expr)
             }
             // PostgreSQL doesn't support QUALIFY
+            // PostgreSQL: UNNEST(GENERATE_SERIES) -> subquery wrapping
             DialectType::PostgreSQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
+                let expr = transforms::unwrap_unnest_generate_series_for_postgres(expr)?;
                 Ok(expr)
             }
             // BigQuery doesn't support DISTINCT ON or CTE column aliases
@@ -1820,28 +1841,39 @@ impl Dialect {
             }
             // TSQL doesn't support QUALIFY
             // TSQL requires boolean expressions in WHERE/HAVING (no implicit truthiness)
+            // TSQL doesn't support CTEs in subqueries (hoist to top level)
+            // NOTE: no_limit_order_by_union is handled in cross_dialect_normalize (not preprocess)
+            // to avoid breaking TSQL identity tests where ORDER BY on UNION is valid
             DialectType::TSQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
                 let expr = transforms::ensure_bools(expr)?;
+                let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
+                let expr = transforms::move_ctes_to_top_level(expr)?;
+                let expr = transforms::qualify_derived_table_outputs(expr)?;
                 Ok(expr)
             }
             // Spark doesn't support QUALIFY (but Databricks does)
+            // Spark doesn't support CTEs in subqueries (hoist to top level)
             DialectType::Spark => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::add_auto_table_alias(expr)?;
                 let expr = transforms::simplify_nested_paren_values(expr)?;
+                let expr = transforms::move_ctes_to_top_level(expr)?;
                 Ok(expr)
             }
             // Databricks supports QUALIFY natively
+            // Databricks doesn't support CTEs in subqueries (hoist to top level)
             DialectType::Databricks => {
                 let expr = transforms::add_auto_table_alias(expr)?;
                 let expr = transforms::simplify_nested_paren_values(expr)?;
+                let expr = transforms::move_ctes_to_top_level(expr)?;
                 Ok(expr)
             }
-            // Hive doesn't support QUALIFY
+            // Hive doesn't support QUALIFY or CTEs in subqueries
             DialectType::Hive => {
                 let expr = transforms::eliminate_qualify(expr)?;
+                let expr = transforms::move_ctes_to_top_level(expr)?;
                 Ok(expr)
             }
             // SQLite doesn't support QUALIFY
@@ -1864,14 +1896,17 @@ impl Dialect {
             }
             // DuckDB supports QUALIFY - no elimination needed
             // Expand POSEXPLODE to GENERATE_SUBSCRIPTS + UNNEST
+            // Expand LIKE ANY / ILIKE ANY to OR chains (DuckDB doesn't support quantifiers)
             DialectType::DuckDB => {
                 let expr = transforms::expand_posexplode_duckdb(expr)?;
+                let expr = transforms::expand_like_any(expr)?;
                 Ok(expr)
             }
-            // Redshift doesn't support QUALIFY or WINDOW clause
+            // Redshift doesn't support QUALIFY, WINDOW clause, or GENERATE_DATE_ARRAY
             DialectType::Redshift => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_window_clause(expr)?;
+                let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
                 Ok(expr)
             }
             // StarRocks doesn't support BETWEEN in DELETE statements or QUALIFY
@@ -1882,8 +1917,9 @@ impl Dialect {
             }
             // DataFusion supports QUALIFY and semi/anti joins natively
             DialectType::DataFusion => Ok(expr),
-            // Oracle - no special preprocessing needed
+            // Oracle doesn't support QUALIFY
             DialectType::Oracle => {
+                let expr = transforms::eliminate_qualify(expr)?;
                 Ok(expr)
             }
             // Drill - no special preprocessing needed
@@ -1892,6 +1928,11 @@ impl Dialect {
             }
             // Teradata - no special preprocessing needed
             DialectType::Teradata => {
+                Ok(expr)
+            }
+            // ClickHouse doesn't support ORDER BY/LIMIT directly on UNION
+            DialectType::ClickHouse => {
+                let expr = transforms::no_limit_order_by_union(expr)?;
                 Ok(expr)
             }
             // Other dialects - no preprocessing
@@ -1916,6 +1957,26 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
+                // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
+                // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
+                // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.
+                let expr = if matches!(self.dialect_type, DialectType::DuckDB) {
+                    use crate::expressions::DataType as DT;
+                    transform_recursive(expr, &|e| {
+                        match e {
+                            Expression::DataType(DT::VarChar { .. }) => {
+                                Ok(Expression::DataType(DT::Text))
+                            }
+                            Expression::DataType(DT::Char { .. }) => {
+                                Ok(Expression::DataType(DT::Text))
+                            }
+                            _ => Ok(e),
+                        }
+                    })?
+                } else {
+                    expr
+                };
+
                 // When source and target differ, first normalize the source dialect's
                 // AST constructs to standard SQL, so that the target dialect can handle them.
                 // This handles cases like Snowflake's SQUARE -> POWER, DIV0 -> CASE, etc.
@@ -2010,10 +2071,8 @@ impl Dialect {
                 // and before target transform, with knowledge of the target dialect's NULL ordering behavior
                 let normalized = crate::transforms::eliminate_distinct_on_for_dialect(normalized, Some(target))?;
 
-                // BigQuery GENERATE_DATE_ARRAY in UNNEST -> Snowflake ARRAY_GENERATE_RANGE + DATEADD
-                let normalized = if matches!(self.dialect_type, DialectType::BigQuery)
-                    && matches!(target, DialectType::Snowflake)
-                {
+                // GENERATE_DATE_ARRAY in UNNEST -> Snowflake ARRAY_GENERATE_RANGE + DATEADD
+                let normalized = if matches!(target, DialectType::Snowflake) {
                     Self::transform_generate_date_array_snowflake(normalized)?
                 } else {
                     normalized
@@ -2026,11 +2085,57 @@ impl Dialect {
                     normalized
                 };
 
+                // Wrap UNION with ORDER BY/LIMIT in a subquery for dialects that require it
+                let normalized = if matches!(target, DialectType::ClickHouse | DialectType::TSQL) {
+                    crate::transforms::no_limit_order_by_union(normalized)?
+                } else {
+                    normalized
+                };
+
+                // TSQL: Convert COUNT(*) -> COUNT_BIG(*) when source is not TSQL/Fabric
+                // Python sqlglot does this in the TSQL generator, but we can't do it there
+                // because it would break TSQL -> TSQL identity
+                let normalized = if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                    && !matches!(self.dialect_type, DialectType::TSQL | DialectType::Fabric)
+                {
+                    transform_recursive(normalized, &|e| {
+                        if let Expression::Count(ref c) = e {
+                            // Build COUNT_BIG(...) as an AggregateFunction
+                            let args = if c.star {
+                                vec![Expression::Star(crate::expressions::Star {
+                                    table: None,
+                                    except: None,
+                                    replace: None,
+                                    rename: None,
+                                    trailing_comments: Vec::new(),
+                                })]
+                            } else if let Some(ref this) = c.this {
+                                vec![this.clone()]
+                            } else {
+                                vec![]
+                            };
+                            Ok(Expression::AggregateFunction(Box::new(crate::expressions::AggregateFunction {
+                                name: "COUNT_BIG".to_string(),
+                                args,
+                                distinct: c.distinct,
+                                filter: c.filter.clone(),
+                                order_by: Vec::new(),
+                                limit: None,
+                                ignore_nulls: None,
+                            })))
+                        } else {
+                            Ok(e)
+                        }
+                    })?
+                } else {
+                    normalized
+                };
+
                 let transformed = target_dialect.transform(normalized)?;
                 let mut sql = if pretty {
-                    target_dialect.generate_pretty(&transformed)?
+                    target_dialect.generate_pretty_with_source(&transformed, self.dialect_type)?
                 } else {
-                    target_dialect.generate(&transformed)?
+                    target_dialect.generate_with_source(&transformed, self.dialect_type)?
                 };
 
                 // Align a known Snowflake pretty-print edge case with Python sqlglot output.
@@ -2052,6 +2157,16 @@ impl Dialect {
     fn transform_generate_date_array_snowflake(expr: Expression) -> Result<Expression> {
         use crate::expressions::*;
         transform_recursive(expr, &|e| {
+            // Handle ARRAY_SIZE(GENERATE_DATE_ARRAY(...)) -> ARRAY_SIZE((SELECT ARRAY_AGG(*) FROM subquery))
+            if let Expression::ArraySize(ref af) = e {
+                if let Expression::Function(ref f) = af.this {
+                    if f.name.eq_ignore_ascii_case("GENERATE_DATE_ARRAY") && f.args.len() >= 2 {
+                        let result = Self::convert_array_size_gda_snowflake(f)?;
+                        return Ok(result);
+                    }
+                }
+            }
+
             let Expression::Select(mut sel) = e else { return Ok(e); };
 
             // Find joins with UNNEST containing GenerateSeries (from GENERATE_DATE_ARRAY conversion)
@@ -2127,7 +2242,10 @@ impl Dialect {
             }
 
             let Some((alias_name, start_expr, end_expr, unit_str)) = gda_info else {
-                return Ok(Expression::Select(sel));
+                // Also check FROM clause for UNNEST(GENERATE_DATE_ARRAY(...)) patterns
+                // This handles Generic->Snowflake where GENERATE_DATE_ARRAY is in FROM, not in JOIN
+                let result = Self::try_transform_from_gda_snowflake(sel);
+                return result;
             };
             let join_idx = gda_join_idx.unwrap();
 
@@ -2310,6 +2428,383 @@ impl Dialect {
         }
     }
 
+    /// Handle UNNEST(GENERATE_DATE_ARRAY(...)) in FROM clause for Snowflake target.
+    /// Converts to a subquery with DATEADD + TABLE(FLATTEN(ARRAY_GENERATE_RANGE(...))).
+    fn try_transform_from_gda_snowflake(mut sel: Box<crate::expressions::Select>) -> Result<Expression> {
+        use crate::expressions::*;
+
+        // Extract GDA info from FROM clause
+        let mut gda_info: Option<(usize, String, Expression, Expression, String, Option<(String, Vec<Identifier>)>)> = None; // (from_idx, col_name, start, end, unit, outer_alias)
+
+        if let Some(ref from) = sel.from {
+            for (idx, table_expr) in from.expressions.iter().enumerate() {
+                // Pattern 1: UNNEST(GENERATE_DATE_ARRAY(...))
+                // Pattern 2: Alias(UNNEST(GENERATE_DATE_ARRAY(...))) AS _q(date_week)
+                let (unnest_opt, outer_alias_info) = match table_expr {
+                    Expression::Unnest(ref unnest) => (Some(unnest.as_ref()), None),
+                    Expression::Alias(ref a) => {
+                        if let Expression::Unnest(ref unnest) = a.this {
+                            let alias_info = (a.alias.name.clone(), a.column_aliases.clone());
+                            (Some(unnest.as_ref()), Some(alias_info))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    _ => (None, None),
+                };
+
+                if let Some(unnest) = unnest_opt {
+                    // Check for GENERATE_DATE_ARRAY function
+                    let func_opt = match &unnest.this {
+                        Expression::Function(ref f) if f.name.eq_ignore_ascii_case("GENERATE_DATE_ARRAY") && f.args.len() >= 2 => Some(f),
+                        // Also check for GenerateSeries (from earlier normalization)
+                        _ => None,
+                    };
+
+                    if let Some(f) = func_opt {
+                        let start_expr = f.args[0].clone();
+                        let end_expr = f.args[1].clone();
+                        let step = f.args.get(2).cloned();
+
+                        // Extract unit and column name
+                        let unit = Self::extract_interval_unit_str(&step);
+                        let col_name = outer_alias_info.as_ref()
+                            .and_then(|(_, cols)| cols.first().map(|id| id.name.clone()))
+                            .unwrap_or_else(|| "value".to_string());
+
+                        if let Some(unit_str) = unit {
+                            gda_info = Some((idx, col_name, start_expr, end_expr, unit_str, outer_alias_info));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some((from_idx, col_name, start_expr, end_expr, unit_str, outer_alias_info)) = gda_info else {
+            return Ok(Expression::Select(sel));
+        };
+
+        // Build the Snowflake subquery:
+        // (SELECT DATEADD(unit, CAST(col_name AS INT), CAST(start AS DATE)) AS col_name
+        //  FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1))) AS _t0(seq, key, path, index, col_name, this))
+
+        // DATEDIFF(unit, start, end)
+        let datediff = Expression::Function(Box::new(Function::new(
+            "DATEDIFF".to_string(),
+            vec![
+                Expression::Column(Column { name: Identifier::new(&unit_str), table: None, join_mark: false, trailing_comments: vec![] }),
+                start_expr.clone(),
+                end_expr.clone(),
+            ],
+        )));
+        // (DATEDIFF(...) + 1 - 1) + 1
+        let plus_one = Expression::Add(Box::new(BinaryOp {
+            left: datediff,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+        let minus_one = Expression::Sub(Box::new(BinaryOp {
+            left: plus_one,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+        let paren_inner = Expression::Paren(Box::new(Paren { this: minus_one, trailing_comments: vec![] }));
+        let outer_plus_one = Expression::Add(Box::new(BinaryOp {
+            left: paren_inner,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+
+        let array_gen_range = Expression::Function(Box::new(Function::new(
+            "ARRAY_GENERATE_RANGE".to_string(),
+            vec![Expression::Literal(Literal::Number("0".to_string())), outer_plus_one],
+        )));
+
+        // TABLE(FLATTEN(INPUT => ...))
+        let flatten_input = Expression::NamedArgument(Box::new(NamedArgument {
+            name: Identifier::new("INPUT"),
+            value: array_gen_range,
+            separator: crate::expressions::NamedArgSeparator::DArrow,
+        }));
+        let flatten = Expression::Function(Box::new(Function::new(
+            "FLATTEN".to_string(),
+            vec![flatten_input],
+        )));
+
+        // Determine alias name for the table: use outer alias or _t0
+        let table_alias_name = outer_alias_info.as_ref()
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "_t0".to_string());
+
+        // TABLE(FLATTEN(...)) AS _t0(seq, key, path, index, col_name, this)
+        let table_func = Expression::Function(Box::new(Function::new("TABLE".to_string(), vec![flatten])));
+        let flatten_aliased = Expression::Alias(Box::new(Alias {
+            this: table_func,
+            alias: Identifier::new(&table_alias_name),
+            column_aliases: vec![
+                Identifier::new("seq"),
+                Identifier::new("key"),
+                Identifier::new("path"),
+                Identifier::new("index"),
+                Identifier::new(&col_name),
+                Identifier::new("this"),
+            ],
+            pre_alias_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        // SELECT DATEADD(unit, CAST(col_name AS INT), CAST(start AS DATE)) AS col_name
+        let dateadd_expr = Expression::Function(Box::new(Function::new(
+            "DATEADD".to_string(),
+            vec![
+                Expression::Column(Column { name: Identifier::new(&unit_str), table: None, join_mark: false, trailing_comments: vec![] }),
+                Expression::Cast(Box::new(Cast {
+                    this: Expression::Column(Column { name: Identifier::new(&col_name), table: None, join_mark: false, trailing_comments: vec![] }),
+                    to: DataType::Int { length: None, integer_spelling: false },
+                    trailing_comments: vec![],
+                    double_colon_syntax: false,
+                    format: None,
+                    default: None,
+                })),
+                // Use start_expr directly - it's already been normalized (DATE literal -> CAST)
+                start_expr.clone(),
+            ],
+        )));
+        let dateadd_aliased = Expression::Alias(Box::new(Alias {
+            this: dateadd_expr,
+            alias: Identifier::new(&col_name),
+            column_aliases: vec![],
+            pre_alias_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        // Build inner SELECT
+        let mut inner_select = Select::new();
+        inner_select.expressions = vec![dateadd_aliased];
+        inner_select.from = Some(From {
+            expressions: vec![flatten_aliased],
+        });
+
+        let inner_select_expr = Expression::Select(Box::new(inner_select));
+        let subquery = Expression::Subquery(Box::new(Subquery {
+            this: inner_select_expr,
+            alias: None,
+            column_aliases: vec![],
+            order_by: None,
+            limit: None,
+            offset: None,
+            distribute_by: None,
+            sort_by: None,
+            cluster_by: None,
+            lateral: false,
+            modifiers_inside: false,
+            trailing_comments: vec![],
+        }));
+
+        // If there was an outer alias (e.g., AS _q(date_week)), wrap with alias
+        let replacement = if let Some((alias_name, col_aliases)) = outer_alias_info {
+            Expression::Alias(Box::new(Alias {
+                this: subquery,
+                alias: Identifier::new(&alias_name),
+                column_aliases: col_aliases,
+                pre_alias_comments: vec![],
+                trailing_comments: vec![],
+            }))
+        } else {
+            subquery
+        };
+
+        // Replace the FROM expression
+        if let Some(ref mut from) = sel.from {
+            from.expressions[from_idx] = replacement;
+        }
+
+        Ok(Expression::Select(sel))
+    }
+
+    /// Convert ARRAY_SIZE(GENERATE_DATE_ARRAY(start, end, step)) for Snowflake.
+    /// Produces: ARRAY_SIZE((SELECT ARRAY_AGG(*) FROM (SELECT DATEADD(unit, CAST(value AS INT), start) AS value
+    ///   FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1))) AS _t0(...))))
+    fn convert_array_size_gda_snowflake(f: &crate::expressions::Function) -> Result<Expression> {
+        use crate::expressions::*;
+
+        let start_expr = f.args[0].clone();
+        let end_expr = f.args[1].clone();
+        let step = f.args.get(2).cloned();
+        let unit_str = Self::extract_interval_unit_str(&step).unwrap_or_else(|| "DAY".to_string());
+        let col_name = "value";
+
+        // Build the inner subquery: same as try_transform_from_gda_snowflake
+        let datediff = Expression::Function(Box::new(Function::new(
+            "DATEDIFF".to_string(),
+            vec![
+                Expression::Column(Column { name: Identifier::new(&unit_str), table: None, join_mark: false, trailing_comments: vec![] }),
+                start_expr.clone(),
+                end_expr.clone(),
+            ],
+        )));
+        let plus_one = Expression::Add(Box::new(BinaryOp {
+            left: datediff,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+        let minus_one = Expression::Sub(Box::new(BinaryOp {
+            left: plus_one,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+        let paren_inner = Expression::Paren(Box::new(Paren { this: minus_one, trailing_comments: vec![] }));
+        let outer_plus_one = Expression::Add(Box::new(BinaryOp {
+            left: paren_inner,
+            right: Expression::Literal(Literal::Number("1".to_string())),
+            left_comments: vec![], operator_comments: vec![], trailing_comments: vec![],
+        }));
+
+        let array_gen_range = Expression::Function(Box::new(Function::new(
+            "ARRAY_GENERATE_RANGE".to_string(),
+            vec![Expression::Literal(Literal::Number("0".to_string())), outer_plus_one],
+        )));
+
+        let flatten_input = Expression::NamedArgument(Box::new(NamedArgument {
+            name: Identifier::new("INPUT"),
+            value: array_gen_range,
+            separator: crate::expressions::NamedArgSeparator::DArrow,
+        }));
+        let flatten = Expression::Function(Box::new(Function::new(
+            "FLATTEN".to_string(),
+            vec![flatten_input],
+        )));
+
+        let table_func = Expression::Function(Box::new(Function::new("TABLE".to_string(), vec![flatten])));
+        let flatten_aliased = Expression::Alias(Box::new(Alias {
+            this: table_func,
+            alias: Identifier::new("_t0"),
+            column_aliases: vec![
+                Identifier::new("seq"),
+                Identifier::new("key"),
+                Identifier::new("path"),
+                Identifier::new("index"),
+                Identifier::new(col_name),
+                Identifier::new("this"),
+            ],
+            pre_alias_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        let dateadd_expr = Expression::Function(Box::new(Function::new(
+            "DATEADD".to_string(),
+            vec![
+                Expression::Column(Column { name: Identifier::new(&unit_str), table: None, join_mark: false, trailing_comments: vec![] }),
+                Expression::Cast(Box::new(Cast {
+                    this: Expression::Column(Column { name: Identifier::new(col_name), table: None, join_mark: false, trailing_comments: vec![] }),
+                    to: DataType::Int { length: None, integer_spelling: false },
+                    trailing_comments: vec![],
+                    double_colon_syntax: false,
+                    format: None,
+                    default: None,
+                })),
+                start_expr.clone(),
+            ],
+        )));
+        let dateadd_aliased = Expression::Alias(Box::new(Alias {
+            this: dateadd_expr,
+            alias: Identifier::new(col_name),
+            column_aliases: vec![],
+            pre_alias_comments: vec![],
+            trailing_comments: vec![],
+        }));
+
+        // Inner SELECT: SELECT DATEADD(...) AS value FROM TABLE(FLATTEN(...)) AS _t0(...)
+        let mut inner_select = Select::new();
+        inner_select.expressions = vec![dateadd_aliased];
+        inner_select.from = Some(From {
+            expressions: vec![flatten_aliased],
+        });
+
+        // Wrap in subquery for the inner part
+        let inner_subquery = Expression::Subquery(Box::new(Subquery {
+            this: Expression::Select(Box::new(inner_select)),
+            alias: None,
+            column_aliases: vec![],
+            order_by: None,
+            limit: None,
+            offset: None,
+            distribute_by: None,
+            sort_by: None,
+            cluster_by: None,
+            lateral: false,
+            modifiers_inside: false,
+            trailing_comments: vec![],
+        }));
+
+        // Outer: SELECT ARRAY_AGG(*) FROM (inner_subquery)
+        let star = Expression::Star(Star { table: None, except: None, replace: None, rename: None, trailing_comments: vec![] });
+        let array_agg = Expression::ArrayAgg(Box::new(AggFunc {
+            this: star,
+            distinct: false,
+            filter: None,
+            order_by: vec![],
+            name: Some("ARRAY_AGG".to_string()),
+            ignore_nulls: None,
+            having_max: None,
+            limit: None,
+        }));
+
+        let mut outer_select = Select::new();
+        outer_select.expressions = vec![array_agg];
+        outer_select.from = Some(From {
+            expressions: vec![inner_subquery],
+        });
+
+        // Wrap in a subquery
+        let outer_subquery = Expression::Subquery(Box::new(Subquery {
+            this: Expression::Select(Box::new(outer_select)),
+            alias: None,
+            column_aliases: vec![],
+            order_by: None,
+            limit: None,
+            offset: None,
+            distribute_by: None,
+            sort_by: None,
+            cluster_by: None,
+            lateral: false,
+            modifiers_inside: false,
+            trailing_comments: vec![],
+        }));
+
+        // ARRAY_SIZE(subquery)
+        Ok(Expression::ArraySize(Box::new(UnaryFunc::new(outer_subquery))))
+    }
+
+    /// Extract interval unit string from an optional step expression.
+    fn extract_interval_unit_str(step: &Option<Expression>) -> Option<String> {
+        use crate::expressions::*;
+        if let Some(Expression::Interval(ref iv)) = step {
+            if let Some(IntervalUnitSpec::Simple { ref unit, .. }) = iv.unit {
+                return Some(format!("{:?}", unit).to_uppercase());
+            }
+            if let Some(ref this) = iv.this {
+                if let Expression::Literal(Literal::String(ref s)) = this {
+                    let parts: Vec<&str> = s.split_whitespace().collect();
+                    if parts.len() == 2 {
+                        return Some(parts[1].to_uppercase());
+                    } else if parts.len() == 1 {
+                        let upper = parts[0].to_uppercase();
+                        if matches!(upper.as_str(), "YEAR" | "QUARTER" | "MONTH" | "WEEK" | "DAY" | "HOUR" | "MINUTE" | "SECOND") {
+                            return Some(upper);
+                        }
+                    }
+                }
+            }
+        }
+        // Default to DAY if no step or no interval
+        if step.is_none() {
+            return Some("DAY".to_string());
+        }
+        None
+    }
+
     fn normalize_snowflake_pretty(mut sql: String) -> String {
         if sql.contains("LATERAL IFF(_u.pos = _u_2.pos_2, _u_2.entity, NULL) AS datasource(SEQ, KEY, PATH, INDEX, VALUE, THIS)")
             && sql.contains("ARRAY_GENERATE_RANGE(0, (GREATEST(ARRAY_SIZE(INPUT => PARSE_JSON(flags))) - 1) + 1)")
@@ -2454,10 +2949,54 @@ impl Dialect {
             MysqlCastCharToText,     // MySQL CAST(x AS CHAR) -> CAST(x AS TEXT/VARCHAR/STRING) for targets
             SparkCastVarcharToString, // Spark CAST(x AS VARCHAR/CHAR) -> CAST(x AS STRING) for Spark targets
             JsonExtractToArrow,      // JSON_EXTRACT(x, path) -> x -> path for SQLite/DuckDB
+            JsonExtractToTsql,       // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> ISNULL(JSON_QUERY, JSON_VALUE) for TSQL
+            JsonExtractToClickHouse, // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> JSONExtractString for ClickHouse
+            JsonExtractScalarConvert, // JSON_EXTRACT_SCALAR -> target-specific (PostgreSQL, Snowflake, SQLite)
+            JsonPathNormalize,       // Normalize JSON path format (brackets, wildcards, quotes) for various dialects
             MinMaxToLeastGreatest,   // Multi-arg MIN(a,b,c) -> LEAST(a,b,c), MAX(a,b,c) -> GREATEST(a,b,c)
             ClickHouseUniqToApproxCountDistinct, // uniq(x) -> APPROX_COUNT_DISTINCT(x) for non-ClickHouse targets
             ClickHouseAnyToAnyValue,  // any(x) -> ANY_VALUE(x) for non-ClickHouse targets
             OracleVarchar2ToVarchar,  // VARCHAR2(N CHAR/BYTE) -> VARCHAR(N) for non-Oracle targets
+            Nvl2Expand,              // NVL2(a, b, c) -> CASE WHEN NOT a IS NULL THEN b ELSE c END
+            IfnullToCoalesce,        // IFNULL(a, b) -> COALESCE(a, b)
+            IsAsciiConvert,          // IS_ASCII(x) -> dialect-specific ASCII check
+            StrPositionConvert,      // STR_POSITION(haystack, needle[, pos]) -> dialect-specific
+            DecodeSimplify,          // DECODE with null-safe -> simple = comparison
+            ArraySumConvert,         // ARRAY_SUM -> target-specific
+            ArraySizeConvert,        // ARRAY_SIZE -> target-specific
+            ArrayAnyConvert,         // ARRAY_ANY -> target-specific
+            CastTimestamptzToFunc,   // CAST(x AS TIMESTAMPTZ) -> TIMESTAMP(x) for MySQL/StarRocks
+            TsOrDsToDateConvert,     // TS_OR_DS_TO_DATE(x[, fmt]) -> dialect-specific
+            TsOrDsToDateStrConvert,  // TS_OR_DS_TO_DATE_STR(x) -> SUBSTRING(CAST(x AS type), 1, 10)
+            DateStrToDateConvert,    // DATE_STR_TO_DATE(x) -> CAST(x AS DATE)
+            TimeStrToDateConvert,    // TIME_STR_TO_DATE(x) -> CAST(x AS DATE)
+            TimeStrToTimeConvert,    // TIME_STR_TO_TIME(x) -> CAST(x AS TIMESTAMP)
+            DateToDateStrConvert,    // DATE_TO_DATE_STR(x) -> CAST(x AS TEXT/VARCHAR/STRING)
+            DateToDiConvert,         // DATE_TO_DI(x) -> dialect-specific (CAST date to YYYYMMDD integer)
+            DiToDateConvert,         // DI_TO_DATE(x) -> dialect-specific (integer YYYYMMDD to date)
+            TsOrDiToDiConvert,       // TS_OR_DI_TO_DI(x) -> dialect-specific
+            UnixToStrConvert,        // UNIX_TO_STR(x, fmt) -> dialect-specific
+            UnixToTimeConvert,       // UNIX_TO_TIME(x) -> dialect-specific
+            UnixToTimeStrConvert,    // UNIX_TO_TIME_STR(x) -> dialect-specific
+            TimeToUnixConvert,       // TIME_TO_UNIX(x) -> dialect-specific
+            TimeToStrConvert,        // TIME_TO_STR(x, fmt) -> dialect-specific
+            StrToUnixConvert,        // STR_TO_UNIX(x, fmt) -> dialect-specific
+            DateTruncSwapArgs,       // DATE_TRUNC('unit', x) -> DATE_TRUNC(x, unit) / TRUNC(x, unit)
+            TimestampTruncConvert,   // TIMESTAMP_TRUNC(x, UNIT[, tz]) -> dialect-specific
+            StrToDateConvert,        // STR_TO_DATE(x, fmt) from Generic -> CAST(StrToTime(x,fmt) AS DATE)
+            TsOrDsAddConvert,       // TS_OR_DS_ADD(x, n, 'UNIT') from Generic -> DATE_ADD per dialect
+            DateFromUnixDateConvert, // DATE_FROM_UNIX_DATE(n) -> DATEADD(DAY, n, '1970-01-01')
+            TimeStrToUnixConvert,    // TIME_STR_TO_UNIX(x) -> dialect-specific
+            TimeToTimeStrConvert,    // TIME_TO_TIME_STR(x) -> CAST(x AS type)
+            CreateTableLikeToCtas,   // CREATE TABLE a LIKE b -> CREATE TABLE a AS SELECT * FROM b LIMIT 0
+            CreateTableLikeToSelectInto, // CREATE TABLE a LIKE b -> SELECT TOP 0 * INTO a FROM b AS temp
+            CreateTableLikeToAs,     // CREATE TABLE a LIKE b -> CREATE TABLE a AS b (ClickHouse)
+            ArrayRemoveConvert,      // ARRAY_REMOVE(arr, target) -> LIST_FILTER/arrayFilter/ARRAY subquery
+            ArrayReverseConvert,     // ARRAY_REVERSE(x) -> arrayReverse(x) for ClickHouse
+            JsonKeysConvert,         // JSON_KEYS -> JSON_OBJECT_KEYS/OBJECT_KEYS
+            ParseJsonStrip,          // PARSE_JSON(x) -> x (strip wrapper)
+            ArraySizeDrill,          // ARRAY_SIZE -> REPEATED_COUNT for Drill
+            WeekOfYearToWeekIso,     // WEEKOFYEAR -> WEEKISO for Snowflake cross-dialect
         }
 
         // Handle SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake/etc.
@@ -2472,6 +3011,31 @@ impl Dialect {
             if let Expression::Select(mut select) = expr {
                 if let Some(ref mut offset) = select.offset {
                     offset.rows = None;
+                }
+                Expression::Select(select)
+            } else {
+                expr
+            }
+        } else {
+            expr
+        };
+
+        // Oracle: LIMIT -> FETCH FIRST, OFFSET -> OFFSET ROWS
+        let expr = if matches!(target, DialectType::Oracle) {
+            if let Expression::Select(mut select) = expr {
+                if let Some(limit) = select.limit.take() {
+                    // Convert LIMIT to FETCH FIRST n ROWS ONLY
+                    select.fetch = Some(crate::expressions::Fetch {
+                        direction: "FIRST".to_string(),
+                        count: Some(limit.this),
+                        percent: false,
+                        rows: true,
+                        with_ties: false,
+                    });
+                }
+                // Add ROWS to OFFSET if present
+                if let Some(ref mut offset) = select.offset {
+                    offset.rows = Some(true);
                 }
                 Expression::Select(select)
             } else {
@@ -2553,9 +3117,9 @@ impl Dialect {
             }
 
             // Strip table-level constraints for Spark/Hive/Databricks
-            // Keep PRIMARY KEY constraints but strip TSQL-specific modifiers; remove all others
+            // Keep PRIMARY KEY and LIKE constraints but strip TSQL-specific modifiers; remove all others
             if matches!(target, DialectType::Spark | DialectType::Databricks | DialectType::Hive) {
-                ct.constraints.retain(|c| matches!(c, crate::expressions::TableConstraint::PrimaryKey { .. }));
+                ct.constraints.retain(|c| matches!(c, crate::expressions::TableConstraint::PrimaryKey { .. } | crate::expressions::TableConstraint::Like { .. }));
                 for constraint in &mut ct.constraints {
                     if let crate::expressions::TableConstraint::PrimaryKey { columns, modifiers, .. } = constraint {
                         // Strip ASC/DESC from column names
@@ -2678,6 +3242,66 @@ impl Dialect {
             expr
         };
 
+        // Wrap bare VALUES in CTE bodies with SELECT * FROM (...) AS _values for generic/non-Presto targets
+        let expr = if !matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena) {
+            if let Expression::Select(mut select) = expr {
+                if let Some(ref mut with) = select.with {
+                    for cte in &mut with.ctes {
+                        if let Expression::Values(ref vals) = cte.this {
+                            // Build: SELECT * FROM (VALUES ...) AS _values
+                            let values_subquery = Expression::Subquery(Box::new(crate::expressions::Subquery {
+                                this: Expression::Values(vals.clone()),
+                                alias: Some(Identifier::new("_values".to_string())),
+                                column_aliases: Vec::new(),
+                                order_by: None,
+                                limit: None,
+                                offset: None,
+                                distribute_by: None,
+                                sort_by: None,
+                                cluster_by: None,
+                                lateral: false,
+                                modifiers_inside: false,
+                                trailing_comments: Vec::new(),
+                            }));
+                            let mut new_select = crate::expressions::Select::new();
+                            new_select.expressions = vec![Expression::Star(crate::expressions::Star {
+                                table: None,
+                                except: None,
+                                replace: None,
+                                rename: None,
+                                trailing_comments: Vec::new(),
+                            })];
+                            new_select.from = Some(crate::expressions::From {
+                                expressions: vec![values_subquery],
+                            });
+                            cte.this = Expression::Select(Box::new(new_select));
+                        }
+                    }
+                }
+                Expression::Select(select)
+            } else {
+                expr
+            }
+        } else {
+            expr
+        };
+
+        // PostgreSQL CREATE INDEX: add NULLS FIRST to index columns that don't have nulls ordering
+        let expr = if matches!(target, DialectType::PostgreSQL) {
+            if let Expression::CreateIndex(mut ci) = expr {
+                for col in &mut ci.columns {
+                    if col.nulls_first.is_none() {
+                        col.nulls_first = Some(true);
+                    }
+                }
+                Expression::CreateIndex(ci)
+            } else {
+                expr
+            }
+        } else {
+            expr
+        };
+
         transform_recursive(expr, &|e| {
             // BigQuery CAST(ARRAY[STRUCT(...)] AS STRUCT_TYPE[]) -> DuckDB: convert unnamed Structs to ROW()
             // This converts auto-named struct literals {'_0': x, '_1': y} inside typed arrays to ROW(x, y)
@@ -2767,6 +3391,7 @@ impl Dialect {
                                 index: p.index,
                                 style: crate::expressions::ParameterStyle::DollarBrace,
                                 quoted: p.quoted,
+                                string_quoted: p.string_quoted,
                                 expression: None,
                             })));
                         }
@@ -2781,6 +3406,7 @@ impl Dialect {
                             index: None,
                             style: crate::expressions::ParameterStyle::DollarBrace,
                             quoted: false,
+                            string_quoted: false,
                             expression: None,
                         })));
                     }
@@ -3008,6 +3634,7 @@ impl Dialect {
                         operand: Some(typeof_func),
                         whens: vec![(Expression::Literal(Literal::String("BLOB".to_string())), octet_length)],
                         else_: Some(length_text),
+                        comments: Vec::new(),
                     })));
                 }
             }
@@ -3064,6 +3691,7 @@ impl Dialect {
                             not: in_expr.not,
                             global: in_expr.global,
                             unnest: None,
+                            is_field: false,
                         })));
                     }
                 }
@@ -3200,6 +3828,8 @@ impl Dialect {
                                                     join_hint: None,
                                                     match_condition: None,
                                                     pivots: Vec::new(),
+                                                    comments: Vec::new(),
+                                                    nesting_group: 0,
                                                 });
                                             } else {
                                                 new_from_exprs.push(expr.clone());
@@ -3229,6 +3859,8 @@ impl Dialect {
                                                     join_hint: None,
                                                     match_condition: None,
                                                     pivots: Vec::new(),
+                                                    comments: Vec::new(),
+                                                    nesting_group: 0,
                                                 });
                                             } else {
                                                 new_from_exprs.push(expr.clone());
@@ -3279,12 +3911,40 @@ impl Dialect {
                                         let cas = a.column_aliases.clone();
                                         match &a.this {
                                             Expression::Unnest(u) => {
-                                                // Convert UNNEST(x) to EXPLODE(x)
-                                                let explode = Expression::Function(Box::new(crate::expressions::Function::new(
-                                                    "EXPLODE".to_string(),
-                                                    vec![u.this.clone()],
-                                                )));
-                                                (Some(explode), ta, cas)
+                                                // Multi-arg UNNEST(y, z) -> INLINE(ARRAYS_ZIP(y, z))
+                                                if !u.expressions.is_empty() {
+                                                    let mut all_args = vec![u.this.clone()];
+                                                    all_args.extend(u.expressions.clone());
+                                                    let arrays_zip = Expression::Function(Box::new(crate::expressions::Function::new(
+                                                        "ARRAYS_ZIP".to_string(),
+                                                        all_args,
+                                                    )));
+                                                    let inline = Expression::Function(Box::new(crate::expressions::Function::new(
+                                                        "INLINE".to_string(),
+                                                        vec![arrays_zip],
+                                                    )));
+                                                    (Some(inline), ta, a.column_aliases.clone())
+                                                } else {
+                                                    // Convert UNNEST(x) to EXPLODE(x) or POSEXPLODE(x)
+                                                    let func_name = if u.with_ordinality {
+                                                        "POSEXPLODE"
+                                                    } else {
+                                                        "EXPLODE"
+                                                    };
+                                                    let explode = Expression::Function(Box::new(crate::expressions::Function::new(
+                                                        func_name.to_string(),
+                                                        vec![u.this.clone()],
+                                                    )));
+                                                    // For POSEXPLODE, add 'pos' to column aliases
+                                                    let cas = if u.with_ordinality {
+                                                        let mut pos_aliases = vec![Identifier::new("pos".to_string())];
+                                                        pos_aliases.extend(a.column_aliases.clone());
+                                                        pos_aliases
+                                                    } else {
+                                                        a.column_aliases.clone()
+                                                    };
+                                                    (Some(explode), ta, cas)
+                                                }
                                             }
                                             Expression::Function(f) if f.name.eq_ignore_ascii_case("EXPLODE") => {
                                                 (Some(Expression::Function(f.clone())), ta, cas)
@@ -3293,12 +3953,22 @@ impl Dialect {
                                         }
                                     }
                                     Expression::Unnest(u) => {
+                                        let func_name = if u.with_ordinality {
+                                            "POSEXPLODE"
+                                        } else {
+                                            "EXPLODE"
+                                        };
                                         let explode = Expression::Function(Box::new(crate::expressions::Function::new(
-                                            "EXPLODE".to_string(),
+                                            func_name.to_string(),
                                             vec![u.this.clone()],
                                         )));
                                         let ta = u.alias.clone();
-                                        (Some(explode), ta, Vec::new())
+                                        let col_aliases = if u.with_ordinality {
+                                            vec![Identifier::new("pos".to_string())]
+                                        } else {
+                                            Vec::new()
+                                        };
+                                        (Some(explode), ta, col_aliases)
                                     }
                                     _ => (None, None, Vec::new())
                                 };
@@ -3418,7 +4088,7 @@ impl Dialect {
                             }
                         }
                         DialectType::ClickHouse => {
-                            DataType::Custom { name: "Nullable(DateTime)".to_string() }
+                            DataType::Nullable { inner: Box::new(DataType::Custom { name: "DateTime".to_string() }) }
                         }
                         DialectType::TSQL | DialectType::Fabric => {
                             DataType::Custom { name: "DATETIME2".to_string() }
@@ -3454,6 +4124,107 @@ impl Dialect {
                         let mut new_del = del.clone();
                         new_del.alias_explicit_as = true;
                         return Ok(Expression::Delete(new_del));
+                    }
+                }
+            }
+
+            // UNION/INTERSECT/EXCEPT DISTINCT handling:
+            // Some dialects require explicit DISTINCT (BigQuery, ClickHouse),
+            // while others don't support it (Presto, Spark, DuckDB, etc.)
+            {
+                let needs_distinct = matches!(target, DialectType::BigQuery | DialectType::ClickHouse);
+                let drop_distinct = matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena
+                    | DialectType::Spark | DialectType::Databricks | DialectType::DuckDB
+                    | DialectType::Hive | DialectType::MySQL | DialectType::PostgreSQL
+                    | DialectType::SQLite | DialectType::TSQL | DialectType::Redshift
+                    | DialectType::Snowflake | DialectType::Oracle | DialectType::Teradata
+                    | DialectType::Drill | DialectType::Doris | DialectType::StarRocks);
+                match &e {
+                    Expression::Union(u) if !u.all && needs_distinct && !u.distinct => {
+                        let mut new_u = (**u).clone();
+                        new_u.distinct = true;
+                        return Ok(Expression::Union(Box::new(new_u)));
+                    }
+                    Expression::Intersect(i) if !i.all && needs_distinct && !i.distinct => {
+                        let mut new_i = (**i).clone();
+                        new_i.distinct = true;
+                        return Ok(Expression::Intersect(Box::new(new_i)));
+                    }
+                    Expression::Except(ex) if !ex.all && needs_distinct && !ex.distinct => {
+                        let mut new_ex = (**ex).clone();
+                        new_ex.distinct = true;
+                        return Ok(Expression::Except(Box::new(new_ex)));
+                    }
+                    Expression::Union(u) if u.distinct && drop_distinct => {
+                        let mut new_u = (**u).clone();
+                        new_u.distinct = false;
+                        return Ok(Expression::Union(Box::new(new_u)));
+                    }
+                    Expression::Intersect(i) if i.distinct && drop_distinct => {
+                        let mut new_i = (**i).clone();
+                        new_i.distinct = false;
+                        return Ok(Expression::Intersect(Box::new(new_i)));
+                    }
+                    Expression::Except(ex) if ex.distinct && drop_distinct => {
+                        let mut new_ex = (**ex).clone();
+                        new_ex.distinct = false;
+                        return Ok(Expression::Except(Box::new(new_ex)));
+                    }
+                    _ => {}
+                }
+            }
+
+            // ClickHouse: MAP('a', '1') -> map('a', '1') (lowercase function name)
+            if matches!(target, DialectType::ClickHouse) {
+                if let Expression::Function(ref f) = e {
+                    if f.name.eq_ignore_ascii_case("MAP") && !f.args.is_empty() {
+                        let mut new_f = f.as_ref().clone();
+                        new_f.name = "map".to_string();
+                        return Ok(Expression::Function(Box::new(new_f)));
+                    }
+                }
+            }
+
+            // ClickHouse: INTERSECT ALL -> INTERSECT (ClickHouse doesn't support ALL on INTERSECT)
+            if matches!(target, DialectType::ClickHouse) {
+                if let Expression::Intersect(ref i) = e {
+                    if i.all {
+                        let mut new_i = (**i).clone();
+                        new_i.all = false;
+                        return Ok(Expression::Intersect(Box::new(new_i)));
+                    }
+                }
+            }
+
+            // Integer division: a / b -> CAST(a AS DOUBLE) / b for dialects that need it
+            // Only from Generic source, to prevent double-wrapping
+            if matches!(source, DialectType::Generic) {
+                if let Expression::Div(ref op) = e {
+                    let cast_type = match target {
+                        DialectType::TSQL | DialectType::Fabric => Some(DataType::Float { precision: None, scale: None, real_spelling: false }),
+                        DialectType::Drill | DialectType::Trino | DialectType::Athena
+                        | DialectType::Presto => Some(DataType::Double { precision: None, scale: None }),
+                        DialectType::PostgreSQL | DialectType::Redshift | DialectType::Materialize
+                        | DialectType::Teradata | DialectType::RisingWave => Some(DataType::Double { precision: None, scale: None }),
+                        _ => None,
+                    };
+                    if let Some(dt) = cast_type {
+                        let cast_left = Expression::Cast(Box::new(Cast {
+                            this: op.left.clone(),
+                            to: dt,
+                            double_colon_syntax: false,
+                            trailing_comments: Vec::new(),
+                            format: None,
+                            default: None,
+                        }));
+                        let new_op = crate::expressions::BinaryOp {
+                            left: cast_left,
+                            right: op.right.clone(),
+                            left_comments: op.left_comments.clone(),
+                            operator_comments: op.operator_comments.clone(),
+                            trailing_comments: op.trailing_comments.clone(),
+                        };
+                        return Ok(Expression::Div(Box::new(new_op)));
                     }
                 }
             }
@@ -3687,6 +4458,7 @@ impl Dialect {
                                 | "ADD_MONTHS" | "DATEADD" | "DATE_ADD" | "DATE_SUB" | "DATETRUNC"
                                 | "LAST_DAY" | "LAST_DAY_OF_MONTH" | "EOMONTH"
                                 | "ARRAY_CONSTRUCT" | "ARRAY_CAT" | "ARRAY_COMPACT"
+                                | "ARRAY_FILTER" | "FILTER" | "REDUCE" | "ARRAY_REVERSE"
                                 | "MAP" | "MAP_FROM_ENTRIES"
                                 | "COLLECT_LIST" | "COLLECT_SET"
                                 | "ISNAN" | "IS_NAN"
@@ -3700,7 +4472,6 @@ impl Dialect {
                                 | "JSON_EXTRACT" | "JSON_EXTRACT_SCALAR"
                                 | "JSON_QUERY" | "JSON_VALUE"
                                 | "JSON_EXTRACT_JSON" | "BSON_EXTRACT_BSON"
-                                | "ARRAY_SUM"
                                 | "TO_UNIX_TIMESTAMP" | "UNIX_TIMESTAMP"
                                 | "CURDATE" | "CURTIME"
                                 | "ARRAY_TO_STRING"
@@ -3722,7 +4493,6 @@ impl Dialect {
                                 | "TO_TIMESTAMP"
                                 | "TO_DATE"
                                 | "TO_JSON"
-                                | "STR_TO_DATE"
                                 | "REGEXP_SPLIT"
                                 | "SPLIT"
                                 | "FORMATDATETIME"
@@ -3771,8 +4541,64 @@ impl Dialect {
                                 | "TRY_ELEMENT_AT"
                                 | "STR_TO_MAP"
                                 | "STRING"
-                                | "TIME_TO_STR"
+                                | "STR_TO_TIME"
+                                | "CURRENT_SCHEMA"
+                                | "LTRIM" | "RTRIM"
+                                | "UUID"
+                                | "FARM_FINGERPRINT"
+                                | "JSON_KEYS"
+                                | "WEEKOFYEAR"
+                                | "CONCAT_WS"
+                                | "ARRAY_SLICE"
+                                | "ARRAY_PREPEND"
+                                | "ARRAY_REMOVE"
+                                | "GENERATE_DATE_ARRAY"
+                                | "PARSE_JSON"
+                                | "JSON_REMOVE"
+                                | "JSON_SET"
+                                | "LEVENSHTEIN"
                                     => Action::GenericFunctionNormalize,
+                                // Canonical date functions -> dialect-specific
+                                "TS_OR_DS_TO_DATE" => Action::TsOrDsToDateConvert,
+                                "TS_OR_DS_TO_DATE_STR" if f.args.len() == 1 => Action::TsOrDsToDateStrConvert,
+                                "DATE_STR_TO_DATE" if f.args.len() == 1 => Action::DateStrToDateConvert,
+                                "TIME_STR_TO_DATE" if f.args.len() == 1 => Action::TimeStrToDateConvert,
+                                "TIME_STR_TO_TIME" if f.args.len() <= 2 => Action::TimeStrToTimeConvert,
+                                "TIME_STR_TO_UNIX" if f.args.len() == 1 => Action::TimeStrToUnixConvert,
+                                "TIME_TO_TIME_STR" if f.args.len() == 1 => Action::TimeToTimeStrConvert,
+                                "DATE_TO_DATE_STR" if f.args.len() == 1 => Action::DateToDateStrConvert,
+                                "DATE_TO_DI" if f.args.len() == 1 => Action::DateToDiConvert,
+                                "DI_TO_DATE" if f.args.len() == 1 => Action::DiToDateConvert,
+                                "TS_OR_DI_TO_DI" if f.args.len() == 1 => Action::TsOrDiToDiConvert,
+                                "UNIX_TO_STR" if f.args.len() == 2 => Action::UnixToStrConvert,
+                                "UNIX_TO_TIME" if f.args.len() == 1 => Action::UnixToTimeConvert,
+                                "UNIX_TO_TIME_STR" if f.args.len() == 1 => Action::UnixToTimeStrConvert,
+                                "TIME_TO_UNIX" if f.args.len() == 1 => Action::TimeToUnixConvert,
+                                "TIME_TO_STR" if f.args.len() == 2 => Action::TimeToStrConvert,
+                                "STR_TO_UNIX" if f.args.len() == 2 => Action::StrToUnixConvert,
+                                // STR_TO_DATE(x, fmt) -> dialect-specific
+                                "STR_TO_DATE" if f.args.len() == 2
+                                    && matches!(source, DialectType::Generic) => Action::StrToDateConvert,
+                                "STR_TO_DATE" => Action::GenericFunctionNormalize,
+                                // TS_OR_DS_ADD(x, n, 'UNIT') from Generic -> dialect-specific DATE_ADD
+                                "TS_OR_DS_ADD" if f.args.len() == 3
+                                    && matches!(source, DialectType::Generic) => Action::TsOrDsAddConvert,
+                                // DATE_FROM_UNIX_DATE(n) -> DATEADD(DAY, n, '1970-01-01')
+                                "DATE_FROM_UNIX_DATE" if f.args.len() == 1 => Action::DateFromUnixDateConvert,
+                                // NVL2(a, b, c) -> CASE WHEN NOT a IS NULL THEN b [ELSE c] END
+                                "NVL2" if (f.args.len() == 2 || f.args.len() == 3) => Action::Nvl2Expand,
+                                // IFNULL(a, b) -> COALESCE(a, b) when coming from Generic source
+                                "IFNULL" if f.args.len() == 2 => Action::IfnullToCoalesce,
+                                // IS_ASCII(x) -> dialect-specific
+                                "IS_ASCII" if f.args.len() == 1 => Action::IsAsciiConvert,
+                                // STR_POSITION(haystack, needle[, pos[, occ]]) -> dialect-specific
+                                "STR_POSITION" => Action::StrPositionConvert,
+                                // ARRAY_SUM -> dialect-specific
+                                "ARRAY_SUM" => Action::ArraySumConvert,
+                                // ARRAY_SIZE -> dialect-specific (Drill only)
+                                "ARRAY_SIZE" if matches!(target, DialectType::Drill) => Action::ArraySizeConvert,
+                                // ARRAY_ANY -> dialect-specific
+                                "ARRAY_ANY" if f.args.len() == 2 => Action::ArrayAnyConvert,
                                 // Functions needing specific cross-dialect transforms
                                 "MAX_BY" | "MIN_BY" if matches!(target, DialectType::ClickHouse | DialectType::Spark | DialectType::Databricks | DialectType::DuckDB) => Action::MaxByMinByConvert,
                                 "STRUCT" if matches!(source, DialectType::Spark | DialectType::Databricks)
@@ -3783,6 +4609,14 @@ impl Dialect {
                                     && matches!(&f.args[0], Expression::Select(s) if s.kind.as_deref() == Some("STRUCT")) => Action::BigQueryArraySelectAsStructToSnowflake,
                                 "ARRAY" if matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::BigQuery | DialectType::DuckDB | DialectType::ClickHouse | DialectType::StarRocks) => Action::ArraySyntaxConvert,
                                 "TRUNC" if f.args.len() == 2 && matches!(target, DialectType::Presto | DialectType::Trino | DialectType::ClickHouse) => Action::TruncToDateTrunc,
+                                // DATE_TRUNC('unit', x) from Generic source -> arg swap for BigQuery/Doris/Spark/MySQL
+                                "DATE_TRUNC" if f.args.len() == 2
+                                    && matches!(source, DialectType::Generic)
+                                    && matches!(target, DialectType::BigQuery | DialectType::Doris | DialectType::StarRocks
+                                        | DialectType::Spark | DialectType::Databricks | DialectType::MySQL) => Action::DateTruncSwapArgs,
+                                // TIMESTAMP_TRUNC(x, UNIT) from Generic source -> convert to per-dialect
+                                "TIMESTAMP_TRUNC" if f.args.len() >= 2
+                                    && matches!(source, DialectType::Generic) => Action::TimestampTruncConvert,
                                 "UNIFORM" if matches!(target, DialectType::Snowflake) => Action::GenericFunctionNormalize,
                                 // GENERATE_SERIES -> SEQUENCE/UNNEST/EXPLODE for target dialects
                                 "GENERATE_SERIES" if matches!(source, DialectType::PostgreSQL | DialectType::Redshift)
@@ -3855,6 +4689,34 @@ impl Dialect {
                                 DialectType::Oracle | DialectType::Snowflake | DialectType::Teradata => Action::None,
                                 _ => Action::GenericFunctionNormalize,
                             }
+                        } else {
+                            Action::None
+                        }
+                    }
+                    Expression::Nvl2(_) => {
+                        // NVL2(a, b, c) -> CASE WHEN NOT a IS NULL THEN b ELSE c END for most dialects
+                        // Keep as NVL2 for dialects that support it natively
+                        match target {
+                            DialectType::Oracle | DialectType::Snowflake | DialectType::Teradata
+                            | DialectType::Spark | DialectType::Databricks | DialectType::Redshift => Action::None,
+                            _ => Action::Nvl2Expand,
+                        }
+                    }
+                    Expression::Decode(_) | Expression::DecodeCase(_) => {
+                        // DECODE(a, b, c[, d, e[, ...]]) -> CASE WHEN with null-safe comparisons
+                        // Keep as DECODE for Oracle/Snowflake
+                        match target {
+                            DialectType::Oracle | DialectType::Snowflake => Action::None,
+                            _ => Action::DecodeSimplify,
+                        }
+                    }
+                    Expression::Coalesce(ref cf) => {
+                        // IFNULL(a, b) -> COALESCE(a, b): clear original_name for cross-dialect
+                        // BigQuery keeps IFNULL natively when source is also BigQuery
+                        if cf.original_name.as_deref() == Some("IFNULL")
+                            && !(matches!(source, DialectType::BigQuery) && matches!(target, DialectType::BigQuery))
+                        {
+                            Action::IfnullToCoalesce
                         } else {
                             Action::None
                         }
@@ -3937,6 +4799,13 @@ impl Dialect {
                             && matches!(c.to, DataType::Timestamp { timezone: false, .. })
                         {
                             Action::CastTimestampToDatetime
+                        } else if matches!(target, DialectType::MySQL | DialectType::StarRocks)
+                            && !matches!(source, DialectType::MySQL | DialectType::StarRocks)
+                            && matches!(c.to, DataType::Timestamp { timezone: false, .. })
+                        {
+                            // Generic/other -> MySQL/StarRocks: CAST(x AS TIMESTAMP) -> CAST(x AS DATETIME)
+                            // but MySQL-native CAST(x AS TIMESTAMP) stays as TIMESTAMP(x) via transform_cast
+                            Action::CastTimestampToDatetime
                         } else if matches!(source,
                             DialectType::Hive | DialectType::Spark | DialectType::Databricks
                         ) && matches!(target,
@@ -3945,6 +4814,10 @@ impl Dialect {
                             | DialectType::Databricks | DialectType::TSQL
                         ) {
                             Action::HiveCastToTryCast
+                        } else if matches!(c.to, DataType::Timestamp { timezone: true, .. })
+                            && matches!(target, DialectType::MySQL | DialectType::StarRocks) {
+                            // CAST(x AS TIMESTAMPTZ) -> TIMESTAMP(x) function for MySQL/StarRocks
+                            Action::CastTimestamptzToFunc
                         } else if matches!(c.to, DataType::Timestamp { timezone: true, .. })
                             && matches!(target, DialectType::Hive | DialectType::Spark | DialectType::Databricks | DialectType::BigQuery) {
                             // CAST(x AS TIMESTAMP WITH TIME ZONE) -> CAST(x AS TIMESTAMP) for Hive/Spark/BigQuery
@@ -4077,7 +4950,7 @@ impl Dialect {
                                 DataType::Int { integer_spelling: true, .. } if matches!(target, DialectType::Databricks | DialectType::Spark) => Action::TSQLTypeNormalize,
                                 _ => Action::None,
                             }
-                        } else if matches!(source, DialectType::Oracle) && !matches!(target, DialectType::Oracle) {
+                        } else if (matches!(source, DialectType::Oracle) || matches!(source, DialectType::Generic)) && !matches!(target, DialectType::Oracle) {
                             match dt {
                                 DataType::Custom { ref name } if name.to_uppercase().starts_with("VARCHAR2(") || name.to_uppercase().starts_with("NVARCHAR2(") || name.eq_ignore_ascii_case("VARCHAR2") || name.eq_ignore_ascii_case("NVARCHAR2") => Action::OracleVarchar2ToVarchar,
                                 _ => Action::None,
@@ -4238,8 +5111,47 @@ impl Dialect {
                         Action::GroupConcatConvert
                     }
                     // CARDINALITY/ARRAY_LENGTH/ARRAY_SIZE -> target-specific array length
-                    Expression::Cardinality(_) | Expression::ArrayLength(_) | Expression::ArraySize(_) => {
+                    Expression::Cardinality(_) | Expression::ArrayLength(_) => {
                         Action::ArrayLengthConvert
+                    }
+                    Expression::ArraySize(_) => {
+                        if matches!(target, DialectType::Drill) {
+                            Action::ArraySizeDrill
+                        } else {
+                            Action::ArrayLengthConvert
+                        }
+                    }
+                    // ARRAY_REMOVE(arr, target) -> LIST_FILTER/arrayFilter/ARRAY subquery
+                    Expression::ArrayRemove(_) => {
+                        match target {
+                            DialectType::DuckDB | DialectType::ClickHouse | DialectType::BigQuery => Action::ArrayRemoveConvert,
+                            _ => Action::None,
+                        }
+                    }
+                    // ARRAY_REVERSE(x) -> arrayReverse for ClickHouse
+                    Expression::ArrayReverse(_) => {
+                        match target {
+                            DialectType::ClickHouse => Action::ArrayReverseConvert,
+                            _ => Action::None,
+                        }
+                    }
+                    // JSON_KEYS(x) -> JSON_OBJECT_KEYS/OBJECT_KEYS for Spark/Databricks/Snowflake
+                    Expression::JsonKeys(_) => {
+                        match target {
+                            DialectType::Spark | DialectType::Databricks | DialectType::Snowflake => Action::JsonKeysConvert,
+                            _ => Action::None,
+                        }
+                    }
+                    // PARSE_JSON(x) -> strip for SQLite/Doris/MySQL/StarRocks
+                    Expression::ParseJson(_) => {
+                        match target {
+                            DialectType::SQLite | DialectType::Doris | DialectType::MySQL | DialectType::StarRocks => Action::ParseJsonStrip,
+                            _ => Action::None,
+                        }
+                    }
+                    // WeekOfYear -> WEEKISO for Snowflake (cross-dialect only)
+                    Expression::WeekOfYear(_) if matches!(target, DialectType::Snowflake) && !matches!(source, DialectType::Snowflake) => {
+                        Action::WeekOfYearToWeekIso
                     }
                     // NVL: clear original_name so generator uses dialect-specific function names
                     Expression::Nvl(f) if f.original_name.is_some() => {
@@ -4278,6 +5190,22 @@ impl Dialect {
                         && dt.names.iter().any(|n| n.name.name.starts_with('#')) => {
                         Action::TempTableHash
                     }
+                    // JSON_EXTRACT -> ISNULL(JSON_QUERY, JSON_VALUE) for TSQL
+                    Expression::JsonExtract(_) if matches!(target, DialectType::TSQL | DialectType::Fabric) => {
+                        Action::JsonExtractToTsql
+                    }
+                    // JSON_EXTRACT_SCALAR -> ISNULL(JSON_QUERY, JSON_VALUE) for TSQL
+                    Expression::JsonExtractScalar(_) if matches!(target, DialectType::TSQL | DialectType::Fabric) => {
+                        Action::JsonExtractToTsql
+                    }
+                    // JSON_EXTRACT -> JSONExtractString for ClickHouse
+                    Expression::JsonExtract(_) if matches!(target, DialectType::ClickHouse) => {
+                        Action::JsonExtractToClickHouse
+                    }
+                    // JSON_EXTRACT_SCALAR -> JSONExtractString for ClickHouse
+                    Expression::JsonExtractScalar(_) if matches!(target, DialectType::ClickHouse) => {
+                        Action::JsonExtractToClickHouse
+                    }
                     // JSON_EXTRACT -> arrow syntax for SQLite/DuckDB
                     Expression::JsonExtract(ref f) if !f.arrow_syntax && matches!(target, DialectType::SQLite | DialectType::DuckDB) => {
                         Action::JsonExtractToArrow
@@ -4285,16 +5213,27 @@ impl Dialect {
                     // JSON_EXTRACT with JSONPath -> JSON_EXTRACT_PATH for PostgreSQL (non-PG sources only)
                     Expression::JsonExtract(ref f) if matches!(target, DialectType::PostgreSQL | DialectType::Redshift)
                         && !matches!(source, DialectType::PostgreSQL | DialectType::Redshift | DialectType::Materialize)
-                        && matches!(&f.path, Expression::Literal(Literal::String(s)) if s.starts_with("$.")) => {
+                        && matches!(&f.path, Expression::Literal(Literal::String(s)) if s.starts_with('$')) => {
                         Action::JsonExtractToGetJsonObject
                     }
                     // JSON_EXTRACT -> GET_JSON_OBJECT for Hive/Spark
                     Expression::JsonExtract(_) if matches!(target, DialectType::Hive | DialectType::Spark | DialectType::Databricks) => {
                         Action::JsonExtractToGetJsonObject
                     }
+                    // JSON_EXTRACT_SCALAR -> target-specific for PostgreSQL, Snowflake, SQLite
+                    // Skip if already in arrow/hash_arrow syntax (same-dialect identity case)
+                    Expression::JsonExtractScalar(ref f) if !f.arrow_syntax && !f.hash_arrow_syntax
+                        && matches!(target, DialectType::PostgreSQL | DialectType::Redshift
+                        | DialectType::Snowflake | DialectType::SQLite | DialectType::DuckDB) => {
+                        Action::JsonExtractScalarConvert
+                    }
                     // JSON_EXTRACT_SCALAR -> GET_JSON_OBJECT for Hive/Spark
                     Expression::JsonExtractScalar(_) if matches!(target, DialectType::Hive | DialectType::Spark | DialectType::Databricks) => {
                         Action::JsonExtractScalarToGetJsonObject
+                    }
+                    // JSON_EXTRACT path normalization for BigQuery, MySQL (bracket/wildcard handling)
+                    Expression::JsonExtract(ref f) if !f.arrow_syntax && matches!(target, DialectType::BigQuery | DialectType::MySQL) => {
+                        Action::JsonPathNormalize
                     }
                     // JsonQuery (parsed JSON_QUERY) -> target-specific
                     Expression::JsonQuery(_) => {
@@ -4477,6 +5416,22 @@ impl Dialect {
                             }
                         }
                     }
+                    // CREATE TABLE a LIKE b -> dialect-specific transformations
+                    Expression::CreateTable(ref ct) if ct.columns.is_empty()
+                        && ct.constraints.iter().any(|c| matches!(c, crate::expressions::TableConstraint::Like { .. }))
+                        && matches!(target, DialectType::DuckDB | DialectType::SQLite | DialectType::Drill) => {
+                        Action::CreateTableLikeToCtas
+                    }
+                    Expression::CreateTable(ref ct) if ct.columns.is_empty()
+                        && ct.constraints.iter().any(|c| matches!(c, crate::expressions::TableConstraint::Like { .. }))
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric) => {
+                        Action::CreateTableLikeToSelectInto
+                    }
+                    Expression::CreateTable(ref ct) if ct.columns.is_empty()
+                        && ct.constraints.iter().any(|c| matches!(c, crate::expressions::TableConstraint::Like { .. }))
+                        && matches!(target, DialectType::ClickHouse) => {
+                        Action::CreateTableLikeToAs
+                    }
                     // CREATE TABLE: strip COMMENT column constraint, USING, PARTITIONED BY for DuckDB
                     Expression::CreateTable(ref ct) if matches!(target, DialectType::DuckDB)
                         && matches!(source, DialectType::DuckDB | DialectType::Spark | DialectType::Databricks | DialectType::Hive) => {
@@ -4601,6 +5556,63 @@ impl Dialect {
             match action {
                 Action::None => {
                     // Handle inline transforms that don't need a dedicated action
+
+                    // BETWEEN SYMMETRIC/ASYMMETRIC expansion for non-PostgreSQL/Dremio targets
+                    if let Expression::Between(ref b) = e {
+                        if let Some(sym) = b.symmetric {
+                            let keeps_symmetric = matches!(target, DialectType::PostgreSQL | DialectType::Dremio);
+                            if !keeps_symmetric {
+                                if sym {
+                                    // SYMMETRIC: expand to (x BETWEEN a AND b OR x BETWEEN b AND a)
+                                    let b = if let Expression::Between(b) = e { *b } else { unreachable!() };
+                                    let between1 = Expression::Between(Box::new(crate::expressions::Between {
+                                        this: b.this.clone(),
+                                        low: b.low.clone(),
+                                        high: b.high.clone(),
+                                        not: b.not,
+                                        symmetric: None,
+                                    }));
+                                    let between2 = Expression::Between(Box::new(crate::expressions::Between {
+                                        this: b.this,
+                                        low: b.high,
+                                        high: b.low,
+                                        not: b.not,
+                                        symmetric: None,
+                                    }));
+                                    return Ok(Expression::Paren(Box::new(crate::expressions::Paren {
+                                        this: Expression::Or(Box::new(crate::expressions::BinaryOp::new(between1, between2))),
+                                        trailing_comments: vec![],
+                                    })));
+                                } else {
+                                    // ASYMMETRIC: strip qualifier, keep as regular BETWEEN
+                                    let b = if let Expression::Between(b) = e { *b } else { unreachable!() };
+                                    return Ok(Expression::Between(Box::new(crate::expressions::Between {
+                                        this: b.this,
+                                        low: b.low,
+                                        high: b.high,
+                                        not: b.not,
+                                        symmetric: None,
+                                    })));
+                                }
+                            }
+                        }
+                    }
+
+                    // ILIKE -> LOWER(x) LIKE LOWER(y) for StarRocks/Doris
+                    if let Expression::ILike(ref _like) = e {
+                        if matches!(target, DialectType::StarRocks | DialectType::Doris) {
+                            let like = if let Expression::ILike(l) = e { *l } else { unreachable!() };
+                            let lower_left = Expression::Function(Box::new(Function::new("LOWER".to_string(), vec![like.left])));
+                            let lower_right = Expression::Function(Box::new(Function::new("LOWER".to_string(), vec![like.right])));
+                            return Ok(Expression::Like(Box::new(crate::expressions::LikeOp {
+                                left: lower_left,
+                                right: lower_right,
+                                escape: like.escape,
+                                quantifier: like.quantifier,
+                            })));
+                        }
+                    }
+
                     // Oracle DBMS_RANDOM.VALUE() -> RANDOM() for PostgreSQL, RAND() for others
                     if let Expression::MethodCall(ref mc) = e {
                         if matches!(source, DialectType::Oracle)
@@ -4734,6 +5746,7 @@ impl Dialect {
                         operand: None,
                         whens: vec![(condition, Expression::Null(Null))],
                         else_: Some(Expression::Function(Box::new(Function::new(f.name, f.args)))),
+                        comments: Vec::new(),
                     })))
                 }
 
@@ -5014,6 +6027,7 @@ impl Dialect {
                                 operand: None,
                                 whens,
                                 else_: Some(tuple_expr),
+                                comments: Vec::new(),
                             }));
                             Ok(Expression::Count(Box::new(crate::expressions::CountFunc {
                                 this: Some(case_expr),
@@ -5046,6 +6060,15 @@ impl Dialect {
                         to: DataType::Timestamp { precision: None, timezone: false },
                         ..c
                     })))
+                }
+
+                Action::CastTimestamptzToFunc => {
+                    // CAST(x AS TIMESTAMPTZ) -> TIMESTAMP(x) function for MySQL/StarRocks
+                    let c = if let Expression::Cast(c) = e { *c } else { unreachable!("action only triggered for Cast expressions") };
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "TIMESTAMP".to_string(),
+                        vec![c.this],
+                    ))))
                 }
 
                 Action::ToDateToCast => {
@@ -5296,6 +6319,7 @@ impl Dialect {
                                 operand: None,
                                 whens: vec![(condition, cast_div)],
                                 else_: Some(Expression::Null(Null)),
+                                comments: Vec::new(),
                             })))
                         } else if matches!(target, DialectType::DuckDB) {
                             // DuckDB: CASE WHEN y <> 0 THEN x / y ELSE NULL END
@@ -5303,6 +6327,7 @@ impl Dialect {
                                 operand: None,
                                 whens: vec![(condition, div_expr)],
                                 else_: Some(Expression::Null(Null)),
+                                comments: Vec::new(),
                             })))
                         } else if matches!(target, DialectType::Snowflake) {
                             // Snowflake: IFF(y <> 0, x / y, NULL)
@@ -5374,7 +6399,7 @@ impl Dialect {
                                 // Need to wrap the DATE type in Nullable
                                 let nullable_date = match ld.this {
                                     Expression::Cast(mut c) => {
-                                        c.to = DataType::Custom { name: "Nullable(DATE)".to_string() };
+                                        c.to = DataType::Nullable { inner: Box::new(DataType::Date) };
                                         Expression::Cast(c)
                                     }
                                     other => other,
@@ -5734,6 +6759,7 @@ impl Dialect {
                                                     ),
                                                 ],
                                                 else_: Some(Expression::number(0)),
+                                                comments: Vec::new(),
                                             })),
                                             colon: false,
                                             parameter_types: Vec::new(),
@@ -5992,6 +7018,7 @@ impl Dialect {
                                                     ),
                                                 ],
                                                 else_: Some(Expression::number(0)),
+                                                comments: Vec::new(),
                                             })),
                                         }));
                                         Ok(Expression::Function(Box::new(Function::new("ARRAY_SORT".to_string(), vec![arr, lambda]))))
@@ -6555,7 +7582,7 @@ impl Dialect {
                                         // ClickHouse: LAST_DAY(CAST(date AS Nullable(DATE)))
                                         let date = Expression::Cast(Box::new(Cast {
                                             this: date_arg,
-                                            to: DataType::Custom { name: "Nullable(DATE)".to_string() },
+                                            to: DataType::Nullable { inner: Box::new(DataType::Date) },
                                             trailing_comments: vec![], double_colon_syntax: false, format: None, default: None,
                                         }));
                                         let date = if let Some(offset) = month_offset {
@@ -6944,10 +7971,10 @@ impl Dialect {
                                     _ => Ok(Expression::Function(f)),
                                 }
                             }
-                            // SORT_ARRAY(x) -> ARRAY_SORT(x) for non-Hive
+                            // SORT_ARRAY(x) -> ARRAY_SORT(x) for non-Hive/Spark
                             "SORT_ARRAY" if f.args.len() == 1 => {
                                 match target {
-                                    DialectType::Hive => Ok(Expression::Function(f)),
+                                    DialectType::Hive | DialectType::Spark | DialectType::Databricks => Ok(Expression::Function(f)),
                                     _ => {
                                         Ok(Expression::Function(Box::new(Function::new("ARRAY_SORT".to_string(), f.args))))
                                     }
@@ -6984,6 +8011,7 @@ impl Dialect {
                                                      Expression::Literal(Literal::Number("-1".to_string()))),
                                                 ],
                                                 else_: Some(Expression::Literal(Literal::Number("0".to_string()))),
+                                                comments: Vec::new(),
                                             }));
                                             let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
                                                 parameters: vec![
@@ -9145,13 +10173,33 @@ impl Dialect {
                                     }
                                 }
                             }
-                            // DATE_ADD(unit, val, date) - 3-arg from ClickHouse/Presto/Spark
+                            // DATE_ADD - 3-arg: either (unit, val, date) from Presto/ClickHouse
+                            // or (date, val, 'UNIT') from Generic canonical form
                             "DATE_ADD" if f.args.len() == 3 => {
                                 let mut args = f.args;
                                 let arg0 = args.remove(0);
                                 let arg1 = args.remove(0);
                                 let arg2 = args.remove(0);
-                                let unit_str = Self::get_unit_str_static(&arg0);
+                                // Detect Generic canonical form: DATE_ADD(date, amount, 'UNIT')
+                                // where arg2 is a string literal matching a unit name
+                                let arg2_unit = match &arg2 {
+                                    Expression::Literal(Literal::String(s)) => {
+                                        let u = s.to_uppercase();
+                                        if matches!(u.as_str(), "DAY" | "MONTH" | "YEAR" | "HOUR" | "MINUTE" | "SECOND" | "WEEK" | "QUARTER" | "MILLISECOND" | "MICROSECOND") {
+                                            Some(u)
+                                        } else { None }
+                                    }
+                                    _ => None,
+                                };
+                                // Reorder: if arg2 is the unit, swap to (unit, val, date) form
+                                let (unit_str, val, date) = if let Some(u) = arg2_unit {
+                                    (u, arg1, arg0)
+                                } else {
+                                    (Self::get_unit_str_static(&arg0), arg1, arg2)
+                                };
+                                // Alias for backward compat with the rest of the match
+                                let arg1 = val;
+                                let arg2 = date;
 
                                 match target {
                                     DialectType::Presto | DialectType::Trino | DialectType::Athena => {
@@ -9170,10 +10218,48 @@ impl Dialect {
                                         }));
                                         Ok(Expression::Add(Box::new(crate::expressions::BinaryOp::new(arg2, interval))))
                                     }
+                                    DialectType::PostgreSQL | DialectType::Materialize | DialectType::RisingWave => {
+                                        // PostgreSQL: x + INTERVAL '1 DAY'
+                                        let amount_str = Self::expr_to_string_static(&arg1);
+                                        let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                            this: Some(Expression::string(&format!("{} {}", amount_str, unit_str))),
+                                            unit: None,
+                                        }));
+                                        Ok(Expression::Add(Box::new(crate::expressions::BinaryOp::new(arg2, interval))))
+                                    }
                                     DialectType::Snowflake | DialectType::TSQL | DialectType::Redshift => {
                                         let unit = Expression::Identifier(Identifier::new(&unit_str));
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "DATEADD".to_string(), vec![unit, arg1, arg2],
+                                        ))))
+                                    }
+                                    DialectType::BigQuery | DialectType::MySQL | DialectType::Doris
+                                    | DialectType::StarRocks | DialectType::Drill => {
+                                        // DATE_ADD(date, INTERVAL amount UNIT)
+                                        let iu = Self::parse_interval_unit_static(&unit_str);
+                                        let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                            this: Some(arg1),
+                                            unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: iu, use_plural: false }),
+                                        }));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE_ADD".to_string(), vec![arg2, interval],
+                                        ))))
+                                    }
+                                    DialectType::SQLite => {
+                                        // SQLite: DATE(x, '1 DAY')
+                                        // Build the string '1 DAY' from amount and unit
+                                        let amount_str = match &arg1 {
+                                            Expression::Literal(Literal::Number(n)) => n.clone(),
+                                            _ => "1".to_string(),
+                                        };
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE".to_string(), vec![arg2, Expression::string(format!("{} {}", amount_str, unit_str))],
+                                        ))))
+                                    }
+                                    DialectType::Dremio => {
+                                        // Dremio: DATE_ADD(date, amount) - drops unit
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE_ADD".to_string(), vec![arg2, arg1],
                                         ))))
                                     }
                                     DialectType::Spark => {
@@ -9209,9 +10295,9 @@ impl Dialect {
                                     }
                                 }
                             }
-                            // DATE_ADD(date, days) - 2-arg Hive/Spark form (add days)
+                            // DATE_ADD(date, days) - 2-arg Hive/Spark/Generic form (add days)
                             "DATE_ADD" if f.args.len() == 2
-                                && matches!(source, DialectType::Hive | DialectType::Spark | DialectType::Databricks) => {
+                                && matches!(source, DialectType::Hive | DialectType::Spark | DialectType::Databricks | DialectType::Generic) => {
                                 let mut args = f.args;
                                 let date = args.remove(0);
                                 let days = args.remove(0);
@@ -9332,6 +10418,19 @@ impl Dialect {
                                             unit: None,
                                         }));
                                         Ok(Expression::Add(Box::new(crate::expressions::BinaryOp::new(date, interval))))
+                                    }
+                                    DialectType::Doris | DialectType::StarRocks | DialectType::Drill => {
+                                        // DATE_ADD(date, INTERVAL days DAY)
+                                        let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                            this: Some(days),
+                                            unit: Some(crate::expressions::IntervalUnitSpec::Simple {
+                                                unit: crate::expressions::IntervalUnit::Day,
+                                                use_plural: false,
+                                            }),
+                                        }));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE_ADD".to_string(), vec![date, interval],
+                                        ))))
                                     }
                                     _ => {
                                         Ok(Expression::Function(Box::new(Function::new(
@@ -9860,6 +10959,7 @@ impl Dialect {
                                                 (is_zero, Expression::number(0)),
                                             ],
                                             else_: Some(pos_adjusted),
+                                            comments: Vec::new(),
                                         })))
                                     }
                                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -10053,6 +11153,7 @@ impl Dialect {
                                             operand: None,
                                             whens: vec![(is_null_check, Expression::Null(crate::expressions::Null))],
                                             else_: Some(coalesce),
+                                            comments: Vec::new(),
                                         })))
                                     }
                                     _ => {
@@ -10789,14 +11890,37 @@ impl Dialect {
                                 Ok(Expression::Function(Box::new(Function::new(func_name.to_string(), vec![arg]))))
                             }
                             // CONCAT(x) single-arg: -> CONCAT(COALESCE(x, '')) for Spark
-                            "CONCAT" if f.args.len() == 1
-                                && matches!(target, DialectType::Spark | DialectType::Databricks) => {
+                            "CONCAT" if f.args.len() == 1 => {
                                 let arg = f.args.into_iter().next().unwrap();
-                                let coalesced = Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
-                                    expressions: vec![arg, Expression::string("")],
-                                    original_name: None,
-                                }));
-                                Ok(Expression::Function(Box::new(Function::new("CONCAT".to_string(), vec![coalesced]))))
+                                match target {
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                        // CONCAT(a) -> CAST(a AS VARCHAR)
+                                        Ok(Expression::Cast(Box::new(Cast {
+                                            this: arg,
+                                            to: DataType::VarChar { length: None, parenthesized_length: false },
+                                            trailing_comments: vec![],
+                                            double_colon_syntax: false,
+                                            format: None,
+                                            default: None,
+                                        })))
+                                    }
+                                    DialectType::TSQL => {
+                                        // CONCAT(a) -> a
+                                        Ok(arg)
+                                    }
+                                    DialectType::DuckDB => {
+                                        // Keep CONCAT(a) for DuckDB (native support)
+                                        Ok(Expression::Function(Box::new(Function::new("CONCAT".to_string(), vec![arg]))))
+                                    }
+                                    DialectType::Spark | DialectType::Databricks => {
+                                        let coalesced = Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
+                                            expressions: vec![arg, Expression::string("")],
+                                            original_name: None,
+                                        }));
+                                        Ok(Expression::Function(Box::new(Function::new("CONCAT".to_string(), vec![coalesced]))))
+                                    }
+                                    _ => Ok(Expression::Function(Box::new(Function::new("CONCAT".to_string(), vec![arg]))))
+                                }
                             }
                             // REGEXP_EXTRACT(a, p) 2-arg: BigQuery default group is 0 (no 3rd arg needed)
                             "REGEXP_EXTRACT" if f.args.len() == 3
@@ -11120,6 +12244,101 @@ impl Dialect {
                                     zone: None,
                                 })))
                             }
+                            // STR_TO_TIME(x, fmt) -> Expression::StrToTime for proper generation
+                            "STR_TO_TIME" if f.args.len() == 2 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                let fmt_expr = args.remove(0);
+                                let format = if let Expression::Literal(Literal::String(s)) = fmt_expr {
+                                    s
+                                } else {
+                                    "%Y-%m-%d %H:%M:%S".to_string()
+                                };
+                                Ok(Expression::StrToTime(Box::new(crate::expressions::StrToTime {
+                                    this: Box::new(this),
+                                    format,
+                                    zone: None,
+                                    safe: None,
+                                    target_type: None,
+                                })))
+                            }
+                            // STR_TO_UNIX(x, fmt) -> Expression::StrToUnix for proper generation
+                            "STR_TO_UNIX" if f.args.len() >= 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                let format = if !args.is_empty() {
+                                    if let Expression::Literal(Literal::String(s)) = args.remove(0) {
+                                        Some(s)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                Ok(Expression::StrToUnix(Box::new(crate::expressions::StrToUnix {
+                                    this: Some(Box::new(this)),
+                                    format,
+                                })))
+                            }
+                            // TIME_TO_UNIX(x) -> Expression::TimeToUnix for proper generation
+                            "TIME_TO_UNIX" if f.args.len() == 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                Ok(Expression::TimeToUnix(Box::new(crate::expressions::UnaryFunc {
+                                    this,
+                                    original_name: None,
+                                })))
+                            }
+                            // UNIX_TO_STR(x, fmt) -> Expression::UnixToStr for proper generation
+                            "UNIX_TO_STR" if f.args.len() >= 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                let format = if !args.is_empty() {
+                                    if let Expression::Literal(Literal::String(s)) = args.remove(0) {
+                                        Some(s)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                Ok(Expression::UnixToStr(Box::new(crate::expressions::UnixToStr {
+                                    this: Box::new(this),
+                                    format,
+                                })))
+                            }
+                            // UNIX_TO_TIME(x) -> Expression::UnixToTime for proper generation
+                            "UNIX_TO_TIME" if f.args.len() == 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                Ok(Expression::UnixToTime(Box::new(crate::expressions::UnixToTime {
+                                    this: Box::new(this),
+                                    scale: None,
+                                    zone: None,
+                                    hours: None,
+                                    minutes: None,
+                                    format: None,
+                                    target_type: None,
+                                })))
+                            }
+                            // TIME_STR_TO_DATE(x) -> Expression::TimeStrToDate for proper generation
+                            "TIME_STR_TO_DATE" if f.args.len() == 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                Ok(Expression::TimeStrToDate(Box::new(crate::expressions::UnaryFunc {
+                                    this,
+                                    original_name: None,
+                                })))
+                            }
+                            // TIME_STR_TO_TIME(x) -> Expression::TimeStrToTime for proper generation
+                            "TIME_STR_TO_TIME" if f.args.len() == 1 => {
+                                let mut args = f.args;
+                                let this = args.remove(0);
+                                Ok(Expression::TimeStrToTime(Box::new(crate::expressions::TimeStrToTime {
+                                    this: Box::new(this),
+                                    zone: None,
+                                })))
+                            }
                             // MONTHS_BETWEEN(end, start) -> DuckDB complex expansion
                             "MONTHS_BETWEEN" if f.args.len() == 2 => {
                                 match target {
@@ -11154,6 +12373,7 @@ impl Dialect {
                                             operand: None,
                                             whens: vec![(both_cond, Expression::number(0))],
                                             else_: Some(frac),
+                                            comments: Vec::new(),
                                         }));
                                         Ok(Expression::Add(Box::new(BinaryOp::new(dd, case_expr))))
                                     }
@@ -11255,6 +12475,549 @@ impl Dialect {
                                         })))
                                     }
                                     _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_FILTER(arr, lambda) -> FILTER for Hive/Spark/Presto, LIST_FILTER for DuckDB
+                            "ARRAY_FILTER" if f.args.len() == 2 => {
+                                let name = match target {
+                                    DialectType::DuckDB => "LIST_FILTER",
+                                    DialectType::StarRocks => "ARRAY_FILTER",
+                                    _ => "FILTER",
+                                };
+                                Ok(Expression::Function(Box::new(Function::new(name.to_string(), f.args))))
+                            }
+                            // FILTER(arr, lambda) -> ARRAY_FILTER for StarRocks, LIST_FILTER for DuckDB
+                            "FILTER" if f.args.len() == 2 => {
+                                let name = match target {
+                                    DialectType::DuckDB => "LIST_FILTER",
+                                    DialectType::StarRocks => "ARRAY_FILTER",
+                                    _ => "FILTER",
+                                };
+                                Ok(Expression::Function(Box::new(Function::new(name.to_string(), f.args))))
+                            }
+                            // REDUCE(arr, init, lambda1, lambda2) -> AGGREGATE for Spark
+                            "REDUCE" if f.args.len() >= 3 => {
+                                let name = match target {
+                                    DialectType::Spark | DialectType::Databricks => "AGGREGATE",
+                                    _ => "REDUCE",
+                                };
+                                Ok(Expression::Function(Box::new(Function::new(name.to_string(), f.args))))
+                            }
+                            // CURRENT_SCHEMA() -> dialect-specific
+                            "CURRENT_SCHEMA" => {
+                                match target {
+                                    DialectType::PostgreSQL => {
+                                        // PostgreSQL: CURRENT_SCHEMA (no parens)
+                                        Ok(Expression::Function(Box::new(Function {
+                                            name: "CURRENT_SCHEMA".to_string(),
+                                            args: vec![], distinct: false, trailing_comments: vec![],
+                                            use_bracket_syntax: false, no_parens: true, quoted: false,
+                                        })))
+                                    }
+                                    DialectType::MySQL | DialectType::Doris | DialectType::StarRocks => {
+                                        Ok(Expression::Function(Box::new(Function::new("SCHEMA".to_string(), vec![]))))
+                                    }
+                                    DialectType::TSQL => {
+                                        Ok(Expression::Function(Box::new(Function::new("SCHEMA_NAME".to_string(), vec![]))))
+                                    }
+                                    DialectType::SQLite => {
+                                        Ok(Expression::Literal(Literal::String("main".to_string())))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // LTRIM(str, chars) 2-arg -> TRIM(LEADING chars FROM str) for Spark/Hive/Databricks/ClickHouse
+                            "LTRIM" if f.args.len() == 2 => {
+                                match target {
+                                    DialectType::Spark | DialectType::Hive | DialectType::Databricks | DialectType::ClickHouse => {
+                                        let mut args = f.args;
+                                        let str_expr = args.remove(0);
+                                        let chars = args.remove(0);
+                                        Ok(Expression::Trim(Box::new(crate::expressions::TrimFunc {
+                                            this: str_expr,
+                                            characters: Some(chars),
+                                            position: crate::expressions::TrimPosition::Leading,
+                                            sql_standard_syntax: true,
+                                            position_explicit: true,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // RTRIM(str, chars) 2-arg -> TRIM(TRAILING chars FROM str) for Spark/Hive/Databricks/ClickHouse
+                            "RTRIM" if f.args.len() == 2 => {
+                                match target {
+                                    DialectType::Spark | DialectType::Hive | DialectType::Databricks | DialectType::ClickHouse => {
+                                        let mut args = f.args;
+                                        let str_expr = args.remove(0);
+                                        let chars = args.remove(0);
+                                        Ok(Expression::Trim(Box::new(crate::expressions::TrimFunc {
+                                            this: str_expr,
+                                            characters: Some(chars),
+                                            position: crate::expressions::TrimPosition::Trailing,
+                                            sql_standard_syntax: true,
+                                            position_explicit: true,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_REVERSE(x) -> arrayReverse(x) for ClickHouse
+                            "ARRAY_REVERSE" if f.args.len() == 1 => {
+                                match target {
+                                    DialectType::ClickHouse => {
+                                        let mut new_f = *f;
+                                        new_f.name = "arrayReverse".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // UUID() -> NEWID() for TSQL
+                            "UUID" if f.args.is_empty() => {
+                                match target {
+                                    DialectType::TSQL | DialectType::Fabric => {
+                                        Ok(Expression::Function(Box::new(Function::new("NEWID".to_string(), vec![]))))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // FARM_FINGERPRINT(x) -> farmFingerprint64(x) for ClickHouse, FARMFINGERPRINT64(x) for Redshift
+                            "FARM_FINGERPRINT" if f.args.len() == 1 => {
+                                match target {
+                                    DialectType::ClickHouse => {
+                                        let mut new_f = *f;
+                                        new_f.name = "farmFingerprint64".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::Redshift => {
+                                        let mut new_f = *f;
+                                        new_f.name = "FARMFINGERPRINT64".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // JSON_KEYS(x) -> JSON_OBJECT_KEYS(x) for Databricks/Spark, OBJECT_KEYS(x) for Snowflake
+                            "JSON_KEYS" => {
+                                match target {
+                                    DialectType::Databricks | DialectType::Spark => {
+                                        let mut new_f = *f;
+                                        new_f.name = "JSON_OBJECT_KEYS".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::Snowflake => {
+                                        let mut new_f = *f;
+                                        new_f.name = "OBJECT_KEYS".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // WEEKOFYEAR(x) -> WEEKISO(x) for Snowflake
+                            "WEEKOFYEAR" => {
+                                match target {
+                                    DialectType::Snowflake => {
+                                        let mut new_f = *f;
+                                        new_f.name = "WEEKISO".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // FORMAT(fmt, args...) -> FORMAT_STRING(fmt, args...) for Databricks
+                            "FORMAT" if f.args.len() >= 2 && matches!(source, DialectType::Generic) => {
+                                match target {
+                                    DialectType::Databricks | DialectType::Spark => {
+                                        let mut new_f = *f;
+                                        new_f.name = "FORMAT_STRING".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // CONCAT_WS('-', args...) -> CONCAT_WS('-', CAST(arg AS VARCHAR), ...) for Presto/Trino
+                            "CONCAT_WS" if f.args.len() >= 2 => {
+                                match target {
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                        let mut args = f.args;
+                                        let sep = args.remove(0);
+                                        let cast_args: Vec<Expression> = args.into_iter().map(|a| {
+                                            Expression::Cast(Box::new(Cast {
+                                                this: a,
+                                                to: DataType::VarChar { length: None, parenthesized_length: false },
+                                                double_colon_syntax: false,
+                                                trailing_comments: Vec::new(),
+                                                format: None,
+                                                default: None,
+                                            }))
+                                        }).collect();
+                                        let mut new_args = vec![sep];
+                                        new_args.extend(cast_args);
+                                        Ok(Expression::Function(Box::new(Function::new("CONCAT_WS".to_string(), new_args))))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_SLICE(x, start, end) -> SLICE(x, start, end) for Presto/Trino/Databricks, arraySlice for ClickHouse
+                            "ARRAY_SLICE" if f.args.len() >= 2 => {
+                                match target {
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena
+                                    | DialectType::Databricks | DialectType::Spark => {
+                                        let mut new_f = *f;
+                                        new_f.name = "SLICE".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::ClickHouse => {
+                                        let mut new_f = *f;
+                                        new_f.name = "arraySlice".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_PREPEND(arr, x) -> LIST_PREPEND(x, arr) for DuckDB (swap args)
+                            "ARRAY_PREPEND" if f.args.len() == 2 => {
+                                match target {
+                                    DialectType::DuckDB => {
+                                        let mut args = f.args;
+                                        let arr = args.remove(0);
+                                        let val = args.remove(0);
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "LIST_PREPEND".to_string(), vec![val, arr]
+                                        ))))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_REMOVE(arr, target) -> dialect-specific
+                            "ARRAY_REMOVE" if f.args.len() == 2 => {
+                                match target {
+                                    DialectType::DuckDB => {
+                                        let mut args = f.args;
+                                        let arr = args.remove(0);
+                                        let target_val = args.remove(0);
+                                        let u_id = crate::expressions::Identifier::new("_u");
+                                        // LIST_FILTER(arr, _u -> _u <> target)
+                                        let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                            parameters: vec![u_id.clone()],
+                                            body: Expression::Neq(Box::new(BinaryOp {
+                                                left: Expression::Identifier(u_id),
+                                                right: target_val,
+                                                left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                            })),
+                                            colon: false,
+                                            parameter_types: Vec::new(),
+                                        }));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "LIST_FILTER".to_string(), vec![arr, lambda]
+                                        ))))
+                                    }
+                                    DialectType::ClickHouse => {
+                                        let mut args = f.args;
+                                        let arr = args.remove(0);
+                                        let target_val = args.remove(0);
+                                        let u_id = crate::expressions::Identifier::new("_u");
+                                        // arrayFilter(_u -> _u <> target, arr)
+                                        let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                            parameters: vec![u_id.clone()],
+                                            body: Expression::Neq(Box::new(BinaryOp {
+                                                left: Expression::Identifier(u_id),
+                                                right: target_val,
+                                                left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                            })),
+                                            colon: false,
+                                            parameter_types: Vec::new(),
+                                        }));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "arrayFilter".to_string(), vec![lambda, arr]
+                                        ))))
+                                    }
+                                    DialectType::BigQuery => {
+                                        // ARRAY(SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target)
+                                        let mut args = f.args;
+                                        let arr = args.remove(0);
+                                        let target_val = args.remove(0);
+                                        let u_id = crate::expressions::Identifier::new("_u");
+                                        let u_col = Expression::Column(crate::expressions::Column {
+                                            name: u_id.clone(),
+                                            table: None,
+                                            join_mark: false,
+                                            trailing_comments: Vec::new(),
+                                        });
+                                        // UNNEST(the_array) AS _u
+                                        let unnest_expr = Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
+                                            this: arr,
+                                            expressions: Vec::new(),
+                                            with_ordinality: false,
+                                            alias: None,
+                                            offset_alias: None,
+                                        }));
+                                        let aliased_unnest = Expression::Alias(Box::new(crate::expressions::Alias {
+                                            this: unnest_expr,
+                                            alias: u_id.clone(),
+                                            column_aliases: Vec::new(),
+                                            pre_alias_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        // _u <> target
+                                        let where_cond = Expression::Neq(Box::new(BinaryOp {
+                                            left: u_col.clone(),
+                                            right: target_val,
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        // SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target
+                                        let subquery = Expression::Select(Box::new(
+                                            crate::expressions::Select::new()
+                                                .column(u_col)
+                                                .from(aliased_unnest)
+                                                .where_(where_cond)
+                                        ));
+                                        // ARRAY(subquery) -- use ArrayFunc with subquery as single element
+                                        Ok(Expression::ArrayFunc(Box::new(crate::expressions::ArrayConstructor {
+                                            expressions: vec![subquery],
+                                            bracket_notation: false,
+                                            use_list_keyword: false,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // PARSE_JSON(str) -> remove for SQLite/Doris (just use the string literal)
+                            "PARSE_JSON" if f.args.len() == 1 => {
+                                match target {
+                                    DialectType::SQLite | DialectType::Doris | DialectType::MySQL
+                                    | DialectType::StarRocks => {
+                                        // Strip PARSE_JSON, return the inner argument
+                                        Ok(f.args.into_iter().next().unwrap())
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // JSON_REMOVE(PARSE_JSON(str), path...) -> for SQLite strip PARSE_JSON
+                            // This is handled by PARSE_JSON stripping above; JSON_REMOVE is passed through
+                            "JSON_REMOVE" => Ok(Expression::Function(f)),
+                            // JSON_SET(PARSE_JSON(str), path, PARSE_JSON(val)) -> for SQLite strip PARSE_JSON
+                            // This is handled by PARSE_JSON stripping above; JSON_SET is passed through
+                            "JSON_SET" => Ok(Expression::Function(f)),
+                            // DECODE(x, search1, result1, ..., default) -> CASE WHEN
+                            // Behavior per search value type:
+                            //   NULL literal -> CASE WHEN x IS NULL THEN result
+                            //   Literal (number, string, bool) -> CASE WHEN x = literal THEN result
+                            //   Non-literal (column, expr) -> CASE WHEN x = search OR (x IS NULL AND search IS NULL) THEN result
+                            "DECODE" if f.args.len() >= 3 => {
+                                // Keep as DECODE for targets that support it natively
+                                let keep_as_decode = matches!(target,
+                                    DialectType::Oracle | DialectType::Snowflake | DialectType::Redshift
+                                    | DialectType::Teradata | DialectType::Spark | DialectType::Databricks);
+                                if keep_as_decode {
+                                    return Ok(Expression::Function(f));
+                                }
+
+                                let mut args = f.args;
+                                let this_expr = args.remove(0);
+                                let mut pairs = Vec::new();
+                                let mut default = None;
+                                let mut i = 0;
+                                while i + 1 < args.len() {
+                                    pairs.push((args[i].clone(), args[i + 1].clone()));
+                                    i += 2;
+                                }
+                                if i < args.len() {
+                                    default = Some(args[i].clone());
+                                }
+                                // Helper: check if expression is a literal value
+                                fn is_literal(e: &Expression) -> bool {
+                                    matches!(e, Expression::Literal(_) | Expression::Boolean(_)
+                                        | Expression::Neg(_))
+                                }
+                                let whens: Vec<(Expression, Expression)> = pairs.into_iter().map(|(search, result)| {
+                                    if matches!(&search, Expression::Null(_)) {
+                                        // NULL search -> IS NULL
+                                        let condition = Expression::Is(Box::new(BinaryOp {
+                                            left: this_expr.clone(), right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        (condition, result)
+                                    } else if is_literal(&search) {
+                                        // Literal search -> simple equality
+                                        let eq = Expression::Eq(Box::new(BinaryOp {
+                                            left: this_expr.clone(), right: search,
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        (eq, result)
+                                    } else {
+                                        // Non-literal (column ref, expression) -> null-safe comparison
+                                        let needs_paren = matches!(&search, Expression::Eq(_) | Expression::Neq(_) | Expression::Gt(_) | Expression::Gte(_) | Expression::Lt(_) | Expression::Lte(_));
+                                        let search_for_eq = if needs_paren {
+                                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                                this: search.clone(), trailing_comments: Vec::new(),
+                                            }))
+                                        } else { search.clone() };
+                                        let eq = Expression::Eq(Box::new(BinaryOp {
+                                            left: this_expr.clone(), right: search_for_eq,
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        let search_for_null = if needs_paren {
+                                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                                this: search.clone(), trailing_comments: Vec::new(),
+                                            }))
+                                        } else { search.clone() };
+                                        let x_is_null = Expression::Is(Box::new(BinaryOp {
+                                            left: this_expr.clone(), right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        let s_is_null = Expression::Is(Box::new(BinaryOp {
+                                            left: search_for_null, right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        let both_null = Expression::And(Box::new(BinaryOp {
+                                            left: x_is_null, right: s_is_null,
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        let condition = Expression::Or(Box::new(BinaryOp {
+                                            left: eq,
+                                            right: Expression::Paren(Box::new(crate::expressions::Paren {
+                                                this: both_null, trailing_comments: Vec::new(),
+                                            })),
+                                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                        }));
+                                        (condition, result)
+                                    }
+                                }).collect();
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None, whens, else_: default, comments: Vec::new(),
+                                })))
+                            }
+                            // LEVENSHTEIN(a, b, ...) -> dialect-specific
+                            "LEVENSHTEIN" => {
+                                match target {
+                                    DialectType::BigQuery => {
+                                        let mut new_f = *f;
+                                        new_f.name = "EDIT_DISTANCE".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::Drill => {
+                                        let mut new_f = *f;
+                                        new_f.name = "LEVENSHTEIN_DISTANCE".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::PostgreSQL if f.args.len() == 6 => {
+                                        // PostgreSQL: LEVENSHTEIN(src, tgt, ins, del, sub, max_d) -> LEVENSHTEIN_LESS_EQUAL
+                                        // 2 args: basic, 5 args: with costs, 6 args: with costs + max_distance
+                                        let mut new_f = *f;
+                                        new_f.name = "LEVENSHTEIN_LESS_EQUAL".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // ARRAY_REVERSE(x) -> arrayReverse(x) for ClickHouse
+                            "ARRAY_REVERSE" => {
+                                match target {
+                                    DialectType::ClickHouse => {
+                                        let mut new_f = *f;
+                                        new_f.name = "arrayReverse".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // GENERATE_DATE_ARRAY(start, end[, step]) -> target-specific
+                            "GENERATE_DATE_ARRAY" => {
+                                let mut args = f.args;
+                                if matches!(target, DialectType::BigQuery) {
+                                    // BigQuery keeps GENERATE_DATE_ARRAY; add default interval if not present
+                                    if args.len() == 2 {
+                                        let default_interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                            this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                            unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                        }));
+                                        args.push(default_interval);
+                                    }
+                                    Ok(Expression::Function(Box::new(Function::new("GENERATE_DATE_ARRAY".to_string(), args))))
+                                } else if matches!(target, DialectType::DuckDB) {
+                                    // DuckDB: CAST(GENERATE_SERIES(start, end, step) AS DATE[])
+                                    let start = args.get(0).cloned();
+                                    let end = args.get(1).cloned();
+                                    let step = args.get(2).cloned().or_else(|| Some(Expression::Interval(Box::new(crate::expressions::Interval {
+                                        this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                        unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                    }))));
+                                    let gen_series = Expression::GenerateSeries(Box::new(crate::expressions::GenerateSeries {
+                                        start: start.map(Box::new),
+                                        end: end.map(Box::new),
+                                        step: step.map(Box::new),
+                                        is_end_exclusive: None,
+                                    }));
+                                    Ok(Expression::Cast(Box::new(Cast {
+                                        this: gen_series,
+                                        to: DataType::Array { element_type: Box::new(DataType::Date), dimension: None },
+                                        trailing_comments: vec![],
+                                        double_colon_syntax: false,
+                                        format: None,
+                                        default: None,
+                                    })))
+                                } else if matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena) {
+                                    // Presto/Trino: SEQUENCE(start, end, interval) with interval normalization
+                                    let start = args.get(0).cloned();
+                                    let end = args.get(1).cloned();
+                                    let step = args.get(2).cloned().or_else(|| Some(Expression::Interval(Box::new(crate::expressions::Interval {
+                                        this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                        unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                    }))));
+                                    let gen_series = Expression::GenerateSeries(Box::new(crate::expressions::GenerateSeries {
+                                        start: start.map(Box::new),
+                                        end: end.map(Box::new),
+                                        step: step.map(Box::new),
+                                        is_end_exclusive: None,
+                                    }));
+                                    Ok(gen_series)
+                                } else if matches!(target, DialectType::Spark | DialectType::Databricks) {
+                                    // Spark/Databricks: SEQUENCE(start, end, step) - keep step as-is
+                                    let start = args.get(0).cloned();
+                                    let end = args.get(1).cloned();
+                                    let step = args.get(2).cloned().or_else(|| Some(Expression::Interval(Box::new(crate::expressions::Interval {
+                                        this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                        unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                    }))));
+                                    let gen_series = Expression::GenerateSeries(Box::new(crate::expressions::GenerateSeries {
+                                        start: start.map(Box::new),
+                                        end: end.map(Box::new),
+                                        step: step.map(Box::new),
+                                        is_end_exclusive: None,
+                                    }));
+                                    Ok(gen_series)
+                                } else if matches!(target, DialectType::Snowflake) {
+                                    // Snowflake: keep as GENERATE_DATE_ARRAY for later transform
+                                    if args.len() == 2 {
+                                        let default_interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                            this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                            unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                        }));
+                                        args.push(default_interval);
+                                    }
+                                    Ok(Expression::Function(Box::new(Function::new("GENERATE_DATE_ARRAY".to_string(), args))))
+                                } else if matches!(target, DialectType::MySQL | DialectType::TSQL | DialectType::Fabric | DialectType::Redshift) {
+                                    // MySQL/TSQL/Redshift: keep as GENERATE_DATE_ARRAY for the preprocess
+                                    // step (unnest_generate_date_array_using_recursive_cte) to convert to CTE
+                                    Ok(Expression::Function(Box::new(Function::new("GENERATE_DATE_ARRAY".to_string(), args))))
+                                } else {
+                                    // PostgreSQL/others: convert to GenerateSeries
+                                    let start = args.get(0).cloned();
+                                    let end = args.get(1).cloned();
+                                    let step = args.get(2).cloned().or_else(|| Some(Expression::Interval(Box::new(crate::expressions::Interval {
+                                        this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                        unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: crate::expressions::IntervalUnit::Day, use_plural: false }),
+                                    }))));
+                                    Ok(Expression::GenerateSeries(Box::new(crate::expressions::GenerateSeries {
+                                        start: start.map(Box::new),
+                                        end: end.map(Box::new),
+                                        step: step.map(Box::new),
+                                        is_end_exclusive: None,
+                                    })))
                                 }
                             }
                             _ => Ok(Expression::Function(f)),
@@ -11409,7 +13172,7 @@ impl Dialect {
                             // fromUnixTimestamp64Milli(CAST(x AS Nullable(Int64)))
                             let cast_arg = Expression::Cast(Box::new(Cast {
                                 this: arg,
-                                to: DataType::Custom { name: "Nullable(Int64)".to_string() },
+                                to: DataType::Nullable { inner: Box::new(DataType::BigInt { length: None }) },
                                 trailing_comments: Vec::new(),
                                 double_colon_syntax: false,
                                 format: None,
@@ -12134,6 +13897,9 @@ impl Dialect {
                         // PostgreSQL ARRAY_LENGTH requires dimension arg
                         Ok(Expression::Function(Box::new(Function::new("ARRAY_LENGTH".to_string(), vec![arg, Expression::number(1)]))))
                     }
+                    DialectType::Snowflake => {
+                        Ok(Expression::ArraySize(Box::new(crate::expressions::UnaryFunc::new(arg))))
+                    }
                     _ => Ok(e), // Keep original
                 }
             }
@@ -12142,6 +13908,18 @@ impl Dialect {
                 // JSON_EXTRACT(x, path) -> x -> path for SQLite/DuckDB (set arrow_syntax = true)
                 if let Expression::JsonExtract(mut f) = e {
                     f.arrow_syntax = true;
+                    // Transform path: convert bracket notation to dot notation
+                    // SQLite strips wildcards, DuckDB preserves them
+                    if let Expression::Literal(Literal::String(ref s)) = f.path {
+                        let mut transformed = s.clone();
+                        if matches!(target, DialectType::SQLite) {
+                            transformed = Self::strip_json_wildcards(&transformed);
+                        }
+                        transformed = Self::bracket_to_dot_notation(&transformed);
+                        if transformed != *s {
+                            f.path = Expression::string(&transformed);
+                        }
+                    }
                     Ok(Expression::JsonExtract(f))
                 } else {
                     Ok(e)
@@ -12152,30 +13930,40 @@ impl Dialect {
                 if let Expression::JsonExtract(f) = e {
                     if matches!(target, DialectType::PostgreSQL | DialectType::Redshift) {
                         // JSON_EXTRACT(x, '$.key') -> JSON_EXTRACT_PATH(x, 'key') for PostgreSQL
-                        // Convert JSONPath to individual keys
-                        let extracted_keys: Option<Vec<String>> = if let Expression::Literal(Literal::String(ref s)) = f.path {
-                            s.strip_prefix("$.").map(|stripped| {
-                                stripped.split('.').map(|k| k.to_string()).collect()
-                            })
-                        } else {
-                            None
-                        };
-                        let keys = if let Some(key_list) = extracted_keys {
-                            key_list.into_iter().map(|k| Expression::string(&k)).collect::<Vec<_>>()
+                        // Use proper decomposition that handles brackets
+                        let keys: Vec<Expression> = if let Expression::Literal(Literal::String(ref s)) = f.path {
+                            let parts = Self::decompose_json_path(s);
+                            parts.into_iter().map(|k| Expression::string(&k)).collect()
                         } else {
                             vec![f.path]
+                        };
+                        let func_name = if matches!(target, DialectType::Redshift) {
+                            "JSON_EXTRACT_PATH_TEXT"
+                        } else {
+                            "JSON_EXTRACT_PATH"
                         };
                         let mut args = vec![f.this];
                         args.extend(keys);
                         Ok(Expression::Function(Box::new(Function::new(
-                            "JSON_EXTRACT_PATH".to_string(),
+                            func_name.to_string(),
                             args,
                         ))))
                     } else {
                         // GET_JSON_OBJECT(x, '$.path') for Hive/Spark
+                        // Convert bracket double quotes to single quotes
+                        let path = if let Expression::Literal(Literal::String(ref s)) = f.path {
+                            let normalized = Self::bracket_to_single_quotes(s);
+                            if normalized != *s {
+                                Expression::string(&normalized)
+                            } else {
+                                f.path
+                            }
+                        } else {
+                            f.path
+                        };
                         Ok(Expression::Function(Box::new(Function::new(
                             "GET_JSON_OBJECT".to_string(),
-                            vec![f.this, f.path],
+                            vec![f.this, path],
                         ))))
                     }
                 } else {
@@ -12190,6 +13978,144 @@ impl Dialect {
                         "GET_JSON_OBJECT".to_string(),
                         vec![f.this, f.path],
                     ))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::JsonExtractToTsql => {
+                // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> ISNULL(JSON_QUERY(x, path), JSON_VALUE(x, path)) for TSQL
+                let (this, path) = match e {
+                    Expression::JsonExtract(f) => (f.this, f.path),
+                    Expression::JsonExtractScalar(f) => (f.this, f.path),
+                    _ => return Ok(e),
+                };
+                // Transform path: strip wildcards, convert bracket notation to dot notation
+                let transformed_path = if let Expression::Literal(Literal::String(ref s)) = path {
+                    let stripped = Self::strip_json_wildcards(s);
+                    let dotted = Self::bracket_to_dot_notation(&stripped);
+                    Expression::string(&dotted)
+                } else {
+                    path
+                };
+                let json_query = Expression::Function(Box::new(Function::new(
+                    "JSON_QUERY".to_string(),
+                    vec![this.clone(), transformed_path.clone()],
+                )));
+                let json_value = Expression::Function(Box::new(Function::new(
+                    "JSON_VALUE".to_string(),
+                    vec![this, transformed_path],
+                )));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "ISNULL".to_string(),
+                    vec![json_query, json_value],
+                ))))
+            }
+
+            Action::JsonExtractToClickHouse => {
+                // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> JSONExtractString(x, 'key1', idx, 'key2') for ClickHouse
+                let (this, path) = match e {
+                    Expression::JsonExtract(f) => (f.this, f.path),
+                    Expression::JsonExtractScalar(f) => (f.this, f.path),
+                    _ => return Ok(e),
+                };
+                let args: Vec<Expression> = if let Expression::Literal(Literal::String(ref s)) = path {
+                    let parts = Self::decompose_json_path(s);
+                    let mut result = vec![this];
+                    for part in parts {
+                        // ClickHouse uses 1-based integer indices for array access
+                        if let Ok(idx) = part.parse::<i64>() {
+                            result.push(Expression::number(idx + 1));
+                        } else {
+                            result.push(Expression::string(&part));
+                        }
+                    }
+                    result
+                } else {
+                    vec![this, path]
+                };
+                Ok(Expression::Function(Box::new(Function::new(
+                    "JSONExtractString".to_string(),
+                    args,
+                ))))
+            }
+
+            Action::JsonExtractScalarConvert => {
+                // JSON_EXTRACT_SCALAR -> target-specific
+                if let Expression::JsonExtractScalar(f) = e {
+                    match target {
+                        DialectType::PostgreSQL | DialectType::Redshift => {
+                            // JSON_EXTRACT_SCALAR(x, '$.path') -> JSON_EXTRACT_PATH_TEXT(x, 'key1', 'key2')
+                            let keys: Vec<Expression> = if let Expression::Literal(Literal::String(ref s)) = f.path {
+                                let parts = Self::decompose_json_path(s);
+                                parts.into_iter().map(|k| Expression::string(&k)).collect()
+                            } else {
+                                vec![f.path]
+                            };
+                            let mut args = vec![f.this];
+                            args.extend(keys);
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "JSON_EXTRACT_PATH_TEXT".to_string(),
+                                args,
+                            ))))
+                        }
+                        DialectType::Snowflake => {
+                            // JSON_EXTRACT_SCALAR(x, '$.path') -> JSON_EXTRACT_PATH_TEXT(x, 'stripped_path')
+                            let stripped_path = if let Expression::Literal(Literal::String(ref s)) = f.path {
+                                let stripped = Self::strip_json_dollar_prefix(s);
+                                Expression::string(&stripped)
+                            } else {
+                                f.path
+                            };
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "JSON_EXTRACT_PATH_TEXT".to_string(),
+                                vec![f.this, stripped_path],
+                            ))))
+                        }
+                        DialectType::SQLite | DialectType::DuckDB => {
+                            // JSON_EXTRACT_SCALAR(x, '$.path') -> x ->> '$.path'
+                            Ok(Expression::JsonExtractScalar(Box::new(crate::expressions::JsonExtractFunc {
+                                this: f.this,
+                                path: f.path,
+                                returning: f.returning,
+                                arrow_syntax: true,
+                                hash_arrow_syntax: false,
+                                wrapper_option: None,
+                                quotes_option: None,
+                                on_scalar_string: false,
+                                on_error: None,
+                            })))
+                        }
+                        _ => Ok(Expression::JsonExtractScalar(f)),
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::JsonPathNormalize => {
+                // Normalize JSON path format for BigQuery, MySQL, etc.
+                if let Expression::JsonExtract(mut f) = e {
+                    if let Expression::Literal(Literal::String(ref s)) = f.path {
+                        let mut normalized = s.clone();
+                        // Convert bracket notation and handle wildcards per dialect
+                        match target {
+                            DialectType::BigQuery => {
+                                // BigQuery strips wildcards and uses single quotes in brackets
+                                normalized = Self::strip_json_wildcards(&normalized);
+                                normalized = Self::bracket_to_single_quotes(&normalized);
+                            }
+                            DialectType::MySQL => {
+                                // MySQL preserves wildcards, converts brackets to dot notation
+                                normalized = Self::bracket_to_dot_notation(&normalized);
+                            }
+                            _ => {}
+                        }
+                        if normalized != *s {
+                            f.path = Expression::string(&normalized);
+                        }
+                    }
+                    Ok(Expression::JsonExtract(f))
                 } else {
                     Ok(e)
                 }
@@ -12642,6 +14568,7 @@ impl Dialect {
                         index: p.index,
                         style: crate::expressions::ParameterStyle::At,
                         quoted: p.quoted,
+                        string_quoted: p.string_quoted,
                         expression: p.expression,
                     })))
                 } else { Ok(e) }
@@ -12808,6 +14735,7 @@ impl Dialect {
                                 Expression::number(null_val),
                             )],
                             else_: Some(Expression::number(non_null_val)),
+                            comments: Vec::new(),
                         }));
                         o.nulls_first = None;
                         // Return a tuple of [case_expr, ordered_expr]
@@ -12841,6 +14769,7 @@ impl Dialect {
                                     Expression::Literal(Literal::Number("1".to_string())),
                                 )],
                                 else_: Some(Expression::Literal(Literal::Number("0".to_string()))),
+                                comments: Vec::new(),
                             }));
                             new_order_by.push(crate::expressions::Ordered {
                                 this: case_expr,
@@ -13219,14 +15148,27 @@ impl Dialect {
             }
 
             Action::JsonToGetPath => {
-                // JSON_EXTRACT(JSON('x'), '$.key') -> GET_PATH(PARSE_JSON('x'), 'key')
+                // JSON_EXTRACT(x, '$.key') -> GET_PATH(PARSE_JSON(x), 'key')
                 if let Expression::JsonExtract(je) = e {
-                    // Convert JSON() to PARSE_JSON()
+                    // Convert to PARSE_JSON() wrapper:
+                    // - JSON(x) -> PARSE_JSON(x)
+                    // - PARSE_JSON(x) -> keep as-is
+                    // - anything else -> wrap in PARSE_JSON()
                     let this = match &je.this {
                         Expression::Function(f) if f.name.eq_ignore_ascii_case("JSON") && f.args.len() == 1 => {
                             Expression::Function(Box::new(Function::new("PARSE_JSON".to_string(), f.args.clone())))
                         }
-                        _ => je.this.clone(),
+                        Expression::Function(f) if f.name.eq_ignore_ascii_case("PARSE_JSON") => {
+                            je.this.clone()
+                        }
+                        // GET_PATH result is already JSON, don't wrap
+                        Expression::Function(f) if f.name.eq_ignore_ascii_case("GET_PATH") => {
+                            je.this.clone()
+                        }
+                        other => {
+                            // Wrap non-JSON expressions in PARSE_JSON()
+                            Expression::Function(Box::new(Function::new("PARSE_JSON".to_string(), vec![other.clone()])))
+                        }
                     };
                     // Convert path: extract key from JSONPath or strip $. prefix from string
                     let path = match &je.path {
@@ -13251,10 +15193,12 @@ impl Dialect {
                             }
                         }
                         Expression::Literal(Literal::String(s)) if s.starts_with("$.") => {
-                            Expression::Literal(Literal::String(s[2..].to_string()))
+                            let stripped = Self::strip_json_wildcards(&s[2..].to_string());
+                            Expression::Literal(Literal::String(stripped))
                         }
                         Expression::Literal(Literal::String(s)) if s.starts_with('$') => {
-                            Expression::Literal(Literal::String(s[1..].to_string()))
+                            let stripped = Self::strip_json_wildcards(&s[1..].to_string());
+                            Expression::Literal(Literal::String(stripped))
                         }
                         _ => je.path.clone(),
                     };
@@ -13601,6 +15545,7 @@ impl Dialect {
                     operand: None,
                     whens: vec![(isnan, Expression::Null(crate::expressions::Null))],
                     else_: Some(corr_clone),
+                    comments: Vec::new(),
                 }));
                 Ok(case_expr)
             }
@@ -13725,6 +15670,7 @@ impl Dialect {
                                     (is_zero, Expression::number(0)),
                                 ],
                                 else_: Some(pos_adjusted),
+                                comments: Vec::new(),
                             })))
                         }
                         _ => {
@@ -13774,6 +15720,7 @@ impl Dialect {
                                 operand: None,
                                 whens: vec![(both_cond, Expression::number(0))],
                                 else_: Some(frac),
+                                comments: Vec::new(),
                             }));
                             Ok(Expression::Add(Box::new(BinaryOp::new(dd, case_expr))))
                         }
@@ -13915,6 +15862,7 @@ impl Dialect {
                                     last_day_date_plus,
                                 )],
                                 else_: Some(date_plus_interval),
+                                comments: Vec::new(),
                             }));
 
                             // Wrap in CAST(... AS type) if needed
@@ -14487,8 +16435,2401 @@ impl Dialect {
                 }
             }
 
+            Action::Nvl2Expand => {
+                // NVL2(a, b[, c]) -> CASE WHEN NOT a IS NULL THEN b [ELSE c] END
+                // But keep as NVL2 for dialects that support it natively
+                let nvl2_native = matches!(target,
+                    DialectType::Oracle | DialectType::Snowflake | DialectType::Redshift
+                    | DialectType::Teradata | DialectType::Spark | DialectType::Databricks
+                );
+                let (a, b, c) = if let Expression::Nvl2(nvl2) = e {
+                    if nvl2_native {
+                        return Ok(Expression::Nvl2(nvl2));
+                    }
+                    (nvl2.this, nvl2.true_value, Some(nvl2.false_value))
+                } else if let Expression::Function(f) = e {
+                    if nvl2_native {
+                        return Ok(Expression::Function(Box::new(Function::new("NVL2".to_string(), f.args))));
+                    }
+                    if f.args.len() < 2 {
+                        return Ok(Expression::Function(f));
+                    }
+                    let mut args = f.args;
+                    let a = args.remove(0);
+                    let b = args.remove(0);
+                    let c = if !args.is_empty() { Some(args.remove(0)) } else { Option::None };
+                    (a, b, c)
+                } else {
+                    return Ok(e);
+                };
+                // Build: NOT (a IS NULL)
+                let is_null = Expression::IsNull(Box::new(IsNull { this: a, not: false, postfix_form: false }));
+                let not_null = Expression::Not(Box::new(crate::expressions::UnaryOp { this: is_null }));
+                Ok(Expression::Case(Box::new(Case {
+                    operand: Option::None,
+                    whens: vec![(not_null, b)],
+                    else_: c,
+                    comments: Vec::new(),
+                })))
+            }
+
+            Action::IfnullToCoalesce => {
+                // IFNULL(a, b) -> COALESCE(a, b): clear original_name to output COALESCE
+                if let Expression::Coalesce(mut cf) = e {
+                    cf.original_name = Option::None;
+                    Ok(Expression::Coalesce(cf))
+                } else if let Expression::Function(f) = e {
+                    Ok(Expression::Function(Box::new(Function::new("COALESCE".to_string(), f.args))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::IsAsciiConvert => {
+                // IS_ASCII(x) -> dialect-specific ASCII check
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::MySQL | DialectType::SingleStore | DialectType::TiDB => {
+                            // REGEXP_LIKE(x, '^[[:ascii:]]*$')
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "REGEXP_LIKE".to_string(),
+                                vec![arg, Expression::Literal(Literal::String("^[[:ascii:]]*$".to_string()))],
+                            ))))
+                        }
+                        DialectType::PostgreSQL | DialectType::Redshift | DialectType::Materialize | DialectType::RisingWave => {
+                            // (x ~ '^[[:ascii:]]*$')
+                            Ok(Expression::Paren(Box::new(Paren {
+                                this: Expression::RegexpLike(Box::new(crate::expressions::RegexpFunc {
+                                    this: arg,
+                                    pattern: Expression::Literal(Literal::String("^[[:ascii:]]*$".to_string())),
+                                    flags: Option::None,
+                                })),
+                                trailing_comments: Vec::new(),
+                            })))
+                        }
+                        DialectType::SQLite => {
+                            // (NOT x GLOB CAST(x'2a5b5e012d7f5d2a' AS TEXT))
+                            let hex_lit = Expression::Literal(Literal::HexString("2a5b5e012d7f5d2a".to_string()));
+                            let cast_expr = Expression::Cast(Box::new(Cast {
+                                this: hex_lit,
+                                to: DataType::Text,
+                                trailing_comments: Vec::new(),
+                                double_colon_syntax: false,
+                                format: Option::None,
+                                default: Option::None,
+                            }));
+                            let glob = Expression::Glob(Box::new(BinaryOp {
+                                left: arg,
+                                right: cast_expr,
+                                left_comments: Vec::new(),
+                                operator_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }));
+                            Ok(Expression::Paren(Box::new(Paren {
+                                this: Expression::Not(Box::new(crate::expressions::UnaryOp { this: glob })),
+                                trailing_comments: Vec::new(),
+                            })))
+                        }
+                        DialectType::TSQL | DialectType::Fabric => {
+                            // (PATINDEX(CONVERT(VARCHAR(MAX), 0x255b5e002d7f5d25) COLLATE Latin1_General_BIN, x) = 0)
+                            let hex_lit = Expression::Literal(Literal::HexNumber("255b5e002d7f5d25".to_string()));
+                            let convert_expr = Expression::Convert(Box::new(crate::expressions::ConvertFunc {
+                                this: hex_lit,
+                                to: DataType::Text, // Text generates as VARCHAR(MAX) for TSQL
+                                style: None,
+                            }));
+                            let collated = Expression::Collation(Box::new(crate::expressions::CollationExpr {
+                                this: convert_expr,
+                                collation: "Latin1_General_BIN".to_string(),
+                                quoted: false,
+                                double_quoted: false,
+                            }));
+                            let patindex = Expression::Function(Box::new(Function::new(
+                                "PATINDEX".to_string(),
+                                vec![collated, arg],
+                            )));
+                            let zero = Expression::Literal(Literal::Number("0".to_string()));
+                            let eq_zero = Expression::Eq(Box::new(BinaryOp {
+                                left: patindex,
+                                right: zero,
+                                left_comments: Vec::new(),
+                                operator_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }));
+                            Ok(Expression::Paren(Box::new(Paren {
+                                this: eq_zero,
+                                trailing_comments: Vec::new(),
+                            })))
+                        }
+                        DialectType::Oracle => {
+                            // NVL(REGEXP_LIKE(x, '^[' || CHR(1) || '-' || CHR(127) || ']*$'), TRUE)
+                            // Build the pattern: '^[' || CHR(1) || '-' || CHR(127) || ']*$'
+                            let s1 = Expression::Literal(Literal::String("^[".to_string()));
+                            let chr1 = Expression::Function(Box::new(Function::new("CHR".to_string(), vec![
+                                Expression::Literal(Literal::Number("1".to_string()))
+                            ])));
+                            let dash = Expression::Literal(Literal::String("-".to_string()));
+                            let chr127 = Expression::Function(Box::new(Function::new("CHR".to_string(), vec![
+                                Expression::Literal(Literal::Number("127".to_string()))
+                            ])));
+                            let s2 = Expression::Literal(Literal::String("]*$".to_string()));
+                            // Build: '^[' || CHR(1) || '-' || CHR(127) || ']*$'
+                            let concat1 = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                this: Box::new(s1), expression: Box::new(chr1), safe: None,
+                            }));
+                            let concat2 = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                this: Box::new(concat1), expression: Box::new(dash), safe: None,
+                            }));
+                            let concat3 = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                this: Box::new(concat2), expression: Box::new(chr127), safe: None,
+                            }));
+                            let concat4 = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                this: Box::new(concat3), expression: Box::new(s2), safe: None,
+                            }));
+                            let regexp_like = Expression::Function(Box::new(Function::new(
+                                "REGEXP_LIKE".to_string(),
+                                vec![arg, concat4],
+                            )));
+                            // Use Column("TRUE") to output literal TRUE keyword (not boolean 1/0)
+                            let true_expr = Expression::Column(crate::expressions::Column {
+                                name: Identifier { name: "TRUE".to_string(), quoted: false, trailing_comments: Vec::new() },
+                                table: None,
+                                join_mark: false,
+                                trailing_comments: Vec::new(),
+                            });
+                            let nvl = Expression::Function(Box::new(Function::new(
+                                "NVL".to_string(),
+                                vec![regexp_like, true_expr],
+                            )));
+                            Ok(nvl)
+                        }
+                        _ => Ok(Expression::Function(Box::new(Function::new("IS_ASCII".to_string(), vec![arg])))),
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::StrPositionConvert => {
+                // STR_POSITION(haystack, needle[, position[, occurrence]]) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    if f.args.len() < 2 {
+                        return Ok(Expression::Function(f));
+                    }
+                    let mut args = f.args;
+
+                    let haystack = args.remove(0);
+                    let needle = args.remove(0);
+                    let position = if !args.is_empty() { Some(args.remove(0)) } else { Option::None };
+                    let occurrence = if !args.is_empty() { Some(args.remove(0)) } else { Option::None };
+
+                    // Helper to build: STRPOS/INSTR(SUBSTRING(haystack, pos), needle) expansion
+                    // Returns: CASE/IF WHEN func(SUBSTRING(haystack, pos), needle[, occ]) = 0 THEN 0 ELSE ... + pos - 1 END
+                    fn build_position_expansion(
+                        haystack: Expression, needle: Expression, pos: Expression,
+                        occurrence: Option<Expression>, inner_func: &str,
+                        wrapper: &str, // "CASE", "IF", "IIF"
+                    ) -> Expression {
+                        let substr = Expression::Function(Box::new(Function::new(
+                            "SUBSTRING".to_string(), vec![haystack, pos.clone()])));
+                        let mut inner_args = vec![substr, needle];
+                        if let Some(occ) = occurrence {
+                            inner_args.push(occ);
+                        }
+                        let inner_call = Expression::Function(Box::new(Function::new(
+                            inner_func.to_string(), inner_args)));
+                        let zero = Expression::Literal(Literal::Number("0".to_string()));
+                        let one = Expression::Literal(Literal::Number("1".to_string()));
+                        let eq_zero = Expression::Eq(Box::new(BinaryOp {
+                            left: inner_call.clone(), right: zero.clone(),
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let add_pos = Expression::Add(Box::new(BinaryOp {
+                            left: inner_call, right: pos,
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let sub_one = Expression::Sub(Box::new(BinaryOp {
+                            left: add_pos, right: one,
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+
+                        match wrapper {
+                            "CASE" => Expression::Case(Box::new(Case {
+                                operand: Option::None,
+                                whens: vec![(eq_zero, zero)],
+                                else_: Some(sub_one),
+                                comments: Vec::new(),
+                            })),
+                            "IIF" => Expression::Function(Box::new(Function::new(
+                                "IIF".to_string(), vec![eq_zero, zero, sub_one]))),
+                            _ => Expression::Function(Box::new(Function::new(
+                                "IF".to_string(), vec![eq_zero, zero, sub_one]))),
+                        }
+                    }
+
+                    match target {
+                        // STRPOS group: Athena, DuckDB, Presto, Trino, Drill
+                        DialectType::Athena | DialectType::DuckDB | DialectType::Presto | DialectType::Trino | DialectType::Drill => {
+                            if let Some(pos) = position {
+                                let wrapper = if matches!(target, DialectType::DuckDB) { "CASE" }
+                                    else { "IF" };
+                                let result = build_position_expansion(haystack, needle, pos, occurrence, "STRPOS", wrapper);
+                                if matches!(target, DialectType::Drill) {
+                                    // Drill uses backtick-quoted `IF`
+                                    if let Expression::Function(mut f) = result {
+                                        f.name = "`IF`".to_string();
+                                        Ok(Expression::Function(f))
+                                    } else {
+                                        Ok(result)
+                                    }
+                                } else {
+                                    Ok(result)
+                                }
+                            } else {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "STRPOS".to_string(), vec![haystack, needle]))))
+                            }
+                        }
+                        // SQLite: IIF wrapper
+                        DialectType::SQLite => {
+                            if let Some(pos) = position {
+                                Ok(build_position_expansion(haystack, needle, pos, occurrence, "INSTR", "IIF"))
+                            } else {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "INSTR".to_string(), vec![haystack, needle]))))
+                            }
+                        }
+                        // INSTR group: Teradata, BigQuery, Oracle
+                        DialectType::Teradata | DialectType::BigQuery | DialectType::Oracle => {
+                            let mut a = vec![haystack, needle];
+                            if let Some(pos) = position { a.push(pos); }
+                            if let Some(occ) = occurrence { a.push(occ); }
+                            Ok(Expression::Function(Box::new(Function::new("INSTR".to_string(), a))))
+                        }
+                        // CHARINDEX group: Snowflake, TSQL
+                        DialectType::Snowflake | DialectType::TSQL | DialectType::Fabric => {
+                            let mut a = vec![needle, haystack];
+                            if let Some(pos) = position { a.push(pos); }
+                            Ok(Expression::Function(Box::new(Function::new("CHARINDEX".to_string(), a))))
+                        }
+                        // POSITION(needle IN haystack): PostgreSQL, Materialize, RisingWave, Redshift
+                        DialectType::PostgreSQL | DialectType::Materialize | DialectType::RisingWave | DialectType::Redshift => {
+                            if let Some(pos) = position {
+                                // Build: CASE WHEN POSITION(needle IN SUBSTRING(haystack FROM pos)) = 0 THEN 0
+                                //   ELSE POSITION(...) + pos - 1 END
+                                let substr = Expression::Substring(Box::new(crate::expressions::SubstringFunc {
+                                    this: haystack,
+                                    start: pos.clone(),
+                                    length: Option::None,
+                                    from_for_syntax: true,
+                                }));
+                                let pos_in = Expression::StrPosition(Box::new(crate::expressions::StrPosition {
+                                    this: Box::new(substr),
+                                    substr: Some(Box::new(needle)),
+                                    position: Option::None,
+                                    occurrence: Option::None,
+                                }));
+                                let zero = Expression::Literal(Literal::Number("0".to_string()));
+                                let one = Expression::Literal(Literal::Number("1".to_string()));
+                                let eq_zero = Expression::Eq(Box::new(BinaryOp {
+                                    left: pos_in.clone(), right: zero.clone(),
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                }));
+                                let add_pos = Expression::Add(Box::new(BinaryOp {
+                                    left: pos_in, right: pos,
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                }));
+                                let sub_one = Expression::Sub(Box::new(BinaryOp {
+                                    left: add_pos, right: one,
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                }));
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: Option::None,
+                                    whens: vec![(eq_zero, zero)],
+                                    else_: Some(sub_one),
+                                    comments: Vec::new(),
+                                })))
+                            } else {
+                                Ok(Expression::StrPosition(Box::new(crate::expressions::StrPosition {
+                                    this: Box::new(haystack),
+                                    substr: Some(Box::new(needle)),
+                                    position: Option::None,
+                                    occurrence: Option::None,
+                                })))
+                            }
+                        }
+                        // LOCATE group: MySQL, Hive, Spark, Databricks, Doris
+                        DialectType::MySQL | DialectType::SingleStore | DialectType::TiDB
+                        | DialectType::Hive | DialectType::Spark | DialectType::Databricks
+                        | DialectType::Doris | DialectType::StarRocks => {
+                            let mut a = vec![needle, haystack];
+                            if let Some(pos) = position { a.push(pos); }
+                            Ok(Expression::Function(Box::new(Function::new("LOCATE".to_string(), a))))
+                        }
+                        // ClickHouse: POSITION(haystack, needle[, position])
+                        DialectType::ClickHouse => {
+                            let mut a = vec![haystack, needle];
+                            if let Some(pos) = position { a.push(pos); }
+                            Ok(Expression::Function(Box::new(Function::new("POSITION".to_string(), a))))
+                        }
+                        _ => {
+                            let mut a = vec![haystack, needle];
+                            if let Some(pos) = position { a.push(pos); }
+                            if let Some(occ) = occurrence { a.push(occ); }
+                            Ok(Expression::Function(Box::new(Function::new("STR_POSITION".to_string(), a))))
+                        }
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArraySumConvert => {
+                // ARRAY_SUM(arr) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    let args = f.args;
+                    match target {
+                        DialectType::DuckDB => {
+                            Ok(Expression::Function(Box::new(Function::new("LIST_SUM".to_string(), args))))
+                        }
+                        DialectType::Spark | DialectType::Databricks => {
+                            // AGGREGATE(arr, 0, (acc, x) -> acc + x, acc -> acc)
+                            let arr = args.into_iter().next().unwrap();
+                            let zero = Expression::Literal(Literal::Number("0".to_string()));
+                            let acc_id = Identifier::new("acc");
+                            let x_id = Identifier::new("x");
+                            let acc = Expression::Identifier(acc_id.clone());
+                            let x = Expression::Identifier(x_id.clone());
+                            let add = Expression::Add(Box::new(BinaryOp {
+                                left: acc.clone(), right: x,
+                                left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                            }));
+                            let lambda1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                parameters: vec![acc_id.clone(), x_id],
+                                body: add,
+                                colon: false,
+                                parameter_types: Vec::new(),
+                            }));
+                            let lambda2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                parameters: vec![acc_id],
+                                body: acc,
+                                colon: false,
+                                parameter_types: Vec::new(),
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "AGGREGATE".to_string(), vec![arr, zero, lambda1, lambda2]))))
+                        }
+                        DialectType::Presto | DialectType::Athena => {
+                            // Presto/Athena keep ARRAY_SUM natively
+                            Ok(Expression::Function(Box::new(Function::new("ARRAY_SUM".to_string(), args))))
+                        }
+                        DialectType::Trino => {
+                            // REDUCE(arr, 0, (acc, x) -> acc + x, acc -> acc)
+                            if args.len() == 1 {
+                                let arr = args.into_iter().next().unwrap();
+                                let zero = Expression::Literal(Literal::Number("0".to_string()));
+                                let acc_id = Identifier::new("acc");
+                                let x_id = Identifier::new("x");
+                                let acc = Expression::Identifier(acc_id.clone());
+                                let x = Expression::Identifier(x_id.clone());
+                                let add = Expression::Add(Box::new(BinaryOp {
+                                    left: acc.clone(), right: x,
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                }));
+                                let lambda1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![acc_id.clone(), x_id],
+                                    body: add,
+                                    colon: false,
+                                    parameter_types: Vec::new(),
+                                }));
+                                let lambda2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![acc_id],
+                                    body: acc,
+                                    colon: false,
+                                    parameter_types: Vec::new(),
+                                }));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REDUCE".to_string(), vec![arr, zero, lambda1, lambda2]))))
+                            } else {
+                                Ok(Expression::Function(Box::new(Function::new("ARRAY_SUM".to_string(), args))))
+                            }
+                        }
+                        DialectType::ClickHouse => {
+                            // arraySum(lambda, arr) or arraySum(arr)
+                            Ok(Expression::Function(Box::new(Function::new("arraySum".to_string(), args))))
+                        }
+                        _ => Ok(Expression::Function(Box::new(Function::new("ARRAY_SUM".to_string(), args)))),
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArraySizeConvert => {
+                if let Expression::Function(f) = e {
+                    Ok(Expression::Function(Box::new(Function::new("REPEATED_COUNT".to_string(), f.args))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArrayAnyConvert => {
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    if args.len() == 2 {
+                        let arr = args.remove(0);
+                        let lambda = args.remove(0);
+
+                        // Extract lambda parameter name and body
+                        let (param_name, pred_body) = if let Expression::Lambda(ref lam) = lambda {
+                            let name = if let Some(p) = lam.parameters.first() {
+                                p.name.clone()
+                            } else {
+                                "x".to_string()
+                            };
+                            (name, lam.body.clone())
+                        } else {
+                            ("x".to_string(), lambda.clone())
+                        };
+
+                        // Helper: build a function call Expression
+                        let make_func = |name: &str, args: Vec<Expression>| -> Expression {
+                            Expression::Function(Box::new(Function::new(name.to_string(), args)))
+                        };
+
+                        // Helper: build (len_func(arr) = 0 OR len_func(filter_expr) <> 0) wrapped in Paren
+                        let build_filter_pattern = |len_func: &str, len_args_extra: Vec<Expression>, filter_expr: Expression| -> Expression {
+                            // len_func(arr, ...extra) = 0
+                            let mut len_arr_args = vec![arr.clone()];
+                            len_arr_args.extend(len_args_extra.clone());
+                            let len_arr = make_func(len_func, len_arr_args);
+                            let eq_zero = Expression::Eq(Box::new(BinaryOp::new(len_arr, Expression::number(0))));
+
+                            // len_func(filter_expr, ...extra) <> 0
+                            let mut len_filter_args = vec![filter_expr];
+                            len_filter_args.extend(len_args_extra);
+                            let len_filter = make_func(len_func, len_filter_args);
+                            let neq_zero = Expression::Neq(Box::new(BinaryOp::new(len_filter, Expression::number(0))));
+
+                            // (eq_zero OR neq_zero)
+                            let or_expr = Expression::Or(Box::new(BinaryOp::new(eq_zero, neq_zero)));
+                            Expression::Paren(Box::new(Paren {
+                                this: or_expr,
+                                trailing_comments: Vec::new(),
+                            }))
+                        };
+
+                        match target {
+                            DialectType::Trino | DialectType::Presto | DialectType::Athena => {
+                                Ok(make_func("ANY_MATCH", vec![arr, lambda]))
+                            }
+                            DialectType::ClickHouse => {
+                                // (LENGTH(arr) = 0 OR LENGTH(arrayFilter(x -> pred, arr)) <> 0)
+                                // ClickHouse arrayFilter takes lambda first, then array
+                                let filter_expr = make_func("arrayFilter", vec![lambda, arr.clone()]);
+                                Ok(build_filter_pattern("LENGTH", vec![], filter_expr))
+                            }
+                            DialectType::Databricks | DialectType::Spark => {
+                                // (SIZE(arr) = 0 OR SIZE(FILTER(arr, x -> pred)) <> 0)
+                                let filter_expr = make_func("FILTER", vec![arr.clone(), lambda]);
+                                Ok(build_filter_pattern("SIZE", vec![], filter_expr))
+                            }
+                            DialectType::DuckDB => {
+                                // (ARRAY_LENGTH(arr) = 0 OR ARRAY_LENGTH(LIST_FILTER(arr, x -> pred)) <> 0)
+                                let filter_expr = make_func("LIST_FILTER", vec![arr.clone(), lambda]);
+                                Ok(build_filter_pattern("ARRAY_LENGTH", vec![], filter_expr))
+                            }
+                            DialectType::Teradata => {
+                                // (CARDINALITY(arr) = 0 OR CARDINALITY(FILTER(arr, x -> pred)) <> 0)
+                                let filter_expr = make_func("FILTER", vec![arr.clone(), lambda]);
+                                Ok(build_filter_pattern("CARDINALITY", vec![], filter_expr))
+                            }
+                            DialectType::BigQuery => {
+                                // (ARRAY_LENGTH(arr) = 0 OR ARRAY_LENGTH(ARRAY(SELECT x FROM UNNEST(arr) AS x WHERE pred)) <> 0)
+                                // Build: SELECT x FROM UNNEST(arr) AS x WHERE pred
+                                let param_col = Expression::column(&param_name);
+                                let unnest_expr = Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
+                                    this: arr.clone(),
+                                    expressions: vec![],
+                                    with_ordinality: false,
+                                    alias: Some(Identifier::new(&param_name)),
+                                    offset_alias: None,
+                                }));
+                                let mut sel = crate::expressions::Select::default();
+                                sel.expressions = vec![param_col];
+                                sel.from = Some(crate::expressions::From { expressions: vec![unnest_expr] });
+                                sel.where_clause = Some(crate::expressions::Where { this: pred_body });
+                                let array_subquery = make_func("ARRAY", vec![Expression::Select(Box::new(sel))]);
+                                Ok(build_filter_pattern("ARRAY_LENGTH", vec![], array_subquery))
+                            }
+                            DialectType::PostgreSQL => {
+                                // (ARRAY_LENGTH(arr, 1) = 0 OR ARRAY_LENGTH(ARRAY(SELECT x FROM UNNEST(arr) AS _t0(x) WHERE pred), 1) <> 0)
+                                // Build: SELECT x FROM UNNEST(arr) AS _t0(x) WHERE pred
+                                let param_col = Expression::column(&param_name);
+                                // For PostgreSQL, UNNEST uses AS _t0(x) syntax - use TableAlias
+                                let unnest_with_alias = Expression::Alias(Box::new(crate::expressions::Alias {
+                                    this: Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
+                                        this: arr.clone(),
+                                        expressions: vec![],
+                                        with_ordinality: false,
+                                        alias: None,
+                                        offset_alias: None,
+                                    })),
+                                    alias: Identifier::new("_t0"),
+                                    column_aliases: vec![Identifier::new(&param_name)],
+                                    pre_alias_comments: Vec::new(),
+                                    trailing_comments: Vec::new(),
+                                }));
+                                let mut sel = crate::expressions::Select::default();
+                                sel.expressions = vec![param_col];
+                                sel.from = Some(crate::expressions::From { expressions: vec![unnest_with_alias] });
+                                sel.where_clause = Some(crate::expressions::Where { this: pred_body });
+                                let array_subquery = make_func("ARRAY", vec![Expression::Select(Box::new(sel))]);
+                                Ok(build_filter_pattern("ARRAY_LENGTH", vec![Expression::number(1)], array_subquery))
+                            }
+                            _ => {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "ARRAY_ANY".to_string(), vec![arr, lambda]))))
+                            }
+                        }
+                    } else {
+                        Ok(Expression::Function(Box::new(Function::new("ARRAY_ANY".to_string(), args))))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DecodeSimplify => {
+                // DECODE(x, search1, result1, ..., default) -> CASE WHEN x = search1 OR (x IS NULL AND search1 IS NULL) THEN result1 ... [ELSE default] END
+                // Helper to build null-safe CASE from (this_expr, search_result_pairs, default)
+                let build_decode_case = |this_expr: Expression, pairs: Vec<(Expression, Expression)>, default: Option<Expression>| {
+                    let whens: Vec<(Expression, Expression)> = pairs.into_iter().map(|(search, result)| {
+                        // Wrap search in parens if it's a comparison expression
+                        let needs_paren = matches!(&search, Expression::Eq(_) | Expression::Neq(_) | Expression::Gt(_) | Expression::Gte(_) | Expression::Lt(_) | Expression::Lte(_));
+                        let search_ref = if needs_paren {
+                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                this: search.clone(),
+                                trailing_comments: Vec::new(),
+                            }))
+                        } else {
+                            search.clone()
+                        };
+                        // Build: x = search OR (x IS NULL AND search IS NULL)
+                        let eq = Expression::Eq(Box::new(BinaryOp {
+                            left: this_expr.clone(),
+                            right: search_ref,
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let search_in_null = if needs_paren {
+                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                this: search.clone(),
+                                trailing_comments: Vec::new(),
+                            }))
+                        } else {
+                            search.clone()
+                        };
+                        let x_is_null = Expression::Is(Box::new(BinaryOp {
+                            left: this_expr.clone(),
+                            right: Expression::Null(crate::expressions::Null),
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let search_is_null = Expression::Is(Box::new(BinaryOp {
+                            left: search_in_null,
+                            right: Expression::Null(crate::expressions::Null),
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let both_null = Expression::And(Box::new(BinaryOp {
+                            left: x_is_null,
+                            right: search_is_null,
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        let condition = Expression::Or(Box::new(BinaryOp {
+                            left: eq,
+                            right: Expression::Paren(Box::new(crate::expressions::Paren {
+                                this: both_null,
+                                trailing_comments: Vec::new(),
+                            })),
+                            left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                        }));
+                        (condition, result)
+                    }).collect();
+                    Expression::Case(Box::new(Case {
+                        operand: None,
+                        whens,
+                        else_: default,
+                        comments: Vec::new(),
+                    }))
+                };
+
+                if let Expression::Decode(decode) = e {
+                    Ok(build_decode_case(decode.this, decode.search_results, decode.default))
+                } else if let Expression::DecodeCase(dc) = e {
+                    // DecodeCase has flat expressions: [x, s1, r1, s2, r2, ..., default?]
+                    let mut exprs = dc.expressions;
+                    if exprs.len() < 3 {
+                        return Ok(Expression::DecodeCase(Box::new(crate::expressions::DecodeCase { expressions: exprs })));
+                    }
+                    let this_expr = exprs.remove(0);
+                    let mut pairs = Vec::new();
+                    let mut default = None;
+                    let mut i = 0;
+                    while i + 1 < exprs.len() {
+                        pairs.push((exprs[i].clone(), exprs[i + 1].clone()));
+                        i += 2;
+                    }
+                    if i < exprs.len() {
+                        // Odd remaining element is the default
+                        default = Some(exprs[i].clone());
+                    }
+                    Ok(build_decode_case(this_expr, pairs, default))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::CreateTableLikeToCtas => {
+                // CREATE TABLE a LIKE b -> CREATE TABLE a AS SELECT * FROM b LIMIT 0
+                if let Expression::CreateTable(ct) = e {
+                    let like_source = ct.constraints.iter().find_map(|c| {
+                        if let crate::expressions::TableConstraint::Like { source, .. } = c {
+                            Some(source.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(source_table) = like_source {
+                        let mut new_ct = *ct;
+                        new_ct.constraints.clear();
+                        // Build: SELECT * FROM b LIMIT 0
+                        let select = Expression::Select(Box::new(crate::expressions::Select {
+                            expressions: vec![Expression::Star(crate::expressions::Star {
+                                table: None,
+                                except: None,
+                                replace: None,
+                                rename: None,
+                                trailing_comments: Vec::new(),
+                            })],
+                            from: Some(crate::expressions::From {
+                                expressions: vec![Expression::Table(source_table)],
+                            }),
+                            limit: Some(crate::expressions::Limit {
+                                this: Expression::Literal(Literal::Number("0".to_string())),
+                                percent: false,
+                                comments: Vec::new(),
+                            }),
+                            ..Default::default()
+                        }));
+                        new_ct.as_select = Some(select);
+                        Ok(Expression::CreateTable(Box::new(new_ct)))
+                    } else {
+                        Ok(Expression::CreateTable(ct))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::CreateTableLikeToSelectInto => {
+                // CREATE TABLE a LIKE b -> SELECT TOP 0 * INTO a FROM b AS temp
+                if let Expression::CreateTable(ct) = e {
+                    let like_source = ct.constraints.iter().find_map(|c| {
+                        if let crate::expressions::TableConstraint::Like { source, .. } = c {
+                            Some(source.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(source_table) = like_source {
+                        let mut aliased_source = source_table;
+                        aliased_source.alias = Some(Identifier::new("temp"));
+                        // Build: SELECT TOP 0 * INTO a FROM b AS temp
+                        let select = Expression::Select(Box::new(crate::expressions::Select {
+                            expressions: vec![Expression::Star(crate::expressions::Star {
+                                table: None,
+                                except: None,
+                                replace: None,
+                                rename: None,
+                                trailing_comments: Vec::new(),
+                            })],
+                            from: Some(crate::expressions::From {
+                                expressions: vec![Expression::Table(aliased_source)],
+                            }),
+                            into: Some(crate::expressions::SelectInto {
+                                this: Expression::Table(ct.name.clone()),
+                                temporary: false,
+                                unlogged: false,
+                                bulk_collect: false,
+                                expressions: Vec::new(),
+                            }),
+                            top: Some(crate::expressions::Top {
+                                this: Expression::Literal(Literal::Number("0".to_string())),
+                                percent: false,
+                                with_ties: false,
+                                parenthesized: false,
+                            }),
+                            ..Default::default()
+                        }));
+                        Ok(select)
+                    } else {
+                        Ok(Expression::CreateTable(ct))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::CreateTableLikeToAs => {
+                // CREATE TABLE a LIKE b -> CREATE TABLE a AS b (ClickHouse)
+                if let Expression::CreateTable(ct) = e {
+                    let like_source = ct.constraints.iter().find_map(|c| {
+                        if let crate::expressions::TableConstraint::Like { source, .. } = c {
+                            Some(source.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(source_table) = like_source {
+                        let mut new_ct = *ct;
+                        new_ct.constraints.clear();
+                        // AS b (just a table reference, not a SELECT)
+                        new_ct.as_select = Some(Expression::Table(source_table));
+                        Ok(Expression::CreateTable(Box::new(new_ct)))
+                    } else {
+                        Ok(Expression::CreateTable(ct))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TsOrDsToDateConvert => {
+                // TS_OR_DS_TO_DATE(x[, fmt]) -> dialect-specific date conversion
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    let this = args.remove(0);
+                    let fmt = if !args.is_empty() {
+                        match &args[0] {
+                            Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    Ok(Expression::TsOrDsToDate(Box::new(crate::expressions::TsOrDsToDate {
+                        this: Box::new(this),
+                        format: fmt,
+                        safe: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TsOrDsToDateStrConvert => {
+                // TS_OR_DS_TO_DATE_STR(x) -> SUBSTRING(CAST(x AS type), 1, 10)
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    let str_type = match target {
+                        DialectType::DuckDB | DialectType::PostgreSQL | DialectType::Materialize => DataType::Text,
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => DataType::Custom { name: "STRING".to_string() },
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::Drill => DataType::VarChar { length: None, parenthesized_length: false },
+                        DialectType::MySQL | DialectType::Doris | DialectType::StarRocks => DataType::Custom { name: "STRING".to_string() },
+                        _ => DataType::VarChar { length: None, parenthesized_length: false },
+                    };
+                    let cast_expr = Expression::Cast(Box::new(Cast {
+                        this: arg,
+                        to: str_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    }));
+                    Ok(Expression::Substring(Box::new(crate::expressions::SubstringFunc {
+                        this: cast_expr,
+                        start: Expression::number(1),
+                        length: Some(Expression::number(10)),
+                        from_for_syntax: false,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DateStrToDateConvert => {
+                // DATE_STR_TO_DATE(x) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::SQLite => {
+                            // SQLite: just the bare expression (dates are strings)
+                            Ok(arg)
+                        }
+                        _ => {
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Date,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeStrToDateConvert => {
+                // TIME_STR_TO_DATE(x) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::Hive | DialectType::Doris | DialectType::StarRocks | DialectType::Snowflake => {
+                            Ok(Expression::Function(Box::new(Function::new("TO_DATE".to_string(), vec![arg]))))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // Presto: CAST(x AS TIMESTAMP)
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Timestamp { timezone: false, precision: None },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        _ => {
+                            // Default: CAST(x AS DATE)
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Date,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeStrToTimeConvert => {
+                // TIME_STR_TO_TIME(x[, zone]) -> dialect-specific CAST to timestamp type
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    let this = args.remove(0);
+                    let zone = if !args.is_empty() {
+                        match &args[0] {
+                            Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let has_zone = zone.is_some();
+
+                    match target {
+                        DialectType::SQLite => {
+                            // SQLite: just the bare expression
+                            Ok(this)
+                        }
+                        DialectType::MySQL => {
+                            if has_zone {
+                                // MySQL with zone: TIMESTAMP(x)
+                                Ok(Expression::Function(Box::new(Function::new("TIMESTAMP".to_string(), vec![this]))))
+                            } else {
+                                // MySQL: CAST(x AS DATETIME) or with precision
+                                // Use DataType::Custom to avoid MySQL's transform_cast converting
+                                // CAST(x AS TIMESTAMP) -> TIMESTAMP(x)
+                                let precision = if let Expression::Literal(Literal::String(ref s)) = this {
+                                    if let Some(dot_pos) = s.rfind('.') {
+                                        let frac = &s[dot_pos + 1..];
+                                        let digit_count = frac.chars().take_while(|c| c.is_ascii_digit()).count();
+                                        if digit_count > 0 { Some(digit_count) } else { None }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                let type_name = match precision {
+                                    Some(p) => format!("DATETIME({})", p),
+                                    None => "DATETIME".to_string(),
+                                };
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Custom { name: type_name },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::ClickHouse => {
+                            if has_zone {
+                                // ClickHouse with zone: CAST(x AS DateTime64(6, 'zone'))
+                                // We need to strip the timezone offset from the literal if present
+                                let clean_this = if let Expression::Literal(Literal::String(ref s)) = this {
+                                    // Strip timezone offset like "-08:00" or "+00:00"
+                                    let re_offset = s.rfind(|c: char| c == '+' || c == '-');
+                                    if let Some(offset_pos) = re_offset {
+                                        if offset_pos > 10 { // After the date part
+                                            let trimmed = s[..offset_pos].to_string();
+                                            Expression::Literal(Literal::String(trimmed))
+                                        } else {
+                                            this.clone()
+                                        }
+                                    } else {
+                                        this.clone()
+                                    }
+                                } else {
+                                    this.clone()
+                                };
+                                let zone_str = zone.unwrap();
+                                // Build: CAST(x AS DateTime64(6, 'zone'))
+                                let type_name = format!("DateTime64(6, '{}')", zone_str);
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this: clean_this,
+                                    to: DataType::Custom { name: type_name },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Custom { name: "DateTime64(6)".to_string() },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::BigQuery => {
+                            if has_zone {
+                                // BigQuery with zone: CAST(x AS TIMESTAMP)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: false, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // BigQuery: CAST(x AS DATETIME) - Timestamp{tz:false} renders as DATETIME for BigQuery
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Custom { name: "DATETIME".to_string() },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::Doris => {
+                            // Doris: CAST(x AS DATETIME)
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this,
+                                to: DataType::Custom { name: "DATETIME".to_string() },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        DialectType::TSQL | DialectType::Fabric => {
+                            if has_zone {
+                                // TSQL with zone: CAST(x AS DATETIMEOFFSET) AT TIME ZONE 'UTC'
+                                let cast_expr = Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Custom { name: "DATETIMEOFFSET".to_string() },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                }));
+                                Ok(Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
+                                    this: cast_expr,
+                                    zone: Expression::Literal(Literal::String("UTC".to_string())),
+                                })))
+                            } else {
+                                // TSQL: CAST(x AS DATETIME2)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Custom { name: "DATETIME2".to_string() },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::DuckDB => {
+                            if has_zone {
+                                // DuckDB with zone: CAST(x AS TIMESTAMPTZ)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: true, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // DuckDB: CAST(x AS TIMESTAMP)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: false, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::PostgreSQL | DialectType::Materialize | DialectType::RisingWave => {
+                            if has_zone {
+                                // PostgreSQL with zone: CAST(x AS TIMESTAMPTZ)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: true, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // PostgreSQL: CAST(x AS TIMESTAMP)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: false, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::Snowflake => {
+                            if has_zone {
+                                // Snowflake with zone: CAST(x AS TIMESTAMPTZ)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: true, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // Snowflake: CAST(x AS TIMESTAMP)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: false, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            if has_zone {
+                                // Presto/Trino with zone: CAST(x AS TIMESTAMP WITH TIME ZONE)
+                                // Check for precision from sub-second digits
+                                let precision = if let Expression::Literal(Literal::String(ref s)) = this {
+                                    if let Some(dot_pos) = s.rfind('.') {
+                                        let frac = &s[dot_pos + 1..];
+                                        let digit_count = frac.chars().take_while(|c| c.is_ascii_digit()).count();
+                                        if digit_count > 0 && matches!(target, DialectType::Trino) {
+                                            Some(digit_count as u32)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                let dt = if let Some(prec) = precision {
+                                    DataType::Timestamp { timezone: true, precision: Some(prec) }
+                                } else {
+                                    DataType::Timestamp { timezone: true, precision: None }
+                                };
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: dt,
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // Check for sub-second precision for Trino
+                                let precision = if let Expression::Literal(Literal::String(ref s)) = this {
+                                    if let Some(dot_pos) = s.rfind('.') {
+                                        let frac = &s[dot_pos + 1..];
+                                        let digit_count = frac.chars().take_while(|c| c.is_ascii_digit()).count();
+                                        if digit_count > 0 && matches!(target, DialectType::Trino) {
+                                            Some(digit_count as u32)
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                let dt = DataType::Timestamp {
+                                    timezone: false,
+                                    precision,
+                                };
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: dt,
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        DialectType::Redshift => {
+                            if has_zone {
+                                // Redshift with zone: CAST(x AS TIMESTAMP WITH TIME ZONE)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: true, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            } else {
+                                // Redshift: CAST(x AS TIMESTAMP)
+                                Ok(Expression::Cast(Box::new(Cast {
+                                    this,
+                                    to: DataType::Timestamp { timezone: false, precision: None },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                })))
+                            }
+                        }
+                        _ => {
+                            // Default: CAST(x AS TIMESTAMP)
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this,
+                                to: DataType::Timestamp { timezone: false, precision: None },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DateToDateStrConvert => {
+                // DATE_TO_DATE_STR(x) -> CAST(x AS text_type) per dialect
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    let str_type = match target {
+                        DialectType::DuckDB => DataType::Text,
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => DataType::Custom { name: "STRING".to_string() },
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::Drill => DataType::VarChar { length: None, parenthesized_length: false },
+                        _ => DataType::VarChar { length: None, parenthesized_length: false },
+                    };
+                    Ok(Expression::Cast(Box::new(Cast {
+                        this: arg,
+                        to: str_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DateToDiConvert => {
+                // DATE_TO_DI(x) -> CAST(format_func(x, fmt) AS INT)
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    let inner = match target {
+                        DialectType::DuckDB => {
+                            // STRFTIME(x, '%Y%m%d')
+                            Expression::Function(Box::new(Function::new("STRFTIME".to_string(), vec![arg, Expression::string("%Y%m%d")])))
+                        }
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                            // DATE_FORMAT(x, 'yyyyMMdd')
+                            Expression::Function(Box::new(Function::new("DATE_FORMAT".to_string(), vec![arg, Expression::string("yyyyMMdd")])))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // DATE_FORMAT(x, '%Y%m%d')
+                            Expression::Function(Box::new(Function::new("DATE_FORMAT".to_string(), vec![arg, Expression::string("%Y%m%d")])))
+                        }
+                        DialectType::Drill => {
+                            // TO_DATE(x, 'yyyyMMdd')
+                            Expression::Function(Box::new(Function::new("TO_DATE".to_string(), vec![arg, Expression::string("yyyyMMdd")])))
+                        }
+                        _ => {
+                            // Default: STRFTIME(x, '%Y%m%d')
+                            Expression::Function(Box::new(Function::new("STRFTIME".to_string(), vec![arg, Expression::string("%Y%m%d")])))
+                        }
+                    };
+                    // Use INT (not INTEGER) for Presto/Trino
+                    let int_type = match target {
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena
+                        | DialectType::TSQL | DialectType::Fabric | DialectType::SQLite
+                        | DialectType::Redshift => DataType::Custom { name: "INT".to_string() },
+                        _ => DataType::Int { length: None, integer_spelling: false },
+                    };
+                    Ok(Expression::Cast(Box::new(Cast {
+                        this: inner,
+                        to: int_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DiToDateConvert => {
+                // DI_TO_DATE(x) -> dialect-specific integer-to-date conversion
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::DuckDB => {
+                            // CAST(STRPTIME(CAST(x AS TEXT), '%Y%m%d') AS DATE)
+                            let cast_text = Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Text,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            }));
+                            let strptime = Expression::Function(Box::new(Function::new(
+                                "STRPTIME".to_string(), vec![cast_text, Expression::string("%Y%m%d")]
+                            )));
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: strptime,
+                                to: DataType::Date,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                            // TO_DATE(CAST(x AS STRING), 'yyyyMMdd')
+                            let cast_str = Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Custom { name: "STRING".to_string() },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "TO_DATE".to_string(), vec![cast_str, Expression::string("yyyyMMdd")]
+                            ))))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // CAST(DATE_PARSE(CAST(x AS VARCHAR), '%Y%m%d') AS DATE)
+                            let cast_varchar = Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::VarChar { length: None, parenthesized_length: false },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            }));
+                            let date_parse = Expression::Function(Box::new(Function::new(
+                                "DATE_PARSE".to_string(), vec![cast_varchar, Expression::string("%Y%m%d")]
+                            )));
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: date_parse,
+                                to: DataType::Date,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        DialectType::Drill => {
+                            // TO_DATE(CAST(x AS VARCHAR), 'yyyyMMdd')
+                            let cast_varchar = Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::VarChar { length: None, parenthesized_length: false },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "TO_DATE".to_string(), vec![cast_varchar, Expression::string("yyyyMMdd")]
+                            ))))
+                        }
+                        _ => Ok(Expression::Function(Box::new(Function::new("DI_TO_DATE".to_string(), vec![arg]))))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TsOrDiToDiConvert => {
+                // TS_OR_DI_TO_DI(x) -> CAST(SUBSTR(REPLACE(CAST(x AS type), '-', ''), 1, 8) AS INT)
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    let str_type = match target {
+                        DialectType::DuckDB => DataType::Text,
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => DataType::Custom { name: "STRING".to_string() },
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => DataType::VarChar { length: None, parenthesized_length: false },
+                        _ => DataType::VarChar { length: None, parenthesized_length: false },
+                    };
+                    let cast_str = Expression::Cast(Box::new(Cast {
+                        this: arg,
+                        to: str_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    }));
+                    let replace_expr = Expression::Function(Box::new(Function::new(
+                        "REPLACE".to_string(), vec![cast_str, Expression::string("-"), Expression::string("")]
+                    )));
+                    let substr_name = match target {
+                        DialectType::DuckDB | DialectType::Hive | DialectType::Spark | DialectType::Databricks => "SUBSTR",
+                        _ => "SUBSTR",
+                    };
+                    let substr = Expression::Function(Box::new(Function::new(
+                        substr_name.to_string(), vec![replace_expr, Expression::number(1), Expression::number(8)]
+                    )));
+                    // Use INT (not INTEGER) for Presto/Trino etc.
+                    let int_type = match target {
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena
+                        | DialectType::TSQL | DialectType::Fabric | DialectType::SQLite
+                        | DialectType::Redshift => DataType::Custom { name: "INT".to_string() },
+                        _ => DataType::Int { length: None, integer_spelling: false },
+                    };
+                    Ok(Expression::Cast(Box::new(Cast {
+                        this: substr,
+                        to: int_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::UnixToStrConvert => {
+                // UNIX_TO_STR(x, fmt) -> convert to Expression::UnixToStr for generator
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    let this = args.remove(0);
+                    let fmt_expr = if !args.is_empty() { Some(args.remove(0)) } else { None };
+
+                    // Check if format is a string literal
+                    let fmt_str = fmt_expr.as_ref().and_then(|f| {
+                        if let Expression::Literal(Literal::String(s)) = f { Some(s.clone()) } else { None }
+                    });
+
+                    if let Some(fmt_string) = fmt_str {
+                        // String literal format -> use UnixToStr expression (generator handles it)
+                        Ok(Expression::UnixToStr(Box::new(crate::expressions::UnixToStr {
+                            this: Box::new(this),
+                            format: Some(fmt_string),
+                        })))
+                    } else if let Some(fmt_e) = fmt_expr {
+                        // Non-literal format (e.g., identifier `y`) -> build target expression directly
+                        match target {
+                            DialectType::DuckDB => {
+                                // STRFTIME(TO_TIMESTAMP(x), y)
+                                let to_ts = Expression::Function(Box::new(Function::new("TO_TIMESTAMP".to_string(), vec![this])));
+                                Ok(Expression::Function(Box::new(Function::new("STRFTIME".to_string(), vec![to_ts, fmt_e]))))
+                            }
+                            DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                // DATE_FORMAT(FROM_UNIXTIME(x), y)
+                                let from_unix = Expression::Function(Box::new(Function::new("FROM_UNIXTIME".to_string(), vec![this])));
+                                Ok(Expression::Function(Box::new(Function::new("DATE_FORMAT".to_string(), vec![from_unix, fmt_e]))))
+                            }
+                            DialectType::Hive | DialectType::Spark | DialectType::Databricks
+                            | DialectType::Doris | DialectType::StarRocks => {
+                                // FROM_UNIXTIME(x, y)
+                                Ok(Expression::Function(Box::new(Function::new("FROM_UNIXTIME".to_string(), vec![this, fmt_e]))))
+                            }
+                            _ => {
+                                // Default: keep as UNIX_TO_STR(x, y)
+                                Ok(Expression::Function(Box::new(Function::new("UNIX_TO_STR".to_string(), vec![this, fmt_e]))))
+                            }
+                        }
+                    } else {
+                        Ok(Expression::UnixToStr(Box::new(crate::expressions::UnixToStr {
+                            this: Box::new(this),
+                            format: None,
+                        })))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::UnixToTimeConvert => {
+                // UNIX_TO_TIME(x) -> convert to Expression::UnixToTime for generator
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    Ok(Expression::UnixToTime(Box::new(crate::expressions::UnixToTime {
+                        this: Box::new(arg),
+                        scale: None,
+                        zone: None,
+                        hours: None,
+                        minutes: None,
+                        format: None,
+                        target_type: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::UnixToTimeStrConvert => {
+                // UNIX_TO_TIME_STR(x) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                            // FROM_UNIXTIME(x)
+                            Ok(Expression::Function(Box::new(Function::new("FROM_UNIXTIME".to_string(), vec![arg]))))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // CAST(FROM_UNIXTIME(x) AS VARCHAR)
+                            let from_unix = Expression::Function(Box::new(Function::new("FROM_UNIXTIME".to_string(), vec![arg])));
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: from_unix,
+                                to: DataType::VarChar { length: None, parenthesized_length: false },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        DialectType::DuckDB => {
+                            // CAST(TO_TIMESTAMP(x) AS TEXT)
+                            let to_ts = Expression::Function(Box::new(Function::new("TO_TIMESTAMP".to_string(), vec![arg])));
+                            Ok(Expression::Cast(Box::new(Cast {
+                                this: to_ts,
+                                to: DataType::Text,
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            })))
+                        }
+                        _ => Ok(Expression::Function(Box::new(Function::new("UNIX_TO_TIME_STR".to_string(), vec![arg]))))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeToUnixConvert => {
+                // TIME_TO_UNIX(x) -> convert to Expression::TimeToUnix for generator
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    Ok(Expression::TimeToUnix(Box::new(crate::expressions::UnaryFunc {
+                        this: arg,
+                        original_name: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeToStrConvert => {
+                // TIME_TO_STR(x, fmt) -> convert to Expression::TimeToStr for generator
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    let this = args.remove(0);
+                    let fmt = match args.remove(0) {
+                        Expression::Literal(Literal::String(s)) => s,
+                        other => {
+                            return Ok(Expression::Function(Box::new(Function::new("TIME_TO_STR".to_string(), vec![this, other]))));
+                        }
+                    };
+                    Ok(Expression::TimeToStr(Box::new(crate::expressions::TimeToStr {
+                        this: Box::new(this),
+                        format: fmt,
+                        culture: None,
+                        zone: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::StrToUnixConvert => {
+                // STR_TO_UNIX(x, fmt) -> convert to Expression::StrToUnix for generator
+                if let Expression::Function(f) = e {
+                    let mut args = f.args;
+                    let this = args.remove(0);
+                    let fmt = match args.remove(0) {
+                        Expression::Literal(Literal::String(s)) => s,
+                        other => {
+                            return Ok(Expression::Function(Box::new(Function::new("STR_TO_UNIX".to_string(), vec![this, other]))));
+                        }
+                    };
+                    Ok(Expression::StrToUnix(Box::new(crate::expressions::StrToUnix {
+                        this: Some(Box::new(this)),
+                        format: Some(fmt),
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeStrToUnixConvert => {
+                // TIME_STR_TO_UNIX(x) -> dialect-specific
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    match target {
+                        DialectType::DuckDB => {
+                            // EPOCH(CAST(x AS TIMESTAMP))
+                            let cast_ts = Expression::Cast(Box::new(Cast {
+                                this: arg,
+                                to: DataType::Timestamp { timezone: false, precision: None },
+                                double_colon_syntax: false,
+                                trailing_comments: Vec::new(),
+                                format: None,
+                                default: None,
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new("EPOCH".to_string(), vec![cast_ts]))))
+                        }
+                        DialectType::Hive | DialectType::Doris | DialectType::StarRocks | DialectType::MySQL => {
+                            // UNIX_TIMESTAMP(x)
+                            Ok(Expression::Function(Box::new(Function::new("UNIX_TIMESTAMP".to_string(), vec![arg]))))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // TO_UNIXTIME(DATE_PARSE(x, '%Y-%m-%d %T'))
+                            let date_parse = Expression::Function(Box::new(Function::new(
+                                "DATE_PARSE".to_string(), vec![arg, Expression::string("%Y-%m-%d %T")]
+                            )));
+                            Ok(Expression::Function(Box::new(Function::new("TO_UNIXTIME".to_string(), vec![date_parse]))))
+                        }
+                        _ => Ok(Expression::Function(Box::new(Function::new("TIME_STR_TO_UNIX".to_string(), vec![arg]))))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimeToTimeStrConvert => {
+                // TIME_TO_TIME_STR(x) -> CAST(x AS str_type) per dialect
+                if let Expression::Function(f) = e {
+                    let arg = f.args.into_iter().next().unwrap();
+                    let str_type = match target {
+                        DialectType::DuckDB => DataType::Text,
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks | DialectType::Doris | DialectType::StarRocks => DataType::Custom { name: "STRING".to_string() },
+                        DialectType::Redshift => DataType::Custom { name: "VARCHAR(MAX)".to_string() },
+                        _ => DataType::VarChar { length: None, parenthesized_length: false },
+                    };
+                    Ok(Expression::Cast(Box::new(Cast {
+                        this: arg,
+                        to: str_type,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    })))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DateTruncSwapArgs => {
+                // DATE_TRUNC('unit', x) from Generic -> target-specific
+                if let Expression::Function(f) = e {
+                    if f.args.len() == 2 {
+                        let unit_arg = f.args[0].clone();
+                        let expr_arg = f.args[1].clone();
+                        // Extract unit string from the first arg
+                        let unit_str = match &unit_arg {
+                            Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+                            _ => return Ok(Expression::Function(f)),
+                        };
+                        match target {
+                            DialectType::BigQuery => {
+                                // BigQuery: DATE_TRUNC(x, UNIT) - unquoted unit
+                                let unit_ident = Expression::Column(crate::expressions::Column {
+                                    name: crate::expressions::Identifier::new(unit_str),
+                                    table: None,
+                                    join_mark: false,
+                                    trailing_comments: Vec::new(),
+                                });
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![expr_arg, unit_ident],
+                                ))))
+                            }
+                            DialectType::Doris => {
+                                // Doris: DATE_TRUNC(x, 'UNIT')
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![expr_arg, Expression::string(&unit_str)],
+                                ))))
+                            }
+                            DialectType::StarRocks => {
+                                // StarRocks: DATE_TRUNC('UNIT', x) - keep standard order
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![Expression::string(&unit_str), expr_arg],
+                                ))))
+                            }
+                            DialectType::Spark | DialectType::Databricks => {
+                                // Spark: TRUNC(x, 'UNIT')
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "TRUNC".to_string(), vec![expr_arg, Expression::string(&unit_str)],
+                                ))))
+                            }
+                            DialectType::MySQL => {
+                                // MySQL: complex expansion based on unit
+                                Self::date_trunc_to_mysql(&unit_str, &expr_arg)
+                            }
+                            _ => Ok(Expression::Function(f)),
+                        }
+                    } else {
+                        Ok(Expression::Function(f))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TimestampTruncConvert => {
+                // TIMESTAMP_TRUNC(x, UNIT[, tz]) from Generic -> target-specific
+                if let Expression::Function(f) = e {
+                    if f.args.len() >= 2 {
+                        let expr_arg = f.args[0].clone();
+                        let unit_arg = f.args[1].clone();
+                        let tz_arg = if f.args.len() >= 3 { Some(f.args[2].clone()) } else { None };
+                        // Extract unit string
+                        let unit_str = match &unit_arg {
+                            Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+                            Expression::Column(c) => c.name.name.to_uppercase(),
+                            _ => {
+                                return Ok(Expression::Function(f));
+                            }
+                        };
+                        match target {
+                            DialectType::Spark | DialectType::Databricks => {
+                                // Spark: DATE_TRUNC('UNIT', x)
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![Expression::string(&unit_str), expr_arg],
+                                ))))
+                            }
+                            DialectType::Doris | DialectType::StarRocks => {
+                                // Doris: DATE_TRUNC(x, 'UNIT')
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![expr_arg, Expression::string(&unit_str)],
+                                ))))
+                            }
+                            DialectType::BigQuery => {
+                                // BigQuery: TIMESTAMP_TRUNC(x, UNIT) - keep but with unquoted unit
+                                let unit_ident = Expression::Column(crate::expressions::Column {
+                                    name: crate::expressions::Identifier::new(unit_str),
+                                    table: None,
+                                    join_mark: false,
+                                    trailing_comments: Vec::new(),
+                                });
+                                let mut args = vec![expr_arg, unit_ident];
+                                if let Some(tz) = tz_arg {
+                                    args.push(tz);
+                                }
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "TIMESTAMP_TRUNC".to_string(), args,
+                                ))))
+                            }
+                            DialectType::DuckDB => {
+                                // DuckDB with timezone: DATE_TRUNC('UNIT', x AT TIME ZONE 'tz') AT TIME ZONE 'tz'
+                                if let Some(tz) = tz_arg {
+                                    let tz_str = match &tz {
+                                        Expression::Literal(Literal::String(s)) => s.clone(),
+                                        _ => "UTC".to_string(),
+                                    };
+                                    // x AT TIME ZONE 'tz'
+                                    let at_tz = Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
+                                        this: expr_arg,
+                                        zone: Expression::string(&tz_str),
+                                    }));
+                                    // DATE_TRUNC('UNIT', x AT TIME ZONE 'tz')
+                                    let trunc = Expression::Function(Box::new(Function::new(
+                                        "DATE_TRUNC".to_string(), vec![Expression::string(&unit_str), at_tz],
+                                    )));
+                                    // DATE_TRUNC(...) AT TIME ZONE 'tz'
+                                    Ok(Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
+                                        this: trunc,
+                                        zone: Expression::string(&tz_str),
+                                    })))
+                                } else {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "DATE_TRUNC".to_string(), vec![Expression::string(&unit_str), expr_arg],
+                                    ))))
+                                }
+                            }
+                            DialectType::Presto | DialectType::Trino | DialectType::Athena
+                            | DialectType::Snowflake => {
+                                // Presto/Snowflake: DATE_TRUNC('UNIT', x) - drop timezone
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), vec![Expression::string(&unit_str), expr_arg],
+                                ))))
+                            }
+                            _ => {
+                                // For most dialects: DATE_TRUNC('UNIT', x) + tz handling
+                                let mut args = vec![Expression::string(&unit_str), expr_arg];
+                                if let Some(tz) = tz_arg {
+                                    args.push(tz);
+                                }
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_TRUNC".to_string(), args,
+                                ))))
+                            }
+                        }
+                    } else {
+                        Ok(Expression::Function(f))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::StrToDateConvert => {
+                // STR_TO_DATE(x, fmt) from Generic -> dialect-specific date parsing
+                if let Expression::Function(f) = e {
+                    if f.args.len() == 2 {
+                        let mut args = f.args;
+                        let this = args.remove(0);
+                        let fmt_expr = args.remove(0);
+                        let fmt_str = match &fmt_expr {
+                            Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                            _ => None,
+                        };
+                        let default_date = "%Y-%m-%d";
+                        let default_time = "%Y-%m-%d %H:%M:%S";
+                        let is_default = fmt_str.as_ref().map_or(false, |f| f == default_date || f == default_time);
+
+                        if is_default {
+                            // Default format: handle per-dialect
+                            match target {
+                                DialectType::MySQL | DialectType::Doris | DialectType::StarRocks => {
+                                    // Keep STR_TO_DATE(x, fmt) as-is
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "STR_TO_DATE".to_string(), vec![this, fmt_expr],
+                                    ))))
+                                }
+                                DialectType::Hive => {
+                                    // Hive: CAST(x AS DATE)
+                                    Ok(Expression::Cast(Box::new(Cast {
+                                        this,
+                                        to: DataType::Date,
+                                        double_colon_syntax: false,
+                                        trailing_comments: Vec::new(),
+                                        format: None,
+                                        default: None,
+                                    })))
+                                }
+                                DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                    // Presto: CAST(DATE_PARSE(x, '%Y-%m-%d') AS DATE)
+                                    let date_parse = Expression::Function(Box::new(Function::new(
+                                        "DATE_PARSE".to_string(), vec![this, fmt_expr],
+                                    )));
+                                    Ok(Expression::Cast(Box::new(Cast {
+                                        this: date_parse,
+                                        to: DataType::Date,
+                                        double_colon_syntax: false,
+                                        trailing_comments: Vec::new(),
+                                        format: None,
+                                        default: None,
+                                    })))
+                                }
+                                _ => {
+                                    // Others: TsOrDsToDate (delegates to generator)
+                                    Ok(Expression::TsOrDsToDate(Box::new(crate::expressions::TsOrDsToDate {
+                                        this: Box::new(this),
+                                        format: None,
+                                        safe: None,
+                                    })))
+                                }
+                            }
+                        } else if let Some(fmt) = fmt_str {
+                            match target {
+                                DialectType::Doris | DialectType::StarRocks | DialectType::MySQL => {
+                                    // Keep STR_TO_DATE but with normalized format (%H:%M:%S -> %T, %-d -> %e)
+                                    let mut normalized = fmt.clone();
+                                    normalized = normalized.replace("%-d", "%e");
+                                    normalized = normalized.replace("%-m", "%c");
+                                    normalized = normalized.replace("%H:%M:%S", "%T");
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "STR_TO_DATE".to_string(), vec![this, Expression::string(&normalized)],
+                                    ))))
+                                }
+                                DialectType::Hive => {
+                                    // Hive: CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(x, java_fmt)) AS DATE)
+                                    let java_fmt = crate::generator::Generator::strftime_to_java_format_static(&fmt);
+                                    let unix_ts = Expression::Function(Box::new(Function::new(
+                                        "UNIX_TIMESTAMP".to_string(), vec![this, Expression::string(&java_fmt)],
+                                    )));
+                                    let from_unix = Expression::Function(Box::new(Function::new(
+                                        "FROM_UNIXTIME".to_string(), vec![unix_ts],
+                                    )));
+                                    Ok(Expression::Cast(Box::new(Cast {
+                                        this: from_unix,
+                                        to: DataType::Date,
+                                        double_colon_syntax: false,
+                                        trailing_comments: Vec::new(),
+                                        format: None,
+                                        default: None,
+                                    })))
+                                }
+                                DialectType::Spark | DialectType::Databricks => {
+                                    // Spark: TO_DATE(x, java_fmt)
+                                    let java_fmt = crate::generator::Generator::strftime_to_java_format_static(&fmt);
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "TO_DATE".to_string(), vec![this, Expression::string(&java_fmt)],
+                                    ))))
+                                }
+                                DialectType::Drill => {
+                                    // Drill: TO_DATE(x, java_fmt) with T quoted as 'T' in Java format
+                                    // The generator's string literal escaping will double the quotes: 'T' -> ''T''
+                                    let java_fmt = crate::generator::Generator::strftime_to_java_format_static(&fmt);
+                                    let java_fmt = java_fmt.replace('T', "'T'");
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "TO_DATE".to_string(), vec![this, Expression::string(&java_fmt)],
+                                    ))))
+                                }
+                                _ => {
+                                    // For other dialects: use TsOrDsToDate which delegates to generator
+                                    Ok(Expression::TsOrDsToDate(Box::new(crate::expressions::TsOrDsToDate {
+                                        this: Box::new(this),
+                                        format: Some(fmt),
+                                        safe: None,
+                                    })))
+                                }
+                            }
+                        } else {
+                            // Non-string format - keep as-is
+                            let mut new_args = Vec::new();
+                            new_args.push(this);
+                            new_args.push(fmt_expr);
+                            Ok(Expression::Function(Box::new(Function::new("STR_TO_DATE".to_string(), new_args))))
+                        }
+                    } else {
+                        Ok(Expression::Function(f))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::TsOrDsAddConvert => {
+                // TS_OR_DS_ADD(x, n, 'UNIT') from Generic -> dialect-specific DATE_ADD
+                if let Expression::Function(f) = e {
+                    if f.args.len() == 3 {
+                        let mut args = f.args;
+                        let x = args.remove(0);
+                        let n = args.remove(0);
+                        let unit_expr = args.remove(0);
+                        let unit_str = match &unit_expr {
+                            Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+                            _ => "DAY".to_string(),
+                        };
+
+                        match target {
+                            DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                                // DATE_ADD(x, n) - only supports DAY unit
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_ADD".to_string(), vec![x, n],
+                                ))))
+                            }
+                            DialectType::MySQL => {
+                                // DATE_ADD(x, INTERVAL n UNIT)
+                                let iu = match unit_str.to_uppercase().as_str() {
+                                    "YEAR" => crate::expressions::IntervalUnit::Year,
+                                    "QUARTER" => crate::expressions::IntervalUnit::Quarter,
+                                    "MONTH" => crate::expressions::IntervalUnit::Month,
+                                    "WEEK" => crate::expressions::IntervalUnit::Week,
+                                    "HOUR" => crate::expressions::IntervalUnit::Hour,
+                                    "MINUTE" => crate::expressions::IntervalUnit::Minute,
+                                    "SECOND" => crate::expressions::IntervalUnit::Second,
+                                    _ => crate::expressions::IntervalUnit::Day,
+                                };
+                                let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                    this: Some(n),
+                                    unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: iu, use_plural: false }),
+                                }));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_ADD".to_string(), vec![x, interval],
+                                ))))
+                            }
+                            DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                // DATE_ADD('UNIT', n, CAST(CAST(x AS TIMESTAMP) AS DATE))
+                                let cast_ts = Expression::Cast(Box::new(Cast {
+                                    this: x,
+                                    to: DataType::Timestamp { precision: None, timezone: false },
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                }));
+                                let cast_date = Expression::Cast(Box::new(Cast {
+                                    this: cast_ts,
+                                    to: DataType::Date,
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                }));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_ADD".to_string(), vec![Expression::string(&unit_str), n, cast_date],
+                                ))))
+                            }
+                            DialectType::DuckDB => {
+                                // CAST(x AS DATE) + INTERVAL n UNIT
+                                let cast_date = Expression::Cast(Box::new(Cast {
+                                    this: x,
+                                    to: DataType::Date,
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                }));
+                                let iu = match unit_str.to_uppercase().as_str() {
+                                    "YEAR" => crate::expressions::IntervalUnit::Year,
+                                    "QUARTER" => crate::expressions::IntervalUnit::Quarter,
+                                    "MONTH" => crate::expressions::IntervalUnit::Month,
+                                    "WEEK" => crate::expressions::IntervalUnit::Week,
+                                    "HOUR" => crate::expressions::IntervalUnit::Hour,
+                                    "MINUTE" => crate::expressions::IntervalUnit::Minute,
+                                    "SECOND" => crate::expressions::IntervalUnit::Second,
+                                    _ => crate::expressions::IntervalUnit::Day,
+                                };
+                                let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                    this: Some(n),
+                                    unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: iu, use_plural: false }),
+                                }));
+                                Ok(Expression::Add(Box::new(crate::expressions::BinaryOp {
+                                    left: cast_date,
+                                    right: interval,
+                                    left_comments: Vec::new(),
+                                    operator_comments: Vec::new(),
+                                    trailing_comments: Vec::new(),
+                                })))
+                            }
+                            DialectType::Drill => {
+                                // DATE_ADD(CAST(x AS DATE), INTERVAL n UNIT)
+                                let cast_date = Expression::Cast(Box::new(Cast {
+                                    this: x,
+                                    to: DataType::Date,
+                                    double_colon_syntax: false,
+                                    trailing_comments: Vec::new(),
+                                    format: None,
+                                    default: None,
+                                }));
+                                let iu = match unit_str.to_uppercase().as_str() {
+                                    "YEAR" => crate::expressions::IntervalUnit::Year,
+                                    "QUARTER" => crate::expressions::IntervalUnit::Quarter,
+                                    "MONTH" => crate::expressions::IntervalUnit::Month,
+                                    "WEEK" => crate::expressions::IntervalUnit::Week,
+                                    "HOUR" => crate::expressions::IntervalUnit::Hour,
+                                    "MINUTE" => crate::expressions::IntervalUnit::Minute,
+                                    "SECOND" => crate::expressions::IntervalUnit::Second,
+                                    _ => crate::expressions::IntervalUnit::Day,
+                                };
+                                let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                    this: Some(n),
+                                    unit: Some(crate::expressions::IntervalUnitSpec::Simple { unit: iu, use_plural: false }),
+                                }));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "DATE_ADD".to_string(), vec![cast_date, interval],
+                                ))))
+                            }
+                            _ => {
+                                // Default: keep as TS_OR_DS_ADD
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "TS_OR_DS_ADD".to_string(), vec![x, n, unit_expr],
+                                ))))
+                            }
+                        }
+                    } else {
+                        Ok(Expression::Function(f))
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::DateFromUnixDateConvert => {
+                // DATE_FROM_UNIX_DATE(n) -> DATEADD(DAY, n, CAST('1970-01-01' AS DATE))
+                if let Expression::Function(f) = e {
+                    // Keep as-is for dialects that support DATE_FROM_UNIX_DATE natively
+                    if matches!(target, DialectType::Spark | DialectType::Databricks | DialectType::BigQuery) {
+                        return Ok(Expression::Function(Box::new(Function::new("DATE_FROM_UNIX_DATE".to_string(), f.args))));
+                    }
+                    let n = f.args.into_iter().next().unwrap();
+                    let epoch_date = Expression::Cast(Box::new(Cast {
+                        this: Expression::string("1970-01-01"),
+                        to: DataType::Date,
+                        double_colon_syntax: false,
+                        trailing_comments: Vec::new(),
+                        format: None,
+                        default: None,
+                    }));
+                    match target {
+                        DialectType::DuckDB => {
+                            // CAST('1970-01-01' AS DATE) + INTERVAL n DAY
+                            let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                this: Some(n),
+                                unit: Some(crate::expressions::IntervalUnitSpec::Simple {
+                                    unit: crate::expressions::IntervalUnit::Day,
+                                    use_plural: false,
+                                }),
+                            }));
+                            Ok(Expression::Add(Box::new(crate::expressions::BinaryOp::new(epoch_date, interval))))
+                        }
+                        DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                            // DATE_ADD('DAY', n, CAST('1970-01-01' AS DATE))
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATE_ADD".to_string(), vec![Expression::string("DAY"), n, epoch_date],
+                            ))))
+                        }
+                        DialectType::Snowflake | DialectType::Redshift | DialectType::TSQL => {
+                            // DATEADD(DAY, n, CAST('1970-01-01' AS DATE))
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATEADD".to_string(), vec![
+                                    Expression::Identifier(Identifier::new("DAY")),
+                                    n, epoch_date,
+                                ],
+                            ))))
+                        }
+                        DialectType::BigQuery => {
+                            // DATE_ADD(CAST('1970-01-01' AS DATE), INTERVAL n DAY)
+                            let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                this: Some(n),
+                                unit: Some(crate::expressions::IntervalUnitSpec::Simple {
+                                    unit: crate::expressions::IntervalUnit::Day,
+                                    use_plural: false,
+                                }),
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATE_ADD".to_string(), vec![epoch_date, interval],
+                            ))))
+                        }
+                        DialectType::MySQL | DialectType::Doris | DialectType::StarRocks | DialectType::Drill => {
+                            // DATE_ADD(CAST('1970-01-01' AS DATE), INTERVAL n DAY)
+                            let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                this: Some(n),
+                                unit: Some(crate::expressions::IntervalUnitSpec::Simple {
+                                    unit: crate::expressions::IntervalUnit::Day,
+                                    use_plural: false,
+                                }),
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATE_ADD".to_string(), vec![epoch_date, interval],
+                            ))))
+                        }
+                        DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                            // DATE_ADD(CAST('1970-01-01' AS DATE), n)
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATE_ADD".to_string(), vec![epoch_date, n],
+                            ))))
+                        }
+                        DialectType::PostgreSQL | DialectType::Materialize | DialectType::RisingWave => {
+                            // CAST('1970-01-01' AS DATE) + INTERVAL 'n DAY'
+                            let n_str = match &n {
+                                Expression::Literal(Literal::Number(s)) => s.clone(),
+                                _ => Self::expr_to_string_static(&n),
+                            };
+                            let interval = Expression::Interval(Box::new(crate::expressions::Interval {
+                                this: Some(Expression::string(&format!("{} DAY", n_str))),
+                                unit: None,
+                            }));
+                            Ok(Expression::Add(Box::new(crate::expressions::BinaryOp::new(epoch_date, interval))))
+                        }
+                        _ => {
+                            // Default: keep as-is
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "DATE_FROM_UNIX_DATE".to_string(), vec![n],
+                            ))))
+                        }
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArrayRemoveConvert => {
+                // ARRAY_REMOVE(arr, target) -> LIST_FILTER/arrayFilter
+                if let Expression::ArrayRemove(bf) = e {
+                    let arr = bf.this;
+                    let target_val = bf.expression;
+                    match target {
+                        DialectType::DuckDB => {
+                            let u_id = crate::expressions::Identifier::new("_u");
+                            let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                parameters: vec![u_id.clone()],
+                                body: Expression::Neq(Box::new(BinaryOp {
+                                    left: Expression::Identifier(u_id),
+                                    right: target_val,
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                })),
+                                colon: false,
+                                parameter_types: Vec::new(),
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "LIST_FILTER".to_string(), vec![arr, lambda]
+                            ))))
+                        }
+                        DialectType::ClickHouse => {
+                            let u_id = crate::expressions::Identifier::new("_u");
+                            let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                parameters: vec![u_id.clone()],
+                                body: Expression::Neq(Box::new(BinaryOp {
+                                    left: Expression::Identifier(u_id),
+                                    right: target_val,
+                                    left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
+                                })),
+                                colon: false,
+                                parameter_types: Vec::new(),
+                            }));
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "arrayFilter".to_string(), vec![lambda, arr]
+                            ))))
+                        }
+                        DialectType::BigQuery => {
+                            // ARRAY(SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target)
+                            let u_id = crate::expressions::Identifier::new("_u");
+                            let u_col = Expression::Column(crate::expressions::Column {
+                                name: u_id.clone(),
+                                table: None,
+                                join_mark: false,
+                                trailing_comments: Vec::new(),
+                            });
+                            let unnest_expr = Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
+                                this: arr,
+                                expressions: Vec::new(),
+                                with_ordinality: false,
+                                alias: None,
+                                offset_alias: None,
+                            }));
+                            let aliased_unnest = Expression::Alias(Box::new(crate::expressions::Alias {
+                                this: unnest_expr,
+                                alias: u_id.clone(),
+                                column_aliases: Vec::new(),
+                                pre_alias_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }));
+                            let where_cond = Expression::Neq(Box::new(BinaryOp {
+                                left: u_col.clone(),
+                                right: target_val,
+                                left_comments: Vec::new(),
+                                operator_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }));
+                            let subquery = Expression::Select(Box::new(
+                                crate::expressions::Select::new()
+                                    .column(u_col)
+                                    .from(aliased_unnest)
+                                    .where_(where_cond)
+                            ));
+                            Ok(Expression::ArrayFunc(Box::new(crate::expressions::ArrayConstructor {
+                                expressions: vec![subquery],
+                                bracket_notation: false,
+                                use_list_keyword: false,
+                            })))
+                        }
+                        _ => Ok(Expression::ArrayRemove(Box::new(crate::expressions::BinaryFunc {
+                            original_name: None, this: arr, expression: target_val,
+                        }))),
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArrayReverseConvert => {
+                // ARRAY_REVERSE(x) -> arrayReverse(x) for ClickHouse
+                if let Expression::ArrayReverse(af) = e {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "arrayReverse".to_string(), vec![af.this]
+                    ))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::JsonKeysConvert => {
+                // JSON_KEYS(x) -> JSON_OBJECT_KEYS/OBJECT_KEYS
+                if let Expression::JsonKeys(uf) = e {
+                    match target {
+                        DialectType::Spark | DialectType::Databricks => {
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "JSON_OBJECT_KEYS".to_string(), vec![uf.this]
+                            ))))
+                        }
+                        DialectType::Snowflake => {
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "OBJECT_KEYS".to_string(), vec![uf.this]
+                            ))))
+                        }
+                        _ => Ok(Expression::JsonKeys(uf)),
+                    }
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ParseJsonStrip => {
+                // PARSE_JSON(x) -> x (strip wrapper for SQLite/Doris)
+                if let Expression::ParseJson(uf) = e {
+                    Ok(uf.this)
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::ArraySizeDrill => {
+                // ARRAY_SIZE(x) -> REPEATED_COUNT(x) for Drill
+                if let Expression::ArraySize(uf) = e {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "REPEATED_COUNT".to_string(), vec![uf.this]
+                    ))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::WeekOfYearToWeekIso => {
+                // WEEKOFYEAR(x) -> WEEKISO(x) for Snowflake (cross-dialect normalization)
+                if let Expression::WeekOfYear(uf) = e {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "WEEKISO".to_string(), vec![uf.this]
+                    ))))
+                } else {
+                    Ok(e)
+                }
+            }
+
             }
         })
+    }
+
+    /// Convert DATE_TRUNC('unit', x) to MySQL-specific expansion
+    fn date_trunc_to_mysql(unit: &str, expr: &Expression) -> Result<Expression> {
+        use crate::expressions::Function;
+        match unit {
+            "DAY" => {
+                // DATE(x)
+                Ok(Expression::Function(Box::new(Function::new("DATE".to_string(), vec![expr.clone()]))))
+            }
+            "WEEK" => {
+                // STR_TO_DATE(CONCAT(YEAR(x), ' ', WEEK(x, 1), ' 1'), '%Y %u %w')
+                let year_x = Expression::Function(Box::new(Function::new("YEAR".to_string(), vec![expr.clone()])));
+                let week_x = Expression::Function(Box::new(Function::new("WEEK".to_string(), vec![expr.clone(), Expression::number(1)])));
+                let concat_args = vec![
+                    year_x,
+                    Expression::string(" "),
+                    week_x,
+                    Expression::string(" 1"),
+                ];
+                let concat = Expression::Function(Box::new(Function::new("CONCAT".to_string(), concat_args)));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "STR_TO_DATE".to_string(), vec![concat, Expression::string("%Y %u %w")],
+                ))))
+            }
+            "MONTH" => {
+                // STR_TO_DATE(CONCAT(YEAR(x), ' ', MONTH(x), ' 1'), '%Y %c %e')
+                let year_x = Expression::Function(Box::new(Function::new("YEAR".to_string(), vec![expr.clone()])));
+                let month_x = Expression::Function(Box::new(Function::new("MONTH".to_string(), vec![expr.clone()])));
+                let concat_args = vec![
+                    year_x,
+                    Expression::string(" "),
+                    month_x,
+                    Expression::string(" 1"),
+                ];
+                let concat = Expression::Function(Box::new(Function::new("CONCAT".to_string(), concat_args)));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "STR_TO_DATE".to_string(), vec![concat, Expression::string("%Y %c %e")],
+                ))))
+            }
+            "QUARTER" => {
+                // STR_TO_DATE(CONCAT(YEAR(x), ' ', QUARTER(x) * 3 - 2, ' 1'), '%Y %c %e')
+                let year_x = Expression::Function(Box::new(Function::new("YEAR".to_string(), vec![expr.clone()])));
+                let quarter_x = Expression::Function(Box::new(Function::new("QUARTER".to_string(), vec![expr.clone()])));
+                // QUARTER(x) * 3 - 2
+                let mul = Expression::Mul(Box::new(crate::expressions::BinaryOp {
+                    left: quarter_x,
+                    right: Expression::number(3),
+                    left_comments: Vec::new(),
+                    operator_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                }));
+                let sub = Expression::Sub(Box::new(crate::expressions::BinaryOp {
+                    left: mul,
+                    right: Expression::number(2),
+                    left_comments: Vec::new(),
+                    operator_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                }));
+                let concat_args = vec![
+                    year_x,
+                    Expression::string(" "),
+                    sub,
+                    Expression::string(" 1"),
+                ];
+                let concat = Expression::Function(Box::new(Function::new("CONCAT".to_string(), concat_args)));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "STR_TO_DATE".to_string(), vec![concat, Expression::string("%Y %c %e")],
+                ))))
+            }
+            "YEAR" => {
+                // STR_TO_DATE(CONCAT(YEAR(x), ' 1 1'), '%Y %c %e')
+                let year_x = Expression::Function(Box::new(Function::new("YEAR".to_string(), vec![expr.clone()])));
+                let concat_args = vec![
+                    year_x,
+                    Expression::string(" 1 1"),
+                ];
+                let concat = Expression::Function(Box::new(Function::new("CONCAT".to_string(), concat_args)));
+                Ok(Expression::Function(Box::new(Function::new(
+                    "STR_TO_DATE".to_string(), vec![concat, Expression::string("%Y %c %e")],
+                ))))
+            }
+            _ => {
+                // Unsupported unit -> keep as DATE_TRUNC
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_TRUNC".to_string(), vec![Expression::string(unit), expr.clone()],
+                ))))
+            }
+        }
     }
 
     /// Check if a DataType is or contains VARCHAR/CHAR (for Spark VARCHAR->STRING normalization)
@@ -14664,6 +19005,8 @@ impl Dialect {
                 join_hint: None,
                 match_condition: None,
                 pivots: Vec::new(),
+                comments: Vec::new(),
+                nesting_group: 0,
             }
         }
 
@@ -14996,6 +19339,168 @@ impl Dialect {
             }
             _ => original.clone(),
         }
+    }
+
+    /// Decompose a JSON path like `$.y[0].z` into individual parts: `["y", "0", "z"]`.
+    /// Strips `$` prefix, handles bracket notation, quoted strings, and removes `[*]` wildcards.
+    fn decompose_json_path(path: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let path = if path.starts_with("$.") {
+            &path[2..]
+        } else if path.starts_with('$') {
+            &path[1..]
+        } else {
+            path
+        };
+        if path.is_empty() {
+            return parts;
+        }
+        let mut current = String::new();
+        let chars: Vec<char> = path.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '.' => {
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                    i += 1;
+                }
+                '[' => {
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                    i += 1;
+                    let mut bracket_content = String::new();
+                    while i < chars.len() && chars[i] != ']' {
+                        if chars[i] == '"' || chars[i] == '\'' {
+                            let quote = chars[i];
+                            i += 1;
+                            while i < chars.len() && chars[i] != quote {
+                                bracket_content.push(chars[i]);
+                                i += 1;
+                            }
+                            if i < chars.len() { i += 1; }
+                        } else {
+                            bracket_content.push(chars[i]);
+                            i += 1;
+                        }
+                    }
+                    if i < chars.len() { i += 1; }
+                    if bracket_content != "*" {
+                        parts.push(bracket_content);
+                    }
+                }
+                _ => {
+                    current.push(chars[i]);
+                    i += 1;
+                }
+            }
+        }
+        if !current.is_empty() {
+            parts.push(current);
+        }
+        parts
+    }
+
+    /// Strip `$` prefix from a JSON path, keeping the rest.
+    /// `$.y[0].z` -> `y[0].z`, `$["a b"]` -> `["a b"]`
+    fn strip_json_dollar_prefix(path: &str) -> String {
+        if path.starts_with("$.") {
+            path[2..].to_string()
+        } else if path.starts_with('$') {
+            path[1..].to_string()
+        } else {
+            path.to_string()
+        }
+    }
+
+    /// Strip `[*]` wildcards from a JSON path.
+    /// `$.y[*]` -> `$.y`, `$.y[*].z` -> `$.y.z`
+    fn strip_json_wildcards(path: &str) -> String {
+        path.replace("[*]", "")
+            .replace("..", ".")  // Clean double dots from `$.y[*].z` -> `$.y..z`
+            .trim_end_matches('.')
+            .to_string()
+    }
+
+    /// Convert bracket notation to dot notation for JSON paths.
+    /// `$["a b"]` -> `$."a b"`, `$["key"]` -> `$.key`
+    fn bracket_to_dot_notation(path: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = path.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '[' {
+                // Read bracket content
+                i += 1;
+                let mut bracket_content = String::new();
+                let mut is_quoted = false;
+                let mut _quote_char = '"';
+                while i < chars.len() && chars[i] != ']' {
+                    if chars[i] == '"' || chars[i] == '\'' {
+                        is_quoted = true;
+                        _quote_char = chars[i];
+                        i += 1;
+                        while i < chars.len() && chars[i] != _quote_char {
+                            bracket_content.push(chars[i]);
+                            i += 1;
+                        }
+                        if i < chars.len() { i += 1; }
+                    } else {
+                        bracket_content.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                if i < chars.len() { i += 1; } // skip ]
+                if bracket_content == "*" {
+                    // Keep wildcard as-is
+                    result.push_str("[*]");
+                } else if is_quoted {
+                    // Quoted bracket -> dot notation with quotes
+                    result.push('.');
+                    result.push('"');
+                    result.push_str(&bracket_content);
+                    result.push('"');
+                } else {
+                    // Numeric index -> keep as bracket
+                    result.push('[');
+                    result.push_str(&bracket_content);
+                    result.push(']');
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    /// Convert JSON path bracket quoted strings to use single quotes instead of double quotes.
+    /// `$["a b"]` -> `$['a b']`
+    fn bracket_to_single_quotes(path: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = path.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '[' && i + 1 < chars.len() && chars[i + 1] == '"' {
+                result.push('[');
+                result.push('\'');
+                i += 2; // skip [ and "
+                while i < chars.len() && chars[i] != '"' {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() { i += 1; } // skip closing "
+                result.push('\'');
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
     }
 
     /// Transform TSQL SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake
@@ -16588,6 +21093,7 @@ impl Dialect {
                             operand: None,
                             whens: vec![(condition, result_div)],
                             else_: Some(Expression::Null(crate::expressions::Null)),
+                            comments: Vec::new(),
                         })))
                     }
                     DialectType::Snowflake => {
@@ -17716,13 +22222,67 @@ impl Dialect {
             // MOD(x, y) -> x % y for PostgreSQL/DuckDB
             "MOD" if args.len() == 2 => {
                 match target {
-                    DialectType::PostgreSQL | DialectType::DuckDB => {
+                    DialectType::PostgreSQL | DialectType::DuckDB
+                    | DialectType::Presto | DialectType::Trino | DialectType::Athena
+                    | DialectType::Snowflake => {
                         let x = args.remove(0);
                         let y = args.remove(0);
+                        // Wrap complex expressions in parens to preserve precedence
+                        let needs_paren = |e: &Expression| matches!(e, Expression::Add(_) | Expression::Sub(_) | Expression::Mul(_) | Expression::Div(_));
+                        let x = if needs_paren(&x) {
+                            Expression::Paren(Box::new(crate::expressions::Paren { this: x, trailing_comments: vec![] }))
+                        } else { x };
+                        let y = if needs_paren(&y) {
+                            Expression::Paren(Box::new(crate::expressions::Paren { this: y, trailing_comments: vec![] }))
+                        } else { y };
+                        Ok(Expression::Mod(Box::new(crate::expressions::BinaryOp::new(x, y))))
+                    }
+                    DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
+                        // Hive/Spark: a % b
+                        let x = args.remove(0);
+                        let y = args.remove(0);
+                        let needs_paren = |e: &Expression| matches!(e, Expression::Add(_) | Expression::Sub(_) | Expression::Mul(_) | Expression::Div(_));
+                        let x = if needs_paren(&x) {
+                            Expression::Paren(Box::new(crate::expressions::Paren { this: x, trailing_comments: vec![] }))
+                        } else { x };
+                        let y = if needs_paren(&y) {
+                            Expression::Paren(Box::new(crate::expressions::Paren { this: y, trailing_comments: vec![] }))
+                        } else { y };
                         Ok(Expression::Mod(Box::new(crate::expressions::BinaryOp::new(x, y))))
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new("MOD".to_string(), args))))
                 }
+            }
+
+            // ARRAY_FILTER(arr, lambda) -> FILTER for Hive/Spark/Presto, ARRAY_FILTER for StarRocks
+            "ARRAY_FILTER" if args.len() == 2 => {
+                let name = match target {
+                    DialectType::DuckDB => "LIST_FILTER",
+                    DialectType::StarRocks => "ARRAY_FILTER",
+                    _ => "FILTER",
+                };
+                Ok(Expression::Function(Box::new(Function::new(name.to_string(), args))))
+            }
+            // FILTER(arr, lambda) -> ARRAY_FILTER for StarRocks, LIST_FILTER for DuckDB
+            "FILTER" if args.len() == 2 => {
+                let name = match target {
+                    DialectType::DuckDB => "LIST_FILTER",
+                    DialectType::StarRocks => "ARRAY_FILTER",
+                    _ => "FILTER",
+                };
+                Ok(Expression::Function(Box::new(Function::new(name.to_string(), args))))
+            }
+            // REDUCE(arr, init, lambda1, lambda2) -> AGGREGATE for Spark
+            "REDUCE" if args.len() >= 3 => {
+                let name = match target {
+                    DialectType::Spark | DialectType::Databricks => "AGGREGATE",
+                    _ => "REDUCE",
+                };
+                Ok(Expression::Function(Box::new(Function::new(name.to_string(), args))))
+            }
+            // ARRAY_REVERSE(x) -> arrayReverse for ClickHouse (handled by generator)
+            "ARRAY_REVERSE" if args.len() == 1 => {
+                Ok(Expression::Function(Box::new(Function::new("ARRAY_REVERSE".to_string(), args))))
             }
 
             // CONCAT(a, b, ...) -> a || b || ... for DuckDB with 3+ args
@@ -18544,6 +23104,7 @@ impl Dialect {
                             operand: Some(typeof_func),
                             whens: vec![(Expression::Literal(Literal::String("BLOB".to_string())), octet_length)],
                             else_: Some(length_text),
+                            comments: Vec::new(),
                         })))
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new("LENGTH".to_string(), vec![arg]))))
@@ -19467,6 +24028,136 @@ mod tests {
         let dialect = Dialect::get(DialectType::PostgreSQL);
         let result = dialect.transpile_to("SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]", DialectType::DuckDB).unwrap();
         assert_eq!(result[0], "SELECT [1, 2, 3] @> [1, 2]");
+    }
+
+    #[test]
+    fn test_array_remove_bigquery() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to("ARRAY_REMOVE(the_array, target)", DialectType::BigQuery).unwrap();
+        assert_eq!(result[0], "ARRAY(SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target)");
+    }
+
+    #[test]
+    fn test_map_clickhouse_case() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let parsed = dialect.parse("CAST(MAP('a', '1') AS MAP(TEXT, TEXT))").unwrap();
+        eprintln!("MAP parsed: {:?}", parsed);
+        let result = dialect.transpile_to("CAST(MAP('a', '1') AS MAP(TEXT, TEXT))", DialectType::ClickHouse).unwrap();
+        eprintln!("MAP result: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_presto() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::Presto,
+        ).unwrap();
+        eprintln!("GDA -> Presto: {}", result[0]);
+        assert_eq!(result[0], "SELECT * FROM UNNEST(SEQUENCE(CAST('2020-01-01' AS DATE), CAST('2020-02-01' AS DATE), (1 * INTERVAL '7' DAY)))");
+    }
+
+    #[test]
+    fn test_generate_date_array_postgres() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::PostgreSQL,
+        ).unwrap();
+        eprintln!("GDA -> PostgreSQL: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_snowflake() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::Snowflake,
+        ).unwrap();
+        eprintln!("GDA -> Snowflake: {}", result[0]);
+    }
+
+    #[test]
+    fn test_array_length_generate_date_array_snowflake() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT ARRAY_LENGTH(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::Snowflake,
+        ).unwrap();
+        eprintln!("ARRAY_LENGTH(GDA) -> Snowflake: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_mysql() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::MySQL,
+        ).unwrap();
+        eprintln!("GDA -> MySQL: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_redshift() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::Redshift,
+        ).unwrap();
+        eprintln!("GDA -> Redshift: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_tsql() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+            DialectType::TSQL,
+        ).unwrap();
+        eprintln!("GDA -> TSQL: {}", result[0]);
+    }
+
+    #[test]
+    fn test_struct_colon_syntax() {
+        let dialect = Dialect::get(DialectType::Generic);
+        // Test without colon first
+        let result = dialect.transpile_to(
+            "CAST((1, 2, 3, 4) AS STRUCT<a TINYINT, b SMALLINT, c INT, d BIGINT>)",
+            DialectType::ClickHouse,
+        );
+        match result {
+            Ok(r) => eprintln!("STRUCT no colon -> ClickHouse: {}", r[0]),
+            Err(e) => eprintln!("STRUCT no colon error: {}", e),
+        }
+        // Now test with colon
+        let result = dialect.transpile_to(
+            "CAST((1, 2, 3, 4) AS STRUCT<a: TINYINT, b: SMALLINT, c: INT, d: BIGINT>)",
+            DialectType::ClickHouse,
+        );
+        match result {
+            Ok(r) => eprintln!("STRUCT colon -> ClickHouse: {}", r[0]),
+            Err(e) => eprintln!("STRUCT colon error: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_generate_date_array_cte_wrapped_mysql() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "WITH dates AS (SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))) SELECT * FROM dates",
+            DialectType::MySQL,
+        ).unwrap();
+        eprintln!("GDA CTE -> MySQL: {}", result[0]);
+    }
+
+    #[test]
+    fn test_generate_date_array_cte_wrapped_tsql() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect.transpile_to(
+            "WITH dates AS (SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))) SELECT * FROM dates",
+            DialectType::TSQL,
+        ).unwrap();
+        eprintln!("GDA CTE -> TSQL: {}", result[0]);
     }
 
 }

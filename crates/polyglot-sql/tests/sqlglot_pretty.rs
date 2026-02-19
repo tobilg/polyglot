@@ -94,24 +94,76 @@ fn test_sqlglot_pretty_sample() {
     results.print_summary("SQLGlot Pretty-Print (Sample)");
 }
 
-/// Debug test for specific pretty-print SQL
+/// Debug test for the 3 remaining failing pretty-print cases
 #[test]
 fn test_debug_pretty_sql() {
     use polyglot_sql::generator::Generator;
     use polyglot_sql::parser::Parser;
 
-    let test_cases = [
-        "SELECT * FROM test;",
-        "WITH a AS ((SELECT 1 AS b) UNION ALL (SELECT 2 AS b)) SELECT * FROM a;",
-        "SELECT * FROM t WHERE a = 1;",
+    let cases: Vec<(&str, &str, usize)> = vec![
+        (
+            "SELECT\n    id,\n    -- SUM(total) as all_that,\n    ARRAY_AGG(foo)[0][0] AS first_foo,\nFROM facts\nGROUP BY all;",
+            "SELECT\n  id,\n  ARRAY_AGG(foo)[0][0] AS first_foo /* SUM(total) as all_that, */\nFROM facts\nGROUP BY ALL;",
+            441,
+        ),
+        (
+            "SELECT\n    *\nFROM\n    a\nWHERE\n    /*111*/\n    b = 1\n    /*222*/\nORDER BY\n    c;",
+            "SELECT\n  *\nFROM a\nWHERE\n  b /* 111 */ = 1\n/* 222 */\nORDER BY\n  c;",
+            457,
+        ),
+        (
+            "SELECT 1\nFROM foo\nWHERE 1=1\nAND -- first comment\n    -- second comment\n    foo.a = 1;",
+            "SELECT\n  1\nFROM foo\nWHERE\n  1 = 1 AND /* first comment */ foo.a /* second comment */ = 1;",
+            423,
+        ),
+        (
+            "SELECT *\nFROM foo\nwHERE 1=1\n    AND\n        -- my comment\n        EXISTS (\n            SELECT 1\n            FROM bar\n        );",
+            "SELECT\n  *\nFROM foo\nWHERE\n  1 = 1 AND EXISTS(\n    SELECT\n      1\n    FROM bar\n  ) /* my comment */;",
+            405,
+        ),
     ];
 
-    for input in &test_cases {
-        println!("\n=== Input ===\n{}", input);
+    for (input, expected, line) in &cases {
+        println!("\n\n=== Line {} Input ===\n{}", line, input);
+        println!("=== Expected ===\n{}", expected);
+
+        // Show tokens
+        let tokenizer = polyglot_sql::tokens::Tokenizer::default();
+        let tokens = tokenizer.tokenize(input).unwrap();
+        for (i, t) in tokens.iter().enumerate() {
+            let mut info = format!("  Token[{}]: {:?} {:?}", i, t.token_type, t.text);
+            if !t.comments.is_empty() {
+                info += &format!(" comments={:?}", t.comments);
+            }
+            if !t.trailing_comments.is_empty() {
+                info += &format!(" trailing={:?}", t.trailing_comments);
+            }
+            println!("{}", info);
+        }
+
         match Parser::parse_sql(input) {
             Ok(stmts) if !stmts.is_empty() => {
                 match Generator::pretty_sql(&stmts[0]) {
-                    Ok(output) => println!("=== Output ===\n{}", output),
+                    Ok(output) => {
+                        println!("=== Pretty Output ===\n{}", output);
+                        if output == *expected {
+                            println!("=== PASS ===");
+                        } else {
+                            println!("=== FAIL ===");
+                            // Show character differences
+                            for (i, (a, b)) in output.chars().zip(expected.chars()).enumerate() {
+                                if a != b {
+                                    println!("  First diff at char {}: got {:?}, expected {:?}", i, a, b);
+                                    println!("  Got context:      ...{}...", &output[i.saturating_sub(20)..output.len().min(i+30)]);
+                                    println!("  Expected context: ...{}...", &expected[i.saturating_sub(20)..expected.len().min(i+30)]);
+                                    break;
+                                }
+                            }
+                            if output.len() != expected.len() {
+                                println!("  Length diff: got {}, expected {}", output.len(), expected.len());
+                            }
+                        }
+                    }
                     Err(e) => println!("Generate error: {}", e),
                 }
             }

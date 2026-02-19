@@ -453,7 +453,7 @@ pub enum Expression {
     ArrayTransform(Box<ArrayTransformFunc>),
     ArrayFlatten(Box<UnaryFunc>),
     ArrayCompact(Box<UnaryFunc>),
-    ArrayIntersect(Box<BinaryFunc>),
+    ArrayIntersect(Box<VarArgFunc>),
     ArrayUnion(Box<BinaryFunc>),
     ArrayExcept(Box<BinaryFunc>),
     ArrayRemove(Box<BinaryFunc>),
@@ -1832,13 +1832,13 @@ impl Select {
 
     /// Set ORDER BY
     pub fn order_by(mut self, expressions: Vec<Ordered>) -> Self {
-        self.order_by = Some(OrderBy { expressions, siblings: false });
+        self.order_by = Some(OrderBy { expressions, siblings: false, comments: Vec::new() });
         self
     }
 
     /// Set LIMIT
     pub fn limit(mut self, n: Expression) -> Self {
-        self.limit = Some(Limit { this: n, percent: false });
+        self.limit = Some(Limit { this: n, percent: false , comments: Vec::new() });
         self
     }
 
@@ -2614,6 +2614,10 @@ pub struct Case {
     pub whens: Vec<(Expression, Expression)>,
     /// Optional ELSE result.
     pub else_: Option<Expression>,
+    /// Comments from the CASE keyword (emitted after END)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// Represent a binary operation (two operands separated by an operator).
@@ -2721,6 +2725,11 @@ pub struct In {
     /// BigQuery: IN UNNEST(expr)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unnest: Option<Box<Expression>>,
+    /// Whether the right side is a bare field reference (no parentheses).
+    /// Matches Python sqlglot's `field` attribute on `In` expression.
+    /// e.g., `a IN subquery1` vs `a IN (subquery1)`
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_field: bool,
 }
 
 /// Represent a BETWEEN predicate (`x BETWEEN low AND high`).
@@ -2735,6 +2744,9 @@ pub struct Between {
     pub high: Expression,
     /// Whether this is NOT BETWEEN.
     pub not: bool,
+    /// SYMMETRIC/ASYMMETRIC qualifier: None = regular, Some(true) = SYMMETRIC, Some(false) = ASYMMETRIC
+    #[serde(default)]
+    pub symmetric: Option<bool>,
 }
 
 /// IS NULL predicate
@@ -2957,6 +2969,14 @@ pub struct Join {
     /// PIVOT/UNPIVOT operations that follow this join (Oracle/TSQL syntax)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pivots: Vec<Expression>,
+    /// Comments collected from between join-kind keywords (e.g., INNER /* comment */ JOIN)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
+    /// Nesting group identifier for nested join pretty-printing.
+    /// Joins in the same group were parsed together; group boundaries come from
+    /// deferred condition resolution phases.
+    #[serde(default)]
+    pub nesting_group: usize,
 }
 
 /// Enumerate all supported SQL join types.
@@ -3048,6 +3068,9 @@ pub struct GroupBy {
     /// ClickHouse: WITH TOTALS modifier
     #[serde(default)]
     pub totals: bool,
+    /// Leading comments that appeared before the GROUP BY keyword
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// Represent a HAVING clause containing a predicate over aggregate results.
@@ -3056,6 +3079,9 @@ pub struct GroupBy {
 pub struct Having {
     /// The filter predicate, typically involving aggregate functions.
     pub this: Expression,
+    /// Leading comments that appeared before the HAVING keyword
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// Represent an ORDER BY clause containing one or more sort specifications.
@@ -3067,6 +3093,9 @@ pub struct OrderBy {
     /// Whether this is ORDER SIBLINGS BY (Oracle hierarchical queries)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub siblings: bool,
+    /// Leading comments that appeared before the ORDER BY keyword
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// Represent an expression with sort direction and null ordering.
@@ -3348,6 +3377,10 @@ pub struct Limit {
     /// Whether PERCENT modifier is present (DuckDB: LIMIT 10 PERCENT)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub percent: bool,
+    /// Comments from before the LIMIT keyword (emitted after the limit value)
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// OFFSET clause
@@ -3507,6 +3540,9 @@ pub struct Cte {
     /// ClickHouse supports expression-first WITH items: WITH <expr> AS <alias>
     #[serde(default)]
     pub alias_first: bool,
+    /// Comments associated with this CTE (placed after alias name, before AS)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// Window specification
@@ -3651,6 +3687,9 @@ pub enum DataType {
     /// String type with optional max length (BigQuery STRING(n))
     String { length: Option<u32> },
     Text,
+    /// TEXT with optional length: TEXT(n) - used by MySQL, SQLite, DuckDB, etc.
+    #[serde(alias = "TextWithLength")]
+    TextWithLength { length: u32 },
 
     // Binary
     Binary { length: Option<u32> },
@@ -4838,6 +4877,9 @@ pub struct Parameter {
     /// Whether the name was quoted (e.g., @"x" vs @x)
     #[serde(default)]
     pub quoted: bool,
+    /// Whether the name was string-quoted with single quotes (e.g., @'foo')
+    #[serde(default)]
+    pub string_quoted: bool,
     /// Optional secondary expression for ${kind:name} syntax (Hive hiveconf variables)
     #[serde(default)]
     pub expression: Option<String>,
@@ -5685,6 +5727,9 @@ pub struct DropTable {
     /// Oracle: PURGE
     #[serde(default)]
     pub purge: bool,
+    /// Comments that appear before the DROP keyword (e.g., leading line comments)
+    #[serde(default)]
+    pub leading_comments: Vec<String>,
 }
 
 impl DropTable {
@@ -5695,6 +5740,7 @@ impl DropTable {
             cascade: false,
             cascade_constraints: false,
             purge: false,
+            leading_comments: Vec::new(),
         }
     }
 }
@@ -6180,6 +6226,9 @@ pub struct Truncate {
     /// Target of TRUNCATE (TABLE vs DATABASE)
     #[serde(default)]
     pub target: TruncateTarget,
+    /// IF EXISTS clause
+    #[serde(default)]
+    pub if_exists: bool,
     pub table: TableRef,
     /// ClickHouse: ON CLUSTER clause for distributed DDL
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -6235,6 +6284,7 @@ impl Truncate {
     pub fn new(table: impl Into<String>) -> Self {
         Self {
             target: TruncateTarget::Table,
+            if_exists: false,
             table: TableRef::new(table),
             on_cluster: None,
             cascade: false,
@@ -6944,12 +6994,39 @@ pub enum SeqPropKind {
     Minvalue,
     Maxvalue,
     Cache,
+    NoCache,
     Cycle,
     NoCycle,
     OwnedBy,
     Order,
     NoOrder,
     Comment,
+    /// SHARING=<value> (Oracle)
+    Sharing,
+    /// KEEP (Oracle)
+    Keep,
+    /// NOKEEP (Oracle)
+    NoKeep,
+    /// SCALE [EXTEND|NOEXTEND] (Oracle)
+    Scale,
+    /// NOSCALE (Oracle)
+    NoScale,
+    /// SHARD [EXTEND|NOEXTEND] (Oracle)
+    Shard,
+    /// NOSHARD (Oracle)
+    NoShard,
+    /// SESSION (Oracle)
+    Session,
+    /// GLOBAL (Oracle)
+    Global,
+    /// NOCACHE (single word, Oracle)
+    NoCacheWord,
+    /// NOCYCLE (single word, Oracle)
+    NoCycleWord,
+    /// NOMINVALUE (single word, Oracle)
+    NoMinvalueWord,
+    /// NOMAXVALUE (single word, Oracle)
+    NoMaxvalueWord,
 }
 
 /// CREATE SEQUENCE statement
@@ -6959,6 +7036,11 @@ pub struct CreateSequence {
     pub name: TableRef,
     pub if_not_exists: bool,
     pub temporary: bool,
+    #[serde(default)]
+    pub or_replace: bool,
+    /// AS <type> clause (e.g., AS SMALLINT, AS BIGINT)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_type: Option<DataType>,
     pub increment: Option<i64>,
     pub minvalue: Option<SequenceBound>,
     pub maxvalue: Option<SequenceBound>,
@@ -6966,12 +7048,24 @@ pub struct CreateSequence {
     pub cache: Option<i64>,
     pub cycle: bool,
     pub owned_by: Option<TableRef>,
+    /// Whether OWNED BY NONE was specified
+    #[serde(default)]
+    pub owned_by_none: bool,
     /// Snowflake: ORDER or NOORDER (true = ORDER, false = NOORDER, None = not specified)
     #[serde(default)]
     pub order: Option<bool>,
     /// Snowflake: COMMENT = 'value'
     #[serde(default)]
     pub comment: Option<String>,
+    /// SHARING=<value> (Oracle)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<String>,
+    /// SCALE modifier: Some("EXTEND"), Some("NOEXTEND"), Some("") for plain SCALE
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_modifier: Option<String>,
+    /// SHARD modifier: Some("EXTEND"), Some("NOEXTEND"), Some("") for plain SHARD
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_modifier: Option<String>,
     /// Tracks the order in which properties appeared in the source
     #[serde(default)]
     pub property_order: Vec<SeqPropKind>,
@@ -6991,6 +7085,8 @@ impl CreateSequence {
             name: TableRef::new(name),
             if_not_exists: false,
             temporary: false,
+            or_replace: false,
+            as_type: None,
             increment: None,
             minvalue: None,
             maxvalue: None,
@@ -6998,8 +7094,12 @@ impl CreateSequence {
             cache: None,
             cycle: false,
             owned_by: None,
+            owned_by_none: false,
             order: None,
             comment: None,
+            sharing: None,
+            scale_modifier: None,
+            shard_modifier: None,
             property_order: Vec::new(),
         }
     }
@@ -9630,6 +9730,9 @@ pub struct Operator {
     #[serde(default)]
     pub operator: Option<Box<Expression>>,
     pub expression: Box<Expression>,
+    /// Comments between OPERATOR() and the RHS expression
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 /// PivotAny
@@ -12446,6 +12549,7 @@ mod tests {
     fn test_expression_sql_for() {
         let expr = crate::parse_one("SELECT IF(x > 0, 1, 0)", crate::DialectType::Generic).unwrap();
         let sql = expr.sql_for(crate::DialectType::Generic);
-        assert!(sql.contains("IF"));
+        // Generic mode normalizes IF() to CASE WHEN
+        assert!(sql.contains("CASE WHEN"), "Expected CASE WHEN in: {}", sql);
     }
 }

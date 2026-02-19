@@ -22,13 +22,8 @@
     },
     {
       "line": 149,
-      "input": "SELECT myCol1, myCol2 FROM baseTable LATERAL VIEW OUTER explode(col1) myTable1 AS myCol1 LATERAL VIEW explode(col2) myTable2 AS myCol2",
-      "expected": "where a > 1 and b > 2 or c > 3;"
-    },
-    {
-      "line": 151,
-      "input": "SELECT",
-      "expected": "myCol1,\n  myCol2\nFROM baseTable\nLATERAL VIEW OUTER\nEXPLODE(col1) myTable1 AS myCol1\nLATERAL VIEW\nEXPLODE(col2) myTable2 AS myCol2\nWHERE\n  a > 1 AND b > 2 OR c > 3;"
+      "input": "SELECT myCol1, myCol2 FROM baseTable LATERAL VIEW OUTER explode(col1) myTable1 AS myCol1 LATERAL VIEW explode(col2) myTable2 AS myCol2\nwhere a > 1 and b > 2 or c > 3;",
+      "expected": "SELECT\n  myCol1,\n  myCol2\nFROM baseTable\nLATERAL VIEW OUTER\nEXPLODE(col1) myTable1 AS myCol1\nLATERAL VIEW\nEXPLODE(col2) myTable2 AS myCol2\nWHERE\n  a > 1 AND b > 2 OR c > 3;"
     },
     {
       "line": 161,
@@ -63,7 +58,7 @@
     {
       "line": 244,
       "input": "SELECT\nx(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\"),\narray(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\"),\narray(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\", array(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\")),\narray(array(\"aaaaaaaaaaaaaa\", \"bbbbbbbbbbbbb\", \"ccccccccc\", \"ddddddddddddd\", \"eeeeeeeeeeeee\", \"fffffff\")),\n;",
-      "expected": "SELECT\n  X(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\",\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  ),\n  ARRAY(\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  );\n/*\n  multi\n  line\n  comment\n*/\nSELECT * FROM foo;\n/*\n  multi\n  line\n  comment\n*/\nSELECT\n  *\nFROM foo;\nSELECT x FROM a.b.c /*x*/, e.f.g /*x*/;\nSELECT\n  x\nFROM a.b.c /* x */, e.f.g /* x */;\nSELECT x FROM (SELECT * FROM bla /*x*/WHERE id = 1) /*x*/;\nSELECT\n  x\nFROM (\n  SELECT\n    *\n  FROM bla /* x */\n  WHERE\n    id = 1\n) /* x */;\nSELECT * /* multi\n   line\n   comment */;\nSELECT\n  * /* multi\n   line\n   comment */;\nWITH table_data AS (\n    SELECT 'bob' AS name, ARRAY['banana', 'apple', 'orange'] AS fruit_basket\n)\nSELECT\n    name,\n    fruit,\n    basket_index\nFROM table_data\nCROSS JOIN UNNEST(fruit_basket) WITH ORDINALITY AS fruit(basket_index);\nWITH table_data AS (\n  SELECT\n    'bob' AS name,\n    ARRAY('banana', 'apple', 'orange') AS fruit_basket\n)\nSELECT\n  name,\n  fruit,\n  basket_index\nFROM table_data\nCROSS JOIN UNNEST(fruit_basket) WITH ORDINALITY AS fruit(basket_index);\nSELECT A.* EXCEPT A.COL_1, A.COL_2 FROM TABLE_1 A;\nSELECT\n  A.*\n  EXCEPT (A.COL_1),\n  A.COL_2\nFROM TABLE_1 AS A;"
+      "expected": "SELECT\n  X(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\"\n  ),\n  ARRAY(\n    \"aaaaaaaaaaaaaa\",\n    \"bbbbbbbbbbbbb\",\n    \"ccccccccc\",\n    \"ddddddddddddd\",\n    \"eeeeeeeeeeeee\",\n    \"fffffff\",\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  ),\n  ARRAY(\n    ARRAY(\n      \"aaaaaaaaaaaaaa\",\n      \"bbbbbbbbbbbbb\",\n      \"ccccccccc\",\n      \"ddddddddddddd\",\n      \"eeeeeeeeeeeee\",\n      \"fffffff\"\n    )\n  );"
     },
     {
       "line": 355,
@@ -121,5 +116,5 @@
       "expected": "SELECT\n  COUNT(*)\nFROM table_a\n/* join comment */\nJOIN table_b\n  ON table_a.id = table_b.id\n/* group by comment */\nGROUP BY\n  table_a.id\n/* having comment */\nHAVING\n  table_a.id = 1;"
     }
   ],
-  "count": 24
+  "count": 23
 }

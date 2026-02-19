@@ -148,7 +148,7 @@
     {
       "sql": "SELECT CAST(x AS TIMESTAMP) FROM t",
       "write": {
-        "mysql": "SELECT TIMESTAMP(x) FROM t",
+        "mysql": "SELECT CAST(x AS DATETIME) FROM t",
         "tsql": "SELECT CAST(x AS DATETIME2) FROM t",
         "duckdb": "SELECT CAST(x AS TIMESTAMP) FROM t",
         "postgresql": "SELECT CAST(x AS TIMESTAMP) FROM t",
@@ -158,7 +158,7 @@
       "read": {
         "tsql": "SELECT CAST(x AS DATETIME2) FROM t"
       },
-      "description": "TIMESTAMP type mapping: MySQL→TIMESTAMP(), TSQL→DATETIME2"
+      "description": "TIMESTAMP type mapping: MySQL→DATETIME, TSQL→DATETIME2"
     },
     {
       "sql": "SELECT CAST(x AS BIGINT) FROM t",
@@ -653,9 +653,9 @@
         "postgresql": "SELECT COUNT(*) FROM t",
         "snowflake": "SELECT COUNT(*) FROM t",
         "spark": "SELECT COUNT(*) FROM t",
-        "tsql": "SELECT COUNT(*) FROM t"
+        "tsql": "SELECT COUNT_BIG(*) FROM t"
       },
-      "description": "COUNT(*) preserved across all dialects"
+      "description": "COUNT(*) preserved across all dialects (TSQL uses COUNT_BIG)"
     },
     {
       "sql": "SELECT GROUPING(x) FROM t",
@@ -674,7 +674,7 @@
       "write": {
         "duckdb": "SELECT SUBSTRING(s, 1, 5) FROM t",
         "mysql": "SELECT SUBSTRING(s, 1, 5) FROM t",
-        "postgresql": "SELECT SUBSTRING(s, 1, 5) FROM t",
+        "postgresql": "SELECT SUBSTRING(s FROM 1 FOR 5) FROM t",
         "snowflake": "SELECT SUBSTRING(s, 1, 5) FROM t",
         "spark": "SELECT SUBSTRING(s, 1, 5) FROM t",
         "tsql": "SELECT SUBSTRING(s, 1, 5) FROM t"

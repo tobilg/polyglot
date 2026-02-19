@@ -1171,6 +1171,7 @@ fn extract_subquery_to_cte(
                 materialized: None,
                 key_expressions: Vec::new(),
                 alias_first: false,
+                comments: Vec::new(),
             });
 
             // Return table reference to the CTE

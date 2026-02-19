@@ -975,7 +975,7 @@
     },
     {
       "sql": "CREATE FUNCTION add(INT, INT) RETURNS INT SET search_path TO 'public' AS 'select $1 + $2;' LANGUAGE SQL IMMUTABLE",
-      "expected": "CREATE FUNCTION add(INT, INT) RETURNS INT SET search_path = 'public' AS 'select $1 + $2;' LANGUAGE SQL IMMUTABLE"
+      "expected": null
     },
     {
       "sql": "CREATE FUNCTION x(INT) RETURNS INT SET foo FROM CURRENT",
@@ -1007,7 +1007,7 @@
     },
     {
       "sql": "CREATE FUNCTION x(INT) RETURNS INT SET search_path TO 'public'",
-      "expected": "CREATE FUNCTION x(INT) RETURNS INT SET search_path = 'public'"
+      "expected": null
     },
     {
       "sql": "CREATE TABLE test (x TIMESTAMP WITHOUT TIME ZONE[][])",

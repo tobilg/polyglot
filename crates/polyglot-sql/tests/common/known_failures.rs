@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Known failure tracking for SQLGlot compatibility tests
 
 use std::collections::{HashMap, HashSet};

@@ -237,6 +237,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 operand,
                 whens,
                 else_,
+                comments: Vec::new(),
             }))
         }
 
@@ -250,6 +251,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 low,
                 high,
                 not: between.not,
+                symmetric: between.symmetric,
             }))
         }
 
@@ -269,6 +271,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 not: in_expr.not,
                 global: in_expr.global,
                 unnest: in_expr.unnest,
+                is_field: in_expr.is_field,
             }))
         }
 

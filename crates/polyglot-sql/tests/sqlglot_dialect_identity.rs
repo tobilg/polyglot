@@ -10,7 +10,6 @@ use common::{
     TestResults,
 };
 use once_cell::sync::Lazy;
-use polyglot_sql::DialectType;
 use std::collections::HashMap;
 use std::fs;
 
@@ -31,6 +30,7 @@ const DIALECT_FILES: &[&str] = &[
     "dune",
     "exasol",
     "fabric",
+    "generic",
     "hive",
     "materialize",
     "mysql",
@@ -175,6 +175,7 @@ dialect_test!(test_sqlglot_dialect_duckdb, "duckdb");
 dialect_test!(test_sqlglot_dialect_dune, "dune");
 dialect_test!(test_sqlglot_dialect_exasol, "exasol");
 dialect_test!(test_sqlglot_dialect_fabric, "fabric");
+dialect_test!(test_sqlglot_dialect_generic, "generic");
 dialect_test!(test_sqlglot_dialect_hive, "hive");
 dialect_test!(test_sqlglot_dialect_materialize, "materialize");
 dialect_test!(test_sqlglot_dialect_mysql, "mysql");

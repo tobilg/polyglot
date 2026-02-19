@@ -1003,6 +1003,7 @@ impl Expr {
             not: false,
             global: false,
             unnest: None,
+            is_field: false,
         })))
     }
 
@@ -1013,6 +1014,7 @@ impl Expr {
             low: low.0,
             high: high.0,
             not: false,
+            symmetric: None,
         })))
     }
 
@@ -1101,6 +1103,7 @@ impl Expr {
             not: true,
             global: false,
             unnest: None,
+            is_field: false,
         })))
     }
 }
@@ -1188,6 +1191,8 @@ impl SelectBuilder {
             join_hint: None,
             match_condition: None,
             pivots: Vec::new(),
+            comments: Vec::new(),
+            nesting_group: 0,
         });
         self
     }
@@ -1205,6 +1210,8 @@ impl SelectBuilder {
             join_hint: None,
             match_condition: None,
             pivots: Vec::new(),
+            comments: Vec::new(),
+            nesting_group: 0,
         });
         self
     }
@@ -1229,13 +1236,14 @@ impl SelectBuilder {
             expressions: expressions.into_iter().map(|e| e.into_expr().0).collect(),
             all: None,
             totals: false,
+            comments: Vec::new(),
         });
         self
     }
 
     /// Set the HAVING clause to filter groups by the given condition.
     pub fn having(mut self, condition: Expr) -> Self {
-        self.select.having = Some(Having { this: condition.0 });
+        self.select.having = Some(Having { this: condition.0, comments: Vec::new() });
         self
     }
 
@@ -1251,6 +1259,7 @@ impl SelectBuilder {
     {
         self.select.order_by = Some(OrderBy {
             siblings: false,
+            comments: Vec::new(),
             expressions: expressions
                 .into_iter()
                 .map(|e| {
@@ -1323,6 +1332,7 @@ impl SelectBuilder {
         self.select.limit = Some(Limit {
             this: Expression::Literal(Literal::Number(count.to_string())),
             percent: false,
+            comments: Vec::new(),
         });
         self
     }
@@ -1364,6 +1374,8 @@ impl SelectBuilder {
             join_hint: None,
             match_condition: None,
             pivots: Vec::new(),
+            comments: Vec::new(),
+            nesting_group: 0,
         });
         self
     }
@@ -1381,6 +1393,8 @@ impl SelectBuilder {
             join_hint: None,
             match_condition: None,
             pivots: Vec::new(),
+            comments: Vec::new(),
+            nesting_group: 0,
         });
         self
     }
@@ -1817,6 +1831,7 @@ impl CaseBuilder {
             operand: self.operand,
             whens: self.whens,
             else_: self.else_,
+            comments: Vec::new(),
         }))
     }
 }
@@ -1935,6 +1950,7 @@ impl SetOpBuilder {
     {
         self.order_by = Some(OrderBy {
             siblings: false,
+            comments: Vec::new(),
             expressions: expressions
                 .into_iter()
                 .map(|e| {
@@ -2851,7 +2867,7 @@ mod tests {
             .to_sql();
         assert_eq!(
             sql,
-            "SELECT id FROM users WHERE status NOT IN ('deleted', 'banned')"
+            "SELECT id FROM users WHERE NOT status IN ('deleted', 'banned')"
         );
     }
 

@@ -287,10 +287,10 @@ impl DialectImpl for DuckDBDialect {
                 vec![f.this, f.expression],
             )))),
 
-            // ArrayPrepend -> LIST_PREPEND
+            // ArrayPrepend -> LIST_PREPEND(element, array) - note arg swap
             Expression::ArrayPrepend(f) => Ok(Expression::Function(Box::new(Function::new(
                 "LIST_PREPEND".to_string(),
-                vec![f.this, f.expression],
+                vec![f.expression, f.this],
             )))),
 
             // ArrayUniqueAgg -> LIST
@@ -742,7 +742,7 @@ impl DialectImpl for DuckDBDialect {
                             };
                             (new_cond, when_result)
                         }).collect();
-                        Ok(Expression::Case(Box::new(Case { operand: None, whens: new_whens, else_: new_else })))
+                        Ok(Expression::Case(Box::new(Case { operand: None, whens: new_whens, else_: new_else , comments: Vec::new() })))
                     } else {
                         Ok(Expression::WindowFunction(Box::new(WindowFunction { this: Expression::Case(Box::new(case)), over: wf.over, keep: wf.keep })))
                     }
@@ -1007,6 +1007,8 @@ impl DialectImpl for DuckDBDialect {
                                         join_hint: None,
                                         match_condition: None,
                                         pivots: Vec::new(),
+                                        comments: Vec::new(),
+                                        nesting_group: 0,
                                     });
                                 } else {
                                     // Keep non-UNNEST expressions in FROM (comma-separated)
@@ -1069,6 +1071,7 @@ impl DialectImpl for DuckDBDialect {
                     operand: None,
                     whens: vec![(f.condition, f.true_value)],
                     else_: f.false_value,
+                    comments: Vec::new(),
                 })))
             }
 
@@ -1089,6 +1092,7 @@ impl DialectImpl for DuckDBDialect {
                     operand: None,
                     whens: vec![(condition, f.true_value)],
                     else_: Some(f.false_value),
+                    comments: Vec::new(),
                 })))
             }
 
@@ -1215,15 +1219,13 @@ impl DuckDBDialect {
     fn transform_data_type(&self, dt: crate::expressions::DataType) -> Result<Expression> {
         use crate::expressions::DataType;
         let transformed = match dt {
-            // BINARY -> VarBinary (DuckDB generator maps VarBinary to BLOB)
-            DataType::Binary { .. } => DataType::VarBinary { length: None },
+            // BINARY -> VarBinary (DuckDB generator maps VarBinary to BLOB), preserving length
+            DataType::Binary { length } => DataType::VarBinary { length },
             // BLOB -> VarBinary (DuckDB generator maps VarBinary to BLOB)
             // This matches Python sqlglot's DuckDB parser mapping BLOB -> VARBINARY
             DataType::Blob => DataType::VarBinary { length: None },
-            // CHAR -> TEXT
-            DataType::Char { .. } => DataType::Text,
-            // VARCHAR -> TEXT
-            DataType::VarChar { .. } => DataType::Text,
+            // CHAR/VARCHAR: Keep as-is, DuckDB generator maps to TEXT with length
+            DataType::Char { .. } | DataType::VarChar { .. } => dt,
             // FLOAT -> REAL (use real_spelling flag so generator can decide)
             DataType::Float { precision, scale, .. } => DataType::Float {
                 precision, scale, real_spelling: true,
@@ -1402,11 +1404,8 @@ impl DuckDBDialect {
                 Function::new("LISTAGG".to_string(), f.args),
             ))),
 
-            // SUBSTR -> SUBSTRING (both work)
-            "SUBSTR" => Ok(Expression::Function(Box::new(Function::new(
-                "SUBSTRING".to_string(),
-                f.args,
-            )))),
+            // SUBSTR is native in DuckDB (keep as-is, don't convert to SUBSTRING)
+            "SUBSTR" => Ok(Expression::Function(Box::new(f))),
 
             // FLATTEN -> UNNEST in DuckDB
             "FLATTEN" => Ok(Expression::Function(Box::new(Function::new(
@@ -1886,18 +1885,18 @@ impl DuckDBDialect {
                 let cond = args.remove(0);
                 let true_val = args.remove(0);
                 let false_val = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(cond, true_val)], else_: Some(false_val) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(cond, true_val)], else_: Some(false_val) , comments: Vec::new() })))
             }
             "SKEW" => Ok(Expression::Function(Box::new(Function::new("SKEWNESS".to_string(), f.args)))),
             "VAR_SAMP" => Ok(Expression::Function(Box::new(Function::new("VARIANCE".to_string(), f.args)))),
             "VARIANCE_POP" => Ok(Expression::Function(Box::new(Function::new("VAR_POP".to_string(), f.args)))),
             "REGR_VALX" if f.args.len() == 2 => {
                 let mut args = f.args; let y = args.remove(0); let x = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: y, not: false, postfix_form: false })), Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })))], else_: Some(x) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: y, not: false, postfix_form: false })), Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })))], else_: Some(x) , comments: Vec::new() })))
             }
             "REGR_VALY" if f.args.len() == 2 => {
                 let mut args = f.args; let y = args.remove(0); let x = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: x, not: false, postfix_form: false })), Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })))], else_: Some(y) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: x, not: false, postfix_form: false })), Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })))], else_: Some(y) , comments: Vec::new() })))
             }
             "BOOLNOT" if f.args.len() == 1 => {
                 let arg = f.args.into_iter().next().unwrap();
@@ -1905,7 +1904,7 @@ impl DuckDBDialect {
             }
             "BITMAP_BIT_POSITION" if f.args.len() == 1 => {
                 let n = f.args.into_iter().next().unwrap();
-                let case_expr = Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Gt(Box::new(BinaryOp { left: n.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::Sub(Box::new(BinaryOp { left: n.clone(), right: Expression::number(1), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })))], else_: Some(Expression::Abs(Box::new(UnaryFunc { this: n, original_name: None }))) }));
+                let case_expr = Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Gt(Box::new(BinaryOp { left: n.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::Sub(Box::new(BinaryOp { left: n.clone(), right: Expression::number(1), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })))], else_: Some(Expression::Abs(Box::new(UnaryFunc { this: n, original_name: None }))) , comments: Vec::new() }));
                 Ok(Expression::Mod(Box::new(BinaryOp { left: Expression::Paren(Box::new(Paren { this: case_expr, trailing_comments: Vec::new() })), right: Expression::number(32768), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })))
             }
             // GREATEST/LEAST - pass through (null-wrapping is handled by source dialect transforms)
@@ -2032,7 +2031,7 @@ impl DuckDBDialect {
             }
             "NVL2" if f.args.len() == 3 => {
                 let mut args = f.args; let a = args.remove(0); let b = args.remove(0); let c = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Not(Box::new(crate::expressions::UnaryOp { this: Expression::IsNull(Box::new(crate::expressions::IsNull { this: a, not: false, postfix_form: false })) })), b)], else_: Some(c) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Not(Box::new(crate::expressions::UnaryOp { this: Expression::IsNull(Box::new(crate::expressions::IsNull { this: a, not: false, postfix_form: false })) })), b)], else_: Some(c) , comments: Vec::new() })))
             }
             "EQUAL_NULL" if f.args.len() == 2 => {
                 let mut args = f.args; let a = args.remove(0); let b = args.remove(0);
@@ -2114,19 +2113,19 @@ impl DuckDBDialect {
             }
             "DIV0" if f.args.len() == 2 => {
                 let mut args = f.args; let a = args.remove(0); let b = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::And(Box::new(BinaryOp { left: Expression::Eq(Box::new(BinaryOp { left: b.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), right: Expression::Not(Box::new(crate::expressions::UnaryOp { this: Expression::IsNull(Box::new(crate::expressions::IsNull { this: a.clone(), not: false, postfix_form: false })) })), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::number(0))], else_: Some(Expression::Div(Box::new(BinaryOp { left: a, right: b, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() }))) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::And(Box::new(BinaryOp { left: Expression::Eq(Box::new(BinaryOp { left: b.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), right: Expression::Not(Box::new(crate::expressions::UnaryOp { this: Expression::IsNull(Box::new(crate::expressions::IsNull { this: a.clone(), not: false, postfix_form: false })) })), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::number(0))], else_: Some(Expression::Div(Box::new(BinaryOp { left: a, right: b, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() }))) , comments: Vec::new() })))
             }
             "DIV0NULL" if f.args.len() == 2 => {
                 let mut args = f.args; let a = args.remove(0); let b = args.remove(0);
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Or(Box::new(BinaryOp { left: Expression::Eq(Box::new(BinaryOp { left: b.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), right: Expression::IsNull(Box::new(crate::expressions::IsNull { this: b.clone(), not: false, postfix_form: false })), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::number(0))], else_: Some(Expression::Div(Box::new(BinaryOp { left: a, right: b, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() }))) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Or(Box::new(BinaryOp { left: Expression::Eq(Box::new(BinaryOp { left: b.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), right: Expression::IsNull(Box::new(crate::expressions::IsNull { this: b.clone(), not: false, postfix_form: false })), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::number(0))], else_: Some(Expression::Div(Box::new(BinaryOp { left: a, right: b, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() }))) , comments: Vec::new() })))
             }
             "ZEROIFNULL" if f.args.len() == 1 => {
                 let x = f.args.into_iter().next().unwrap();
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: x.clone(), not: false, postfix_form: false })), Expression::number(0))], else_: Some(x) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::IsNull(Box::new(crate::expressions::IsNull { this: x.clone(), not: false, postfix_form: false })), Expression::number(0))], else_: Some(x) , comments: Vec::new() })))
             }
             "NULLIFZERO" if f.args.len() == 1 => {
                 let x = f.args.into_iter().next().unwrap();
-                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Eq(Box::new(BinaryOp { left: x.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::Null(crate::expressions::Null))], else_: Some(x) })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens: vec![(Expression::Eq(Box::new(BinaryOp { left: x.clone(), right: Expression::number(0), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::Null(crate::expressions::Null))], else_: Some(x) , comments: Vec::new() })))
             }
             "TO_DOUBLE" if f.args.len() == 1 => { let arg = f.args.into_iter().next().unwrap(); Ok(Expression::Cast(Box::new(Cast { this: arg, to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None }))) }
             "DATE" if f.args.len() == 1 => { let arg = f.args.into_iter().next().unwrap(); Ok(Expression::Cast(Box::new(Cast { this: arg, to: DataType::Date, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None }))) }
@@ -2197,6 +2196,7 @@ impl DuckDBDialect {
                         })),
                     )],
                     else_: Some(Expression::Null(crate::expressions::Null)),
+                    comments: Vec::new(),
                 })))
             }
 
@@ -2320,7 +2320,8 @@ impl DuckDBDialect {
                 })))
             }
 
-            // DECODE(expr, search1, result1, ..., default) -> CASE WHEN expr = search1 OR (expr IS NULL AND search1 IS NULL) THEN result1 ... ELSE default END
+            // DECODE(expr, search1, result1, ..., default) -> CASE WHEN expr = search1 THEN result1 ... ELSE default END
+            // For NULL search values, use IS NULL instead of = NULL
             "DECODE" if f.args.len() >= 3 => {
                 let mut args = f.args;
                 let expr = args.remove(0);
@@ -2329,31 +2330,28 @@ impl DuckDBDialect {
                 while args.len() >= 2 {
                     let search = args.remove(0);
                     let result = args.remove(0);
-                    // Wrap complex expressions in parens for = comparison
-                    let needs_paren_expr = matches!(&expr, Expression::Eq(_) | Expression::Neq(_) | Expression::Gt(_) | Expression::Lt(_) | Expression::Gte(_) | Expression::Lte(_) | Expression::And(_) | Expression::Or(_));
-                    let needs_paren_search = matches!(&search, Expression::Eq(_) | Expression::Neq(_) | Expression::Gt(_) | Expression::Lt(_) | Expression::Gte(_) | Expression::Lte(_) | Expression::And(_) | Expression::Or(_));
-                    let eq_left = if needs_paren_expr { Expression::Paren(Box::new(Paren { this: expr.clone(), trailing_comments: Vec::new() })) } else { expr.clone() };
-                    let eq_right = if needs_paren_search { Expression::Paren(Box::new(Paren { this: search.clone(), trailing_comments: Vec::new() })) } else { search.clone() };
-                    let is_null_expr = if needs_paren_expr { Expression::Paren(Box::new(Paren { this: expr.clone(), trailing_comments: Vec::new() })) } else { expr.clone() };
-                    let is_null_search = if needs_paren_search { Expression::Paren(Box::new(Paren { this: search.clone(), trailing_comments: Vec::new() })) } else { search.clone() };
-                    let condition = Expression::Or(Box::new(BinaryOp {
-                        left: Expression::Eq(Box::new(BinaryOp { left: eq_left, right: eq_right, left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })),
-                        right: Expression::Paren(Box::new(Paren {
-                            this: Expression::And(Box::new(BinaryOp {
-                                left: Expression::IsNull(Box::new(crate::expressions::IsNull { this: is_null_expr, not: false, postfix_form: false })),
-                                right: Expression::IsNull(Box::new(crate::expressions::IsNull { this: is_null_search, not: false, postfix_form: false })),
-                                left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
-                            })),
+                    // For NULL search values, use IS NULL; otherwise use =
+                    let condition = if matches!(&search, Expression::Null(_)) {
+                        Expression::IsNull(Box::new(crate::expressions::IsNull {
+                            this: expr.clone(),
+                            not: false,
+                            postfix_form: false,
+                        }))
+                    } else {
+                        Expression::Eq(Box::new(BinaryOp {
+                            left: expr.clone(),
+                            right: search,
+                            left_comments: Vec::new(),
+                            operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
-                        })),
-                        left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new(),
-                    }));
+                        }))
+                    };
                     whens.push((condition, result));
                 }
                 if !args.is_empty() {
                     else_expr = Some(args.remove(0));
                 }
-                Ok(Expression::Case(Box::new(Case { operand: None, whens, else_: else_expr })))
+                Ok(Expression::Case(Box::new(Case { operand: None, whens, else_: else_expr, comments: Vec::new() })))
             }
 
             // TRY_TO_BOOLEAN -> CASE WHEN UPPER(CAST(x AS TEXT)) = 'ON' THEN TRUE WHEN ... = 'OFF' THEN FALSE ELSE TRY_CAST(x AS BOOLEAN) END
@@ -2368,6 +2366,7 @@ impl DuckDBDialect {
                         (Expression::Eq(Box::new(BinaryOp { left: upper_text, right: Expression::Literal(Literal::String("OFF".to_string())), left_comments: Vec::new(), operator_comments: Vec::new(), trailing_comments: Vec::new() })), Expression::Boolean(crate::expressions::BooleanLiteral { value: false })),
                     ],
                     else_: Some(Expression::TryCast(Box::new(Cast { this: arg, to: DataType::Boolean, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None }))),
+                    comments: Vec::new(),
                 })))
             }
 
@@ -2388,6 +2387,7 @@ impl DuckDBDialect {
                         })), Expression::Function(Box::new(Function::new("ERROR".to_string(), vec![Expression::Literal(Literal::String("TO_BOOLEAN: Non-numeric values NaN and INF are not supported".to_string()))])))),
                     ],
                     else_: Some(Expression::Cast(Box::new(Cast { this: arg, to: DataType::Boolean, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None }))),
+                    comments: Vec::new(),
                 })))
             }
 
@@ -2822,6 +2822,7 @@ impl DuckDBDialect {
                         Expression::Function(Box::new(Function::new("LAST_DAY".to_string(), vec![date_plus_interval.clone()]))),
                     )],
                     else_: Some(date_plus_interval),
+                    comments: Vec::new(),
                 }));
 
                 // Wrap in CAST if date had explicit type
@@ -2995,6 +2996,7 @@ impl DuckDBDialect {
                             (Expression::Function(Box::new(Function::new("STARTS_WITH".to_string(), vec![Expression::Upper(Box::new(UnaryFunc::new(day_name))), Expression::Literal(Literal::String("SU".to_string()))]))), Expression::number(7)),
                         ],
                         else_: None,
+                        comments: Vec::new(),
                     }))
                 };
 
@@ -3075,6 +3077,7 @@ impl DuckDBDialect {
                             (Expression::Function(Box::new(Function::new("STARTS_WITH".to_string(), vec![Expression::Upper(Box::new(UnaryFunc::new(day_name))), Expression::Literal(Literal::String("SU".to_string()))]))), Expression::number(7)),
                         ],
                         else_: None,
+                        comments: Vec::new(),
                     }))
                 };
 
@@ -3235,6 +3238,7 @@ impl DuckDBDialect {
                             operand: None,
                             whens: vec![(cond, signed_val)],
                             else_: Some(modded),
+                            comments: Vec::new(),
                         })),
                         trailing_comments: Vec::new(),
                     })))
@@ -3795,6 +3799,7 @@ impl DuckDBDialect {
                         Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })),
                     )],
                     else_: Some(x),
+                    comments: Vec::new(),
                 })))
             }
 
@@ -3810,6 +3815,7 @@ impl DuckDBDialect {
                         Expression::Cast(Box::new(Cast { this: Expression::Null(crate::expressions::Null), to: DataType::Double { precision: None, scale: None }, trailing_comments: Vec::new(), double_colon_syntax: false, format: None, default: None })),
                     )],
                     else_: Some(y),
+                    comments: Vec::new(),
                 })))
             }
 

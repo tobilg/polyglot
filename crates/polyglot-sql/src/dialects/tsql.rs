@@ -292,6 +292,8 @@ impl DialectImpl for TSQLDialect {
                     join_hint: None,
                     match_condition: None,
                     pivots: join.pivots,
+                    comments: join.comments,
+                    nesting_group: 0,
                 })))
             }
 
@@ -308,6 +310,8 @@ impl DialectImpl for TSQLDialect {
                     join_hint: None,
                     match_condition: None,
                     pivots: join.pivots,
+                    comments: join.comments,
+                    nesting_group: 0,
                 })))
             }
 

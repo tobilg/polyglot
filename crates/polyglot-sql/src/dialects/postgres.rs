@@ -572,6 +572,7 @@ impl DialectImpl for PostgresDialect {
                     operand: None,
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,
@@ -765,6 +766,8 @@ impl DialectImpl for PostgresDialect {
                     join_hint: None,
                     match_condition: None,
                     pivots: join.pivots,
+                    comments: join.comments,
+                    nesting_group: 0,
                 })))
             }
 
@@ -781,6 +784,8 @@ impl DialectImpl for PostgresDialect {
                     join_hint: None,
                     match_condition: None,
                     pivots: join.pivots,
+                    comments: join.comments,
+                    nesting_group: 0,
                 })))
             }
 
@@ -932,15 +937,11 @@ impl PostgresDialect {
                 name: "DOUBLE PRECISION".to_string(),
             },
 
-            // BINARY -> BYTEA
-            DataType::Binary { .. } => DataType::Custom {
-                name: "BYTEA".to_string(),
-            },
+            // BINARY -> BYTEA (handled by generator which preserves length)
+            DataType::Binary { .. } => dt,
 
-            // VARBINARY -> BYTEA
-            DataType::VarBinary { .. } => DataType::Custom {
-                name: "BYTEA".to_string(),
-            },
+            // VARBINARY -> BYTEA (handled by generator which preserves length)
+            DataType::VarBinary { .. } => dt,
 
             // BLOB -> BYTEA
             DataType::Blob => DataType::Custom {
@@ -1404,6 +1405,7 @@ impl PostgresDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Data structures for SQLGlot test fixtures
 
 use serde::Deserialize;
@@ -110,4 +111,67 @@ pub struct CustomDialectFixtures {
 /// All custom dialect fixtures discovered from the custom_fixtures directory
 pub struct AllCustomFixtures {
     pub dialects: Vec<CustomDialectFixtures>,
+}
+
+// =============================================================================
+// Transpile test fixture types (from test_transpile.py)
+// =============================================================================
+
+/// Normalization test: parse generic SQL, expect normalized output
+#[derive(Debug, Deserialize)]
+pub struct NormalizationTest {
+    pub sql: String,
+    pub expected: String,
+    pub line: usize,
+}
+
+/// Transpile-with-dialect test from test_transpile.py
+#[derive(Debug, Deserialize)]
+pub struct TranspileWriteTest {
+    pub sql: String,
+    pub expected: String,
+    #[serde(default)]
+    pub write: Option<String>,
+    #[serde(default)]
+    pub read: Option<String>,
+    pub line: usize,
+}
+
+/// Transpile fixtures from test_transpile.py
+#[derive(Debug, Deserialize)]
+pub struct TranspileFixtures {
+    pub normalization: Vec<NormalizationTest>,
+    pub transpilation: Vec<TranspileWriteTest>,
+}
+
+// =============================================================================
+// Parser test fixture types (from test_parser.py)
+// =============================================================================
+
+/// Parser round-trip test
+#[derive(Debug, Deserialize)]
+pub struct ParserRoundtripTest {
+    pub sql: String,
+    pub expected: String,
+    #[serde(default)]
+    pub read: Option<String>,
+    #[serde(default)]
+    pub write: Option<String>,
+    pub line: usize,
+}
+
+/// Parser error test (SQL that should fail to parse)
+#[derive(Debug, Deserialize)]
+pub struct ParserErrorTest {
+    pub sql: String,
+    #[serde(default)]
+    pub read: Option<String>,
+    pub line: usize,
+}
+
+/// Parser fixtures from test_parser.py
+#[derive(Debug, Deserialize)]
+pub struct ParserFixtures {
+    pub roundtrips: Vec<ParserRoundtripTest>,
+    pub errors: Vec<ParserErrorTest>,
 }

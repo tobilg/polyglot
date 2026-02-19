@@ -71,6 +71,7 @@ impl DialectImpl for RedshiftDialect {
                     operand: None,
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,
@@ -95,6 +96,31 @@ impl DialectImpl for RedshiftDialect {
             Expression::Rand(r) => {
                 let _ = r.seed;
                 Ok(Expression::Random(crate::expressions::Random))
+            }
+
+            // DateAdd -> DATEADD(unit, count, date) in Redshift
+            Expression::DateAdd(f) => {
+                let unit_str = match f.unit {
+                    crate::expressions::IntervalUnit::Year => "YEAR",
+                    crate::expressions::IntervalUnit::Quarter => "QUARTER",
+                    crate::expressions::IntervalUnit::Month => "MONTH",
+                    crate::expressions::IntervalUnit::Week => "WEEK",
+                    crate::expressions::IntervalUnit::Day => "DAY",
+                    crate::expressions::IntervalUnit::Hour => "HOUR",
+                    crate::expressions::IntervalUnit::Minute => "MINUTE",
+                    crate::expressions::IntervalUnit::Second => "SECOND",
+                    crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
+                    crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+                };
+                let unit = Expression::Identifier(crate::expressions::Identifier {
+                    name: unit_str.to_string(),
+                    quoted: false,
+                    trailing_comments: Vec::new(),
+                });
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATEADD".to_string(),
+                    vec![unit, f.interval, f.this],
+                ))))
             }
 
             // Generic function transformations
@@ -127,6 +153,7 @@ impl DialectImpl for RedshiftDialect {
                         select.limit = Some(Limit {
                             this: top.this,
                             percent: false,
+                            comments: Vec::new(),
                         });
                     } else {
                         // Restore TOP if it has PERCENT or WITH TIES (not supported as LIMIT)
@@ -462,6 +489,7 @@ impl RedshiftDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

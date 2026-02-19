@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Test runner utilities for SQLGlot compatibility tests
 
 use polyglot_sql::dialects::{Dialect, DialectType};
@@ -220,6 +221,51 @@ pub fn parse_dialect(name: &str) -> Option<DialectType> {
         "solr" => Some(DialectType::Solr),
         "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Some(DialectType::DataFusion),
         _ => None,
+    }
+}
+
+/// Run a normalization test: parse generic SQL, generate generic, compare to expected
+pub fn normalization_test(sql: &str, expected: &str) -> Result<(), String> {
+    let ast = Parser::parse_sql(sql).map_err(|e| format!("Parse error: {}", e))?;
+
+    if ast.is_empty() {
+        return Err("No statements parsed".to_string());
+    }
+
+    let output = Generator::sql(&ast[0]).map_err(|e| format!("Generate error: {}", e))?;
+
+    if output != expected {
+        return Err(format!(
+            "Mismatch:\n  input:    {}\n  expected: {}\n  output:   {}",
+            sql, expected, output
+        ));
+    }
+
+    Ok(())
+}
+
+/// Run a parser error test: verify that SQL fails to parse
+pub fn parser_error_test(sql: &str, dialect: Option<DialectType>) -> Result<(), String> {
+    let result = if let Some(d) = dialect {
+        let dial = Dialect::get(d);
+        dial.parse(sql)
+    } else {
+        Parser::parse_sql(sql)
+    };
+
+    match result {
+        Err(_) => Ok(()),
+        Ok(ast) => {
+            let generated = if !ast.is_empty() {
+                Generator::sql(&ast[0]).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            Err(format!(
+                "Expected parse error for SQL: {}\n  but got: {}",
+                sql, generated
+            ))
+        }
     }
 }
 

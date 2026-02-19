@@ -8,10 +8,10 @@
 
 mod common;
 
-use common::test_data::{
-    AllCustomFixtures, CustomDialectFixtureFile, CustomDialectFixtures,
+use common::{
+    dialect_identity_test, parse_dialect, transpile_test, AllCustomFixtures,
+    CustomDialectFixtureFile, CustomDialectFixtures,
 };
-use common::test_runner::{dialect_identity_test, parse_dialect, transpile_test};
 use once_cell::sync::Lazy;
 use std::fs;
 use std::path::Path;

@@ -865,6 +865,7 @@ impl TokenType {
                 | TokenType::Overwrite
                 | TokenType::StraightJoin
                 | TokenType::Start
+                | TokenType::Keep
         )
     }
 
@@ -1351,11 +1352,15 @@ impl<'a> TokenizerState<'a> {
             self.scan_token()?;
         }
 
-        // Handle edge case: comments with no tokens (e.g., SQL that's just a comment)
-        // In this case, self.comments contains leading comments that couldn't be attached
-        // to any token. We can't do much with them here.
-        // Note: After the first token is created, comments go directly to trailing_comments
-        // via scan_block_comment/scan_line_comment, so self.comments should typically be empty.
+        // Handle leftover leading comments at end of input.
+        // These are comments on a new line after the last token that couldn't be attached
+        // as leading comments to a subsequent token (because there is none).
+        // Attach them as trailing comments on the last token so they're preserved.
+        if !self.comments.is_empty() {
+            if let Some(last) = self.tokens.last_mut() {
+                last.trailing_comments.extend(self.comments.drain(..));
+            }
+        }
 
         Ok(std::mem::take(&mut self.tokens))
     }
@@ -1393,14 +1398,28 @@ impl<'a> TokenizerState<'a> {
     }
 
     fn skip_whitespace(&mut self) {
+        // Track whether we've seen a newline since the last token.
+        // Comments on a new line (after a newline) are leading comments on the next token,
+        // while comments on the same line are trailing comments on the previous token.
+        // This matches Python sqlglot's behavior.
+        let mut saw_newline = false;
         while !self.is_at_end() {
             let c = self.peek();
             match c {
-                ' ' | '\t' | '\r' | '\n' => {
+                ' ' | '\t' | '\r' => {
+                    self.advance();
+                }
+                '\n' => {
+                    saw_newline = true;
+                    self.advance();
+                }
+                '\u{3000}' => {
                     self.advance();
                 }
                 '-' if self.peek_next() == '-' => {
-                    self.scan_line_comment();
+                    self.scan_line_comment(saw_newline);
+                    // After a line comment, we're always on a new line
+                    saw_newline = true;
                 }
                 '/' if self.peek_next() == '*' => {
                     // Check if this is a hint comment /*+ ... */
@@ -1408,34 +1427,56 @@ impl<'a> TokenizerState<'a> {
                         // This is a hint comment, handle it as a token instead of skipping
                         break;
                     }
-                    if self.scan_block_comment().is_err() {
+                    if self.scan_block_comment(saw_newline).is_err() {
                         return;
                     }
+                    // Don't reset saw_newline - it carries forward
+                }
+                '/' if self.peek_next() == '/' && self.config.comments.contains_key("//") => {
+                    // Dialect-specific // line comment (e.g., Snowflake)
+                    // But NOT inside URIs like file:// or paths with consecutive slashes
+                    // Check that previous non-whitespace char is not ':' or '/'
+                    let prev_non_ws = if self.current > 0 {
+                        let mut i = self.current - 1;
+                        while i > 0 && (self.chars[i] == ' ' || self.chars[i] == '\t') {
+                            i -= 1;
+                        }
+                        self.chars[i]
+                    } else {
+                        '\0'
+                    };
+                    if prev_non_ws == ':' || prev_non_ws == '/' {
+                        // This is likely a URI (file://, http://) or path, not a comment
+                        break;
+                    }
+                    self.scan_line_comment(saw_newline);
+                    // After a line comment, we're always on a new line
+                    saw_newline = true;
                 }
                 _ => break,
             }
         }
     }
 
-    fn scan_line_comment(&mut self) {
+    fn scan_line_comment(&mut self, after_newline: bool) {
         self.advance(); // -
         self.advance(); // -
         let start = self.current;
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();
         }
-        let comment: String = self.chars[start..self.current].iter().collect();
-        let comment_text = comment.trim().to_string();
+        let comment_text: String = self.chars[start..self.current].iter().collect();
 
-        // Attach to previous token as trailing comment, or buffer for next token
-        if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
-        } else {
+        // If the comment starts on a new line (after_newline), it's a leading comment
+        // on the next token. Otherwise, it's a trailing comment on the previous token.
+        if after_newline || self.tokens.is_empty() {
             self.comments.push(comment_text);
+        } else if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
         }
     }
 
-    fn scan_block_comment(&mut self) -> Result<()> {
+    fn scan_block_comment(&mut self, after_newline: bool) -> Result<()> {
         self.advance(); // /
         self.advance(); // *
         let content_start = self.current;
@@ -1473,11 +1514,12 @@ impl<'a> TokenizerState<'a> {
         // For round-trip fidelity, preserve the exact comment content including nested comments
         let comment_text = format!("/*{}*/", content);
 
-        // Attach to previous token as trailing comment, or buffer for next token
-        if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
-        } else {
+        // If the comment starts on a new line (after_newline), it's a leading comment
+        // on the next token. Otherwise, it's a trailing comment on the previous token.
+        if after_newline || self.tokens.is_empty() {
             self.comments.push(comment_text);
+        } else if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
         }
 
         Ok(())
@@ -2117,25 +2159,32 @@ impl<'a> TokenizerState<'a> {
 
     fn scan_quoted_identifier(&mut self, end_quote: char) -> Result<()> {
         self.advance(); // Opening quote
-        let start = self.current;
+        let mut value = String::new();
 
-        while !self.is_at_end() && self.peek() != end_quote {
-            if self.peek() == end_quote && self.peek_next() == end_quote {
-                // Escaped quote
+        loop {
+            if self.is_at_end() {
+                return Err(Error::tokenize(
+                    "Unterminated identifier",
+                    self.line,
+                    self.column,
+                ));
+            }
+            if self.peek() == end_quote {
+                if self.peek_next() == end_quote {
+                    // Escaped quote (e.g., "" inside "x""y") -> store single quote
+                    value.push(end_quote);
+                    self.advance(); // skip first quote
+                    self.advance(); // skip second quote
+                } else {
+                    // End of identifier
+                    break;
+                }
+            } else {
+                value.push(self.peek());
                 self.advance();
             }
-            self.advance();
         }
 
-        if self.is_at_end() {
-            return Err(Error::tokenize(
-                "Unterminated identifier",
-                self.line,
-                self.column,
-            ));
-        }
-
-        let value: String = self.chars[start..self.current].iter().collect();
         self.advance(); // Closing quote
         self.add_token_with_text(TokenType::QuotedIdentifier, value);
         Ok(())
@@ -2761,7 +2810,20 @@ mod tests {
         // Comments are attached to the PREVIOUS token as trailing_comments
         // This is better for round-trip fidelity (e.g., SELECT c /* comment */ FROM)
         assert_eq!(tokens[0].trailing_comments.len(), 1);
-        assert_eq!(tokens[0].trailing_comments[0], "comment");
+        assert_eq!(tokens[0].trailing_comments[0], " comment");
+    }
+
+    #[test]
+    fn test_comment_in_and_chain() {
+        use crate::parser::Parser;
+        use crate::generator::Generator;
+
+        // Line comments between AND clauses should appear after the AND operator
+        let sql = "SELECT a FROM b WHERE foo\n-- c1\nAND bar\n-- c2\nAND bla";
+        let ast = Parser::parse_sql(sql).unwrap();
+        let mut gen = Generator::default();
+        let output = gen.generate(&ast[0]).unwrap();
+        assert_eq!(output, "SELECT a FROM b WHERE foo AND /* c1 */ bar AND /* c2 */ bla");
     }
 
     #[test]

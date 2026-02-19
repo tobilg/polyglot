@@ -84,15 +84,14 @@ impl DialectImpl for SQLiteDialect {
                 })))
             }
 
-            // CountIf -> SUM(CASE WHEN condition THEN 1 ELSE 0 END)
+            // CountIf -> SUM(IIF(condition, 1, 0))
             Expression::CountIf(f) => {
-                let case_expr = Expression::Case(Box::new(Case {
-                    operand: None,
-                    whens: vec![(f.this.clone(), Expression::number(1))],
-                    else_: Some(Expression::number(0)),
-                }));
+                let iif_expr = Expression::Function(Box::new(Function::new(
+                    "IIF".to_string(),
+                    vec![f.this.clone(), Expression::number(1), Expression::number(0)],
+                )));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
-                    this: case_expr,
+                    this: iif_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
@@ -299,9 +298,9 @@ impl SQLiteDialect {
                 f.args.into_iter().next().unwrap(),
             )))),
 
-            // SUBSTR is native to SQLite
+            // SUBSTRING is native to SQLite (keep as-is)
             "SUBSTRING" => Ok(Expression::Function(Box::new(Function::new(
-                "SUBSTR".to_string(),
+                "SUBSTRING".to_string(),
                 f.args,
             )))),
 
@@ -392,6 +391,20 @@ impl SQLiteDialect {
                 ))))
             }
 
+            // CONCAT(a, b, ...) -> a || b || ... for SQLite
+            "CONCAT" if f.args.len() >= 2 => {
+                let mut args = f.args;
+                let mut result = args.remove(0);
+                for arg in args {
+                    result = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                        this: Box::new(result),
+                        expression: Box::new(arg),
+                        safe: None,
+                    }));
+                }
+                Ok(result)
+            }
+
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
         }
@@ -410,6 +423,7 @@ impl SQLiteDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

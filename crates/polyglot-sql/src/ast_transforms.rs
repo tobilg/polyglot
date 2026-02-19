@@ -107,6 +107,7 @@ pub fn set_limit(expr: Expression, limit: usize) -> Expression {
         sel.limit = Some(Limit {
             this: Expression::number(limit as i64),
             percent: false,
+            comments: Vec::new(),
         });
         Expression::Select(sel)
     } else {

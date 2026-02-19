@@ -180,7 +180,7 @@ impl DialectImpl for ClickHouseDialect {
                 if in_expr.global {
                     return Ok(Expression::In(in_expr));
                 }
-                let In { this, expressions, query, unnest, global, .. } = *in_expr;
+                let In { this, expressions, query, unnest, global, is_field, .. } = *in_expr;
                 let expressions = unwrap_in_array(expressions, &query, &unnest);
                 let base = Expression::In(Box::new(In {
                     this: wrap_predicate_left(this),
@@ -189,6 +189,7 @@ impl DialectImpl for ClickHouseDialect {
                     not: false,
                     global,
                     unnest,
+                    is_field,
                 }));
                 Ok(Expression::Not(Box::new(UnaryOp {
                     this: wrap_not_target(base),
@@ -226,6 +227,7 @@ impl DialectImpl for ClickHouseDialect {
                     operand: None,
                     whens: vec![(f.condition, f.true_value)],
                     else_: f.false_value,
+                    comments: Vec::new(),
                 })))
             }
 

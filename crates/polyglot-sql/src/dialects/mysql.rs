@@ -582,6 +582,7 @@ impl MySQLDialect {
 
     /// Transform CAST expression
     /// MySQL uses TIMESTAMP() function instead of CAST(x AS TIMESTAMP)
+    /// For Generic->MySQL, TIMESTAMP (no tz) is pre-converted to DATETIME in cross_dialect_normalize
     fn transform_cast(&self, cast: Cast) -> Result<Expression> {
         // CAST AS TIMESTAMP/TIMESTAMPTZ/TIMESTAMPLTZ -> TIMESTAMP() function
         match &cast.to {
@@ -608,8 +609,8 @@ impl MySQLDialect {
     /// Based on Python sqlglot's CHAR_CAST_MAPPING and SIGNED_CAST_MAPPING
     fn transform_cast_type(&self, cast: Cast) -> Cast {
         let new_type = match &cast.to {
-            // CHAR_CAST_MAPPING: These types become CHAR in MySQL CAST
-            DataType::VarChar { .. } => DataType::Char { length: None },
+            // CHAR_CAST_MAPPING: These types become CHAR in MySQL CAST, preserving length
+            DataType::VarChar { length, .. } => DataType::Char { length: *length },
             DataType::Text => DataType::Char { length: None },
 
             // SIGNED_CAST_MAPPING: These integer types become SIGNED in MySQL CAST
@@ -641,6 +642,7 @@ impl MySQLDialect {
 
             // Types that are valid in MySQL CAST - pass through
             DataType::Binary { .. } => cast.to.clone(),
+            DataType::VarBinary { .. } => cast.to.clone(),
             DataType::Date => cast.to.clone(),
             DataType::Time { .. } => cast.to.clone(),
             DataType::Decimal { .. } => cast.to.clone(),

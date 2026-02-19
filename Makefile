@@ -1,6 +1,7 @@
 .PHONY: help extract-fixtures test-rust test-rust-all test-rust-identity test-rust-dialect \
         test-rust-transpile test-rust-pretty test-rust-roundtrip test-rust-matrix \
         test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-verify \
+        test-rust-transpile-generic test-rust-parser \
         test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
@@ -23,11 +24,13 @@ help:
 	@echo "  make test-rust-lib       - Run lib unit tests (704)"
 	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation + custom"
 	@echo ""
-	@echo "  SQLGlot Fixture Tests (8,455 tests):"
-	@echo "  make test-rust-identity  - Generic identity tests (955)"
-	@echo "  make test-rust-dialect   - Dialect identity tests (3,461)"
-	@echo "  make test-rust-transpile - Transpilation tests (4,015)"
-	@echo "  make test-rust-pretty    - Pretty-printing tests (24)"
+	@echo "  SQLGlot Fixture Tests:"
+	@echo "  make test-rust-identity         - Generic identity tests (955)"
+	@echo "  make test-rust-dialect          - Dialect identity tests"
+	@echo "  make test-rust-transpile        - Transpilation tests"
+	@echo "  make test-rust-pretty           - Pretty-printing tests (24)"
+	@echo "  make test-rust-transpile-generic - Normalization/transpile tests (test_transpile.py)"
+	@echo "  make test-rust-parser           - Parser round-trip/error tests (test_parser.py)"
 	@echo ""
 	@echo "  Additional Tests:"
 	@echo "  make test-rust-roundtrip - Organized roundtrip unit tests"
@@ -128,7 +131,8 @@ test-rust-lib:
 # Run all sqlglot fixture tests
 test-rust-all: setup-fixtures
 	cargo test -p polyglot-sql --test sqlglot_identity --test sqlglot_dialect_identity \
-		--test sqlglot_transpilation --test sqlglot_pretty -- --nocapture
+		--test sqlglot_transpilation --test sqlglot_pretty \
+		--test sqlglot_transpile --test sqlglot_parser -- --nocapture
 
 # Run lib + identity + dialect identity + transpilation + custom dialects (full verification)
 test-rust-verify: setup-fixtures
@@ -144,8 +148,25 @@ test-rust-verify: setup-fixtures
 	@echo "=== Transpilation tests ==="
 	@cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
 	@echo ""
+	@echo "=== Transpile generic tests (test_transpile.py) ==="
+	@cargo test --test sqlglot_transpile test_sqlglot_transpile_all -p polyglot-sql -- --nocapture
+	@echo ""
+	@echo "=== Parser tests (test_parser.py) ==="
+	@cargo test --test sqlglot_parser test_sqlglot_parser_all -p polyglot-sql -- --nocapture
+	@echo ""
+	@echo "=== Pretty-print tests ==="
+	@cargo test --test sqlglot_pretty -p polyglot-sql -- --nocapture
+	@echo ""
 	@echo "=== Custom dialect tests ==="
 	@cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
+
+# Run normalization/transpile tests from test_transpile.py
+test-rust-transpile-generic: setup-fixtures
+	cargo test -p polyglot-sql --test sqlglot_transpile -- --nocapture
+
+# Run parser round-trip/error tests from test_parser.py
+test-rust-parser: setup-fixtures
+	cargo test -p polyglot-sql --test sqlglot_parser -- --nocapture
 
 # -----------------------------------------------------------------------------
 # Additional Rust Tests

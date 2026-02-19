@@ -1131,6 +1131,8 @@ mod tests {
             join_hint: None,
             match_condition: None,
             pivots: vec![],
+            comments: vec![],
+            nesting_group: 0,
         }));
         let join_right = Expression::Join(Box::new(crate::expressions::Join {
             this: Expression::Table(crate::expressions::TableRef::new("t")),
@@ -1143,6 +1145,8 @@ mod tests {
             join_hint: None,
             match_condition: None,
             pivots: vec![],
+            comments: vec![],
+            nesting_group: 0,
         }));
         assert!(!is_same_type(&join_left, &join_right));
     }

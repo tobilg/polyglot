@@ -1350,11 +1350,11 @@ mod tests {
 
     #[test]
     fn test_ifnull_identity() {
-        // BigQuery supports IFNULL natively, so it should be preserved
+        // Generic -> BigQuery: IFNULL is normalized to COALESCE (matching sqlglot behavior)
         let result = transpile_to_bigquery("SELECT IFNULL(a, b)");
         assert!(
-            result.contains("IFNULL"),
-            "Expected IFNULL, got: {}",
+            result.contains("COALESCE"),
+            "Expected COALESCE, got: {}",
             result
         );
     }

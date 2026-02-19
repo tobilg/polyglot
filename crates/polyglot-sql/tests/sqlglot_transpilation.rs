@@ -23,6 +23,7 @@ const DIALECT_FILES: &[&str] = &[
     "databricks",
     "doris",
     "duckdb",
+    "generic",
     "hive",
     "materialize",
     "mysql",
@@ -175,6 +176,7 @@ transpile_test_fn!(test_sqlglot_transpilation_postgres, "postgres");
 transpile_test_fn!(test_sqlglot_transpilation_bigquery, "bigquery");
 transpile_test_fn!(test_sqlglot_transpilation_snowflake, "snowflake");
 transpile_test_fn!(test_sqlglot_transpilation_duckdb, "duckdb");
+transpile_test_fn!(test_sqlglot_transpilation_generic, "generic");
 transpile_test_fn!(test_sqlglot_transpilation_tsql, "tsql");
 transpile_test_fn!(test_sqlglot_transpilation_oracle, "oracle");
 transpile_test_fn!(test_sqlglot_transpilation_spark, "spark");

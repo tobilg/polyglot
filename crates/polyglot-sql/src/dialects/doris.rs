@@ -59,6 +59,7 @@ impl DialectImpl for DorisDialect {
                     operand: None,
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,
@@ -184,16 +185,8 @@ impl DorisDialect {
                 f.args,
             )))),
 
-            // LOCATE -> INSTR (with swapped args)
-            "LOCATE" if f.args.len() >= 2 => {
-                let mut args = f.args;
-                let substring = args.remove(0);
-                let string = args.remove(0);
-                Ok(Expression::Function(Box::new(Function::new(
-                    "INSTR".to_string(),
-                    vec![string, substring],
-                ))))
-            }
+            // LOCATE is native in Doris (keep as-is)
+            "LOCATE" => Ok(Expression::Function(Box::new(f))),
 
             // INSTR is native in Doris
             "INSTR" => Ok(Expression::Function(Box::new(f))),
@@ -286,6 +279,7 @@ impl DorisDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

@@ -84,6 +84,7 @@ impl DialectImpl for StarRocksDialect {
                     operand: None,
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,
@@ -321,6 +322,7 @@ impl StarRocksDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,
@@ -341,8 +343,25 @@ impl StarRocksDialect {
     }
 
     fn transform_cast(&self, c: Cast) -> Result<Expression> {
-        // StarRocks type mappings are handled in the generator
-        Ok(Expression::Cast(Box::new(c)))
+        // StarRocks: CAST(x AS TIMESTAMP/TIMESTAMPTZ) -> TIMESTAMP(x) function
+        // Similar to MySQL behavior
+        match &c.to {
+            crate::expressions::DataType::Timestamp { .. } => {
+                Ok(Expression::Function(Box::new(Function::new(
+                    "TIMESTAMP".to_string(),
+                    vec![c.this],
+                ))))
+            }
+            crate::expressions::DataType::Custom { name } if name.to_uppercase() == "TIMESTAMPTZ"
+                || name.to_uppercase() == "TIMESTAMPLTZ" => {
+                Ok(Expression::Function(Box::new(Function::new(
+                    "TIMESTAMP".to_string(),
+                    vec![c.this],
+                ))))
+            }
+            // StarRocks type mappings are handled in the generator
+            _ => Ok(Expression::Cast(Box::new(c))),
+        }
     }
 
     /// Transform LATERAL UNNEST for StarRocks

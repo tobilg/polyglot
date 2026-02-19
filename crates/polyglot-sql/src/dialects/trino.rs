@@ -79,22 +79,8 @@ impl DialectImpl for TrinoDialect {
                 })))
             }
 
-            // CountIf -> SUM(CASE WHEN condition THEN 1 ELSE 0 END)
-            Expression::CountIf(f) => {
-                let case_expr = Expression::Case(Box::new(Case {
-                    operand: None,
-                    whens: vec![(f.this.clone(), Expression::number(1))],
-                    else_: Some(Expression::number(0)),
-                }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
-                    this: case_expr,
-                    distinct: f.distinct,
-                    filter: f.filter,
-                    order_by: Vec::new(),
-                name: None,
-                limit: None,
-                })))
-            }
+            // CountIf is native in Trino (keep as-is)
+            Expression::CountIf(f) => Ok(Expression::CountIf(f)),
 
             // EXPLODE -> UNNEST in Trino
             Expression::Explode(f) => Ok(Expression::Unnest(Box::new(
@@ -411,6 +397,7 @@ impl TrinoDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

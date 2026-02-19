@@ -73,22 +73,8 @@ impl DialectImpl for PrestoDialect {
                 })))
             }
 
-            // CountIf -> SUM(CASE WHEN condition THEN 1 ELSE 0 END)
-            Expression::CountIf(f) => {
-                let case_expr = Expression::Case(Box::new(Case {
-                    operand: None,
-                    whens: vec![(f.this.clone(), Expression::number(1))],
-                    else_: Some(Expression::number(0)),
-                }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
-                    this: case_expr,
-                    distinct: f.distinct,
-                    filter: f.filter,
-                    order_by: Vec::new(),
-                name: None,
-                limit: None,
-                })))
-            }
+            // CountIf is native in Presto (keep as-is)
+            Expression::CountIf(f) => Ok(Expression::CountIf(f)),
 
             // EXPLODE -> UNNEST in Presto
             Expression::Explode(f) => Ok(Expression::Unnest(Box::new(
@@ -559,11 +545,8 @@ impl PrestoDialect {
                 ))))
             }
 
-            // SUBSTR -> SUBSTRING (both work, but SUBSTRING is standard)
-            "SUBSTR" => Ok(Expression::Function(Box::new(Function::new(
-                "SUBSTRING".to_string(),
-                f.args,
-            )))),
+            // SUBSTR is native in Presto (keep as-is, don't convert to SUBSTRING)
+            "SUBSTR" => Ok(Expression::Function(Box::new(f))),
 
             // LEN -> LENGTH
             "LEN" if f.args.len() == 1 => Ok(Expression::Length(Box::new(UnaryFunc::new(
@@ -881,6 +864,7 @@ impl PrestoDialect {
                     operand: None,
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
+                    comments: Vec::new(),
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
                     this: case_expr,

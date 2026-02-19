@@ -1238,11 +1238,11 @@
     },
     {
       "line": 310,
-      "sql": "SELECT a AS any, b AS some, c AS all, d AS exists FROM test WHERE a = ANY (SELECT 1)"
+      "sql": "SELECT a AS any, b AS some, c AS all, d AS exists FROM test WHERE a = ANY(SELECT 1)"
     },
     {
       "line": 311,
-      "sql": "SELECT a FROM test WHERE a > ALL (SELECT 1)"
+      "sql": "SELECT a FROM test WHERE a > ALL(SELECT 1)"
     },
     {
       "line": 312,

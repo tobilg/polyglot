@@ -1997,6 +1997,8 @@ mod tests {
             join_hint: None,
             match_condition: None,
             pivots: vec![],
+            comments: vec![],
+            nesting_group: 0,
         };
         let reserved = get_reserved_words(None);
         quote_join(&mut join, &reserved);
@@ -2020,6 +2022,7 @@ mod tests {
             materialized: None,
             key_expressions: vec![],
             alias_first: false,
+            comments: Vec::new(),
         };
         let reserved = get_reserved_words(None);
         maybe_quote(&mut cte.alias, &reserved);

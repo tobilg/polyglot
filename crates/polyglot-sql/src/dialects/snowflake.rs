@@ -47,6 +47,8 @@ impl DialectImpl for SnowflakeDialect {
         config.quotes.insert("$$".to_string(), "$$".to_string());
         // Snowflake does NOT support nested comments (per Python sqlglot)
         config.nested_comments = false;
+        // Snowflake supports // as single-line comments (in addition to --)
+        config.comments.insert("//".to_string(), None);
         config
     }
 
@@ -87,6 +89,8 @@ impl DialectImpl for SnowflakeDialect {
             nvl2_supported: true,
             // Snowflake uses FLATTEN for unnest
             unnest_with_ordinality: false,
+            // Snowflake uses space before paren: ALL (subquery)
+            quantified_no_paren_space: false,
             ..Default::default()
         }
     }
@@ -119,6 +123,7 @@ impl DialectImpl for SnowflakeDialect {
                     not: false,
                     global: in_expr.global,
                     unnest: in_expr.unnest,
+                    is_field: in_expr.is_field,
                 };
                 Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
                     this: Expression::In(Box::new(in_without_not)),
@@ -375,7 +380,7 @@ impl DialectImpl for SnowflakeDialect {
             // ArrayIntersect -> ARRAY_INTERSECTION
             Expression::ArrayIntersect(f) => Ok(Expression::Function(Box::new(Function::new(
                 "ARRAY_INTERSECTION".to_string(),
-                vec![f.this, f.expression],
+                f.expressions,
             )))),
 
             // SortArray -> ARRAY_SORT
@@ -516,7 +521,7 @@ impl DialectImpl for SnowflakeDialect {
                 vec![f.this],
             )))),
 
-            // WeekOfYear -> WEEK (matches Python SQLGlot behavior)
+            // WeekOfYear -> WEEK (Snowflake native function)
             Expression::WeekOfYear(f) => Ok(Expression::Function(Box::new(Function::new(
                 "WEEK".to_string(),
                 vec![f.this],
