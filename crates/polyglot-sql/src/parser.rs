@@ -16624,7 +16624,7 @@ impl Parser {
             // Look through nested parens for SELECT/WITH
             let mut depth = 0usize;
             let mut found_select = false;
-            for i in 0..20 {
+            for i in 0..100 {
                 match self.peek_nth(i).map(|t| t.token_type) {
                     Some(TokenType::LParen) => depth += 1,
                     Some(TokenType::Select) | Some(TokenType::With) if depth > 0 => { found_select = true; break; }
@@ -18566,24 +18566,32 @@ impl Parser {
     fn parse_revoke(&mut self) -> Result<Expression> {
         self.expect(TokenType::Revoke)?;
 
-        // ClickHouse: REVOKE role FROM user (no ON clause) — parse as command
+        // ClickHouse: REVOKE role FROM user (no ON clause), multi-privilege, or wildcard — parse as command
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             let saved_pos = self.current;
             let mut depth = 0i32;
-            let mut found_on = false;
+            let mut on_count = 0;
             let mut found_from = false;
+            let mut has_star_in_name = false;
             let mut i = self.current;
             while i < self.tokens.len() && self.tokens[i].token_type != TokenType::Semicolon {
                 match self.tokens[i].token_type {
                     TokenType::LParen => depth += 1,
                     TokenType::RParen => depth -= 1,
-                    TokenType::On if depth == 0 => { found_on = true; break; }
-                    TokenType::From if depth == 0 => { found_from = true; break; }
+                    TokenType::On if depth == 0 => on_count += 1,
+                    TokenType::From if depth == 0 => { found_from = true; }
+                    TokenType::Star if depth == 0 && on_count > 0 && !found_from => {
+                        if i > 0 && self.tokens[i - 1].token_type != TokenType::Dot
+                            && self.tokens[i - 1].token_type != TokenType::On
+                        {
+                            has_star_in_name = true;
+                        }
+                    }
                     _ => {}
                 }
                 i += 1;
             }
-            if found_from && !found_on {
+            if (found_from && on_count == 0) || on_count > 1 || has_star_in_name {
                 self.current = saved_pos;
                 return self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse REVOKE statement"));
             }
@@ -28652,7 +28660,9 @@ impl Parser {
             // MATCH(...) AGAINST(...) - MySQL/SingleStore full-text search
             "MATCH" => {
                 // Parse column expressions or TABLE syntax
-                let expressions = if self.check(TokenType::Table) {
+                let expressions = if self.check(TokenType::Table)
+                    && !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                {
                     // SingleStore TABLE syntax: MATCH(TABLE tablename)
                     self.advance(); // consume TABLE
                     let table_name = self.expect_identifier_or_keyword()?;
