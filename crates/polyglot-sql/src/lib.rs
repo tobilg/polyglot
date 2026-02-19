@@ -32,6 +32,7 @@ pub mod tokens;
 pub mod transforms;
 pub mod traversal;
 pub mod trie;
+pub mod validation;
 
 pub use dialects::{Dialect, DialectType, CustomDialectBuilder, unregister_custom_dialect};
 pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
@@ -81,6 +82,7 @@ pub use ast_transforms::{
     get_subqueries, get_aggregate_functions, get_window_functions, node_count,
 };
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
+pub use validation::{FunctionCatalog, FunctionSignature};
 pub use optimizer::{annotate_types, TypeAnnotator, TypeCoercionClass};
 
 /// Transpile SQL from one dialect to another.
@@ -188,7 +190,15 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
                     ]);
                 }
             }
-            ValidationResult::success()
+
+            // Dialect-specific function validation (non-blocking warnings)
+            let mut result = ValidationResult::success();
+            let function_warnings =
+                validation::dialect_validate_functions(&expressions, dialect);
+            for w in function_warnings {
+                result.add_error(w);
+            }
+            result
         }
         Err(e) => {
             let error = match &e {
