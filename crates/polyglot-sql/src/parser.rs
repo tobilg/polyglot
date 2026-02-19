@@ -13747,6 +13747,26 @@ impl Parser {
             None
         };
 
+        // ClickHouse: TO destination_table after REFRESH ... APPEND
+        // e.g., CREATE MATERIALIZED VIEW v REFRESH AFTER 1 SECOND APPEND TO tab (cols) EMPTY AS ...
+        let to_table = if to_table.is_none() && self.match_token(TokenType::To) {
+            Some(self.parse_table_ref()?)
+        } else {
+            to_table
+        };
+
+        // ClickHouse: column definitions after REFRESH ... APPEND TO tab (cols)
+        if schema.is_none() && self.check(TokenType::LParen)
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+        {
+            let saved_pos = self.current;
+            if let Some(Expression::Schema(parsed_schema)) = self.parse_schema()? {
+                schema = Some(*parsed_schema);
+            } else {
+                self.current = saved_pos;
+            }
+        }
+
         // Redshift: AUTO REFRESH YES|NO for materialized views
         let auto_refresh = if self.match_text_seq(&["AUTO", "REFRESH"]) {
             if self.match_identifier("YES") {
@@ -13767,9 +13787,10 @@ impl Parser {
             self.parse_clickhouse_table_properties(&mut table_properties)?;
         }
 
-        // ClickHouse: POPULATE keyword before AS in materialized views
+        // ClickHouse: POPULATE / EMPTY keywords before AS in materialized views
         if materialized && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             let _ = self.match_identifier("POPULATE");
+            let _ = self.match_identifier("EMPTY");
         }
 
         // AS is optional - some dialects (e.g., Presto) allow SELECT without AS
@@ -30290,7 +30311,40 @@ impl Parser {
                 } else {
                     None
                 };
-                exprs.push(Ordered { this: expr, desc, nulls_first, explicit_asc, with_fill: None });
+                // ClickHouse: WITH FILL in window ORDER BY
+                let with_fill = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::With)
+                    && self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1].text.eq_ignore_ascii_case("FILL")
+                {
+                    self.advance(); // consume WITH
+                    self.advance(); // consume FILL
+                    let from_ = if self.match_token(TokenType::From) {
+                        Some(Box::new(self.parse_addition()?))
+                    } else { None };
+                    let to = if self.match_text_seq(&["TO"]) {
+                        Some(Box::new(self.parse_addition()?))
+                    } else { None };
+                    let step = if self.match_text_seq(&["STEP"]) {
+                        Some(Box::new(self.parse_addition()?))
+                    } else { None };
+                    let staleness = if self.match_text_seq(&["STALENESS"]) {
+                        Some(Box::new(self.parse_addition()?))
+                    } else { None };
+                    let interpolate = if self.match_text_seq(&["INTERPOLATE"]) {
+                        if self.match_token(TokenType::LParen) {
+                            let items = self.parse_expression_list()?;
+                            self.expect(TokenType::RParen)?;
+                            if items.len() == 1 {
+                                Some(Box::new(items.into_iter().next().unwrap()))
+                            } else {
+                                Some(Box::new(Expression::Tuple(Box::new(crate::expressions::Tuple { expressions: items }))))
+                            }
+                        } else { None }
+                    } else { None };
+                    Some(Box::new(WithFill { from_, to, step, staleness, interpolate }))
+                } else { None };
+                exprs.push(Ordered { this: expr, desc, nulls_first, explicit_asc, with_fill });
                 if !self.match_token(TokenType::Comma) {
                     break;
                 }
@@ -32942,11 +32996,17 @@ impl Parser {
                         self.expect_identifier()?
                     };
                     columns.push(Identifier::new(col));
+                    // ClickHouse allows comma-separated columns without parens: EXCEPT col1, col2
+                    // But only if the next token after comma looks like a column name
                     if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                        || !self.match_token(TokenType::Comma)
+                        || !self.check(TokenType::Comma)
+                        || !matches!(self.peek_nth(1).map(|t| t.token_type),
+                            Some(TokenType::Identifier) | Some(TokenType::QuotedIdentifier)
+                            | Some(TokenType::Var) | Some(TokenType::String))
                     {
                         break;
                     }
+                    self.advance(); // consume comma
                 }
             }
             except = Some(columns);
@@ -34051,15 +34111,60 @@ impl Parser {
             };
 
             // Check for AS alias on this expression (Spark/Hive: IF(cond, val AS name, ...))
-            let expr = if self.match_token(TokenType::As) {
-                let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                Expression::Alias(Box::new(Alias {
-                    this: expr,
-                    alias,
-                    column_aliases: Vec::new(),
-                    pre_alias_comments: Vec::new(),
-                    trailing_comments: Vec::new(),
-                }))
+            let expr = if self.check(TokenType::As) {
+                let as_pos = self.current;
+                self.advance(); // consume AS
+                // Check if what follows looks like an alias name
+                if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
+                    || (matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && self.peek().token_type.is_keyword())
+                {
+                    let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                    let alias_expr = Expression::Alias(Box::new(Alias {
+                        this: expr,
+                        alias,
+                        column_aliases: Vec::new(),
+                        pre_alias_comments: Vec::new(),
+                        trailing_comments: Vec::new(),
+                    }));
+                    // ClickHouse: if followed by an operator, the alias is part of a bigger expression
+                    // e.g., blockSize() AS bs < 1000 means (blockSize() AS bs) < 1000
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && matches!(self.peek().token_type,
+                            TokenType::Lt | TokenType::Gt | TokenType::Lte | TokenType::Gte
+                            | TokenType::Eq | TokenType::Neq
+                            | TokenType::Plus | TokenType::Dash | TokenType::Star | TokenType::Slash
+                            | TokenType::Percent | TokenType::And | TokenType::Or
+                            | TokenType::Like | TokenType::Not | TokenType::In
+                            | TokenType::Is | TokenType::Between)
+                    {
+                        // Parse the operator and right-hand side
+                        let op_token = self.advance();
+                        let right = self.parse_expression()?;
+                        match op_token.token_type {
+                            TokenType::Lt => Expression::Lt(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Gt => Expression::Gt(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Lte => Expression::Lte(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Gte => Expression::Gte(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Eq => Expression::Eq(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Neq => Expression::Neq(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Plus => Expression::Add(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Dash => Expression::Sub(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Star => Expression::Mul(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Slash => Expression::Div(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Percent => Expression::Mod(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::And => Expression::And(Box::new(BinaryOp::new(alias_expr, right))),
+                            TokenType::Or => Expression::Or(Box::new(BinaryOp::new(alias_expr, right))),
+                            _ => alias_expr, // fallback, shouldn't happen
+                        }
+                    } else {
+                        alias_expr
+                    }
+                } else {
+                    // Not an alias name, backtrack
+                    self.current = as_pos;
+                    expr
+                }
             } else {
                 expr
             };
