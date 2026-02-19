@@ -26248,8 +26248,10 @@ impl Parser {
                 // Also handles extract(func(args), ...) where the first arg is a function call
                 // Check if first arg is a known datetime field — if not, parse as regular function
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                    && (self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.peek().token_type.is_keyword())
-                    && (self.check_next(TokenType::Comma) || self.check_next(TokenType::LParen))
+                    && (self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.peek().token_type.is_keyword()
+                        || self.check(TokenType::String) || self.check(TokenType::Number))
+                    && (self.check_next(TokenType::Comma) || self.check_next(TokenType::LParen)
+                        || self.check_next(TokenType::Var) || self.check_next(TokenType::Identifier))
                 {
                     let args = self.parse_function_arguments()?;
                     self.expect(TokenType::RParen)?;
@@ -26287,6 +26289,7 @@ impl Parser {
                     return Err(Error::parse("Expected FROM or comma after EXTRACT field"));
                 }
                 let this = self.parse_expression()?;
+                let this = self.try_clickhouse_func_arg_alias(this);
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Extract(Box::new(ExtractFunc { this, field })))
             }
@@ -26298,12 +26301,16 @@ impl Parser {
             // SUBSTRING(str, pos, len)
             "SUBSTRING" | "SUBSTR" => {
                 let this = self.parse_expression()?;
+                // ClickHouse: implicit/explicit alias: substring('1234' lhs FROM 2) or substring('1234' AS lhs FROM 2)
+                let this = self.try_clickhouse_func_arg_alias(this);
 
                 // Check for SQL standard FROM syntax: SUBSTRING(str FROM pos [FOR len])
                 if self.match_token(TokenType::From) {
                     let start = self.parse_expression()?;
+                    let start = self.try_clickhouse_func_arg_alias(start);
                     let length = if self.match_token(TokenType::For) {
-                        Some(self.parse_expression()?)
+                        let len = self.parse_expression()?;
+                        Some(self.try_clickhouse_func_arg_alias(len))
                     } else {
                         None
                     };
@@ -26317,8 +26324,10 @@ impl Parser {
                 } else if self.match_token(TokenType::For) {
                     // PostgreSQL: SUBSTRING(str FOR len) or SUBSTRING(str FOR len FROM pos)
                     let length_expr = self.parse_expression()?;
+                    let length_expr = self.try_clickhouse_func_arg_alias(length_expr);
                     let start = if self.match_token(TokenType::From) {
-                        self.parse_expression()?
+                        let s = self.parse_expression()?;
+                        self.try_clickhouse_func_arg_alias(s)
                     } else {
                         // No FROM, use 1 as default start position
                         Expression::Literal(Literal::Number("1".to_string()))
@@ -26333,8 +26342,10 @@ impl Parser {
                 } else if self.match_token(TokenType::Comma) {
                     // Comma-separated syntax: SUBSTRING(str, pos) or SUBSTRING(str, pos, len)
                     let start = self.parse_expression()?;
+                    let start = self.try_clickhouse_func_arg_alias(start);
                     let length = if self.match_token(TokenType::Comma) {
-                        Some(self.parse_expression()?)
+                        let len = self.parse_expression()?;
+                        Some(self.try_clickhouse_func_arg_alias(len))
                     } else {
                         None
                     };
@@ -26653,9 +26664,11 @@ impl Parser {
                         // Or TRIM(BOTH str) / TRIM(LEADING str COLLATE collation) - PostgreSQL syntax without FROM
                         // Use parse_bitwise_or to avoid consuming FROM as part of the expression
                         let first_expr = self.parse_bitwise_or()?;
+                        let first_expr = self.try_clickhouse_func_arg_alias(first_expr);
                         if self.match_token(TokenType::From) {
                             // Standard: TRIM(BOTH chars FROM str)
                             let this = self.parse_bitwise_or()?;
+                            let this = self.try_clickhouse_func_arg_alias(this);
                             self.expect(TokenType::RParen)?;
                             Ok(Expression::Trim(Box::new(TrimFunc {
                                 this,
@@ -26680,11 +26693,13 @@ impl Parser {
                 } else {
                     // No explicit position - could be TRIM(str) or TRIM(str, chars) or SQL standard without position
                     let first_expr = self.parse_expression()?;
+                    let first_expr = self.try_clickhouse_func_arg_alias(first_expr);
 
                     if self.match_token(TokenType::From) {
                         // SQL standard: first_expr was actually the characters to trim, now parse the string
                         // e.g., TRIM(' ' FROM name)
                         let this = self.parse_expression()?;
+                        let this = self.try_clickhouse_func_arg_alias(this);
                         self.expect(TokenType::RParen)?;
                         Ok(Expression::Trim(Box::new(TrimFunc {
                             this,
@@ -27734,12 +27749,15 @@ impl Parser {
             // and 2-arg BigQuery style (DATE_ADD(date, INTERVAL amount unit))
             "DATEADD" | "DATE_ADD" | "TIMEADD" | "TIMESTAMPADD" => {
                 let first_arg = self.parse_expression()?;
+                let first_arg = self.try_clickhouse_func_arg_alias(first_arg);
                 self.expect(TokenType::Comma)?;
                 let second_arg = self.parse_expression()?;
+                let second_arg = self.try_clickhouse_func_arg_alias(second_arg);
 
                 // Check if there's a third argument (traditional 3-arg syntax)
                 if self.match_token(TokenType::Comma) {
                     let third_arg = self.parse_expression()?;
+                    let third_arg = self.try_clickhouse_func_arg_alias(third_arg);
                     self.expect(TokenType::RParen)?;
                     Ok(Expression::Function(Box::new(Function {
                         name: name.to_string(),
@@ -27768,18 +27786,22 @@ impl Parser {
             "DATEDIFF" | "DATE_DIFF" | "TIMEDIFF" | "TIMESTAMPDIFF" => {
                 // First argument (can be unit for DATEDIFF/TIMESTAMPDIFF or datetime for TIMEDIFF)
                 let first_arg = self.parse_expression()?;
+                let first_arg = self.try_clickhouse_func_arg_alias(first_arg);
                 self.expect(TokenType::Comma)?;
                 let second_arg = self.parse_expression()?;
+                let second_arg = self.try_clickhouse_func_arg_alias(second_arg);
                 // Third argument is optional (SQLite TIMEDIFF only takes 2 args)
                 let mut args = if self.match_token(TokenType::Comma) {
                     let third_arg = self.parse_expression()?;
+                    let third_arg = self.try_clickhouse_func_arg_alias(third_arg);
                     vec![first_arg, second_arg, third_arg]
                 } else {
                     vec![first_arg, second_arg]
                 };
                 // ClickHouse: optional 4th timezone argument for dateDiff
                 while self.match_token(TokenType::Comma) {
-                    args.push(self.parse_expression()?);
+                    let arg = self.parse_expression()?;
+                    args.push(self.try_clickhouse_func_arg_alias(arg));
                 }
                 self.expect(TokenType::RParen)?;
                 Ok(Expression::Function(Box::new(Function {
@@ -29276,6 +29298,9 @@ impl Parser {
             } else {
                 arg
             };
+
+            // ClickHouse: implicit alias without AS keyword: func(expr identifier, ...)
+            let arg = self.try_clickhouse_implicit_alias(arg);
 
             // Handle trailing comments
             let trailing_comments = self.previous_trailing_comments();
@@ -31122,12 +31147,17 @@ impl Parser {
             expr
         };
 
+        // ClickHouse: implicit alias in CAST: cast('1234' lhs AS UInt32) or cast('1234' lhs, 'UInt32')
+        let expr = self.try_clickhouse_implicit_alias(expr);
+
         // ClickHouse: CAST(expr, 'type_string') or CAST(expr, expression) syntax with comma instead of AS
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
             && self.match_token(TokenType::Comma)
         {
             // Parse as expression to handle concat and other operations: CAST(x, 'Str' || 'ing')
             let type_expr = self.parse_expression()?;
+            // ClickHouse: alias on type expr: cast('1234' lhs, 'UInt32' rhs) or cast('1234', 'UInt32' AS rhs)
+            let type_expr = self.try_clickhouse_func_arg_alias(type_expr);
             self.expect(TokenType::RParen)?;
             let _trailing_comments = self.previous_trailing_comments();
             return Ok(Expression::CastToStrType(Box::new(CastToStrType {
@@ -31147,6 +31177,22 @@ impl Parser {
             let alias = self.expect_identifier_or_keyword_with_quoted()?;
             self.expect(TokenType::As)?;
             Expression::Alias(Box::new(Alias::new(expr, alias)))
+        } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
+            && self.peek_nth(1).map_or(false, |t| t.token_type == TokenType::Comma)
+        {
+            // ClickHouse: CAST(expr AS alias, type_string) — alias before comma syntax
+            let alias = self.expect_identifier_or_keyword_with_quoted()?;
+            let expr = Expression::Alias(Box::new(Alias::new(expr, alias)));
+            self.expect(TokenType::Comma)?;
+            let type_expr = self.parse_expression()?;
+            let type_expr = self.try_clickhouse_func_arg_alias(type_expr);
+            self.expect(TokenType::RParen)?;
+            let _trailing_comments = self.previous_trailing_comments();
+            return Ok(Expression::CastToStrType(Box::new(CastToStrType {
+                this: Box::new(expr),
+                to: Some(Box::new(type_expr)),
+            })));
         } else {
             expr
         };
@@ -38436,7 +38482,7 @@ impl Parser {
         // Parse the expression to extract from
         let expression = self.parse_bitwise()?;
         let this = match expression {
-            Some(expr) => expr,
+            Some(expr) => self.try_clickhouse_func_arg_alias(expr),
             None => return Err(Error::parse("Expected expression after FROM in EXTRACT")),
         };
 
@@ -43253,6 +43299,7 @@ impl Parser {
         match self.parse_bitwise() {
             Ok(Some(expr)) => {
                 let expr = self.maybe_clickhouse_alias(expr);
+                let expr = self.try_clickhouse_func_arg_alias(expr);
                 args.push(expr);
             },
             Ok(None) => return Ok(None),
@@ -43264,6 +43311,7 @@ impl Parser {
             match self.parse_bitwise() {
                 Ok(Some(haystack)) => {
                     let haystack = self.maybe_clickhouse_alias(haystack);
+                    let haystack = self.try_clickhouse_func_arg_alias(haystack);
                     return Ok(Some(Expression::StrPosition(Box::new(StrPosition {
                         this: Box::new(haystack),
                         substr: Some(Box::new(args.remove(0))),
@@ -43281,6 +43329,7 @@ impl Parser {
             match self.parse_bitwise() {
                 Ok(Some(expr)) => {
                     let expr = self.maybe_clickhouse_alias(expr);
+                    let expr = self.try_clickhouse_func_arg_alias(expr);
                     args.push(expr);
                 },
                 Ok(None) => break,
@@ -43778,6 +43827,84 @@ impl Parser {
         }
 
         Ok(())
+    }
+
+    /// ClickHouse implicit alias in function arguments: `expr identifier` (without AS keyword).
+    /// The token after the alias must be a delimiter (comma, RParen, FROM, FOR, AS).
+    fn try_clickhouse_implicit_alias(&mut self, expr: Expression) -> Expression {
+        if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            return expr;
+        }
+        if self.check(TokenType::Var) || self.check(TokenType::Identifier) {
+            let next_after = self.peek_nth(1).map(|t| t.token_type);
+            let is_delimiter = matches!(next_after,
+                Some(TokenType::Comma) | Some(TokenType::RParen) | Some(TokenType::From)
+                | Some(TokenType::For) | Some(TokenType::As)
+            );
+            if is_delimiter {
+                let alias_token = self.advance();
+                let alias_name = alias_token.text.clone();
+                return Expression::Alias(Box::new(crate::expressions::Alias::new(
+                    expr,
+                    Identifier::new(alias_name),
+                )));
+            }
+        }
+        expr
+    }
+
+    /// ClickHouse alias in function arguments: handles both implicit (`expr identifier`)
+    /// and explicit (`expr AS identifier`) aliases. Use this in special function parsers
+    /// (SUBSTRING, TRIM, EXTRACT) but NOT in CAST (which has its own AS handling).
+    fn try_clickhouse_func_arg_alias(&mut self, expr: Expression) -> Expression {
+        if !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            return expr;
+        }
+        // Try implicit alias first
+        if self.check(TokenType::Var) || self.check(TokenType::Identifier) {
+            let next_after = self.peek_nth(1).map(|t| t.token_type);
+            let is_delimiter = matches!(next_after,
+                Some(TokenType::Comma) | Some(TokenType::RParen) | Some(TokenType::From)
+                | Some(TokenType::For) | Some(TokenType::As)
+            );
+            if is_delimiter {
+                let alias_token = self.advance();
+                let alias_name = alias_token.text.clone();
+                return Expression::Alias(Box::new(crate::expressions::Alias::new(
+                    expr,
+                    Identifier::new(alias_name),
+                )));
+            }
+        }
+        // Try explicit AS alias
+        if self.check(TokenType::As) {
+            let next_idx = self.current + 1;
+            let after_alias_idx = self.current + 2;
+            let is_alias_token = next_idx < self.tokens.len() && matches!(
+                self.tokens[next_idx].token_type,
+                TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
+            );
+            let is_delimiter = is_alias_token && after_alias_idx < self.tokens.len()
+                && matches!(self.tokens[after_alias_idx].token_type,
+                    TokenType::Comma | TokenType::RParen | TokenType::From
+                    | TokenType::For | TokenType::As);
+            if is_delimiter {
+                self.advance(); // consume AS
+                let alias_token = self.advance();
+                let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
+                    let mut ident = Identifier::new(alias_token.text.clone());
+                    ident.quoted = true;
+                    ident
+                } else {
+                    Identifier::new(alias_token.text.clone())
+                };
+                return Expression::Alias(Box::new(crate::expressions::Alias::new(
+                    expr,
+                    alias_name,
+                )));
+            }
+        }
+        expr
     }
 
     /// parse_clickhouse_engine_expression - Parse ENGINE expression with optional args
@@ -45954,7 +46081,10 @@ impl Parser {
 
         // Parse first argument (the string)
         match self.parse_bitwise() {
-            Ok(Some(expr)) => args.push(expr),
+            Ok(Some(expr)) => {
+                let expr = self.try_clickhouse_func_arg_alias(expr);
+                args.push(expr);
+            }
             Ok(None) => return Ok(None),
             Err(e) => return Err(e),
         }
@@ -45962,7 +46092,10 @@ impl Parser {
         // Check for comma-separated additional arguments
         while self.match_token(TokenType::Comma) {
             match self.parse_bitwise() {
-                Ok(Some(expr)) => args.push(expr),
+                Ok(Some(expr)) => {
+                    let expr = self.try_clickhouse_func_arg_alias(expr);
+                    args.push(expr);
+                }
                 Ok(None) => break,
                 Err(e) => return Err(e),
             }
@@ -45977,7 +46110,10 @@ impl Parser {
             if self.match_token(TokenType::From) {
                 from_for_syntax = true;
                 match self.parse_bitwise() {
-                    Ok(Some(expr)) => start = Some(expr),
+                    Ok(Some(expr)) => {
+                        let expr = self.try_clickhouse_func_arg_alias(expr);
+                        start = Some(expr);
+                    }
                     Ok(None) => {}
                     Err(e) => return Err(e),
                 }
@@ -45988,7 +46124,10 @@ impl Parser {
                     start = Some(Expression::Literal(Literal::Number("1".to_string())));
                 }
                 match self.parse_bitwise() {
-                    Ok(Some(expr)) => length = Some(expr),
+                    Ok(Some(expr)) => {
+                        let expr = self.try_clickhouse_func_arg_alias(expr);
+                        length = Some(expr);
+                    }
                     Ok(None) => {}
                     Err(e) => return Err(e),
                 }
@@ -46690,7 +46829,9 @@ impl Parser {
 
         // Parse first expression
         let first = match self.parse_bitwise() {
-            Ok(Some(expr)) => expr,
+            Ok(Some(expr)) => {
+                self.try_clickhouse_func_arg_alias(expr)
+            }
             Ok(None) => return Ok(None),
             Err(e) => return Err(e),
         };
@@ -46699,7 +46840,7 @@ impl Parser {
         let (this, characters, sql_standard_syntax) = if self.match_token(TokenType::From) {
             // SQL standard syntax: TRIM([position] chars FROM str)
             let second = match self.parse_bitwise() {
-                Ok(Some(expr)) => expr,
+                Ok(Some(expr)) => self.try_clickhouse_func_arg_alias(expr),
                 Ok(None) => return Err(Error::parse("Expected expression after FROM in TRIM")),
                 Err(e) => return Err(e),
             };
