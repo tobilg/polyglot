@@ -1934,9 +1934,112 @@ impl Parser {
                         }));
                     }
                 }
+                // ClickHouse: Also handle EXCEPT/REPLACE between APPLYs:
+                // * APPLY(toDate) EXCEPT(i, j) APPLY(any)
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && (self.check(TokenType::Except) || self.check(TokenType::Exclude)
+                        || self.check(TokenType::Replace))
+                {
+                    // Consume EXCEPT/REPLACE modifiers after APPLY
+                    self.parse_star_modifiers(None)?;
+                    // Continue with more APPLYs
+                    while self.check(TokenType::Apply) {
+                        self.advance();
+                        let apply_expr = if self.match_token(TokenType::LParen) {
+                            let expr = self.parse_expression()?;
+                            self.expect(TokenType::RParen)?;
+                            expr
+                        } else {
+                            self.parse_expression()?
+                        };
+                        star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
+                            this: Box::new(star_expr),
+                            expression: Box::new(apply_expr),
+                        }));
+                    }
+                }
                 expressions.push(star_expr);
             } else {
                 let expr = self.parse_expression()?;
+
+                // ClickHouse: COLUMNS(id, value) EXCEPT (id) REPLACE (5 AS id) APPLY func
+                // Also: a.* APPLY(toDate) EXCEPT(i, j) APPLY(any) - qualified star with APPLY
+                let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                    let is_columns_func = match &expr {
+                        Expression::Function(f) => f.name.eq_ignore_ascii_case("COLUMNS"),
+                        _ => false,
+                    };
+                    let is_qualified_star = matches!(&expr, Expression::Star(_));
+                    if (is_columns_func || is_qualified_star) && (self.check(TokenType::Except) || self.check(TokenType::Exclude)
+                            || self.check(TokenType::Replace) || self.check(TokenType::Apply)) {
+                        let mut result = expr;
+                        // Parse any mix of EXCEPT/REPLACE/APPLY in any order
+                        // e.g., * APPLY(toDate) EXCEPT(i, j) APPLY(any)
+                        loop {
+                            if self.check(TokenType::Except) || self.check(TokenType::Exclude) {
+                                // Parse EXCEPT/EXCLUDE modifier
+                                self.advance();
+                                self.match_identifier("STRICT");
+                                if self.match_token(TokenType::LParen) {
+                                    loop {
+                                        if self.check(TokenType::RParen) { break; }
+                                        let _ = self.parse_expression()?;
+                                        if !self.match_token(TokenType::Comma) { break; }
+                                    }
+                                    self.expect(TokenType::RParen)?;
+                                } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                    let _ = self.parse_expression()?;
+                                }
+                            } else if self.check(TokenType::Replace) {
+                                // Parse REPLACE modifier: REPLACE (expr AS alias, ...)
+                                self.advance();
+                                self.match_identifier("STRICT");
+                                if self.match_token(TokenType::LParen) {
+                                    loop {
+                                        if self.check(TokenType::RParen) { break; }
+                                        let _ = self.parse_expression()?;
+                                        if self.match_token(TokenType::As) {
+                                            if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                                self.advance();
+                                            }
+                                        }
+                                        if !self.match_token(TokenType::Comma) { break; }
+                                    }
+                                    self.expect(TokenType::RParen)?;
+                                } else {
+                                    let _ = self.parse_expression()?;
+                                    if self.match_token(TokenType::As) {
+                                        if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                            self.advance();
+                                        }
+                                    }
+                                }
+                            } else if self.check(TokenType::Apply) {
+                                // Parse APPLY transformer
+                                self.advance();
+                                let apply_expr = if self.match_token(TokenType::LParen) {
+                                    let e = self.parse_expression()?;
+                                    self.expect(TokenType::RParen)?;
+                                    e
+                                } else {
+                                    self.parse_expression()?
+                            };
+                            result = Expression::Apply(Box::new(crate::expressions::Apply {
+                                this: Box::new(result),
+                                expression: Box::new(apply_expr),
+                            }));
+                            } else {
+                                break;
+                            }
+                        }
+                        result
+                    } else {
+                        expr
+                    }
+                } else {
+                    expr
+                };
+
                 // Capture comments between expression and potential AS
                 let pre_alias_comments = self.previous_trailing_comments();
 
@@ -24068,7 +24171,65 @@ impl Parser {
                 if self.match_token(TokenType::Star) {
                     // table.* with potential modifiers
                     let star = self.parse_star_modifiers(Some(ident))?;
-                    return Ok(Expression::Star(star));
+                    let mut star_expr = Expression::Star(star);
+                    // ClickHouse: a.* APPLY(func) EXCEPT(col) REPLACE(expr AS col) in any order
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                        loop {
+                            if self.check(TokenType::Apply) {
+                                self.advance();
+                                let apply_expr = if self.match_token(TokenType::LParen) {
+                                    let e = self.parse_expression()?;
+                                    self.expect(TokenType::RParen)?;
+                                    e
+                                } else {
+                                    self.parse_expression()?
+                                };
+                                star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
+                                    this: Box::new(star_expr),
+                                    expression: Box::new(apply_expr),
+                                }));
+                            } else if self.check(TokenType::Except) || self.check(TokenType::Exclude) {
+                                self.advance();
+                                self.match_identifier("STRICT");
+                                if self.match_token(TokenType::LParen) {
+                                    loop {
+                                        if self.check(TokenType::RParen) { break; }
+                                        let _ = self.parse_expression()?;
+                                        if !self.match_token(TokenType::Comma) { break; }
+                                    }
+                                    self.expect(TokenType::RParen)?;
+                                } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                    let _ = self.parse_expression()?;
+                                }
+                            } else if self.check(TokenType::Replace) {
+                                self.advance();
+                                self.match_identifier("STRICT");
+                                if self.match_token(TokenType::LParen) {
+                                    loop {
+                                        if self.check(TokenType::RParen) { break; }
+                                        let _ = self.parse_expression()?;
+                                        if self.match_token(TokenType::As) {
+                                            if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                                self.advance();
+                                            }
+                                        }
+                                        if !self.match_token(TokenType::Comma) { break; }
+                                    }
+                                    self.expect(TokenType::RParen)?;
+                                } else {
+                                    let _ = self.parse_expression()?;
+                                    if self.match_token(TokenType::As) {
+                                        if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                            self.advance();
+                                        }
+                                    }
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    return Ok(star_expr);
                 }
                 // Handle numeric field access: a.1, t.2 (ClickHouse tuple field access)
                 // Also handle negative: a.-1 (ClickHouse negative tuple index)
@@ -29404,6 +29565,63 @@ impl Parser {
                     if table_name.is_some() {
                         let star = self.parse_star_modifiers(table_name)?;
                         expr = Expression::Star(star);
+                        // ClickHouse: a.* APPLY(func) EXCEPT(col) REPLACE(expr AS col) in any order
+                        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                            loop {
+                                if self.check(TokenType::Apply) {
+                                    self.advance();
+                                    let apply_expr = if self.match_token(TokenType::LParen) {
+                                        let e = self.parse_expression()?;
+                                        self.expect(TokenType::RParen)?;
+                                        e
+                                    } else {
+                                        self.parse_expression()?
+                                    };
+                                    expr = Expression::Apply(Box::new(crate::expressions::Apply {
+                                        this: Box::new(expr),
+                                        expression: Box::new(apply_expr),
+                                    }));
+                                } else if self.check(TokenType::Except) || self.check(TokenType::Exclude) {
+                                    self.advance();
+                                    self.match_identifier("STRICT");
+                                    if self.match_token(TokenType::LParen) {
+                                        loop {
+                                            if self.check(TokenType::RParen) { break; }
+                                            let _ = self.parse_expression()?;
+                                            if !self.match_token(TokenType::Comma) { break; }
+                                        }
+                                        self.expect(TokenType::RParen)?;
+                                    } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                        let _ = self.parse_expression()?;
+                                    }
+                                } else if self.check(TokenType::Replace) {
+                                    self.advance();
+                                    self.match_identifier("STRICT");
+                                    if self.match_token(TokenType::LParen) {
+                                        loop {
+                                            if self.check(TokenType::RParen) { break; }
+                                            let _ = self.parse_expression()?;
+                                            if self.match_token(TokenType::As) {
+                                                if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                                    self.advance();
+                                                }
+                                            }
+                                            if !self.match_token(TokenType::Comma) { break; }
+                                        }
+                                        self.expect(TokenType::RParen)?;
+                                    } else {
+                                        let _ = self.parse_expression()?;
+                                        if self.match_token(TokenType::As) {
+                                            if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                                self.advance();
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
                     } else {
                         // For complex expressions (like CAST, function calls), use Dot with * as field
                         expr = Expression::Dot(Box::new(DotAccess {
