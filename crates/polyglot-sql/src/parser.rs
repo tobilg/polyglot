@@ -1646,6 +1646,17 @@ impl Parser {
                         self.expect_identifier_or_keyword_with_quoted()?
                     };
                     format = Some(Expression::Identifier(ident));
+                    // ClickHouse: FORMAT <name> may be followed by inline data
+                    // (CSV rows, JSON objects, etc.) — consume to semicolon
+                    if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                        && !self.is_at_end()
+                        && !self.check(TokenType::Semicolon)
+                        && !self.check(TokenType::Settings)
+                    {
+                        while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                            self.advance();
+                        }
+                    }
                     continue;
                 }
 
@@ -23056,7 +23067,7 @@ impl Parser {
                     })));
                 }
                 // Otherwise empty tuple
-                return Ok(Expression::Tuple(Box::new(Tuple { expressions: Vec::new() })));
+                return self.maybe_parse_subscript(Expression::Tuple(Box::new(Tuple { expressions: Vec::new() })));
             }
 
             // Check if this is a VALUES expression inside parens: (VALUES ...)
