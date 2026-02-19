@@ -38014,7 +38014,32 @@ impl Parser {
                 } else {
                     None
                 };
-                let value = self.parse_primary_or_var()?;
+                // ClickHouse: STRUCTURE (...) contains column defs without commas — consume balanced parens
+                let is_structure = key.as_ref().map_or(false, |k| {
+                    matches!(k, Expression::Identifier(id) if id.name.eq_ignore_ascii_case("STRUCTURE"))
+                });
+                let value = if is_structure && self.check(TokenType::LParen) {
+                    let mut raw = String::new();
+                    let mut depth = 0i32;
+                    while !self.is_at_end() {
+                        let tok = self.advance();
+                        match tok.token_type {
+                            TokenType::LParen => { depth += 1; raw.push('('); }
+                            TokenType::RParen => {
+                                depth -= 1;
+                                if depth == 0 { raw.push(')'); break; }
+                                raw.push(')');
+                            }
+                            _ => {
+                                if !raw.is_empty() && !raw.ends_with('(') { raw.push(' '); }
+                                raw.push_str(&tok.text);
+                            }
+                        }
+                    }
+                    Some(Expression::Var(Box::new(Var { this: raw })))
+                } else {
+                    self.parse_primary_or_var()?
+                };
                 if key.is_none() && value.is_none() {
                     break;
                 }
