@@ -26076,8 +26076,9 @@ impl Parser {
             "EXTRACT" => {
                 // ClickHouse: EXTRACT used as a regular function with comma syntax (extract(haystack, pattern))
                 // Also handles extract(func(args), ...) where the first arg is a function call
+                // Check if first arg is a known datetime field — if not, parse as regular function
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
-                    && (self.check(TokenType::Identifier) || self.check(TokenType::Var))
+                    && (self.check(TokenType::Identifier) || self.check(TokenType::Var) || self.peek().token_type.is_keyword())
                     && (self.check_next(TokenType::Comma) || self.check_next(TokenType::LParen))
                 {
                     let args = self.parse_function_arguments()?;
@@ -33877,7 +33878,10 @@ impl Parser {
     }
 
     fn expect_identifier_or_alias_keyword_with_quoted(&mut self) -> Result<Identifier> {
-        if self.is_identifier_token() || self.can_be_alias_keyword() || self.is_safe_keyword_as_identifier() {
+        // ClickHouse: any keyword can be used as a table alias after explicit AS
+        let ch_keyword = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.peek().token_type.is_keyword();
+        if self.is_identifier_token() || self.can_be_alias_keyword() || self.is_safe_keyword_as_identifier() || ch_keyword {
             let token = self.advance();
             let quoted = token.token_type == TokenType::QuotedIdentifier;
             Ok(Identifier {
@@ -45640,8 +45644,17 @@ impl Parser {
         // Check for AS keyword
         let explicit_as = self.match_token(TokenType::As);
 
+        // ClickHouse: keywords can be used as table aliases when AS is explicit
+        let is_keyword_alias = explicit_as
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.peek().token_type.is_keyword();
+
         // Try to parse identifier
-        if self.check(TokenType::Identifier) || self.check(TokenType::QuotedIdentifier) {
+        if self.check(TokenType::Identifier) || self.check(TokenType::QuotedIdentifier) || is_keyword_alias {
+            if is_keyword_alias && !self.check(TokenType::Identifier) && !self.check(TokenType::QuotedIdentifier) {
+                let token = self.advance();
+                return Ok(Some(Identifier::new(token.text)));
+            }
             if let Some(Expression::Identifier(id)) = self.parse_identifier()? {
                 return Ok(Some(id));
             }
@@ -45921,7 +45934,16 @@ impl Parser {
         }
 
         // Parse the alias identifier
-        if !self.check(TokenType::Identifier) && !self.check(TokenType::QuotedIdentifier) {
+        // ClickHouse: keywords can be used as table aliases (e.g., AS select, AS from)
+        let is_keyword_alias = has_as
+            && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.peek().token_type.is_keyword();
+        if !self.check(TokenType::Identifier) && !self.check(TokenType::QuotedIdentifier)
+            && !self.check(TokenType::Var) && !is_keyword_alias
+        {
+            if has_as {
+                return Err(Error::parse("Expected identifier after AS"));
+            }
             return Ok(None);
         }
 
