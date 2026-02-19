@@ -8373,11 +8373,11 @@ impl Parser {
             && (self.check(TokenType::Dictionary) || self.check_identifier("DICTIONARY"))
         {
             let mut parts = vec!["REPLACE".to_string()];
-            let mut paren_depth = 0i32;
+            let mut _paren_depth = 0i32;
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
                 let token = self.advance();
-                if token.token_type == TokenType::LParen { paren_depth += 1; }
-                if token.token_type == TokenType::RParen { paren_depth -= 1; }
+                if token.token_type == TokenType::LParen { _paren_depth += 1; }
+                if token.token_type == TokenType::RParen { _paren_depth -= 1; }
                 let text = if token.token_type == TokenType::String {
                     format!("'{}'", token.text)
                 } else if token.token_type == TokenType::QuotedIdentifier {

@@ -8,8 +8,22 @@ fn test(label: &str, sql: &str) {
 }
 
 fn main() {
-    test("format_json", r#"insert into t select * from input() format JSONEachRow {"x" : 1, "y" : "s1"}, {"y" : "s2", "x" : 2}"#);
-    test("format_csv", "insert into t select x, y from input() format CSV 1,2");
-    test("normal_format", "SELECT 1 FORMAT TabSeparated");
-    test("format_values", "INSERT INTO t FORMAT Values (1, 'a'), (2, 'b')");
+    // Normal EXTRACT
+    test("e1", "SELECT EXTRACT(DAY FROM toDate('2019-05-05'))");
+    test("e2", "SELECT EXTRACT(YEAR FROM now())");
+    // ClickHouse function-style extract
+    test("e3", "SELECT extract('1234', '123')");
+    test("e4", "SELECT extract('1234' arg_1, '123' arg_2), arg_1, arg_2");
+    // Normal CAST
+    test("c1", "SELECT cast('1234' AS UInt32)");
+    test("c2", "SELECT cast(x AS DateTime('UTC'))");
+    // Normal SUBSTRING
+    test("s1", "SELECT substring('hello' FROM 2 FOR 3)");
+    test("s2", "SELECT substring('hello', 2, 3)");
+    // Normal TRIM
+    test("t1", "SELECT trim(BOTH ' ' FROM '  hello  ')");
+    test("t2", "SELECT trim('  hello  ')");
+    // Normal DATEADD/DATEDIFF
+    test("d1", "SELECT dateAdd(DAY, 1, now())");
+    test("d2", "SELECT dateDiff(DAY, now(), now())");
 }
