@@ -12,8 +12,8 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::fs;
 
-/// Path to the fixtures directory
-const FIXTURES_PATH: &str = "tests/fixtures";
+/// Path to the fixtures directory (created by `make extract-fixtures`)
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 /// Available dialect fixtures
 const DIALECT_FILES: &[&str] = &[

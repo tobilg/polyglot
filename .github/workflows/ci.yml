@@ -20,6 +20,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Extract test fixtures
+        run: make extract-all-fixtures
+
       - name: Lib unit tests
         run: cargo test --lib -p polyglot-sql
 
@@ -34,6 +45,12 @@ jobs:
 
       - name: Custom dialect tests
         run: cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
+
+      - name: ClickHouse parser tests
+        run: RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+
+      - name: ClickHouse coverage tests (report-only)
+        run: RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 
   sdk-build:
     needs: rust-test

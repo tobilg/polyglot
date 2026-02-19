@@ -3930,6 +3930,7 @@ impl Generator {
             }
             JoinKind::Array => self.write_keyword("ARRAY JOIN"),
             JoinKind::LeftArray => self.write_keyword("LEFT ARRAY JOIN"),
+            JoinKind::Paste => self.write_keyword("PASTE JOIN"),
         }
         }
 
@@ -8270,6 +8271,9 @@ impl Generator {
                     self.write_space();
                     self.generate_expression(src)?;
                 }
+            }
+            AlterTableAction::Raw { sql } => {
+                self.write(sql);
             }
         }
         Ok(())
@@ -14930,6 +14934,8 @@ impl Generator {
             (IntervalUnit::Millisecond, true) => "MILLISECONDS",
             (IntervalUnit::Microsecond, false) => "MICROSECOND",
             (IntervalUnit::Microsecond, true) => "MICROSECONDS",
+            (IntervalUnit::Nanosecond, false) => "NANOSECOND",
+            (IntervalUnit::Nanosecond, true) => "NANOSECONDS",
         }
     }
 
@@ -14985,6 +14991,8 @@ impl Generator {
             (IntervalUnit::Millisecond, true) => self.write_keyword("MILLISECONDS"),
             (IntervalUnit::Microsecond, false) => self.write_keyword("MICROSECOND"),
             (IntervalUnit::Microsecond, true) => self.write_keyword("MICROSECONDS"),
+            (IntervalUnit::Nanosecond, false) => self.write_keyword("NANOSECOND"),
+            (IntervalUnit::Nanosecond, true) => self.write_keyword("NANOSECONDS"),
         }
     }
 
@@ -18506,10 +18514,16 @@ impl Generator {
             self.write_space();
         }
 
-        // If the inner expression is a Paren, don't add extra parentheses
+        // If the inner expression is a Paren wrapping a statement, don't add extra parentheses
         // This handles cases like ((SELECT 1)) LIMIT 1 where we wrap Paren in Subquery
         // to carry the LIMIT modifier without adding more parens
-        let skip_outer_parens = matches!(&subquery.this, Expression::Paren(_));
+        let skip_outer_parens = if let Expression::Paren(ref p) = &subquery.this {
+            matches!(&p.this, Expression::Select(_) | Expression::Union(_) |
+                Expression::Intersect(_) | Expression::Except(_) |
+                Expression::Subquery(_))
+        } else {
+            false
+        };
 
         // Check if inner expression is a statement for pretty formatting
         let is_statement = matches!(
@@ -32935,6 +32949,13 @@ impl Generator {
             self.write_keyword("STEP");
             self.write_space();
             self.generate_expression(step)?;
+        }
+
+        if let Some(staleness) = &e.staleness {
+            self.write_space();
+            self.write_keyword("STALENESS");
+            self.write_space();
+            self.generate_expression(staleness)?;
         }
 
         if let Some(interpolate) = &e.interpolate {

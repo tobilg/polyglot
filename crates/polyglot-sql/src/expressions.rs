@@ -3022,6 +3022,8 @@ pub enum JoinKind {
     // ClickHouse ARRAY JOIN
     Array,
     LeftArray,
+    // ClickHouse PASTE JOIN (positional join)
+    Paste,
 }
 
 impl Default for JoinKind {
@@ -3864,6 +3866,7 @@ pub enum IntervalUnit {
     Second,
     Millisecond,
     Microsecond,
+    Nanosecond,
 }
 
 /// SQL Command (COMMIT, ROLLBACK, BEGIN, etc.)
@@ -5945,6 +5948,10 @@ pub enum AlterTableAction {
     ReplacePartition {
         partition: Expression,
         source: Option<Box<Expression>>,
+    },
+    /// Raw SQL for dialect-specific ALTER TABLE actions (e.g., ClickHouse UPDATE/DELETE/DETACH/etc.)
+    Raw {
+        sql: String,
     },
 }
 
@@ -8442,6 +8449,8 @@ pub struct WithFill {
     pub to: Option<Box<Expression>>,
     #[serde(default)]
     pub step: Option<Box<Expression>>,
+    #[serde(default)]
+    pub staleness: Option<Box<Expression>>,
     #[serde(default)]
     pub interpolate: Option<Box<Expression>>,
 }

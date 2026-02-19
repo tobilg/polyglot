@@ -11,8 +11,8 @@ use once_cell::sync::Lazy;
 use polyglot_sql::DialectType;
 use std::fs;
 
-/// Path to the fixtures directory
-const FIXTURES_PATH: &str = "tests/fixtures";
+/// Path to the fixtures directory (created by `make extract-fixtures`)
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 /// Lazily load transpile fixtures
 static TRANSPILE_FIXTURES: Lazy<Option<TranspileFixtures>> = Lazy::new(|| {

@@ -22,12 +22,21 @@ impl DialectImpl for ClickHouseDialect {
         // ClickHouse uses double quotes and backticks for identifiers
         config.identifiers.insert('"', '"');
         config.identifiers.insert('`', '`');
-        // ClickHouse does NOT support nested comments
-        config.nested_comments = false;
+        // ClickHouse supports nested comments
+        config.nested_comments = true;
         // ClickHouse allows identifiers to start with digits
         config.identifiers_can_start_with_digit = true;
         // ClickHouse uses backslash escaping in strings
         config.string_escapes.push('\\');
+        // ClickHouse supports # as single-line comment
+        config.hash_comments = true;
+        // ClickHouse allows $ in identifiers
+        config.dollar_sign_is_identifier = true;
+        // ClickHouse: INSERT ... FORMAT <name> is followed by raw data
+        config.insert_format_raw_data = true;
+        // ClickHouse supports 0xDEADBEEF hex integer literals
+        config.hex_number_strings = true;
+        config.hex_string_is_integer_type = true;
         config
     }
 

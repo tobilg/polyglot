@@ -865,7 +865,67 @@ impl TokenType {
                 | TokenType::Overwrite
                 | TokenType::StraightJoin
                 | TokenType::Start
+                // Additional keywords registered in tokenizer but previously missing from is_keyword()
+                | TokenType::Ignore
+                | TokenType::Domain
+                | TokenType::Apply
+                | TokenType::Respect
+                | TokenType::Materialized
+                | TokenType::Prewhere
+                | TokenType::Old
+                | TokenType::New
+                | TokenType::Cast
+                | TokenType::TryCast
+                | TokenType::SafeCast
+                | TokenType::Transaction
+                | TokenType::Describe
+                | TokenType::Kill
+                | TokenType::Lambda
+                | TokenType::Declare
                 | TokenType::Keep
+                | TokenType::Output
+                | TokenType::Percent
+                | TokenType::Qualify
+                | TokenType::Returning
+                | TokenType::Language
+                | TokenType::Preserve
+                | TokenType::Savepoint
+                | TokenType::Rollback
+                | TokenType::Body
+                | TokenType::Increment
+                | TokenType::Minvalue
+                | TokenType::Maxvalue
+                | TokenType::Cycle
+                | TokenType::NoCycle
+                | TokenType::Seed
+                | TokenType::Namespace
+                | TokenType::Authorization
+                | TokenType::Order
+                | TokenType::Restart
+                | TokenType::Before
+                | TokenType::Instead
+                | TokenType::Each
+                | TokenType::Statement
+                | TokenType::Referencing
+                | TokenType::Of
+                | TokenType::Separator
+                | TokenType::Others
+                | TokenType::Placing
+                | TokenType::Owned
+                | TokenType::Running
+                | TokenType::Define
+                | TokenType::Measures
+                | TokenType::MatchRecognize
+                | TokenType::AutoIncrement
+                | TokenType::Connect
+                | TokenType::Distribute
+                | TokenType::Bernoulli
+                | TokenType::TableSample
+                | TokenType::Inpath
+                | TokenType::Pragma
+                | TokenType::Siblings
+                | TokenType::SerdeProperties
+                | TokenType::RLike
         )
     }
 
@@ -949,6 +1009,16 @@ pub struct TokenizerConfig {
     /// When false (Spark/Databricks), backslashes in raw strings are always literal.
     /// Python sqlglot: STRING_ESCAPES_ALLOWED_IN_RAW_STRINGS (default True)
     pub string_escapes_allowed_in_raw_strings: bool,
+    /// Whether # starts a single-line comment (ClickHouse, MySQL)
+    pub hash_comments: bool,
+    /// Whether $ can start/continue an identifier (ClickHouse).
+    /// When true, a bare `$` that is not part of a dollar-quoted string or positional
+    /// parameter is treated as an identifier character.
+    pub dollar_sign_is_identifier: bool,
+    /// Whether INSERT ... FORMAT <name> should treat subsequent data as raw (ClickHouse).
+    /// When true, after tokenizing `INSERT ... FORMAT <non-VALUES-name>`, all text until
+    /// the next blank line or end of input is consumed as a raw data token.
+    pub insert_format_raw_data: bool,
 }
 
 impl Default for TokenizerConfig {
@@ -1278,6 +1348,9 @@ impl Default for TokenizerConfig {
             // Default: backslash escapes ARE allowed in raw strings (sqlglot default)
             // Spark/Databricks set this to false
             string_escapes_allowed_in_raw_strings: true,
+            hash_comments: false,
+            dollar_sign_is_identifier: false,
+            insert_format_raw_data: false,
         }
     }
 }
@@ -1350,6 +1423,17 @@ impl<'a> TokenizerState<'a> {
 
             self.start = self.current;
             self.scan_token()?;
+
+            // ClickHouse: After INSERT ... FORMAT <name> (where name != VALUES),
+            // the rest until the next blank line or end of input is raw data.
+            if self.config.insert_format_raw_data {
+                if let Some(raw) = self.try_scan_insert_format_raw_data() {
+                    if !raw.is_empty() {
+                        self.start = self.current;
+                        self.add_token_with_text(TokenType::Var, raw);
+                    }
+                }
+            }
         }
 
         // Handle leftover leading comments at end of input.
@@ -1413,13 +1497,21 @@ impl<'a> TokenizerState<'a> {
                     saw_newline = true;
                     self.advance();
                 }
-                '\u{3000}' => {
+                '\u{00A0}' // non-breaking space
+                | '\u{2000}'..='\u{200B}' // various Unicode spaces + zero-width space
+                | '\u{3000}' // ideographic (full-width) space
+                | '\u{FEFF}' // BOM / zero-width no-break space
+                => {
                     self.advance();
                 }
                 '-' if self.peek_next() == '-' => {
                     self.scan_line_comment(saw_newline);
                     // After a line comment, we're always on a new line
                     saw_newline = true;
+                }
+                '/' if self.peek_next() == '/' && self.config.hash_comments => {
+                    // ClickHouse: // single-line comments (same dialects that support # comments)
+                    self.scan_double_slash_comment();
                 }
                 '/' if self.peek_next() == '*' => {
                     // Check if this is a hint comment /*+ ... */
@@ -1453,8 +1545,42 @@ impl<'a> TokenizerState<'a> {
                     // After a line comment, we're always on a new line
                     saw_newline = true;
                 }
+                '#' if self.config.hash_comments => {
+                    self.scan_hash_line_comment();
+                }
                 _ => break,
             }
+        }
+    }
+
+    fn scan_hash_line_comment(&mut self) {
+        self.advance(); // #
+        let start = self.current;
+        while !self.is_at_end() && self.peek() != '\n' {
+            self.advance();
+        }
+        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment_text = comment.trim().to_string();
+        if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
+        } else {
+            self.comments.push(comment_text);
+        }
+    }
+
+    fn scan_double_slash_comment(&mut self) {
+        self.advance(); // /
+        self.advance(); // /
+        let start = self.current;
+        while !self.is_at_end() && self.peek() != '\n' {
+            self.advance();
+        }
+        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment_text = comment.trim().to_string();
+        if let Some(last) = self.tokens.last_mut() {
+            last.trailing_comments.push(comment_text);
+        } else {
+            self.comments.push(comment_text);
         }
     }
 
@@ -1730,6 +1856,11 @@ impl<'a> TokenizerState<'a> {
             if let Some(()) = self.try_scan_tagged_dollar_string()? {
                 return Ok(());
             }
+            // If tagged dollar string didn't match and dollar_sign_is_identifier is set,
+            // treat the $ and following chars as an identifier (e.g., ClickHouse $alias$name$).
+            if self.config.dollar_sign_is_identifier {
+                return self.scan_dollar_identifier();
+            }
         }
 
         // Check for dollar-quoted strings: $$...$$
@@ -1740,6 +1871,11 @@ impl<'a> TokenizerState<'a> {
         // Check for positional parameters: $1, $2, etc.
         if c == '$' && self.peek_next().is_ascii_digit() {
             return self.scan_positional_parameter();
+        }
+
+        // ClickHouse: bare $ (not followed by alphanumeric/underscore) as identifier
+        if c == '$' && self.config.dollar_sign_is_identifier {
+            return self.scan_dollar_identifier();
         }
 
         // TSQL: Check for identifiers starting with # (temp tables) or @ (variables)
@@ -1753,6 +1889,30 @@ impl<'a> TokenizerState<'a> {
             self.advance();
             self.add_token(token_type);
             return Ok(());
+        }
+
+        // Unicode minus (U+2212) → treat as regular minus
+        if c == '\u{2212}' {
+            self.advance();
+            self.add_token(TokenType::Dash);
+            return Ok(());
+        }
+
+        // Unicode fraction slash (U+2044) → treat as regular slash
+        if c == '\u{2044}' {
+            self.advance();
+            self.add_token(TokenType::Slash);
+            return Ok(());
+        }
+
+        // Unicode curly/smart quotes → treat as regular string quotes
+        if c == '\u{2018}' || c == '\u{2019}' {
+            // Left/right single quotation marks → scan as string with matching end
+            return self.scan_unicode_quoted_string(c);
+        }
+        if c == '\u{201C}' || c == '\u{201D}' {
+            // Left/right double quotation marks → scan as quoted identifier
+            return self.scan_unicode_quoted_identifier(c);
         }
 
         // Must be an identifier or keyword
@@ -2190,6 +2350,51 @@ impl<'a> TokenizerState<'a> {
         Ok(())
     }
 
+    /// Scan a string delimited by Unicode curly single quotes (U+2018/U+2019).
+    /// Content between curly quotes is literal (no escape processing).
+    /// When opened with \u{2018} (left), close with \u{2019} (right) only.
+    /// When opened with \u{2019} (right), close with \u{2019} (right) — self-closing.
+    fn scan_unicode_quoted_string(&mut self, open_quote: char) -> Result<()> {
+        self.advance(); // Opening curly quote
+        let start = self.current;
+        // Determine closing quote: left opens -> right closes; right opens -> right closes
+        let close_quote = if open_quote == '\u{2018}' {
+            '\u{2019}' // left opens, right closes
+        } else {
+            '\u{2019}' // right quote also closes with right quote
+        };
+        while !self.is_at_end() && self.peek() != close_quote {
+            self.advance();
+        }
+        let value: String = self.chars[start..self.current].iter().collect();
+        if !self.is_at_end() {
+            self.advance(); // Closing quote
+        }
+        self.add_token_with_text(TokenType::String, value);
+        Ok(())
+    }
+
+    /// Scan an identifier delimited by Unicode curly double quotes (U+201C/U+201D).
+    /// When opened with \u{201C} (left), close with \u{201D} (right) only.
+    fn scan_unicode_quoted_identifier(&mut self, open_quote: char) -> Result<()> {
+        self.advance(); // Opening curly quote
+        let start = self.current;
+        let close_quote = if open_quote == '\u{201C}' {
+            '\u{201D}' // left opens, right closes
+        } else {
+            '\u{201D}' // right also closes with right
+        };
+        while !self.is_at_end() && self.peek() != close_quote && self.peek() != '"' {
+            self.advance();
+        }
+        let value: String = self.chars[start..self.current].iter().collect();
+        if !self.is_at_end() {
+            self.advance(); // Closing quote
+        }
+        self.add_token_with_text(TokenType::QuotedIdentifier, value);
+        Ok(())
+    }
+
     fn scan_number(&mut self) -> Result<()> {
         // Check for 0x/0X hex number prefix (SQLite-style)
         if self.config.hex_number_strings && self.peek() == '0' && !self.is_at_end() {
@@ -2198,18 +2403,50 @@ impl<'a> TokenizerState<'a> {
                 // Advance past '0' and 'x'/'X'
                 self.advance();
                 self.advance();
-                // Collect hex digits
+                // Collect hex digits (allow underscores as separators, e.g., 0xbad_cafe)
                 let hex_start = self.current;
-                while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                while !self.is_at_end() && (self.peek().is_ascii_hexdigit() || self.peek() == '_') {
+                    if self.peek() == '_' && !self.peek_next().is_ascii_hexdigit() {
+                        break;
+                    }
                     self.advance();
                 }
                 if self.current > hex_start {
-                    let hex_value: String = self.chars[hex_start..self.current].iter().collect();
-                    if self.config.hex_string_is_integer_type {
-                        // BigQuery: 0xA represents an integer in hex notation
+                    // Check for hex float: 0xABC.DEFpEXP or 0xABCpEXP
+                    let mut is_hex_float = false;
+                    // Optional fractional part: .hexdigits
+                    if !self.is_at_end() && self.peek() == '.' {
+                        let after_dot = if self.current + 1 < self.size { self.chars[self.current + 1] } else { '\0' };
+                        if after_dot.is_ascii_hexdigit() {
+                            is_hex_float = true;
+                            self.advance(); // consume '.'
+                            while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                                self.advance();
+                            }
+                        }
+                    }
+                    // Optional binary exponent: p/P [+/-] digits
+                    if !self.is_at_end() && (self.peek() == 'p' || self.peek() == 'P') {
+                        is_hex_float = true;
+                        self.advance(); // consume p/P
+                        if !self.is_at_end() && (self.peek() == '+' || self.peek() == '-') {
+                            self.advance();
+                        }
+                        while !self.is_at_end() && self.peek().is_ascii_digit() {
+                            self.advance();
+                        }
+                    }
+                    if is_hex_float {
+                        // Hex float literal — emit as regular Number token with full text
+                        let full_text: String = self.chars[self.start..self.current].iter().collect();
+                        self.add_token_with_text(TokenType::Number, full_text);
+                    } else if self.config.hex_string_is_integer_type {
+                        // BigQuery/ClickHouse: 0xA represents an integer in hex notation
+                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexNumber, hex_value);
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
+                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexString, hex_value);
                     }
                     return Ok(());
@@ -2711,6 +2948,27 @@ impl<'a> TokenizerState<'a> {
 
     /// Scan TSQL identifiers that start with # (temp tables) or @ (variables)
     /// Examples: #temp, ##global_temp, @variable
+    /// Scan an identifier that starts with `$` (ClickHouse).
+    /// Examples: `$alias$name$`, `$x`
+    fn scan_dollar_identifier(&mut self) -> Result<()> {
+        // Consume the leading $
+        self.advance();
+
+        // Consume alphanumeric, _, and $ continuation chars
+        while !self.is_at_end() {
+            let c = self.peek();
+            if c.is_alphanumeric() || c == '_' || c == '$' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        let text: String = self.chars[self.start..self.current].iter().collect();
+        self.add_token_with_text(TokenType::Var, text);
+        Ok(())
+    }
+
     fn scan_tsql_identifier(&mut self) -> Result<()> {
         // Consume the leading # or @ (or ##)
         let first = self.advance();
@@ -2734,6 +2992,74 @@ impl<'a> TokenizerState<'a> {
         // These are always identifiers (variables or temp table names), never keywords
         self.add_token_with_text(TokenType::Var, text);
         Ok(())
+    }
+
+    /// Check if the last tokens match INSERT ... FORMAT <name> (not VALUES).
+    /// If so, consume everything until the next blank line (two consecutive newlines)
+    /// or end of input as raw data.
+    fn try_scan_insert_format_raw_data(&mut self) -> Option<String> {
+        let len = self.tokens.len();
+        if len < 3 {
+            return None;
+        }
+
+        // Last token should be the format name (Identifier or Var, not VALUES)
+        let last = &self.tokens[len - 1];
+        if last.text.eq_ignore_ascii_case("VALUES") {
+            return None;
+        }
+        if !matches!(last.token_type, TokenType::Var | TokenType::Identifier) {
+            return None;
+        }
+
+        // Second-to-last should be FORMAT
+        let format_tok = &self.tokens[len - 2];
+        if !format_tok.text.eq_ignore_ascii_case("FORMAT") {
+            return None;
+        }
+
+        // Check that there's an INSERT somewhere earlier in the tokens
+        let has_insert = self.tokens[..len - 2].iter().rev().take(20).any(|t| {
+            t.token_type == TokenType::Insert
+        });
+        if !has_insert {
+            return None;
+        }
+
+        // We're in INSERT ... FORMAT <name> context. Consume everything until:
+        // - A blank line (two consecutive newlines, possibly with whitespace between)
+        // - End of input
+        let raw_start = self.current;
+        while !self.is_at_end() {
+            let c = self.peek();
+            if c == '\n' {
+                // Check for blank line: \n followed by optional \r and \n
+                let saved = self.current;
+                self.advance(); // consume first \n
+                // Skip \r if present
+                while !self.is_at_end() && self.peek() == '\r' {
+                    self.advance();
+                }
+                if self.is_at_end() || self.peek() == '\n' {
+                    // Found blank line or end of input - stop here
+                    // Don't consume the second \n so subsequent SQL can be tokenized
+                    let raw: String = self.chars[raw_start..saved].iter().collect();
+                    return Some(raw.trim().to_string());
+                }
+                // Not a blank line, continue scanning
+            } else {
+                self.advance();
+            }
+        }
+
+        // Reached end of input
+        let raw: String = self.chars[raw_start..self.current].iter().collect();
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     }
 
     fn add_token(&mut self, token_type: TokenType) {
@@ -2946,12 +3272,11 @@ mod tests {
     fn test_unrecognized_character() {
         let tokenizer = Tokenizer::default();
 
-        // Test that unrecognized characters don't cause infinite loops
+        // Unicode curly quotes are now handled as string delimiters
         let result = tokenizer.tokenize("SELECT \u{2018}hello\u{2019}");
-        // Should return an error for the smart quote, not hang
-        assert!(result.is_err(), "Should error on unrecognized character, got: {:?}", result);
+        assert!(result.is_ok(), "Curly quotes should be tokenized as strings");
 
-        // Unicode bullet character
+        // Unicode bullet character should still error
         let result = tokenizer.tokenize("SELECT • FROM t");
         assert!(result.is_err());
     }

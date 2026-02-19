@@ -47,13 +47,14 @@ export function loadDialectTests(jsonPath: string): ExtractedDialectTests | null
  * Load all dialect tests from the fixtures directory.
  */
 export function loadAllDialectTests(fixturesDir: string): ExtractedDialectTests[] {
-  // All 32 dialects from fixtures/extracted/dialects/*.json
+  // All 33 dialects from sqlglot_fixtures/dialects/*.json
   const dialects = [
     'athena', 'bigquery', 'clickhouse', 'databricks', 'doris', 'dremio',
-    'drill', 'druid', 'duckdb', 'dune', 'exasol', 'fabric', 'hive',
-    'materialize', 'mysql', 'oracle', 'pipe_syntax', 'postgres', 'presto',
-    'prql', 'redshift', 'risingwave', 'singlestore', 'snowflake', 'solr',
-    'spark', 'sqlite', 'starrocks', 'tableau', 'teradata', 'trino', 'tsql'
+    'drill', 'druid', 'duckdb', 'dune', 'exasol', 'fabric', 'generic',
+    'hive', 'materialize', 'mysql', 'oracle', 'pipe_syntax', 'postgres',
+    'presto', 'prql', 'redshift', 'risingwave', 'singlestore', 'snowflake',
+    'solr', 'spark', 'sqlite', 'starrocks', 'tableau', 'teradata', 'trino',
+    'tsql'
   ];
 
   const results: ExtractedDialectTests[] = [];
@@ -70,6 +71,6 @@ export function loadAllDialectTests(fixturesDir: string): ExtractedDialectTests[
 }
 
 /**
- * Directory containing extracted dialect test JSON files
+ * Directory containing extracted dialect test JSON files (relative to project root)
  */
-export const DIALECTS_FIXTURE_DIR = 'fixtures/extracted/dialects';
+export const DIALECTS_FIXTURE_DIR = 'crates/polyglot-sql/tests/sqlglot_fixtures/dialects';

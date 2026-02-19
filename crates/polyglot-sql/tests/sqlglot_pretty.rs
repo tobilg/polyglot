@@ -9,8 +9,8 @@ use common::{pretty_test, PrettyFixtures, TestResults};
 use once_cell::sync::Lazy;
 use std::fs;
 
-/// Path to the fixtures directory (symlink created by `make setup-fixtures`)
-const FIXTURES_PATH: &str = "tests/fixtures";
+/// Path to the fixtures directory (created by `make extract-fixtures`)
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 /// Lazily load pretty fixtures from extracted JSON
 static PRETTY_FIXTURES: Lazy<Option<PrettyFixtures>> = Lazy::new(|| {

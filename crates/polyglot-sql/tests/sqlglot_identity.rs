@@ -11,8 +11,8 @@ use common::{
 use once_cell::sync::Lazy;
 use std::fs;
 
-/// Path to the fixtures directory (symlink created by `make setup-fixtures`)
-const FIXTURES_PATH: &str = "tests/fixtures";
+/// Path to the fixtures directory (created by `make extract-fixtures`)
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 /// Lazily load identity fixtures
 static IDENTITY_FIXTURES: Lazy<Option<IdentityFixtures>> = Lazy::new(|| {

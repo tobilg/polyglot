@@ -6,7 +6,7 @@ use common::{identity_test, IdentityFixtures};
 use once_cell::sync::Lazy;
 use std::fs;
 
-const FIXTURES_PATH: &str = "tests/fixtures";
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 static IDENTITY_FIXTURES: Lazy<Option<IdentityFixtures>> = Lazy::new(|| {
     let path = format!("{}/identity.json", FIXTURES_PATH);

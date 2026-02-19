@@ -375,6 +375,7 @@ impl DialectImpl for TSQLDialect {
                     Some(crate::expressions::IntervalUnit::Second) => "SECOND",
                     Some(crate::expressions::IntervalUnit::Millisecond) => "MILLISECOND",
                     Some(crate::expressions::IntervalUnit::Microsecond) => "MICROSECOND",
+                    Some(crate::expressions::IntervalUnit::Nanosecond) => "NANOSECOND",
                     None => "DAY",
                 };
                 let unit = Expression::Identifier(crate::expressions::Identifier {
@@ -401,6 +402,7 @@ impl DialectImpl for TSQLDialect {
                     crate::expressions::IntervalUnit::Second => "SECOND",
                     crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
                     crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+                    crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND",
                 };
                 let unit = Expression::Identifier(crate::expressions::Identifier {
                     name: unit_str.to_string(),

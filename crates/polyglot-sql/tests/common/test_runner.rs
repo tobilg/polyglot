@@ -95,23 +95,27 @@ pub fn dialect_identity_test(
         false
     };
 
-    let output = if use_pretty {
-        if use_identify {
-            d.generate_pretty_with_identify(&transformed)
-                .map_err(|e| format!("Generate error: {}", e))?
-        } else {
-            d.generate_pretty(&transformed)
-                .map_err(|e| format!("Generate error: {}", e))?
-        }
-    } else {
-        if use_identify {
-            d.generate_with_identify(&transformed)
-                .map_err(|e| format!("Generate error: {}", e))?
-        } else {
-            d.generate(&transformed)
-                .map_err(|e| format!("Generate error: {}", e))?
-        }
-    };
+    // For ClickHouse, detect if the input uses lowercase keywords and preserve that casing
+    let use_lowercase = matches!(dialect, DialectType::ClickHouse)
+        && expected_output
+            .trim_start()
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_lowercase());
+
+    let output = d
+        .generate_with_overrides(&transformed, |config| {
+            if use_pretty {
+                config.pretty = true;
+            }
+            if use_identify {
+                config.always_quote_identifiers = true;
+            }
+            if use_lowercase {
+                config.uppercase_keywords = false;
+            }
+        })
+        .map_err(|e| format!("Generate error: {}", e))?;
 
     if output != expected_output {
         return Err(format!(

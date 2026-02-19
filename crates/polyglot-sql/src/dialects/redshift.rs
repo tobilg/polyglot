@@ -111,6 +111,7 @@ impl DialectImpl for RedshiftDialect {
                     crate::expressions::IntervalUnit::Second => "SECOND",
                     crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
                     crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+                    crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND",
                 };
                 let unit = Expression::Identifier(crate::expressions::Identifier {
                     name: unit_str.to_string(),

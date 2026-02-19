@@ -33,6 +33,58 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CLICKHOUSE_TESTS_DIR = PROJECT_ROOT / "external-projects" / "clickhouse" / "tests" / "queries" / "0_stateless"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "crates" / "polyglot-sql" / "tests" / "custom_fixtures" / "clickhouse"
 
+# Files to skip — must match SKIP_FILES in custom_clickhouse_parser.rs
+SKIP_FILES = {
+    # KQL (Kusto Query Language) files — not SQL
+    "02366_kql_distinct.sql",
+    "02366_kql_extend.sql",
+    "02366_kql_func_dynamic.sql",
+    "02366_kql_func_iif.sql",
+    "02366_kql_func_scalar.sql",
+    "02366_kql_func_string.sql",
+    "02366_kql_mvexpand.sql",
+    "02366_kql_summarize.sql",
+    "02366_kql_tabular.sql",
+    # Intentionally invalid/malformed SQL for error handling tests
+    "02469_fix_aliases_parser.sql",
+    "02472_segfault_expression_parser.sql",
+    "02474_fix_function_parser_bug.sql",
+    "02476_fix_cast_parser_bug.sql",
+    "02515_tuple_lambda_parsing.sql",
+    "02901_remove_nullable_crash_analyzer.sql",
+    "02985_dialects_with_distributed_tables.sql",
+    "03144_fuzz_quoted_type_name.sql",
+    "03814_subquery_parser_partially.sql",
+    # Files that test ClickHouse-specific syntax extensions not in scope
+    "00692_if_exception_code.sql",
+    "01144_multiword_data_types.sql",
+    "01280_unicode_whitespaces_lexer.sql",
+    "01564_test_hint_woes.sql",
+    "01604_explain_ast_of_nonselect_query.sql",
+    "01622_multiple_ttls.sql",
+    "01666_blns_long.sql",
+    "02128_apply_lambda_parsing.sql",
+    "02343_create_empty_as_select.sql",
+    "02493_numeric_literals_with_underscores.sql",
+    "02863_ignore_foreign_keys_in_tables_definition.sql",
+    "03257_reverse_sorting_key.sql",
+    "03257_reverse_sorting_key_simple.sql",
+    "03257_reverse_sorting_key_zookeeper.sql",
+    "03273_select_from_explain_ast_non_select.sql",
+    "03280_aliases_for_selects_and_views.sql",
+    "03286_reverse_sorting_key_final.sql",
+    "03286_reverse_sorting_key_final2.sql",
+    "03322_bugfix_of_with_insert.sql",
+    "03460_basic_projection_index.sql",
+    "03558_no_alias_in_single_expressions.sql",
+    "03559_explain_ast_in_subquery.sql",
+    "03601_temporary_views.sql",
+    "03668_shard_join_in_reverse_order.sql",
+    "03669_min_max_projection_with_reverse_order_key.sql",
+    "03761_join_using_empty_list.sql",
+    "03800_assume_not_null_coalesce_if_null_monotonicity_key_condition.sql",
+}
+
 # ClickHouse directive patterns to strip
 DIRECTIVE_PATTERNS = [
     re.compile(r"--\s*\{.*?\}", re.DOTALL),  # -- { serverError ... }
@@ -307,14 +359,18 @@ def main():
     print("\n--- Phase 1: Extracting statements ---")
     all_stmts = []
     files_processed = 0
+    files_skipped = 0
     for filepath in sql_files:
+        if filepath.name in SKIP_FILES:
+            files_skipped += 1
+            continue
         stmts = extract_from_file(filepath, args.max_length)
         all_stmts.extend(stmts)
         files_processed += 1
         if args.verbose and files_processed % 500 == 0:
             print(f"  Processed {files_processed}/{len(sql_files)} files, {len(all_stmts)} statements so far")
 
-    print(f"  Extracted {len(all_stmts)} statements from {files_processed} files")
+    print(f"  Extracted {len(all_stmts)} statements from {files_processed} files (skipped {files_skipped})")
 
     # Phase 2: Deduplicate
     print("\n--- Phase 2: Deduplicating ---")
@@ -392,9 +448,8 @@ def main():
     print(f"  Total tests written:     {total_written}")
     print(f"  Output directory:        {output_dir}")
     print(f"{'='*60}")
-    print(f"\nNext step: run polyglot tests and remove failures:")
-    print(f"  RUST_MIN_STACK=16777216 cargo test --test custom_dialect_tests -p polyglot-sql --release -- test_custom_dialect_identity_all --nocapture 2>&1 > temporary-files/clickhouse_test_output.txt")
-    print(f"  uv run python3 tools/clickhouse-extract/remove-failures.py temporary-files/clickhouse_test_output.txt")
+    print(f"\nRun coverage tests:")
+    print(f"  make test-rust-clickhouse")
 
 
 if __name__ == "__main__":

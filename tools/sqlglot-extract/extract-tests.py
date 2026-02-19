@@ -9,8 +9,7 @@ Parses Python AST to extract:
 - assertEqual(parse_one(sql).sql(), expected) from test_parser.py
 - assertRaises(ParseError) from test_parser.py
 
-Outputs JSON files for each dialect in fixtures/extracted/dialects/
-Plus transpile.json and parser.json in fixtures/extracted/
+Outputs JSON files directly to crates/polyglot-sql/tests/sqlglot_fixtures/
 """
 
 import ast
@@ -624,19 +623,17 @@ def extract_parser_tests(filepath: str) -> Dict[str, Any]:
 
 
 def main():
-    # Determine paths relative to script location
-    script_dir = Path(__file__).parent.parent
-    project_root = script_dir.parent.parent
+    # Determine paths: script is at tools/sqlglot-extract/extract-tests.py
+    project_root = Path(__file__).resolve().parent.parent.parent
 
     sqlglot_tests_dir = project_root / 'external-projects' / 'sqlglot' / 'tests'
     dialects_dir = sqlglot_tests_dir / 'dialects'
     fixtures_dir = sqlglot_tests_dir / 'fixtures'
 
-    output_dir = script_dir / 'fixtures' / 'extracted' / 'dialects'
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Also create identity.json and pretty.json in parent dir
-    extracted_dir = script_dir / 'fixtures' / 'extracted'
+    # Output directly to crate test directory
+    output_dir = project_root / 'crates' / 'polyglot-sql' / 'tests' / 'sqlglot_fixtures'
+    dialects_output_dir = output_dir / 'dialects'
+    dialects_output_dir.mkdir(parents=True, exist_ok=True)
 
     print("SQLGlot Test Extractor")
     print("=" * 60)
@@ -649,7 +646,7 @@ def main():
 
         identity_tests = [{'line': i + 1, 'sql': sql} for i, sql in enumerate(lines)]
 
-        with open(extracted_dir / 'identity.json', 'w') as f:
+        with open(output_dir / 'identity.json', 'w') as f:
             json.dump({'tests': identity_tests, 'count': len(identity_tests)}, f, indent=2)
 
         print(f"Identity tests: {len(identity_tests)} extracted")
@@ -659,7 +656,7 @@ def main():
     if pretty_sql.exists():
         pretty_tests = extract_pretty_tests(str(pretty_sql))
 
-        with open(extracted_dir / 'pretty.json', 'w') as f:
+        with open(output_dir / 'pretty.json', 'w') as f:
             json.dump({'tests': pretty_tests, 'count': len(pretty_tests)}, f, indent=2)
 
         print(f"Pretty tests: {len(pretty_tests)} extracted")
@@ -696,7 +693,7 @@ def main():
             tests['dialect'] = dialect_name
 
         # Write to JSON
-        output_file = output_dir / f"{dialect_name}.json"
+        output_file = dialects_output_dir / f"{dialect_name}.json"
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(tests, f, indent=2, ensure_ascii=False)
 
@@ -721,7 +718,7 @@ def main():
     if transpile_file.exists():
         transpile_data = extract_transpile_tests(str(transpile_file))
 
-        with open(extracted_dir / 'transpile.json', 'w') as f:
+        with open(output_dir / 'transpile.json', 'w') as f:
             json.dump(transpile_data, f, indent=2, ensure_ascii=False)
 
         norm_count = len(transpile_data['normalization'])
@@ -744,7 +741,7 @@ def main():
     if parser_file.exists():
         parser_data = extract_parser_tests(str(parser_file))
 
-        with open(extracted_dir / 'parser.json', 'w') as f:
+        with open(output_dir / 'parser.json', 'w') as f:
             json.dump(parser_data, f, indent=2, ensure_ascii=False)
 
         rt_count = len(parser_data['roundtrips'])
@@ -755,7 +752,7 @@ def main():
         print("  test_parser.py not found!")
 
     print()
-    print(f"Output written to: {extracted_dir}")
+    print(f"Output written to: {output_dir}")
 
 
 if __name__ == '__main__':

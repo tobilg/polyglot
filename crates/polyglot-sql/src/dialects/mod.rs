@@ -1781,6 +1781,18 @@ impl Dialect {
         generator.generate(expr)
     }
 
+    /// Generate SQL from an expression with caller-specified config overrides
+    pub fn generate_with_overrides(
+        &self,
+        expr: &Expression,
+        overrides: impl FnOnce(&mut GeneratorConfig),
+    ) -> Result<String> {
+        let mut config = self.get_config_for_expr(expr);
+        overrides(&mut config);
+        let mut generator = Generator::with_config(config);
+        generator.generate(expr)
+    }
+
     /// Transforms an expression tree to conform to this dialect's syntax and semantics.
     ///
     /// The transformation proceeds in two phases:
@@ -14874,6 +14886,7 @@ impl Dialect {
                                     crate::expressions::IntervalUnit::Second => "SECOND",
                                     crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
                                     crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+                                    crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND",
                                 }
                             }
                             _ => "",
@@ -23220,6 +23233,7 @@ impl Dialect {
             crate::expressions::IntervalUnit::Second => "SECOND".to_string(),
             crate::expressions::IntervalUnit::Millisecond => "MILLISECOND".to_string(),
             crate::expressions::IntervalUnit::Microsecond => "MICROSECOND".to_string(),
+            crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND".to_string(),
         }
     }
 

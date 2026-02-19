@@ -1,12 +1,26 @@
-.PHONY: help extract-fixtures test-rust test-rust-all test-rust-identity test-rust-dialect \
+.PHONY: help \
+        setup-sqlglot setup-clickhouse-tests setup-external \
+        extract-fixtures extract-clickhouse-fixtures extract-all-fixtures \
+        test-rust test-rust-all test-rust-identity test-rust-dialect \
         test-rust-transpile test-rust-pretty test-rust-roundtrip test-rust-matrix \
         test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-verify \
         test-rust-transpile-generic test-rust-parser \
-        test-compare build-wasm setup-fixtures clean-fixtures clean generate-bindings copy-bindings \
+        test-rust-clickhouse-parser test-rust-clickhouse-coverage \
+        test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
+        generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
-        bump-version \
-        setup-clickhouse-tests extract-clickhouse-fixtures test-rust-clickhouse clean-clickhouse-fixtures
+        bump-version
+
+# =============================================================================
+# Pinned External Project Versions
+# =============================================================================
+
+SQLGLOT_REPO := https://github.com/tobymao/sqlglot.git
+SQLGLOT_REF := v28.10.1
+
+CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
+CLICKHOUSE_REF := v26.1.3.52-stable
 
 # Default target
 help:
@@ -14,14 +28,18 @@ help:
 	@echo "=============================="
 	@echo ""
 	@echo "Fixture Management:"
-	@echo "  make extract-fixtures    - Extract tests from Python sqlglot to JSON"
-	@echo "  make setup-fixtures      - Create symlink for Rust tests"
-	@echo "  make clean-fixtures      - Remove extracted fixtures"
+	@echo "  make setup-external          - Clone external repos (sqlglot, ClickHouse)"
+	@echo "  make extract-fixtures        - Extract sqlglot test fixtures"
+	@echo "  make extract-clickhouse-fixtures - Extract ClickHouse test fixtures"
+	@echo "  make extract-all-fixtures    - Extract all fixtures (sqlglot + ClickHouse)"
+	@echo "  make clean-fixtures          - Remove extracted sqlglot fixtures"
+	@echo "  make clean-clickhouse-fixtures - Remove ClickHouse fixtures"
+	@echo "  make clean-external          - Remove external project clones"
 	@echo ""
 	@echo "Rust Tests (fast):"
 	@echo "  make test-rust           - Run all Rust tests"
 	@echo "  make test-rust-all       - Run all sqlglot fixture tests"
-	@echo "  make test-rust-lib       - Run lib unit tests (704)"
+	@echo "  make test-rust-lib       - Run lib unit tests (736)"
 	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation + custom"
 	@echo ""
 	@echo "  SQLGlot Fixture Tests:"
@@ -39,6 +57,10 @@ help:
 	@echo "  make test-rust-errors    - Error handling tests"
 	@echo "  make test-rust-functions - Function normalization tests"
 	@echo "  make test-rust-custom   - Custom dialect tests (DataFusion, etc.)"
+	@echo ""
+	@echo "  ClickHouse Tests:"
+	@echo "  make test-rust-clickhouse-parser   - ClickHouse parser tests"
+	@echo "  make test-rust-clickhouse-coverage - ClickHouse coverage tests (report-only)"
 	@echo ""
 	@echo "Full Comparison (slow, ~60s):"
 	@echo "  make test-compare        - Run JS comparison tool (requires WASM build)"
@@ -63,79 +85,102 @@ help:
 	@echo "Release:"
 	@echo "  make bump-version V=x.y.z - Bump version in all crates and packages"
 	@echo ""
-	@echo "ClickHouse Tests:"
-	@echo "  make setup-clickhouse-tests      - Sparse clone ClickHouse test files"
-	@echo "  make extract-clickhouse-fixtures - Extract + validate fixture JSON"
-	@echo "  make test-rust-clickhouse        - Run ClickHouse custom dialect tests"
-	@echo "  make clean-clickhouse-fixtures   - Remove generated ClickHouse fixtures"
-	@echo ""
 	@echo "Clean:"
 	@echo "  make clean               - Remove all build artifacts"
-	@echo "  make clean-fixtures      - Remove extracted fixtures"
+	@echo "  make clean-fixtures      - Remove extracted sqlglot fixtures"
+	@echo "  make clean-clickhouse-fixtures - Remove ClickHouse fixtures"
+	@echo "  make clean-external      - Remove external project clones"
 
 # =============================================================================
-# Fixture Management
+# External Project Setup
 # =============================================================================
 
-# Extract test fixtures from Python sqlglot test files
-extract-fixtures:
-	@echo "Extracting fixtures from sqlglot Python tests..."
-	cd tools/sqlglot-compare && python3 scripts/extract-tests.py
-	@echo "Done! Fixtures in tools/sqlglot-compare/fixtures/extracted/"
-
-# Create symlink for Rust tests to access fixtures
-setup-fixtures:
-	@echo "Setting up fixture symlink for Rust tests..."
-	@mkdir -p crates/polyglot-sql/tests
-	@if [ ! -L crates/polyglot-sql/tests/fixtures ]; then \
-		ln -s ../../../tools/sqlglot-compare/fixtures/extracted \
-		      crates/polyglot-sql/tests/fixtures; \
-		echo "Symlink created."; \
+# Clone sqlglot repo at pinned tag
+setup-sqlglot:
+	@if [ ! -d external-projects/sqlglot/.git ]; then \
+		echo "Cloning sqlglot at $(SQLGLOT_REF)..."; \
+		mkdir -p external-projects; \
+		git clone --depth=1 --branch $(SQLGLOT_REF) $(SQLGLOT_REPO) external-projects/sqlglot; \
+		echo "sqlglot cloned."; \
 	else \
-		echo "Symlink already exists."; \
+		echo "sqlglot already present."; \
 	fi
 
-# Remove extracted fixtures
-clean-fixtures:
-	rm -rf tools/sqlglot-compare/fixtures/extracted
-	rm -f crates/polyglot-sql/tests/fixtures
+# Sparse clone ClickHouse test files
+setup-clickhouse-tests:
+	@if [ ! -d external-projects/clickhouse/.git ]; then \
+		echo "Cloning ClickHouse tests (sparse, $(CLICKHOUSE_REF))..."; \
+		mkdir -p external-projects/clickhouse; \
+		cd external-projects/clickhouse && \
+			git init && \
+			git remote add origin $(CLICKHOUSE_REPO) && \
+			git sparse-checkout init --cone && \
+			git sparse-checkout set tests/queries/0_stateless && \
+			git fetch --depth=1 origin $(CLICKHOUSE_REF) && \
+			git checkout FETCH_HEAD; \
+		echo "ClickHouse test files cloned."; \
+	else \
+		echo "ClickHouse test files already present."; \
+	fi
+
+# Clone all external repos
+setup-external: setup-sqlglot setup-clickhouse-tests
+
+# =============================================================================
+# Fixture Extraction
+# =============================================================================
+
+# Extract sqlglot test fixtures directly to crate test dir
+extract-fixtures: setup-sqlglot
+	@echo "Extracting fixtures from sqlglot Python tests..."
+	@uv run python3 tools/sqlglot-extract/extract-tests.py
+	@echo "Done! Fixtures in crates/polyglot-sql/tests/sqlglot_fixtures/"
+
+# Extract ClickHouse SQL tests into custom fixture JSON files
+extract-clickhouse-fixtures: setup-clickhouse-tests
+	@echo "Extracting ClickHouse test fixtures..."
+	@uv run --with sqlglot python3 tools/clickhouse-extract/extract-clickhouse-tests.py
+	@echo "Done! Fixtures in crates/polyglot-sql/tests/custom_fixtures/clickhouse/"
+
+# Extract all fixtures (sqlglot + ClickHouse)
+extract-all-fixtures: extract-fixtures extract-clickhouse-fixtures
 
 # =============================================================================
 # Rust Tests (Fast Iteration)
 # =============================================================================
 
 # Run all sqlglot compatibility tests
-test-rust: setup-fixtures
+test-rust:
 	cargo test -p polyglot-sql sqlglot -- --nocapture
 
-# Run only generic identity tests (954 tests)
-test-rust-identity: setup-fixtures
+# Run only generic identity tests (955 tests)
+test-rust-identity:
 	cargo test -p polyglot-sql sqlglot_identity -- --nocapture
 
 # Run dialect-specific identity tests
-test-rust-dialect: setup-fixtures
+test-rust-dialect:
 	cargo test -p polyglot-sql sqlglot_dialect -- --nocapture
 
 # Run transpilation tests
-test-rust-transpile: setup-fixtures
+test-rust-transpile:
 	cargo test -p polyglot-sql sqlglot_transpilation -- --nocapture
 
 # Run pretty-printing tests (24 tests)
-test-rust-pretty: setup-fixtures
+test-rust-pretty:
 	cargo test -p polyglot-sql sqlglot_pretty -- --nocapture
 
-# Run lib unit tests (693 tests)
+# Run lib unit tests (736 tests)
 test-rust-lib:
 	cargo test --lib -p polyglot-sql
 
 # Run all sqlglot fixture tests
-test-rust-all: setup-fixtures
+test-rust-all:
 	cargo test -p polyglot-sql --test sqlglot_identity --test sqlglot_dialect_identity \
 		--test sqlglot_transpilation --test sqlglot_pretty \
 		--test sqlglot_transpile --test sqlglot_parser -- --nocapture
 
 # Run lib + identity + dialect identity + transpilation + custom dialects (full verification)
-test-rust-verify: setup-fixtures
+test-rust-verify:
 	@echo "=== Lib unit tests ==="
 	@cargo test --lib -p polyglot-sql
 	@echo ""
@@ -161,11 +206,11 @@ test-rust-verify: setup-fixtures
 	@cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
 
 # Run normalization/transpile tests from test_transpile.py
-test-rust-transpile-generic: setup-fixtures
+test-rust-transpile-generic:
 	cargo test -p polyglot-sql --test sqlglot_transpile -- --nocapture
 
 # Run parser round-trip/error tests from test_parser.py
-test-rust-parser: setup-fixtures
+test-rust-parser:
 	cargo test -p polyglot-sql --test sqlglot_parser -- --nocapture
 
 # -----------------------------------------------------------------------------
@@ -199,6 +244,18 @@ test-rust-custom:
 # Quick check - just compile tests
 test-rust-check:
 	cargo check -p polyglot-sql --tests
+
+# -----------------------------------------------------------------------------
+# ClickHouse Tests
+# -----------------------------------------------------------------------------
+
+# Run ClickHouse parser tests
+test-rust-clickhouse-parser:
+	RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+
+# Run ClickHouse coverage tests (report-only, failures expected)
+test-rust-clickhouse-coverage:
+	RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 
 # =============================================================================
 # Full Comparison (Reference Implementation)
@@ -301,43 +358,21 @@ endif
 	@echo "Version bumped to $(V) in all crates and packages."
 
 # =============================================================================
-# ClickHouse Test Extraction
+# Clean
 # =============================================================================
 
-# Sparse clone ClickHouse test files (only tests/queries/0_stateless/)
-setup-clickhouse-tests:
-	@echo "Setting up ClickHouse test files (sparse clone)..."
-	@mkdir -p external-projects/clickhouse
-	@if [ ! -d external-projects/clickhouse/.git ]; then \
-		cd external-projects/clickhouse && \
-		git init && \
-		git remote add origin https://github.com/ClickHouse/ClickHouse.git && \
-		git sparse-checkout init --cone && \
-		git sparse-checkout set tests/queries/0_stateless && \
-		git fetch --depth=1 origin master && \
-		git checkout master; \
-		echo "ClickHouse test files cloned."; \
-	else \
-		echo "ClickHouse test files already present."; \
-	fi
-
-# Extract ClickHouse SQL tests into custom fixture JSON files
-extract-clickhouse-fixtures: setup-clickhouse-tests
-	@echo "Extracting ClickHouse test fixtures..."
-	uv run --with sqlglot python3 tools/clickhouse-extract/extract-clickhouse-tests.py
-	@echo "Done! Fixtures in crates/polyglot-sql/tests/custom_fixtures/clickhouse/"
-
-# Run ClickHouse custom dialect tests
-test-rust-clickhouse:
-	cargo test --test custom_dialect_tests -p polyglot-sql -- clickhouse --nocapture
+# Remove extracted sqlglot fixtures
+clean-fixtures:
+	rm -rf crates/polyglot-sql/tests/sqlglot_fixtures
 
 # Remove generated ClickHouse fixture files
 clean-clickhouse-fixtures:
 	rm -rf crates/polyglot-sql/tests/custom_fixtures/clickhouse
 
-# =============================================================================
-# Clean
-# =============================================================================
+# Remove external project clones
+clean-external:
+	rm -rf external-projects/sqlglot
+	rm -rf external-projects/clickhouse
 
 # Remove all build artifacts
 clean:

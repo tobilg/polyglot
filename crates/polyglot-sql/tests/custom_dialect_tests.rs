@@ -47,6 +47,9 @@ fn load_dialect_fixtures(dir: &Path) -> Vec<CustomDialectFixtureFile> {
     files
 }
 
+/// Dialects with separate test runners (excluded from this auto-discovery).
+const EXCLUDED_DIALECTS: &[&str] = &["clickhouse"];
+
 /// Auto-discover all dialect subdirectories and load their fixtures.
 static ALL_CUSTOM_FIXTURES: Lazy<AllCustomFixtures> = Lazy::new(|| {
     let mut dialects = Vec::new();
@@ -54,6 +57,9 @@ static ALL_CUSTOM_FIXTURES: Lazy<AllCustomFixtures> = Lazy::new(|| {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
                 let dialect_name = entry.file_name().to_string_lossy().to_string();
+                if EXCLUDED_DIALECTS.contains(&dialect_name.as_str()) {
+                    continue;
+                }
                 let files = load_dialect_fixtures(&entry.path());
                 if !files.is_empty() {
                     dialects.push(CustomDialectFixtures {

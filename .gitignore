@@ -73,3 +73,8 @@ dist/
 .wrangler/
 packages/sdk/coverage/
 
+# Extracted test fixtures (generated from external repos)
+crates/polyglot-sql/tests/sqlglot_fixtures/
+crates/polyglot-sql/tests/custom_fixtures/clickhouse/
+tools/sqlglot-compare/fixtures/extracted/
+

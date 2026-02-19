@@ -57,8 +57,8 @@ program
   .command('extract')
   .description('Extract test cases from SQLGlot source (uses Python script)')
   .action(() => {
-    console.log('Run the Python extraction script:');
-    console.log('  python scripts/extract-tests.py');
+    console.log('Run the fixture extraction from the project root:');
+    console.log('  make extract-fixtures');
   });
 
 async function runComparison(options: CompareOptions & { identityOnly?: boolean; maxTests?: number }): Promise<void> {
@@ -109,7 +109,7 @@ async function runComparison(options: CompareOptions & { identityOnly?: boolean;
     }
 
     // Dialect tests from extracted JSON
-    const dialectsPath = join(toolRoot, DIALECTS_FIXTURE_DIR);
+    const dialectsPath = join(projectRoot, DIALECTS_FIXTURE_DIR);
     if (existsSync(dialectsPath)) {
       const dialectTests = loadAllDialectTests(dialectsPath);
       for (const dt of dialectTests) {
@@ -118,7 +118,7 @@ async function runComparison(options: CompareOptions & { identityOnly?: boolean;
       }
       console.log(`Loaded dialect tests from ${dialectTests.length} dialects`);
     } else {
-      console.log('No dialect test fixtures found. Run: python scripts/extract-tests.py');
+      console.log('No dialect test fixtures found. Run: make extract-fixtures');
     }
   }
 

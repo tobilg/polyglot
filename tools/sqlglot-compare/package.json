@@ -7,7 +7,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "extract": "python scripts/extract-tests.py",
+    "extract": "echo 'Run make extract-fixtures from the project root'",
     "compare": "node dist/index.js compare",
     "check-threshold": "node dist/index.js check-threshold",
     "dev": "tsc --watch"

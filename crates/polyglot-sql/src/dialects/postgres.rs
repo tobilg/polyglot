@@ -409,6 +409,10 @@ impl DialectImpl for PostgresDialect {
                 let epoch_field = DateTimeField::Custom("epoch".to_string());
 
                 let result = match unit {
+                    IntervalUnit::Nanosecond => {
+                        let epoch = extract(epoch_field.clone(), ts_diff());
+                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000000)))))
+                    }
                     IntervalUnit::Microsecond => {
                         let epoch = extract(epoch_field, ts_diff());
                         cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000)))))
