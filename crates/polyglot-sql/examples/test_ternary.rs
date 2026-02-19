@@ -8,23 +8,29 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // Star APPLY/EXCEPT/REPLACE
-    test("SELECT * APPLY(toDate) EXCEPT(i, j) APPLY(any) from t");
-    test("SELECT a.* APPLY(toDate) EXCEPT(i, j) APPLY(any) from t a");
-    test("SELECT * EXCEPT(id) REPLACE(5 AS value) FROM t");
-    test("SELECT a.* EXCEPT(id) FROM t a");
-    test("SELECT * APPLY(toString) FROM t");
-    test("SELECT a.* APPLY(toString) FROM t a");
+    // WITH tuple CTE
+    test("WITH ((SELECT 1) AS x, (SELECT 2) AS y) SELECT x, y");
+    test("WITH ((SELECT query_start_time_microseconds FROM system.query_log) AS t1, (SELECT query_start_time FROM system.query_log) AS t2) SELECT t1, t2");
 
-    // COLUMNS function with transformers
-    test("SELECT COLUMNS(id, value) REPLACE (5 AS id) FROM t");
-    test("SELECT COLUMNS(id) REPLACE (5 AS id) FROM t");
-    test("SELECT COLUMNS('pattern') EXCEPT (col1) FROM t");
-    test("SELECT COLUMNS(id, value) APPLY(toString) FROM t");
+    // Simple WITH
+    test("WITH 1 AS n SELECT n");
+    test("WITH (SELECT 1) AS n SELECT n");
 
-    // Basic queries should still work
-    test("SELECT 1");
-    test("SELECT a, b FROM t");
-    test("SELECT a.b FROM t");
-    test("SELECT * FROM t");
+    // AND as function
+    test("SELECT NOT ((SELECT * AND(16)) AND 1)");
+    test("SELECT * FROM AND(16)");
+
+    // * in JOIN ON
+    test("SELECT 1 FROM t0 JOIN t0 ON *");
+
+    // * IS NOT NULL
+    test("SELECT *, * IS NOT NULL FROM t");
+
+    // Trailing comma in Tuple type
+    test("SELECT (1, 'foo')::Tuple(a Int, b String,)");
+    test("SELECT (1, (2,'foo'))::Tuple(Int, Tuple(Int, String,),)");
+
+    // Trailing comma in SELECT
+    test("SELECT 1,");
+    test("SELECT 1, FROM numbers(1)");
 }

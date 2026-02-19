@@ -2322,12 +2322,41 @@ impl<'a> TokenizerState<'a> {
                     self.advance();
                 }
                 if self.current > hex_start {
-                    let hex_value: String = self.chars[hex_start..self.current].iter().collect();
-                    if self.config.hex_string_is_integer_type {
-                        // BigQuery: 0xA represents an integer in hex notation
+                    // Check for hex float: 0xABC.DEFpEXP or 0xABCpEXP
+                    let mut is_hex_float = false;
+                    // Optional fractional part: .hexdigits
+                    if !self.is_at_end() && self.peek() == '.' {
+                        let after_dot = if self.current + 1 < self.size { self.chars[self.current + 1] } else { '\0' };
+                        if after_dot.is_ascii_hexdigit() {
+                            is_hex_float = true;
+                            self.advance(); // consume '.'
+                            while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                                self.advance();
+                            }
+                        }
+                    }
+                    // Optional binary exponent: p/P [+/-] digits
+                    if !self.is_at_end() && (self.peek() == 'p' || self.peek() == 'P') {
+                        is_hex_float = true;
+                        self.advance(); // consume p/P
+                        if !self.is_at_end() && (self.peek() == '+' || self.peek() == '-') {
+                            self.advance();
+                        }
+                        while !self.is_at_end() && self.peek().is_ascii_digit() {
+                            self.advance();
+                        }
+                    }
+                    if is_hex_float {
+                        // Hex float literal — emit as regular Number token with full text
+                        let full_text: String = self.chars[self.start..self.current].iter().collect();
+                        self.add_token_with_text(TokenType::Number, full_text);
+                    } else if self.config.hex_string_is_integer_type {
+                        // BigQuery/ClickHouse: 0xA represents an integer in hex notation
+                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexNumber, hex_value);
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
+                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexString, hex_value);
                     }
                     return Ok(());

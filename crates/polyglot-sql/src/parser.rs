@@ -2708,6 +2708,20 @@ impl Parser {
                     inner
                 };
 
+                // ClickHouse: ((SELECT 1) AS x, (SELECT 2) AS y) — tuple of aliased subqueries
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Comma)
+                {
+                    let mut exprs = vec![inner];
+                    while self.match_token(TokenType::Comma) {
+                        if self.check(TokenType::RParen) { break; }
+                        let e = self.parse_expression()?;
+                        exprs.push(e);
+                    }
+                    self.expect(TokenType::RParen)?;
+                    return Ok(Expression::Tuple(Box::new(Tuple { expressions: exprs })));
+                }
+
                 // Check for set operations after the first table expression
                 let had_set_operation = self.check(TokenType::Union) || self.check(TokenType::Intersect) || self.check(TokenType::Except);
                 let result = if had_set_operation {
@@ -23142,10 +23156,19 @@ impl Parser {
                 };
 
                 // Check for tuple of tuples: ((1, 2), (3, 4))
+                // Also handles ClickHouse: ((SELECT 1) AS x, (SELECT 2) AS y)
                 if self.match_token(TokenType::Comma) {
                     let mut expressions = vec![first_expr];
                     loop {
+                        if self.check(TokenType::RParen) { break; } // trailing comma
                         let elem = self.parse_expression()?;
+                        // Handle AS alias after each element (ClickHouse tuple CTE pattern)
+                        let elem = if self.match_token(TokenType::As) {
+                            let alias = self.expect_identifier_or_keyword()?;
+                            Expression::Alias(Box::new(Alias::new(elem, Identifier::new(alias))))
+                        } else {
+                            elem
+                        };
                         expressions.push(elem);
                         if !self.match_token(TokenType::Comma) {
                             break;
