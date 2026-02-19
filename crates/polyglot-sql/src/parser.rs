@@ -5751,23 +5751,23 @@ impl Parser {
             // Parse optional WITH FILL clause (ClickHouse)
             let with_fill = if self.match_text_seq(&["WITH", "FILL"]) {
                 let from_ = if self.match_token(TokenType::From) {
-                    Some(Box::new(self.parse_addition()?))
+                    Some(Box::new(self.parse_or()?))
                 } else {
                     None
                 };
                 let to = if self.match_text_seq(&["TO"]) {
-                    Some(Box::new(self.parse_addition()?))
+                    Some(Box::new(self.parse_or()?))
                 } else {
                     None
                 };
                 let step = if self.match_text_seq(&["STEP"]) {
-                    Some(Box::new(self.parse_addition()?))
+                    Some(Box::new(self.parse_or()?))
                 } else {
                     None
                 };
                 // ClickHouse: STALENESS [INTERVAL] expr
                 let staleness = if self.match_text_seq(&["STALENESS"]) {
-                    Some(Box::new(self.parse_addition()?))
+                    Some(Box::new(self.parse_or()?))
                 } else {
                     None
                 };
@@ -23375,8 +23375,8 @@ impl Parser {
 
                 // Handle aliasing of expression inside outer parens (e.g., ((a, b) AS c))
                 let first_expr = if self.match_token(TokenType::As) {
-                    let alias = self.expect_identifier()?;
-                    Expression::Alias(Box::new(Alias::new(expr, Identifier::new(alias))))
+                    let alias = self.expect_identifier_or_alias_keyword_with_quoted()?;
+                    Expression::Alias(Box::new(Alias::new(expr, alias)))
                 } else {
                     expr
                 };
@@ -30320,16 +30320,16 @@ impl Parser {
                     self.advance(); // consume WITH
                     self.advance(); // consume FILL
                     let from_ = if self.match_token(TokenType::From) {
-                        Some(Box::new(self.parse_addition()?))
+                        Some(Box::new(self.parse_or()?))
                     } else { None };
                     let to = if self.match_text_seq(&["TO"]) {
-                        Some(Box::new(self.parse_addition()?))
+                        Some(Box::new(self.parse_or()?))
                     } else { None };
                     let step = if self.match_text_seq(&["STEP"]) {
-                        Some(Box::new(self.parse_addition()?))
+                        Some(Box::new(self.parse_or()?))
                     } else { None };
                     let staleness = if self.match_text_seq(&["STALENESS"]) {
-                        Some(Box::new(self.parse_addition()?))
+                        Some(Box::new(self.parse_or()?))
                     } else { None };
                     let interpolate = if self.match_text_seq(&["INTERPOLATE"]) {
                         if self.match_token(TokenType::LParen) {
@@ -42015,22 +42015,22 @@ impl Parser {
         // Parse optional WITH FILL clause (ClickHouse)
         let with_fill = if self.match_text_seq(&["WITH", "FILL"]) {
             let from_ = if self.match_token(TokenType::From) {
-                Some(Box::new(self.parse_addition()?))
+                Some(Box::new(self.parse_or()?))
             } else {
                 None
             };
             let to = if self.match_text_seq(&["TO"]) {
-                Some(Box::new(self.parse_addition()?))
+                Some(Box::new(self.parse_or()?))
             } else {
                 None
             };
             let step = if self.match_text_seq(&["STEP"]) {
-                Some(Box::new(self.parse_addition()?))
+                Some(Box::new(self.parse_or()?))
             } else {
                 None
             };
             let staleness = if self.match_text_seq(&["STALENESS"]) {
-                Some(Box::new(self.parse_addition()?))
+                Some(Box::new(self.parse_or()?))
             } else {
                 None
             };
