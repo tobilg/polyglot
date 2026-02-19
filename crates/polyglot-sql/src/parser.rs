@@ -822,6 +822,12 @@ impl Parser {
                     self.parse_attach_detach(true)
                 }
             }
+            // ClickHouse: UNDROP TABLE [IF EXISTS] ... [UUID '...'] [ON CLUSTER ...]
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("UNDROP")
+                && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
+                self.advance(); // consume UNDROP
+                self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse UNDROP statement"))
+            }
             // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH")
                 && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) => {
@@ -11093,6 +11099,27 @@ impl Parser {
                 if self.match_token(TokenType::LParen) {
                     let expression = self.parse_statement()?;
                     self.expect(TokenType::RParen)?;
+                    // ClickHouse: PROJECTION name (SELECT ...) WITH SETTINGS (key=value, ...)
+                    if self.check(TokenType::With) && self.current + 1 < self.tokens.len()
+                        && self.tokens[self.current + 1].token_type == TokenType::Settings
+                    {
+                        self.advance(); // consume WITH
+                        self.advance(); // consume SETTINGS
+                        if self.match_token(TokenType::LParen) {
+                            // Consume key=value pairs
+                            loop {
+                                if self.check(TokenType::RParen) { break; }
+                                if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                                    self.advance(); // key
+                                }
+                                if self.match_token(TokenType::Eq) {
+                                    let _ = self.parse_primary()?; // value
+                                }
+                                if !self.match_token(TokenType::Comma) { break; }
+                            }
+                            self.expect(TokenType::RParen)?;
+                        }
+                    }
                     constraints.push(TableConstraint::Projection { name, expression });
                 } else if self.match_token(TokenType::Index) {
                     // PROJECTION name INDEX expr TYPE type_name
@@ -13894,9 +13921,12 @@ impl Parser {
     fn parse_drop(&mut self) -> Result<Expression> {
         self.expect(TokenType::Drop)?;
 
-        // ClickHouse: DROP TEMPORARY TABLE
+        // ClickHouse: DROP TEMPORARY TABLE / DROP TEMPORARY VIEW
         if self.check(TokenType::Temporary) && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             self.advance(); // consume TEMPORARY
+            if self.check(TokenType::View) {
+                return self.parse_drop_view(false);
+            }
             return self.parse_drop_table();
         }
 
@@ -13994,6 +14024,16 @@ impl Parser {
         self.expect(TokenType::Table)?;
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
+
+        // ClickHouse: IF EMPTY
+        if !if_exists && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            if self.check(TokenType::If) && self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1].text.eq_ignore_ascii_case("EMPTY")
+            {
+                self.advance(); // consume IF
+                self.advance(); // consume EMPTY
+            }
+        }
 
         // Parse table names (can be multiple)
         let mut names = Vec::new();
@@ -14595,20 +14635,36 @@ impl Parser {
                 let mut partitions = Vec::new();
                 loop {
                     if self.check(TokenType::LParen) {
+                        // ClickHouse: PARTITION (expr) or PARTITION (expr, expr, ...)
                         // Standard SQL: PARTITION (key=value, ...)
-                        self.advance(); // consume (
-                        let mut parts = Vec::new();
-                        loop {
-                            let key = self.expect_identifier()?;
-                            self.expect(TokenType::Eq)?;
-                            let value = self.parse_expression()?;
-                            parts.push((Identifier::new(key), value));
-                            if !self.match_token(TokenType::Comma) {
-                                break;
+                        // Peek ahead: if LParen is followed by String/Number (not identifier=),
+                        // parse as expression
+                        let is_ch_expr = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                            && self.current + 1 < self.tokens.len()
+                            && (self.tokens[self.current + 1].token_type == TokenType::String
+                                || self.tokens[self.current + 1].token_type == TokenType::Number
+                                || self.tokens[self.current + 1].token_type == TokenType::LParen
+                                || (self.current + 2 < self.tokens.len()
+                                    && self.tokens[self.current + 2].token_type != TokenType::Eq));
+                        if is_ch_expr {
+                            // Parse as tuple expression
+                            let expr = self.parse_expression()?;
+                            partitions.push(vec![(Identifier::new("__expr__".to_string()), expr)]);
+                        } else {
+                            self.advance(); // consume (
+                            let mut parts = Vec::new();
+                            loop {
+                                let key = self.expect_identifier()?;
+                                self.expect(TokenType::Eq)?;
+                                let value = self.parse_expression()?;
+                                parts.push((Identifier::new(key), value));
+                                if !self.match_token(TokenType::Comma) {
+                                    break;
+                                }
                             }
+                            self.expect(TokenType::RParen)?;
+                            partitions.push(parts);
                         }
-                        self.expect(TokenType::RParen)?;
-                        partitions.push(parts);
                     } else if self.match_text_seq(&["ALL"]) {
                         // ClickHouse: PARTITION ALL
                         partitions.push(vec![(Identifier::new("ALL".to_string()), Expression::Boolean(BooleanLiteral { value: true }))]);
@@ -19245,6 +19301,16 @@ impl Parser {
         self.expect(TokenType::Database)?;
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
+
+        // ClickHouse: IF EMPTY
+        if !if_exists && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            if self.check(TokenType::If) && self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1].text.eq_ignore_ascii_case("EMPTY")
+            {
+                self.advance(); // consume IF
+                self.advance(); // consume EMPTY
+            }
+        }
         let name = Identifier::new(self.expect_identifier()?);
 
         // ClickHouse: ON CLUSTER clause
@@ -24005,8 +24071,22 @@ impl Parser {
                     return Ok(Expression::Star(star));
                 }
                 // Handle numeric field access: a.1, t.2 (ClickHouse tuple field access)
+                // Also handle negative: a.-1 (ClickHouse negative tuple index)
                 if self.check(TokenType::Number) {
                     let field_name = self.advance().text;
+                    let col_expr = Expression::Dot(Box::new(DotAccess {
+                        this: Expression::Column(Column { name: ident, table: None, join_mark: false, trailing_comments: Vec::new() }),
+                        field: Identifier::new(field_name),
+                    }));
+                    return self.maybe_parse_subscript(col_expr);
+                }
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::Dash) && self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1].token_type == TokenType::Number
+                {
+                    self.advance(); // consume -
+                    let num = self.advance().text;
+                    let field_name = format!("-{}", num);
                     let col_expr = Expression::Dot(Box::new(DotAccess {
                         this: Expression::Column(Column { name: ident, table: None, join_mark: false, trailing_comments: Vec::new() }),
                         field: Identifier::new(field_name),
@@ -25069,11 +25149,64 @@ impl Parser {
             "COUNT_IF" | "COUNTIF" => {
                 let distinct = self.match_token(TokenType::Distinct);
                 let this = self.parse_expression()?;
+                // ClickHouse: handle AS alias inside countIf args: countIf(expr AS d, pred)
+                let this = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && self.check(TokenType::As)
+                {
+                    let next_idx = self.current + 1;
+                    let after_alias_idx = self.current + 2;
+                    let is_alias = next_idx < self.tokens.len()
+                        && (matches!(self.tokens[next_idx].token_type,
+                            TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier)
+                            || self.tokens[next_idx].token_type.is_keyword())
+                        && after_alias_idx < self.tokens.len()
+                        && matches!(self.tokens[after_alias_idx].token_type,
+                            TokenType::RParen | TokenType::Comma);
+                    if is_alias {
+                        self.advance(); // consume AS
+                        let alias_token = self.advance();
+                        Expression::Alias(Box::new(crate::expressions::Alias {
+                            this,
+                            alias: Identifier::new(alias_token.text.clone()),
+                            column_aliases: Vec::new(),
+                            pre_alias_comments: Vec::new(),
+                            trailing_comments: Vec::new(),
+                        }))
+                    } else {
+                        this
+                    }
+                } else {
+                    this
+                };
                 if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                     && self.match_token(TokenType::Comma)
                 {
                     let mut args = vec![this];
-                    args.push(self.parse_expression()?);
+                    let arg = self.parse_expression()?;
+                    // Handle AS alias on subsequent args too
+                    let arg = if self.check(TokenType::As) {
+                        let next_idx = self.current + 1;
+                        let after_alias_idx = self.current + 2;
+                        let is_alias = next_idx < self.tokens.len()
+                            && (matches!(self.tokens[next_idx].token_type,
+                                TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier)
+                                || self.tokens[next_idx].token_type.is_keyword())
+                            && after_alias_idx < self.tokens.len()
+                            && matches!(self.tokens[after_alias_idx].token_type,
+                                TokenType::RParen | TokenType::Comma);
+                        if is_alias {
+                            self.advance(); // consume AS
+                            let alias_token = self.advance();
+                            Expression::Alias(Box::new(crate::expressions::Alias {
+                                this: arg,
+                                alias: Identifier::new(alias_token.text.clone()),
+                                column_aliases: Vec::new(),
+                                pre_alias_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                            }))
+                        } else { arg }
+                    } else { arg };
+                    args.push(arg);
                     while self.match_token(TokenType::Comma) {
                         args.push(self.parse_expression()?);
                     }

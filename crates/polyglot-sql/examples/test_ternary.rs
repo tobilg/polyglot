@@ -2,43 +2,50 @@ use polyglot_sql::{parse, DialectType};
 
 fn test(sql: &str) {
     match parse(sql, DialectType::ClickHouse) {
-        Ok(_exprs) => println!("OK: {}", &sql[..sql.len().min(120)]),
-        Err(e) => println!("ERR: {} -> {}", &sql[..sql.len().min(120)], e),
+        Ok(_exprs) => println!("OK: {}", &sql[..sql.len().min(150)]),
+        Err(e) => println!("ERR: {} -> {}", &sql[..sql.len().min(150)], e),
     }
 }
 
 fn main() {
-    // LIMIT in subquery with modulo
-    test("SELECT count() FROM (SELECT number FROM numbers(10) LIMIT randConstant() % 2)");
-    test("SELECT count() FROM (SELECT number FROM numbers(10) LIMIT 1 % 2)");
+    // Projection WITH SETTINGS in CREATE TABLE column list
+    test("CREATE TABLE t(x UInt64, y String, PROJECTION p1 (SELECT x ORDER BY x) WITH SETTINGS (index_granularity = 2)) ENGINE = MergeTree() ORDER BY x");
 
-    // PRIMARY KEY key in schema
-    test("CREATE MATERIALIZED VIEW mv (key String, PRIMARY KEY key) ENGINE = MergeTree ORDER BY key AS SELECT * FROM data");
+    // DROP TEMPORARY VIEW
+    test("DROP TEMPORARY VIEW IF EXISTS tview_basic");
 
-    // PROJECTION INDEX syntax
-    test("CREATE TABLE t (id UInt64, PROJECTION region_proj INDEX region TYPE basic) ENGINE = MergeTree ORDER BY id");
+    // CREATE TEMPORARY VIEW INNER ENGINE (intentional error test - should tolerate it)
+    test("CREATE TEMPORARY VIEW tv_inner INNER ENGINE = Memory AS SELECT 1");
 
-    // PRIMARY KEY (t.a)
-    test("CREATE TABLE test (t Tuple(a Int32)) ENGINE = EmbeddedRocksDB() PRIMARY KEY (t.a)");
+    // Negative index on column
+    test("SELECT _partition_value.-1 FROM a1");
 
-    // INDEX with comparison
-    test("CREATE TABLE t0 (c0 String, INDEX i0 c0 < (SELECT _table) TYPE minmax) ENGINE = MergeTree() ORDER BY tuple()");
+    // 02681 - UNDROP ON CLUSTER
+    test("undrop table t1 uuid '1234-5678' on cluster test_shard_localhost");
 
-    // CONSTRAINT CHECK (SELECT)
-    test("ALTER TABLE t ADD CONSTRAINT c0 CHECK (SELECT 1)");
+    // 01556 - test multiple EXPLAIN lines
+    test("EXPLAIN SELECT 1 UNION ALL SELECT 1");
+    test("EXPLAIN (SELECT 1 UNION ALL SELECT 1) UNION ALL SELECT 1");
+    test("EXPLAIN SELECT 1 UNION (SELECT 1 UNION ALL SELECT 1)");
 
-    // ARRAY JOIN no args
-    test("SELECT x, a FROM (SELECT 1 AS x, [1] AS arr) ARRAY JOIN");
+    // 01604 EXPLAIN AST non-SELECT
+    test("explain ast alter table t1 delete where date = today()");
+    test("explain ast create function double AS (n) -> 2*n");
 
-    // EXECUTE AS
-    test("EXECUTE AS test_user ALTER TABLE normal UPDATE s = 'x' WHERE n=1");
+    // 02339 DESCRIBE (SELECT)
+    test("DESCRIBE (SELECT *)");
+    test("DESCRIBE TABLE t");
 
-    // Inline alias in function args (not yet fixed)
-    test("SELECT countIf(toDate('2000-12-05') + number as d, toDayOfYear(d) % 2) FROM numbers(100)");
+    // 02343 CREATE TABLE EMPTY
+    test("create table t engine=Memory empty");
+    test("create table t engine=Memory empty as select 1");
 
-    // SELECT * AND(16) in subquery (not yet fixed)
-    test("SELECT not((SELECT * AND(16)) AND 1)");
+    // Check the 03789 RMV
+    test("CREATE MATERIALIZED VIEW mv REFRESH EVERY 1 MONTH APPEND TO target AS WITH (SELECT 1) AS x, (SELECT 2) AS y SELECT * FROM t");
 
-    // DuckDB LIMIT PERCENT should still work
-    test("SELECT * FROM t LIMIT 50 PERCENT");
+    // 03567 comparison in function
+    test("SELECT if(length(v) as bs < 1000, 'ok', toString(bs))");
+
+    // 03595 IS NOT NULL with star
+    test("SELECT *, * IS NOT NULL FROM t");
 }
