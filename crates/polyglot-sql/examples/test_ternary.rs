@@ -8,29 +8,15 @@ fn test(sql: &str) {
 }
 
 fn main() {
-    // WITH tuple CTE
-    test("WITH ((SELECT 1) AS x, (SELECT 2) AS y) SELECT x, y");
-    test("WITH ((SELECT query_start_time_microseconds FROM system.query_log) AS t1, (SELECT query_start_time FROM system.query_log) AS t2) SELECT t1, t2");
+    // Lambda without parens - single param (pseudocolumn issue)
+    test("SELECT level -> least(1.0, greatest(-1.0, level))");
+    test("WITH level -> least(1.0, greatest(-1.0, level)) AS clamp SELECT clamp(0.5)");
+    test("WITH 1 AS master_volume, level -> least(1.0, greatest(-1.0, level)) AS clamp SELECT clamp(0.5)");
 
-    // Simple WITH
-    test("WITH 1 AS n SELECT n");
-    test("WITH (SELECT 1) AS n SELECT n");
-
-    // AND as function
-    test("SELECT NOT ((SELECT * AND(16)) AND 1)");
-    test("SELECT * FROM AND(16)");
-
-    // * in JOIN ON
-    test("SELECT 1 FROM t0 JOIN t0 ON *");
-
-    // * IS NOT NULL
-    test("SELECT *, * IS NOT NULL FROM t");
-
-    // Trailing comma in Tuple type
-    test("SELECT (1, 'foo')::Tuple(a Int, b String,)");
-    test("SELECT (1, (2,'foo'))::Tuple(Int, Tuple(Int, String,),)");
-
-    // Trailing comma in SELECT
-    test("SELECT 1,");
-    test("SELECT 1, FROM numbers(1)");
+    // INSERT INTO t VALUES without parens
+    test("INSERT INTO t VALUES 1");
+    test("INSERT INTO FUNCTION s3('url') VALUES 1");
+    // Regular INSERT should still work
+    test("INSERT INTO t VALUES (1, 2)");
+    test("INSERT INTO t VALUES (1), (2), (3)");
 }

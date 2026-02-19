@@ -7850,6 +7850,18 @@ impl Parser {
                 })));
             }
 
+            // ClickHouse: allow bare VALUES without parens: VALUES 1, 2, 3
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && !self.check(TokenType::LParen)
+            {
+                loop {
+                    let val = self.parse_expression()?;
+                    all_values.push(vec![val]);
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+            } else {
             loop {
                 self.expect(TokenType::LParen)?;
                 // ClickHouse: allow empty VALUES () — empty tuple
@@ -7877,6 +7889,7 @@ impl Parser {
                     break;
                 }
             }
+            } // close else (parenthesized values)
 
             (all_values, None)
         } else if self.check(TokenType::Table) {
@@ -24344,7 +24357,10 @@ impl Parser {
 
             // Check for Oracle pseudocolumns (ROWNUM, ROWID, LEVEL, SYSDATE, etc.)
             // Note: SQLite treats rowid as a regular column name, not a pseudocolumn
-            if !quoted && !matches!(self.config.dialect, Some(crate::dialects::DialectType::SQLite)) {
+            // ClickHouse: skip pseudocolumn parsing as these are regular identifiers
+            if !quoted && !matches!(self.config.dialect,
+                Some(crate::dialects::DialectType::SQLite) | Some(crate::dialects::DialectType::ClickHouse))
+            {
                 if let Some(pseudocolumn_type) = PseudocolumnType::from_str(&name) {
                     return Ok(Expression::Pseudocolumn(Pseudocolumn { kind: pseudocolumn_type }));
                 }
