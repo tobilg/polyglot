@@ -1941,10 +1941,26 @@ impl Parser {
             let is_ch_keyword_func = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.check(TokenType::Except) || self.check(TokenType::Intersect))
                 && self.check_next(TokenType::LParen);
-            // ClickHouse: `from`/`except` can be column names; only treat as keywords if not followed by comma/dot
+            // ClickHouse: `from`/`except` can be column names when followed by an operator
+            // (e.g., `from + from`, `from in [0]`, `from, ...`)
+            // Also: `from FROM t` — two consecutive FROM tokens means first is column name
             let is_ch_keyword_as_column = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
                 && (self.check(TokenType::From) || self.check(TokenType::Except))
-                && (self.check_next(TokenType::Comma) || self.check_next(TokenType::Dot));
+                && {
+                    let next_tt = self.peek_nth(1).map(|t| t.token_type).unwrap_or(TokenType::Semicolon);
+                    matches!(next_tt,
+                        TokenType::Plus | TokenType::Dash | TokenType::Star | TokenType::Slash
+                        | TokenType::Percent | TokenType::Eq | TokenType::Neq | TokenType::Lt
+                        | TokenType::Gt | TokenType::Lte | TokenType::Gte
+                        | TokenType::And | TokenType::Or | TokenType::Comma | TokenType::Dot
+                        | TokenType::In | TokenType::Is | TokenType::Not | TokenType::Like
+                        | TokenType::Between | TokenType::Semicolon | TokenType::RParen
+                        | TokenType::As | TokenType::DPipe | TokenType::Amp | TokenType::Pipe
+                        | TokenType::LBracket
+                        // Two consecutive FROM tokens: first is column name (e.g., SELECT from FROM t)
+                        | TokenType::From
+                    )
+                };
             if !is_ch_keyword_func && !is_ch_keyword_as_column && (self.is_at_end()
                 || self.check(TokenType::From)
                 || self.check(TokenType::Where)
@@ -2239,9 +2255,26 @@ impl Parser {
             }
 
             // Handle trailing comma (ClickHouse supports trailing commas in SELECT)
+            // ClickHouse: `from` after comma is a column name if followed by an operator
+            // (e.g., `from + from` or `from in [0]`), comma, or line-end
+            let from_is_column = matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.check(TokenType::From)
+                && {
+                    let next_tt = self.peek_nth(1).map(|t| t.token_type).unwrap_or(TokenType::Semicolon);
+                    matches!(next_tt,
+                        TokenType::Plus | TokenType::Dash | TokenType::Star | TokenType::Slash
+                        | TokenType::Percent | TokenType::Eq | TokenType::Neq | TokenType::Lt
+                        | TokenType::Gt | TokenType::Lte | TokenType::Gte
+                        | TokenType::And | TokenType::Or | TokenType::Comma | TokenType::Dot
+                        | TokenType::In | TokenType::Is | TokenType::Not | TokenType::Like
+                        | TokenType::Between | TokenType::Semicolon | TokenType::RParen
+                        | TokenType::As | TokenType::DPipe | TokenType::Amp | TokenType::Pipe
+                        | TokenType::LBracket
+                    )
+                };
             if (self.config.allow_trailing_commas
                 || matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))
-                && (self.check_from_keyword()
+                && (!from_is_column && self.check_from_keyword()
                     || self.check(TokenType::Where)
                     || self.check(TokenType::GroupBy)
                     || self.check(TokenType::Having)
@@ -4070,6 +4103,41 @@ impl Parser {
                     trailing_comments: Vec::new(),
                 })),
             };
+        }
+
+        // ClickHouse: subquery column alias list without alias name: FROM (...) (c0, c1)
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.check(TokenType::LParen)
+            && matches!(&expr, Expression::Subquery(s) if s.alias.is_none())
+        {
+            // Lookahead: check if this is (identifier, identifier, ...) — column alias list
+            let mut look = self.current + 1;
+            let mut is_col_list = true;
+            let mut col_count = 0;
+            loop {
+                if look >= self.tokens.len() { is_col_list = false; break; }
+                let tt = self.tokens[look].token_type;
+                if tt == TokenType::Identifier || tt == TokenType::Var || tt == TokenType::QuotedIdentifier || tt.is_keyword() {
+                    col_count += 1;
+                    look += 1;
+                } else { is_col_list = false; break; }
+                if look >= self.tokens.len() { is_col_list = false; break; }
+                if self.tokens[look].token_type == TokenType::Comma { look += 1; }
+                else if self.tokens[look].token_type == TokenType::RParen { break; }
+                else { is_col_list = false; break; }
+            }
+            if is_col_list && col_count >= 1 {
+                self.advance(); // consume LParen
+                let mut aliases = Vec::new();
+                loop {
+                    aliases.push(Identifier::new(self.advance().text.clone()));
+                    if !self.match_token(TokenType::Comma) { break; }
+                }
+                self.expect(TokenType::RParen)?;
+                if let Expression::Subquery(ref mut s) = expr {
+                    s.column_aliases = aliases;
+                }
+            }
         }
 
         // ClickHouse FINAL modifier: table [AS alias] FINAL
@@ -18402,26 +18470,41 @@ impl Parser {
 
         // ClickHouse: GRANT can grant roles (no ON clause), grant privileges (has ON clause),
         // or use complex syntax. If we see TO before ON, treat as command.
+        // Also: multi-privilege grants (multiple ON), wildcard grants (test*.*),
+        // WITH REPLACE OPTION all parse as commands.
         if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
             // Save position after GRANT keyword
             let saved_pos = self.current;
-            // Scan ahead to see if we hit TO before ON (role grant) or ON first (privilege grant)
+            // Scan ahead to check grant structure
             let mut depth = 0i32;
-            let mut found_on = false;
+            let mut on_count = 0;
             let mut found_to = false;
+            let mut has_star_in_name = false;
+            let mut has_replace_option = false;
             let mut i = self.current;
             while i < self.tokens.len() && self.tokens[i].token_type != TokenType::Semicolon {
                 match self.tokens[i].token_type {
                     TokenType::LParen => depth += 1,
                     TokenType::RParen => depth -= 1,
-                    TokenType::On if depth == 0 => { found_on = true; break; }
-                    TokenType::To if depth == 0 => { found_to = true; break; }
+                    TokenType::On if depth == 0 => on_count += 1,
+                    TokenType::To if depth == 0 => { found_to = true; }
+                    TokenType::Star if depth == 0 && on_count > 0 && !found_to => {
+                        // Check if star is part of a wildcard name (e.g., test*.*)
+                        if i > 0 && self.tokens[i - 1].token_type != TokenType::Dot
+                            && self.tokens[i - 1].token_type != TokenType::On
+                        {
+                            has_star_in_name = true;
+                        }
+                    }
+                    TokenType::Replace if depth == 0 && found_to => {
+                        has_replace_option = true;
+                    }
                     _ => {}
                 }
                 i += 1;
             }
-            if found_to && !found_on {
-                // This is a role grant (GRANT role1, role2 TO user1, ...) — parse as command
+            if (found_to && on_count == 0) || on_count > 1 || has_star_in_name || has_replace_option {
+                // Role grant, multi-privilege grant, wildcard grant, or REPLACE OPTION — parse as command
                 self.current = saved_pos;
                 return self.parse_command()?.ok_or_else(|| Error::parse("Failed to parse GRANT statement"));
             }
@@ -32876,16 +32959,12 @@ impl Parser {
                 }
                 self.expect(TokenType::RParen)?;
             } else if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
-                // ClickHouse: REPLACE [STRICT] expr AS name, ... (without parens)
-                loop {
-                    let expr = self.parse_expression()?;
-                    self.expect(TokenType::As)?;
-                    let alias = self.expect_identifier_or_keyword()?;
-                    replacements.push(Alias::new(expr, Identifier::new(alias)));
-                    if !self.match_token(TokenType::Comma) {
-                        break;
-                    }
-                }
+                // ClickHouse: REPLACE [STRICT] expr AS name (single entry without parens)
+                // Multiple entries require parens: REPLACE(expr1 AS name1, expr2 AS name2)
+                let expr = self.parse_expression()?;
+                self.expect(TokenType::As)?;
+                let alias = self.expect_identifier_or_keyword()?;
+                replacements.push(Alias::new(expr, Identifier::new(alias)));
             } else {
                 return Err(Error::parse("Expected LParen after REPLACE"));
             }
