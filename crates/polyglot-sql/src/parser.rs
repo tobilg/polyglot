@@ -2091,6 +2091,8 @@ impl Parser {
                 let expr = if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
                     let is_columns_func = match &expr {
                         Expression::Function(f) => f.name.eq_ignore_ascii_case("COLUMNS"),
+                        Expression::MethodCall(m) => m.method.name.eq_ignore_ascii_case("COLUMNS"),
+                        Expression::Columns(_) => true,
                         _ => false,
                     };
                     let is_qualified_star = matches!(&expr, Expression::Star(_));
