@@ -1802,6 +1802,47 @@ impl Parser {
                 Vec::new()
             };
 
+            // ClickHouse: keyword -> body AS alias (single-param lambda where param is a keyword)
+            // e.g., WITH time -> sin(time * 2 * pi()) AS sine_wave
+            if matches!(self.config.dialect, Some(DialectType::ClickHouse))
+                && self.check(TokenType::Arrow)
+            {
+                self.advance(); // consume ->
+                let body = self.parse_expression()?;
+                let lambda = Expression::Lambda(Box::new(LambdaExpr {
+                    parameters: vec![name.clone()],
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                }));
+                // Expect AS alias
+                if self.match_token(TokenType::As) && self.is_identifier_or_keyword_token() {
+                    let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                    ctes.push(Cte {
+                        alias,
+                        this: lambda,
+                        columns: Vec::new(),
+                        materialized: None,
+                        key_expressions: Vec::new(),
+                        alias_first: false,
+                    });
+                } else {
+                    // Unaliased lambda CTE
+                    ctes.push(Cte {
+                        alias: name,
+                        this: lambda,
+                        columns: Vec::new(),
+                        materialized: None,
+                        key_expressions: Vec::new(),
+                        alias_first: false,
+                    });
+                }
+                if self.match_token(TokenType::Comma) {
+                    continue;
+                }
+                break;
+            }
+
             // AS is optional (Snowflake allows WITH t (SELECT ...) without AS)
             self.match_token(TokenType::As);
 
@@ -23048,6 +23089,55 @@ impl Parser {
                         "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY")
                     || (t.token_type == TokenType::Var && self.peek_nth(2).map_or(false, |t2| t2.token_type == TokenType::Eq))
                 });
+            // ClickHouse: (from, to, ...) -> body is a tuple-lambda with keyword params
+            // Detect pattern: (keyword/ident, keyword/ident, ...) ->
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+                let mut look = self.current;
+                let mut is_tuple_lambda = true;
+                let mut param_count = 0;
+                loop {
+                    if look >= self.tokens.len() { is_tuple_lambda = false; break; }
+                    let tt = self.tokens[look].token_type;
+                    if tt == TokenType::Identifier || tt == TokenType::Var || tt == TokenType::QuotedIdentifier || tt.is_keyword() {
+                        param_count += 1;
+                        look += 1;
+                    } else {
+                        is_tuple_lambda = false;
+                        break;
+                    }
+                    if look >= self.tokens.len() { is_tuple_lambda = false; break; }
+                    if self.tokens[look].token_type == TokenType::Comma {
+                        look += 1;
+                    } else if self.tokens[look].token_type == TokenType::RParen {
+                        look += 1;
+                        break;
+                    } else {
+                        is_tuple_lambda = false;
+                        break;
+                    }
+                }
+                if is_tuple_lambda && param_count >= 1 && look < self.tokens.len()
+                    && self.tokens[look].token_type == TokenType::Arrow
+                {
+                    // Parse as lambda: consume params
+                    let mut params = Vec::new();
+                    loop {
+                        let tok = self.advance();
+                        params.push(Identifier::new(tok.text));
+                        if self.match_token(TokenType::Comma) { continue; }
+                        break;
+                    }
+                    self.expect(TokenType::RParen)?;
+                    self.expect(TokenType::Arrow)?;
+                    let body = self.parse_expression()?;
+                    return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                        parameters: params,
+                        body,
+                        colon: false,
+                        parameter_types: Vec::new(),
+                    })));
+                }
+            }
             if self.check(TokenType::Select) || self.check(TokenType::With) || self.check(TokenType::From)
                 || is_explain_subquery
             {
@@ -23331,6 +23421,25 @@ impl Parser {
 
                 // Allow postfix operators on tuple expressions (e.g., ('a', 'b').1 for tuple element access)
                 return self.maybe_parse_subscript(result);
+            }
+
+            // ClickHouse: (x -> body) — lambda inside parentheses
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_token(TokenType::Arrow)
+            {
+                let parameters = if let Expression::Column(c) = first_expr {
+                    vec![c.name]
+                } else if let Expression::Identifier(id) = first_expr {
+                    vec![id]
+                } else {
+                    return Err(Error::parse("Expected identifier as lambda parameter"));
+                };
+                let body = self.parse_expression()?;
+                self.expect(TokenType::RParen)?;
+                return Ok(Expression::Paren(Box::new(Paren {
+                    this: Expression::Lambda(Box::new(LambdaExpr { parameters, body, colon: false, parameter_types: Vec::new() })),
+                    trailing_comments: Vec::new(),
+                })));
             }
 
             self.expect(TokenType::RParen)?;
@@ -24469,6 +24578,29 @@ impl Parser {
             }));
         }
 
+        // ClickHouse: structural keywords like FROM, ON, JOIN can be used as identifiers
+        // in expression context when followed by an operator (e.g., from + 1, on.col)
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            && self.peek().token_type.is_keyword()
+            && !self.is_safe_keyword_as_identifier()
+        {
+            let next_tt = self.peek_nth(1).map(|t| t.token_type).unwrap_or(TokenType::Semicolon);
+            let is_expr_context = matches!(next_tt,
+                TokenType::Plus | TokenType::Dash | TokenType::Star | TokenType::Slash
+                | TokenType::Percent | TokenType::Dot | TokenType::Arrow | TokenType::LBracket
+                | TokenType::DPipe | TokenType::Amp | TokenType::Pipe | TokenType::Caret
+                | TokenType::RParen | TokenType::DColon
+            );
+            if is_expr_context {
+                let token = self.advance();
+                return Ok(Expression::Column(Column {
+                    name: Identifier::new(token.text),
+                    table: None,
+                    join_mark: false,
+                    trailing_comments: Vec::new(),
+                }));
+            }
+        }
         // Some keywords can be used as identifiers (column names, table names, etc.)
         // when they are "safe" keywords that don't affect query structure.
         // Structural keywords like FROM, WHERE, JOIN should NOT be usable as identifiers.
@@ -29871,7 +30003,10 @@ impl Parser {
                     format: None,
                     default: None,
                 }));
-            } else if self.match_token(TokenType::Arrow) {
+            } else if self.check(TokenType::Arrow)
+                && !matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+            {
+                self.advance(); // consume ->
                 // JSON extract operator: expr -> path (PostgreSQL, MySQL, DuckDB)
                 // Use parse_json_path_operand to get only the immediate operand for proper left-to-right associativity
                 let path = self.parse_json_path_operand()?;
