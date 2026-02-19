@@ -24585,11 +24585,15 @@ impl Parser {
             && !self.is_safe_keyword_as_identifier()
         {
             let next_tt = self.peek_nth(1).map(|t| t.token_type).unwrap_or(TokenType::Semicolon);
-            let is_expr_context = matches!(next_tt,
-                TokenType::Plus | TokenType::Dash | TokenType::Star | TokenType::Slash
-                | TokenType::Percent | TokenType::Dot | TokenType::Arrow | TokenType::LBracket
-                | TokenType::DPipe | TokenType::Amp | TokenType::Pipe | TokenType::Caret
-                | TokenType::RParen | TokenType::DColon
+            // A structural keyword can be used as an identifier when it appears
+            // in expression context. We detect this by checking what follows.
+            // Essentially: it's NOT an identifier only if the keyword itself starts
+            // a clause (e.g., FROM followed by a table name). But when it's followed
+            // by an operator, comma, close-paren, or even another clause keyword
+            // (meaning it's the last token in an expression), it's an identifier.
+            let is_expr_context = !matches!(next_tt,
+                TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
+                | TokenType::LParen | TokenType::Number | TokenType::String
             );
             if is_expr_context {
                 let token = self.advance();
@@ -34142,6 +34146,14 @@ impl Parser {
         let mut identifiers = Vec::new();
 
         loop {
+            // ClickHouse: USING * — wildcard in USING clause
+            if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                && self.match_token(TokenType::Star)
+            {
+                identifiers.push(Identifier::new("*".to_string()));
+                if !self.match_token(TokenType::Comma) { break; }
+                continue;
+            }
             // Check if it's a quoted identifier before consuming
             let quoted = self.check(TokenType::QuotedIdentifier);
             let mut name = self.expect_identifier_or_safe_keyword()?;
