@@ -2026,6 +2026,62 @@ impl Parser {
                         }));
                     }
                 }
+                // ClickHouse: * followed by operators (e.g., * IS NOT NULL, * AND expr)
+                // Treat * as a regular expression and continue parsing operators
+                if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse))
+                    && matches!(self.peek().token_type,
+                        TokenType::Is | TokenType::And | TokenType::Or
+                        | TokenType::Eq | TokenType::Neq | TokenType::Lt | TokenType::Gt
+                        | TokenType::Lte | TokenType::Gte | TokenType::Not
+                        | TokenType::Plus | TokenType::Dash | TokenType::Slash | TokenType::Percent
+                        | TokenType::Like | TokenType::Between | TokenType::In)
+                {
+                    // Re-parse from the operator with star_expr as the left side
+                    let left = star_expr;
+                    // Use parse_comparison / parse_is chain
+                    if self.check(TokenType::Is) {
+                        self.advance(); // consume IS
+                        let not = self.match_token(TokenType::Not);
+                        if self.match_token(TokenType::Null) {
+                            star_expr = if not {
+                                Expression::Not(Box::new(UnaryOp {
+                                    this: Expression::Is(Box::new(BinaryOp::new(left, Expression::Null(Null)))),
+                                }))
+                            } else {
+                                Expression::Is(Box::new(BinaryOp::new(left, Expression::Null(Null))))
+                            };
+                        } else {
+                            let right = self.parse_or()?;
+                            star_expr = if not {
+                                Expression::Not(Box::new(UnaryOp {
+                                    this: Expression::Is(Box::new(BinaryOp::new(left, right))),
+                                }))
+                            } else {
+                                Expression::Is(Box::new(BinaryOp::new(left, right)))
+                            };
+                        }
+                    } else if self.match_token(TokenType::And) {
+                        let right = self.parse_or()?;
+                        star_expr = Expression::And(Box::new(BinaryOp::new(left, right)));
+                    } else if self.match_token(TokenType::Or) {
+                        let right = self.parse_or()?;
+                        star_expr = Expression::Or(Box::new(BinaryOp::new(left, right)));
+                    } else {
+                        let op_token = self.advance();
+                        let right = self.parse_or()?;
+                        star_expr = match op_token.token_type {
+                            TokenType::Eq => Expression::Eq(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Neq => Expression::Neq(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Lt => Expression::Lt(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Gt => Expression::Gt(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Lte => Expression::Lte(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Gte => Expression::Gte(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Plus => Expression::Add(Box::new(BinaryOp::new(left, right))),
+                            TokenType::Dash => Expression::Sub(Box::new(BinaryOp::new(left, right))),
+                            _ => left, // fallback
+                        };
+                    }
+                }
                 expressions.push(star_expr);
             } else {
                 let expr = self.parse_expression()?;
