@@ -186,10 +186,7 @@ where
     let mut result = Vec::new();
 
     // Add any missing nodes that appear only as dependencies
-    let all_deps: Vec<T> = dag
-        .values()
-        .flat_map(|deps| deps.iter().cloned())
-        .collect();
+    let all_deps: Vec<T> = dag.values().flat_map(|deps| deps.iter().cloned()).collect();
 
     for dep in all_deps {
         dag.entry(dep).or_insert_with(HashSet::new);
@@ -657,7 +654,9 @@ pub fn merge_ranges<T: Ord + Copy>(mut ranges: Vec<(T, T)>) -> Vec<(T, T)> {
     let mut merged = vec![ranges[0]];
 
     for (start, end) in ranges.into_iter().skip(1) {
-        let last = merged.last_mut().expect("merged initialized with at least one element");
+        let last = merged
+            .last_mut()
+            .expect("merged initialized with at least one element");
         if start <= last.1 {
             last.1 = std::cmp::max(last.1, end);
         } else {
@@ -965,7 +964,11 @@ mod tests {
         );
         assert_eq!(
             split_num_words("catalog.db.table", ".", 3, true),
-            vec![Some("catalog".to_string()), Some("db".to_string()), Some("table".to_string())]
+            vec![
+                Some("catalog".to_string()),
+                Some("db".to_string()),
+                Some("table".to_string())
+            ]
         );
         assert_eq!(
             split_num_words("db.table", ".", 1, true),
@@ -1014,17 +1017,16 @@ mod tests {
 
     #[test]
     fn test_single_valued_mapping() {
-        let columns = HashSet::from([
-            "id".to_string(),
-            "name".to_string(),
-            "email".to_string(),
-        ]);
+        let columns = HashSet::from(["id".to_string(), "name".to_string(), "email".to_string()]);
         let mapping = SingleValuedMapping::new(columns, "users".to_string());
 
         // Get existing keys
         assert_eq!(mapping.get(&"id".to_string()), Some(&"users".to_string()));
         assert_eq!(mapping.get(&"name".to_string()), Some(&"users".to_string()));
-        assert_eq!(mapping.get(&"email".to_string()), Some(&"users".to_string()));
+        assert_eq!(
+            mapping.get(&"email".to_string()),
+            Some(&"users".to_string())
+        );
 
         // Get non-existing key
         assert_eq!(mapping.get(&"unknown".to_string()), None);
@@ -1043,10 +1045,7 @@ mod tests {
 
     #[test]
     fn test_single_valued_mapping_from_iter() {
-        let mapping = SingleValuedMapping::from_iter(
-            vec!["a".to_string(), "b".to_string()],
-            42,
-        );
+        let mapping = SingleValuedMapping::from_iter(vec!["a".to_string(), "b".to_string()], 42);
 
         assert_eq!(mapping.get(&"a".to_string()), Some(&42));
         assert_eq!(mapping.get(&"b".to_string()), Some(&42));

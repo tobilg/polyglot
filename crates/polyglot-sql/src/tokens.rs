@@ -35,7 +35,12 @@ pub struct Span {
 
 impl Span {
     pub fn new(start: usize, end: usize, line: usize, column: usize) -> Self {
-        Self { start, end, line, column }
+        Self {
+            start,
+            end,
+            line,
+            column,
+        }
     }
 }
 
@@ -149,8 +154,8 @@ pub enum TokenType {
     DPipeSlash,
     Caret,
     CaretAt,
-    LtLt,  // <<
-    GtGt,  // >>
+    LtLt, // <<
+    GtGt, // >>
     Tilde,
     Arrow,
     DArrow,
@@ -186,14 +191,14 @@ pub enum TokenType {
     Break,
 
     // Comments (emitted as tokens for round-trip fidelity)
-    BlockComment,  // /* ... */
-    LineComment,   // -- ...
+    BlockComment, // /* ... */
+    LineComment,  // -- ...
 
     // Literals
     String,
-    DollarString,  // $$...$$
-    TripleDoubleQuotedString,  // """..."""
-    TripleSingleQuotedString,  // '''...'''
+    DollarString,             // $$...$$
+    TripleDoubleQuotedString, // """..."""
+    TripleSingleQuotedString, // '''...'''
     Number,
     Identifier,
     QuotedIdentifier,
@@ -212,7 +217,7 @@ pub enum TokenType {
     HexNumber,
     ByteString,
     NationalString,
-    EscapeString,  // PostgreSQL E'...' escape string
+    EscapeString, // PostgreSQL E'...' escape string
     RawString,
     HeredocString,
     HeredocStringAlternative,
@@ -451,10 +456,10 @@ pub enum TokenType {
     Lateral,
     Left,
     Like,
-    NotLike,     // !~~ operator (PostgreSQL)
-    NotILike,    // !~~* operator (PostgreSQL)
-    NotRLike,    // !~ operator (PostgreSQL)
-    NotIRLike,   // !~* operator (PostgreSQL)
+    NotLike,   // !~~ operator (PostgreSQL)
+    NotILike,  // !~~* operator (PostgreSQL)
+    NotRLike,  // !~ operator (PostgreSQL)
+    NotIRLike, // !~* operator (PostgreSQL)
     Limit,
     List,
     Load,
@@ -1111,7 +1116,7 @@ impl Default for TokenizerConfig {
         keywords.insert("DEFAULT".to_string(), TokenType::Default);
         keywords.insert("DECLARE".to_string(), TokenType::Declare);
         keywords.insert("AUTO_INCREMENT".to_string(), TokenType::AutoIncrement);
-        keywords.insert("AUTOINCREMENT".to_string(), TokenType::AutoIncrement);  // Snowflake style
+        keywords.insert("AUTOINCREMENT".to_string(), TokenType::AutoIncrement); // Snowflake style
         keywords.insert("MATERIALIZED".to_string(), TokenType::Materialized);
         keywords.insert("REPLACE".to_string(), TokenType::Replace);
         keywords.insert("TO".to_string(), TokenType::To);
@@ -1710,7 +1715,9 @@ impl<'a> TokenizerState<'a> {
         // Scan the tag (identifier: alphanumeric + underscore, including Unicode)
         // Tags can contain Unicode characters like emojis (e.g., $🦆$)
         let tag_start = self.current;
-        while !self.is_at_end() && (self.peek().is_alphanumeric() || self.peek() == '_' || !self.peek().is_ascii()) {
+        while !self.is_at_end()
+            && (self.peek().is_alphanumeric() || self.peek() == '_' || !self.peek().is_ascii())
+        {
             self.advance();
         }
         let tag: String = self.chars[tag_start..self.current].iter().collect();
@@ -1767,7 +1774,10 @@ impl<'a> TokenizerState<'a> {
         // For $$...$$ (no tag), just scan until closing $$
         let start = self.current;
         while !self.is_at_end() {
-            if self.peek() == '$' && self.current + 1 < self.size && self.chars[self.current + 1] == '$' {
+            if self.peek() == '$'
+                && self.current + 1 < self.size
+                && self.chars[self.current + 1] == '$'
+            {
                 break;
             }
             self.advance();
@@ -1791,23 +1801,31 @@ impl<'a> TokenizerState<'a> {
         if c == '\'' {
             // Check for triple-quoted string '''...''' if configured
             if self.config.quotes.contains_key("'''")
-               && self.peek_next() == '\''
-               && self.current + 2 < self.size && self.chars[self.current + 2] == '\'' {
+                && self.peek_next() == '\''
+                && self.current + 2 < self.size
+                && self.chars[self.current + 2] == '\''
+            {
                 return self.scan_triple_quoted_string('\'');
             }
             return self.scan_string();
         }
 
         // Check for triple-quoted string """...""" if configured
-        if c == '"' && self.config.quotes.contains_key("\"\"\"")
-           && self.peek_next() == '"'
-           && self.current + 2 < self.size && self.chars[self.current + 2] == '"' {
+        if c == '"'
+            && self.config.quotes.contains_key("\"\"\"")
+            && self.peek_next() == '"'
+            && self.current + 2 < self.size
+            && self.chars[self.current + 2] == '"'
+        {
             return self.scan_triple_quoted_string('"');
         }
 
         // Check for double-quoted strings when dialect supports them (e.g., BigQuery)
         // This must come before identifier quotes check
-        if c == '"' && self.config.quotes.contains_key("\"") && !self.config.identifiers.contains_key(&'"') {
+        if c == '"'
+            && self.config.quotes.contains_key("\"")
+            && !self.config.identifiers.contains_key(&'"')
+        {
             return self.scan_double_quoted_string();
         }
 
@@ -1828,9 +1846,16 @@ impl<'a> TokenizerState<'a> {
         // - Previous char is an identifier character (e.g., foo.25 should be foo, ., 25)
         //   This handles BigQuery numeric table parts like project.dataset.25
         if c == '.' && self.peek_next().is_ascii_digit() {
-            let prev_char = if self.current > 0 { self.chars[self.current - 1] } else { '\0' };
-            let is_after_ident = prev_char.is_alphanumeric() || prev_char == '_'
-                || prev_char == '`' || prev_char == '"' || prev_char == ']'
+            let prev_char = if self.current > 0 {
+                self.chars[self.current - 1]
+            } else {
+                '\0'
+            };
+            let is_after_ident = prev_char.is_alphanumeric()
+                || prev_char == '_'
+                || prev_char == '`'
+                || prev_char == '"'
+                || prev_char == ']'
                 || prev_char == ')';
             if prev_char != '.' && !is_after_ident {
                 return self.scan_number_starting_with_dot();
@@ -1838,7 +1863,11 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Check for hint comment /*+ ... */
-        if c == '/' && self.peek_next() == '*' && self.current + 2 < self.size && self.chars[self.current + 2] == '+' {
+        if c == '/'
+            && self.peek_next() == '*'
+            && self.current + 2 < self.size
+            && self.chars[self.current + 2] == '+'
+        {
             return self.scan_hint();
         }
 
@@ -1851,7 +1880,9 @@ impl<'a> TokenizerState<'a> {
         // Check for tagged dollar-quoted strings: $tag$content$tag$
         // Tags can contain Unicode characters (including emojis like 🦆) and digits (e.g., $1$)
         if c == '$'
-            && (self.peek_next().is_alphanumeric() || self.peek_next() == '_' || !self.peek_next().is_ascii())
+            && (self.peek_next().is_alphanumeric()
+                || self.peek_next() == '_'
+                || !self.peek_next().is_ascii())
         {
             if let Some(()) = self.try_scan_tagged_dollar_string()? {
                 return Ok(());
@@ -1880,7 +1911,11 @@ impl<'a> TokenizerState<'a> {
 
         // TSQL: Check for identifiers starting with # (temp tables) or @ (variables)
         // e.g., #temp, ##global_temp, @variable
-        if (c == '#' || c == '@') && (self.peek_next().is_alphanumeric() || self.peek_next() == '_' || self.peek_next() == '#') {
+        if (c == '#' || c == '@')
+            && (self.peek_next().is_alphanumeric()
+                || self.peek_next() == '_'
+                || self.peek_next() == '#')
+        {
             return self.scan_tsql_identifier();
         }
 
@@ -1922,7 +1957,11 @@ impl<'a> TokenizerState<'a> {
     fn try_scan_multi_char_operator(&mut self) -> Option<TokenType> {
         let c = self.peek();
         let next = self.peek_next();
-        let third = if self.current + 2 < self.size { self.chars[self.current + 2] } else { '\0' };
+        let third = if self.current + 2 < self.size {
+            self.chars[self.current + 2]
+        } else {
+            '\0'
+        };
 
         // Check for three-character operators first
         // -|- (Adjacent - PostgreSQL range adjacency)
@@ -2004,7 +2043,11 @@ impl<'a> TokenizerState<'a> {
         }
 
         // !~~* (Not ILike - PostgreSQL)
-        let fourth = if self.current + 3 < self.size { self.chars[self.current + 3] } else { '\0' };
+        let fourth = if self.current + 3 < self.size {
+            self.chars[self.current + 3]
+        } else {
+            '\0'
+        };
         if c == '!' && next == '~' && third == '~' && fourth == '*' {
             self.advance();
             self.advance();
@@ -2090,7 +2133,7 @@ impl<'a> TokenizerState<'a> {
         // Two-character operators
         let token_type = match (c, next) {
             ('.', ':') => Some(TokenType::DotColon),
-            ('=', '=') => Some(TokenType::Eq),  // Hive/Spark == equality operator
+            ('=', '=') => Some(TokenType::Eq), // Hive/Spark == equality operator
             ('<', '=') => Some(TokenType::Lte),
             ('>', '=') => Some(TokenType::Gte),
             ('!', '=') => Some(TokenType::Neq),
@@ -2099,24 +2142,24 @@ impl<'a> TokenizerState<'a> {
             ('<', '<') => Some(TokenType::LtLt),
             ('>', '>') => Some(TokenType::GtGt),
             ('|', '|') => Some(TokenType::DPipe),
-            ('|', '/') => Some(TokenType::PipeSlash),  // Square root - PostgreSQL
+            ('|', '/') => Some(TokenType::PipeSlash), // Square root - PostgreSQL
             (':', ':') => Some(TokenType::DColon),
-            (':', '=') => Some(TokenType::ColonEq),    // := (assignment, named args)
-            (':', '>') => Some(TokenType::ColonGt),    // ::> (TSQL)
-            ('-', '>') => Some(TokenType::Arrow),      // JSON object access
-            ('=', '>') => Some(TokenType::FArrow),     // Fat arrow (lambda)
+            (':', '=') => Some(TokenType::ColonEq), // := (assignment, named args)
+            (':', '>') => Some(TokenType::ColonGt), // ::> (TSQL)
+            ('-', '>') => Some(TokenType::Arrow),   // JSON object access
+            ('=', '>') => Some(TokenType::FArrow),  // Fat arrow (lambda)
             ('&', '&') => Some(TokenType::DAmp),
-            ('&', '<') => Some(TokenType::AmpLt),      // PostgreSQL range operator
-            ('&', '>') => Some(TokenType::AmpGt),      // PostgreSQL range operator
-            ('@', '@') => Some(TokenType::AtAt),       // Text search match
-            ('?', '|') => Some(TokenType::QMarkPipe),  // JSONB contains any key
-            ('?', '&') => Some(TokenType::QMarkAmp),   // JSONB contains all keys
-            ('?', '?') => Some(TokenType::DQMark),     // Double question mark
-            ('#', '>') => Some(TokenType::HashArrow),  // JSONB path extraction
-            ('#', '-') => Some(TokenType::HashDash),   // JSONB delete
-            ('^', '@') => Some(TokenType::CaretAt),    // PostgreSQL starts-with operator
-            ('*', '*') => Some(TokenType::DStar),      // Power operator
-            ('|', '>') => Some(TokenType::PipeGt),     // Pipe-greater (some dialects)
+            ('&', '<') => Some(TokenType::AmpLt), // PostgreSQL range operator
+            ('&', '>') => Some(TokenType::AmpGt), // PostgreSQL range operator
+            ('@', '@') => Some(TokenType::AtAt),  // Text search match
+            ('?', '|') => Some(TokenType::QMarkPipe), // JSONB contains any key
+            ('?', '&') => Some(TokenType::QMarkAmp), // JSONB contains all keys
+            ('?', '?') => Some(TokenType::DQMark), // Double question mark
+            ('#', '>') => Some(TokenType::HashArrow), // JSONB path extraction
+            ('#', '-') => Some(TokenType::HashDash), // JSONB delete
+            ('^', '@') => Some(TokenType::CaretAt), // PostgreSQL starts-with operator
+            ('*', '*') => Some(TokenType::DStar), // Power operator
+            ('|', '>') => Some(TokenType::PipeGt), // Pipe-greater (some dialects)
             _ => None,
         };
 
@@ -2287,8 +2330,10 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() {
             // Check for closing triple quote
             if self.peek() == quote_char
-                && self.current + 1 < self.size && self.chars[self.current + 1] == quote_char
-                && self.current + 2 < self.size && self.chars[self.current + 2] == quote_char
+                && self.current + 1 < self.size
+                && self.chars[self.current + 1] == quote_char
+                && self.current + 2 < self.size
+                && self.chars[self.current + 2] == quote_char
             {
                 // Found closing """
                 break;
@@ -2398,7 +2443,11 @@ impl<'a> TokenizerState<'a> {
     fn scan_number(&mut self) -> Result<()> {
         // Check for 0x/0X hex number prefix (SQLite-style)
         if self.config.hex_number_strings && self.peek() == '0' && !self.is_at_end() {
-            let next = if self.current + 1 < self.size { self.chars[self.current + 1] } else { '\0' };
+            let next = if self.current + 1 < self.size {
+                self.chars[self.current + 1]
+            } else {
+                '\0'
+            };
             if next == 'x' || next == 'X' {
                 // Advance past '0' and 'x'/'X'
                 self.advance();
@@ -2416,7 +2465,11 @@ impl<'a> TokenizerState<'a> {
                     let mut is_hex_float = false;
                     // Optional fractional part: .hexdigits
                     if !self.is_at_end() && self.peek() == '.' {
-                        let after_dot = if self.current + 1 < self.size { self.chars[self.current + 1] } else { '\0' };
+                        let after_dot = if self.current + 1 < self.size {
+                            self.chars[self.current + 1]
+                        } else {
+                            '\0'
+                        };
                         if after_dot.is_ascii_hexdigit() {
                             is_hex_float = true;
                             self.advance(); // consume '.'
@@ -2438,15 +2491,18 @@ impl<'a> TokenizerState<'a> {
                     }
                     if is_hex_float {
                         // Hex float literal — emit as regular Number token with full text
-                        let full_text: String = self.chars[self.start..self.current].iter().collect();
+                        let full_text: String =
+                            self.chars[self.start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::Number, full_text);
                     } else if self.config.hex_string_is_integer_type {
                         // BigQuery/ClickHouse: 0xA represents an integer in hex notation
-                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
+                        let hex_value: String =
+                            self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexNumber, hex_value);
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
-                        let hex_value: String = self.chars[hex_start..self.current].iter().collect();
+                        let hex_value: String =
+                            self.chars[hex_start..self.current].iter().collect();
                         self.add_token_with_text(TokenType::HexString, hex_value);
                     }
                     return Ok(());
@@ -2478,7 +2534,7 @@ impl<'a> TokenizerState<'a> {
             // Do NOT consume if it's a double dot (..) which is a range operator
             if next != '.' {
                 self.advance(); // consume the .
-                // Only consume digits after the decimal point (not identifiers)
+                                // Only consume digits after the decimal point (not identifiers)
                 while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
                     if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
                         break;
@@ -2510,10 +2566,16 @@ impl<'a> TokenizerState<'a> {
             // Try 2-char suffix first (e.g., "BD"), then 1-char
             let suffix_match = if self.current + 1 < self.size {
                 let two_char: String = vec![self.chars[self.current], self.chars[self.current + 1]]
-                    .iter().collect::<String>().to_uppercase();
+                    .iter()
+                    .collect::<String>()
+                    .to_uppercase();
                 if self.config.numeric_literals.contains_key(&two_char) {
                     // Make sure the 2-char suffix is not followed by more identifier chars
-                    let after_suffix = if self.current + 2 < self.size { self.chars[self.current + 2] } else { ' ' };
+                    let after_suffix = if self.current + 2 < self.size {
+                        self.chars[self.current + 2]
+                    } else {
+                        ' '
+                    };
                     if !after_suffix.is_alphanumeric() && after_suffix != '_' {
                         Some((two_char, 2))
                     } else {
@@ -2521,7 +2583,11 @@ impl<'a> TokenizerState<'a> {
                     }
                 } else if self.config.numeric_literals.contains_key(&next_char) {
                     // 1-char suffix - make sure not followed by more identifier chars
-                    let after_suffix = if self.current + 1 < self.size { self.chars[self.current + 1] } else { ' ' };
+                    let after_suffix = if self.current + 1 < self.size {
+                        self.chars[self.current + 1]
+                    } else {
+                        ' '
+                    };
                     if !after_suffix.is_alphanumeric() && after_suffix != '_' {
                         Some((next_char, 1))
                     } else {
@@ -2544,7 +2610,12 @@ impl<'a> TokenizerState<'a> {
                 }
                 // Emit as a special number-with-suffix token
                 // We'll encode as "number::TYPE" so the parser can split it
-                let type_name = self.config.numeric_literals.get(&suffix).expect("suffix verified by contains_key above").clone();
+                let type_name = self
+                    .config
+                    .numeric_literals
+                    .get(&suffix)
+                    .expect("suffix verified by contains_key above")
+                    .clone();
                 let combined = format!("{}::{}", text, type_name);
                 self.add_token_with_text(TokenType::Number, combined);
                 return Ok(());
@@ -2626,7 +2697,11 @@ impl<'a> TokenizerState<'a> {
             // PostgreSQL allows $, TSQL allows # and @
             // But stop consuming # if followed by > or >> (PostgreSQL #> and #>> operators)
             if c == '#' {
-                let next_c = if self.current + 1 < self.size { self.chars[self.current + 1] } else { '\0' };
+                let next_c = if self.current + 1 < self.size {
+                    self.chars[self.current + 1]
+                } else {
+                    '\0'
+                };
                 if next_c == '>' || next_c == '-' {
                     break; // Don't consume # — it's part of #>, #>>, or #- operator
                 }
@@ -2700,7 +2775,10 @@ impl<'a> TokenizerState<'a> {
                     let prefix = if lowercase { "e:" } else { "E:" };
                     self.advance(); // consume the opening quote
                     let string_value = self.scan_string_content_with_escapes(true)?;
-                    self.add_token_with_text(TokenType::EscapeString, format!("{}{}", prefix, string_value));
+                    self.add_token_with_text(
+                        TokenType::EscapeString,
+                        format!("{}{}", prefix, string_value),
+                    );
                     return Ok(());
                 }
                 "X" => {
@@ -2738,7 +2816,11 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Check for U&'...' Unicode string syntax (SQL standard)
-        if upper == "U" && self.peek() == '&' && self.current + 1 < self.size && self.chars[self.current + 1] == '\'' {
+        if upper == "U"
+            && self.peek() == '&'
+            && self.current + 1 < self.size
+            && self.chars[self.current + 1] == '\''
+        {
             self.advance(); // consume '&'
             self.advance(); // consume opening quote
             let string_value = self.scan_string_content()?;
@@ -2760,9 +2842,13 @@ impl<'a> TokenizerState<'a> {
     /// Scan string content (everything between quotes)
     /// If `force_backslash_escapes` is true, backslash is always treated as an escape character
     /// (used for PostgreSQL E'...' escape strings)
-    fn scan_string_content_with_escapes(&mut self, force_backslash_escapes: bool) -> Result<String> {
+    fn scan_string_content_with_escapes(
+        &mut self,
+        force_backslash_escapes: bool,
+    ) -> Result<String> {
         let mut value = String::new();
-        let use_backslash_escapes = force_backslash_escapes || self.config.string_escapes.contains(&'\\');
+        let use_backslash_escapes =
+            force_backslash_escapes || self.config.string_escapes.contains(&'\\');
 
         while !self.is_at_end() {
             let c = self.peek();
@@ -2892,7 +2978,10 @@ impl<'a> TokenizerState<'a> {
                 } else {
                     break;
                 }
-            } else if c == '\\' && self.peek_next() == quote_char && self.config.string_escapes_allowed_in_raw_strings {
+            } else if c == '\\'
+                && self.peek_next() == quote_char
+                && self.config.string_escapes_allowed_in_raw_strings
+            {
                 // Backslash-escaped quote - works in raw strings when string_escapes_allowed_in_raw_strings is true
                 // e.g., \' inside r'...' becomes literal ' (BigQuery behavior)
                 // Spark/Databricks has this set to false, so backslash is always literal there
@@ -3019,9 +3108,11 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Check that there's an INSERT somewhere earlier in the tokens
-        let has_insert = self.tokens[..len - 2].iter().rev().take(20).any(|t| {
-            t.token_type == TokenType::Insert
-        });
+        let has_insert = self.tokens[..len - 2]
+            .iter()
+            .rev()
+            .take(20)
+            .any(|t| t.token_type == TokenType::Insert);
         if !has_insert {
             return None;
         }
@@ -3036,7 +3127,7 @@ impl<'a> TokenizerState<'a> {
                 // Check for blank line: \n followed by optional \r and \n
                 let saved = self.current;
                 self.advance(); // consume first \n
-                // Skip \r if present
+                                // Skip \r if present
                 while !self.is_at_end() && self.peek() == '\r' {
                     self.advance();
                 }
@@ -3141,15 +3232,18 @@ mod tests {
 
     #[test]
     fn test_comment_in_and_chain() {
-        use crate::parser::Parser;
         use crate::generator::Generator;
+        use crate::parser::Parser;
 
         // Line comments between AND clauses should appear after the AND operator
         let sql = "SELECT a FROM b WHERE foo\n-- c1\nAND bar\n-- c2\nAND bla";
         let ast = Parser::parse_sql(sql).unwrap();
         let mut gen = Generator::default();
         let output = gen.generate(&ast[0]).unwrap();
-        assert_eq!(output, "SELECT a FROM b WHERE foo AND /* c1 */ bar AND /* c2 */ bla");
+        assert_eq!(
+            output,
+            "SELECT a FROM b WHERE foo AND /* c1 */ bar AND /* c2 */ bla"
+        );
     }
 
     #[test]
@@ -3180,7 +3274,12 @@ mod tests {
         let tokenizer = Tokenizer::default();
         let tokens = tokenizer.tokenize("N'abc'").unwrap();
 
-        assert_eq!(tokens.len(), 1, "Expected 1 token for N'abc', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Expected 1 token for N'abc', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::NationalString);
         assert_eq!(tokens[0].text, "abc");
     }
@@ -3190,7 +3289,12 @@ mod tests {
         let tokenizer = Tokenizer::default();
         let tokens = tokenizer.tokenize("X'ABCD'").unwrap();
 
-        assert_eq!(tokens.len(), 1, "Expected 1 token for X'ABCD', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Expected 1 token for X'ABCD', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::HexString);
         assert_eq!(tokens[0].text, "ABCD");
     }
@@ -3200,7 +3304,12 @@ mod tests {
         let tokenizer = Tokenizer::default();
         let tokens = tokenizer.tokenize("B'01010'").unwrap();
 
-        assert_eq!(tokens.len(), 1, "Expected 1 token for B'01010', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Expected 1 token for B'01010', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::BitString);
         assert_eq!(tokens[0].text, "01010");
     }
@@ -3211,7 +3320,12 @@ mod tests {
 
         // Test trailing dot
         let tokens = tokenizer.tokenize("SELECT 1.").unwrap();
-        assert_eq!(tokens.len(), 2, "Expected 2 tokens for 'SELECT 1.', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            2,
+            "Expected 2 tokens for 'SELECT 1.', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[1].token_type, TokenType::Number);
         assert_eq!(tokens[1].text, "1.");
 
@@ -3222,7 +3336,12 @@ mod tests {
         // Test number followed by dot and identifier
         // In PostgreSQL (and sqlglot), "1.x" parses as float "1." with alias "x"
         let tokens = tokenizer.tokenize("SELECT 1.a").unwrap();
-        assert_eq!(tokens.len(), 3, "Expected 3 tokens for 'SELECT 1.a', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            3,
+            "Expected 3 tokens for 'SELECT 1.a', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[1].token_type, TokenType::Number);
         assert_eq!(tokens[1].text, "1.");
         assert_eq!(tokens[2].token_type, TokenType::Var);
@@ -3243,13 +3362,23 @@ mod tests {
 
         // Test leading dot number (e.g., .25 for 0.25)
         let tokens = tokenizer.tokenize(".25").unwrap();
-        assert_eq!(tokens.len(), 1, "Expected 1 token for '.25', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Expected 1 token for '.25', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::Number);
         assert_eq!(tokens[0].text, ".25");
 
         // Test leading dot in context (Oracle SAMPLE clause)
         let tokens = tokenizer.tokenize("SAMPLE (.25)").unwrap();
-        assert_eq!(tokens.len(), 4, "Expected 4 tokens for 'SAMPLE (.25)', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            4,
+            "Expected 4 tokens for 'SAMPLE (.25)', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::Sample);
         assert_eq!(tokens[1].token_type, TokenType::LParen);
         assert_eq!(tokens[2].token_type, TokenType::Number);
@@ -3258,13 +3387,23 @@ mod tests {
 
         // Test leading dot with exponent
         let tokens = tokenizer.tokenize(".5e10").unwrap();
-        assert_eq!(tokens.len(), 1, "Expected 1 token for '.5e10', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            1,
+            "Expected 1 token for '.5e10', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[0].token_type, TokenType::Number);
         assert_eq!(tokens[0].text, ".5e10");
 
         // Test that plain dot is still a Dot token
         let tokens = tokenizer.tokenize("a.b").unwrap();
-        assert_eq!(tokens.len(), 3, "Expected 3 tokens for 'a.b', got {:?}", tokens);
+        assert_eq!(
+            tokens.len(),
+            3,
+            "Expected 3 tokens for 'a.b', got {:?}",
+            tokens
+        );
         assert_eq!(tokens[1].token_type, TokenType::Dot);
     }
 
@@ -3274,7 +3413,10 @@ mod tests {
 
         // Unicode curly quotes are now handled as string delimiters
         let result = tokenizer.tokenize("SELECT \u{2018}hello\u{2019}");
-        assert!(result.is_ok(), "Curly quotes should be tokenized as strings");
+        assert!(
+            result.is_ok(),
+            "Curly quotes should be tokenized as strings"
+        );
 
         // Unicode bullet character should still error
         let result = tokenizer.tokenize("SELECT • FROM t");
@@ -3304,21 +3446,24 @@ mod tests {
 
     #[test]
     fn test_colon_eq_parsing() {
-        use crate::parser::Parser;
         use crate::generator::Generator;
+        use crate::parser::Parser;
 
         // MySQL @var := value in SELECT
-        let ast = Parser::parse_sql("SELECT @var1 := 1, @var2").expect("Failed to parse MySQL @var := expr");
+        let ast = Parser::parse_sql("SELECT @var1 := 1, @var2")
+            .expect("Failed to parse MySQL @var := expr");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT @var1 := 1, @var2");
 
         // MySQL @var := @var in SELECT
-        let ast = Parser::parse_sql("SELECT @var1, @var2 := @var1").expect("Failed to parse MySQL @var2 := @var1");
+        let ast = Parser::parse_sql("SELECT @var1, @var2 := @var1")
+            .expect("Failed to parse MySQL @var2 := @var1");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT @var1, @var2 := @var1");
 
         // MySQL @var := COUNT(*)
-        let ast = Parser::parse_sql("SELECT @var1 := COUNT(*) FROM t1").expect("Failed to parse MySQL @var := COUNT(*)");
+        let ast = Parser::parse_sql("SELECT @var1 := COUNT(*) FROM t1")
+            .expect("Failed to parse MySQL @var := COUNT(*)");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT @var1 := COUNT(*) FROM t1");
 
@@ -3328,22 +3473,26 @@ mod tests {
         assert_eq!(output, "SET @var1 = 1");
 
         // Function named args with :=
-        let ast = Parser::parse_sql("UNION_VALUE(k1 := 1)").expect("Failed to parse named arg with :=");
+        let ast =
+            Parser::parse_sql("UNION_VALUE(k1 := 1)").expect("Failed to parse named arg with :=");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "UNION_VALUE(k1 := 1)");
 
         // UNNEST with recursive := TRUE
-        let ast = Parser::parse_sql("SELECT UNNEST(col, recursive := TRUE) FROM t").expect("Failed to parse UNNEST with :=");
+        let ast = Parser::parse_sql("SELECT UNNEST(col, recursive := TRUE) FROM t")
+            .expect("Failed to parse UNNEST with :=");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT UNNEST(col, recursive := TRUE) FROM t");
 
         // DuckDB prefix alias: foo: 1 means 1 AS foo
-        let ast = Parser::parse_sql("SELECT foo: 1").expect("Failed to parse DuckDB prefix alias foo: 1");
+        let ast =
+            Parser::parse_sql("SELECT foo: 1").expect("Failed to parse DuckDB prefix alias foo: 1");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT 1 AS foo");
 
         // DuckDB prefix alias with multiple columns
-        let ast = Parser::parse_sql("SELECT foo: 1, bar: 2, baz: 3").expect("Failed to parse DuckDB multiple prefix aliases");
+        let ast = Parser::parse_sql("SELECT foo: 1, bar: 2, baz: 3")
+            .expect("Failed to parse DuckDB multiple prefix aliases");
         let output = Generator::sql(&ast[0]).expect("Failed to generate");
         assert_eq!(output, "SELECT 1 AS foo, 2 AS bar, 3 AS baz");
     }
@@ -3354,10 +3503,16 @@ mod tests {
 
         fn check(dialect: DialectType, sql: &str, expected: Option<&str>) {
             let d = Dialect::get(dialect);
-            let ast = d.parse(sql).unwrap_or_else(|e| panic!("Parse error for '{}': {}", sql, e));
+            let ast = d
+                .parse(sql)
+                .unwrap_or_else(|e| panic!("Parse error for '{}': {}", sql, e));
             assert!(!ast.is_empty(), "Empty AST for: {}", sql);
-            let transformed = d.transform(ast[0].clone()).unwrap_or_else(|e| panic!("Transform error for '{}': {}", sql, e));
-            let output = d.generate(&transformed).unwrap_or_else(|e| panic!("Generate error for '{}': {}", sql, e));
+            let transformed = d
+                .transform(ast[0].clone())
+                .unwrap_or_else(|e| panic!("Transform error for '{}': {}", sql, e));
+            let output = d
+                .generate(&transformed)
+                .unwrap_or_else(|e| panic!("Generate error for '{}': {}", sql, e));
             let expected = expected.unwrap_or(sql);
             assert_eq!(output, expected, "Roundtrip failed for: {}", sql);
         }
@@ -3369,26 +3524,40 @@ mod tests {
         check(DialectType::MySQL, "SET @var1 := 1", Some("SET @var1 = 1"));
 
         // DuckDB := tests
-        check(DialectType::DuckDB, "SELECT UNNEST(col, recursive := TRUE) FROM t", None);
+        check(
+            DialectType::DuckDB,
+            "SELECT UNNEST(col, recursive := TRUE) FROM t",
+            None,
+        );
         check(DialectType::DuckDB, "UNION_VALUE(k1 := 1)", None);
 
         // STRUCT_PACK(a := 'b')::json should at least parse without error
         // (The STRUCT_PACK -> Struct transformation is a separate feature)
         {
             let d = Dialect::get(DialectType::DuckDB);
-            let ast = d.parse("STRUCT_PACK(a := 'b')::json").expect("Failed to parse STRUCT_PACK(a := 'b')::json");
+            let ast = d
+                .parse("STRUCT_PACK(a := 'b')::json")
+                .expect("Failed to parse STRUCT_PACK(a := 'b')::json");
             assert!(!ast.is_empty(), "Empty AST for STRUCT_PACK(a := 'b')::json");
         }
 
         // DuckDB prefix alias tests
-        check(DialectType::DuckDB, "SELECT foo: 1", Some("SELECT 1 AS foo"));
-        check(DialectType::DuckDB, "SELECT foo: 1, bar: 2, baz: 3", Some("SELECT 1 AS foo, 2 AS bar, 3 AS baz"));
+        check(
+            DialectType::DuckDB,
+            "SELECT foo: 1",
+            Some("SELECT 1 AS foo"),
+        );
+        check(
+            DialectType::DuckDB,
+            "SELECT foo: 1, bar: 2, baz: 3",
+            Some("SELECT 1 AS foo, 2 AS bar, 3 AS baz"),
+        );
     }
 
     #[test]
     fn test_comment_roundtrip() {
-        use crate::parser::Parser;
         use crate::generator::Generator;
+        use crate::parser::Parser;
 
         fn check_roundtrip(sql: &str) -> Option<String> {
             let ast = match Parser::parse_sql(sql) {
@@ -3406,7 +3575,10 @@ mod tests {
             if output == sql {
                 None
             } else {
-                Some(format!("Mismatch:\n  input:  {}\n  output: {}", sql, output))
+                Some(format!(
+                    "Mismatch:\n  input:  {}\n  output: {}",
+                    sql, output
+                ))
             }
         }
 
@@ -3474,10 +3646,16 @@ mod tests {
         // Test roundtrip for Databricks dialect with dollar-quoted function body
         fn check_databricks(sql: &str, expected: Option<&str>) {
             let d = Dialect::get(DialectType::Databricks);
-            let ast = d.parse(sql).unwrap_or_else(|e| panic!("Parse error for '{}': {}", sql, e));
+            let ast = d
+                .parse(sql)
+                .unwrap_or_else(|e| panic!("Parse error for '{}': {}", sql, e));
             assert!(!ast.is_empty(), "Empty AST for: {}", sql);
-            let transformed = d.transform(ast[0].clone()).unwrap_or_else(|e| panic!("Transform error for '{}': {}", sql, e));
-            let output = d.generate(&transformed).unwrap_or_else(|e| panic!("Generate error for '{}': {}", sql, e));
+            let transformed = d
+                .transform(ast[0].clone())
+                .unwrap_or_else(|e| panic!("Transform error for '{}': {}", sql, e));
+            let output = d
+                .generate(&transformed)
+                .unwrap_or_else(|e| panic!("Generate error for '{}': {}", sql, e));
             let expected = expected.unwrap_or(sql);
             assert_eq!(output, expected, "Roundtrip failed for: {}", sql);
         }

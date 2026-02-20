@@ -13,6 +13,7 @@ use polyglot_sql::builder::{
 };
 use polyglot_sql::dialects::{Dialect, DialectType};
 use polyglot_sql::expressions::Expression;
+use polyglot_sql::generator::{Generator, GeneratorConfig, NotInStyle};
 use wasm_bindgen::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -189,14 +190,20 @@ impl WasmExpr {
     // -- Output --
 
     /// Generate SQL string (generic dialect).
-    pub fn to_sql(&self) -> String {
-        self.inner.to_sql()
+    pub fn to_sql(&self) -> Result<String, JsValue> {
+        let config = GeneratorConfig {
+            not_in_style: NotInStyle::Infix,
+            ..Default::default()
+        };
+        let mut generator = Generator::with_config(config);
+        generator
+            .generate(&self.inner.0)
+            .map_err(|e| js_error(format!("Failed to generate SQL for expression: {e}")))
     }
 
     /// Return the expression AST as a JSON value.
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&self.inner.0)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&self.inner.0).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 
@@ -274,8 +281,7 @@ impl WasmAssignmentArray {
 
     /// Add a column = value assignment.
     pub fn push(&mut self, column: &str, value: &WasmExpr) {
-        self.inner
-            .push((column.to_string(), value.inner.clone()));
+        self.inner.push((column.to_string(), value.inner.clone()));
     }
 
     /// Get the number of assignments.
@@ -385,9 +391,9 @@ pub fn wasm_alias(expr: &WasmExpr, name: &str) -> WasmExpr {
 
 /// Wrap a SelectBuilder as a named subquery expression. Consumes the builder.
 #[wasm_bindgen]
-pub fn wasm_subquery(query: &mut WasmSelectBuilder, alias: &str) -> WasmExpr {
-    let q = query.inner.take().expect("Builder already consumed");
-    WasmExpr::new(core_builder::subquery(q, alias))
+pub fn wasm_subquery(query: &mut WasmSelectBuilder, alias: &str) -> Result<WasmExpr, JsValue> {
+    let q = take_owned(&mut query.inner, "SelectBuilder")?;
+    Ok(WasmExpr::new(core_builder::subquery(q, alias)))
 }
 
 /// Create a `COUNT(DISTINCT expr)` expression.
@@ -406,12 +412,46 @@ pub fn wasm_extract(field: &str, expr: &WasmExpr) -> WasmExpr {
 // Helper: generate SQL with a specific dialect
 // ---------------------------------------------------------------------------
 
-fn generate_sql(expr: &Expression, dialect_str: &str) -> String {
+fn generate_sql(expr: &Expression, dialect_str: &str) -> Result<String, JsValue> {
     let dialect_type = dialect_str
         .parse::<DialectType>()
         .unwrap_or(DialectType::Generic);
+
+    if dialect_type == DialectType::Generic {
+        let config = GeneratorConfig {
+            dialect: Some(DialectType::Generic),
+            not_in_style: NotInStyle::Infix,
+            ..Default::default()
+        };
+        let mut generator = Generator::with_config(config);
+        return generator
+            .generate(expr)
+            .map_err(|e| js_error(format!("Failed to generate SQL for generic dialect: {e}")));
+    }
+
     let d = Dialect::get(dialect_type);
-    d.generate(expr).unwrap_or_default()
+    d.generate(expr).map_err(|e| {
+        js_error(format!(
+            "Failed to generate SQL for dialect '{dialect_str}': {e}"
+        ))
+    })
+}
+
+fn js_error(message: impl Into<String>) -> JsValue {
+    #[cfg(target_arch = "wasm32")]
+    {
+        JsValue::from_str(&message.into())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = message.into();
+        JsValue::NULL
+    }
+}
+
+fn take_owned<T>(slot: &mut Option<T>, name: &str) -> Result<T, JsValue> {
+    slot.take()
+        .ok_or_else(|| js_error(format!("{name} already consumed")))
 }
 
 fn build_json(expr: &Expression) -> Result<JsValue, JsValue> {
@@ -609,23 +649,25 @@ impl WasmSelectBuilder {
     // -- WINDOW --
 
     /// Add a named WINDOW clause definition.
-    pub fn window(&mut self, name: &str, def: &mut WasmWindowDefBuilder) {
-        let window_def = def.inner.take().expect("WindowDefBuilder already consumed");
+    pub fn window(&mut self, name: &str, def: &mut WasmWindowDefBuilder) -> Result<(), JsValue> {
+        let window_def = take_owned(&mut def.inner, "WindowDefBuilder")?;
         if let Some(b) = self.inner.take() {
             self.inner = Some(b.window(name, window_def));
         }
+        Ok(())
     }
 
     // -- LATERAL VIEW --
 
     /// Add a LATERAL VIEW clause (Hive/Spark).
-    pub fn lateral_view(&mut self, func_expr: &WasmExpr, table_alias: &str, col_aliases: Vec<String>) {
+    pub fn lateral_view(
+        &mut self,
+        func_expr: &WasmExpr,
+        table_alias: &str,
+        col_aliases: Vec<String>,
+    ) {
         if let Some(b) = self.inner.take() {
-            self.inner = Some(b.lateral_view(
-                func_expr.inner.clone(),
-                table_alias,
-                col_aliases,
-            ));
+            self.inner = Some(b.lateral_view(func_expr.inner.clone(), table_alias, col_aliases));
         }
     }
 
@@ -641,8 +683,8 @@ impl WasmSelectBuilder {
     // -- CTAS SQL --
 
     /// Convert to CREATE TABLE AS SELECT and return generated SQL.
-    pub fn ctas_sql(&mut self, table_name: &str, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn ctas_sql(&mut self, table_name: &str, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "SelectBuilder")?;
         let expr = b.ctas(table_name);
         generate_sql(&expr, dialect)
     }
@@ -650,46 +692,52 @@ impl WasmSelectBuilder {
     // -- Set operations --
 
     /// Combine with UNION (duplicate elimination). Consumes both builders.
-    pub fn union(&mut self, other: &mut WasmSelectBuilder) -> WasmSetOpBuilder {
-        let left = self.inner.take().expect("Builder already consumed");
-        let right = other.inner.take().expect("Other builder already consumed");
-        WasmSetOpBuilder {
+    pub fn union(&mut self, other: &mut WasmSelectBuilder) -> Result<WasmSetOpBuilder, JsValue> {
+        let left = take_owned(&mut self.inner, "SelectBuilder")?;
+        let right = take_owned(&mut other.inner, "SelectBuilder")?;
+        Ok(WasmSetOpBuilder {
             inner: Some(left.union(right)),
-        }
+        })
     }
 
     /// Combine with UNION ALL (keep duplicates). Consumes both builders.
-    pub fn union_all(&mut self, other: &mut WasmSelectBuilder) -> WasmSetOpBuilder {
-        let left = self.inner.take().expect("Builder already consumed");
-        let right = other.inner.take().expect("Other builder already consumed");
-        WasmSetOpBuilder {
+    pub fn union_all(
+        &mut self,
+        other: &mut WasmSelectBuilder,
+    ) -> Result<WasmSetOpBuilder, JsValue> {
+        let left = take_owned(&mut self.inner, "SelectBuilder")?;
+        let right = take_owned(&mut other.inner, "SelectBuilder")?;
+        Ok(WasmSetOpBuilder {
             inner: Some(left.union_all(right)),
-        }
+        })
     }
 
     /// Combine with INTERSECT. Consumes both builders.
-    pub fn intersect(&mut self, other: &mut WasmSelectBuilder) -> WasmSetOpBuilder {
-        let left = self.inner.take().expect("Builder already consumed");
-        let right = other.inner.take().expect("Other builder already consumed");
-        WasmSetOpBuilder {
+    pub fn intersect(
+        &mut self,
+        other: &mut WasmSelectBuilder,
+    ) -> Result<WasmSetOpBuilder, JsValue> {
+        let left = take_owned(&mut self.inner, "SelectBuilder")?;
+        let right = take_owned(&mut other.inner, "SelectBuilder")?;
+        Ok(WasmSetOpBuilder {
             inner: Some(left.intersect(right)),
-        }
+        })
     }
 
     /// Combine with EXCEPT. Consumes both builders.
-    pub fn except_(&mut self, other: &mut WasmSelectBuilder) -> WasmSetOpBuilder {
-        let left = self.inner.take().expect("Builder already consumed");
-        let right = other.inner.take().expect("Other builder already consumed");
-        WasmSetOpBuilder {
+    pub fn except_(&mut self, other: &mut WasmSelectBuilder) -> Result<WasmSetOpBuilder, JsValue> {
+        let left = take_owned(&mut self.inner, "SelectBuilder")?;
+        let right = take_owned(&mut other.inner, "SelectBuilder")?;
+        Ok(WasmSetOpBuilder {
             inner: Some(left.except_(right)),
-        }
+        })
     }
 
     // -- CTAS --
 
     /// Convert to CREATE TABLE AS SELECT. Returns the AST JSON.
     pub fn ctas(&mut self, table_name: &str) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "SelectBuilder")?;
         let expr = b.ctas(table_name);
         build_json(&expr)
     }
@@ -697,15 +745,15 @@ impl WasmSelectBuilder {
     // -- Output --
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "SelectBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "SelectBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -746,23 +794,24 @@ impl WasmInsertBuilder {
     }
 
     /// Set the source query for INSERT ... SELECT.
-    pub fn query(&mut self, query: &mut WasmSelectBuilder) {
-        let q = query.inner.take().expect("Query builder already consumed");
+    pub fn query(&mut self, query: &mut WasmSelectBuilder) -> Result<(), JsValue> {
+        let q = take_owned(&mut query.inner, "SelectBuilder")?;
         if let Some(b) = self.inner.take() {
             self.inner = Some(b.query(q));
         }
+        Ok(())
     }
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "InsertBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "InsertBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -810,15 +859,15 @@ impl WasmUpdateBuilder {
     }
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "UpdateBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "UpdateBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -852,15 +901,15 @@ impl WasmDeleteBuilder {
     }
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "DeleteBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "DeleteBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -921,15 +970,15 @@ impl WasmMergeBuilder {
     }
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "MergeBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "MergeBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -970,16 +1019,16 @@ impl WasmCaseBuilder {
     }
 
     /// Build the CASE expression and return a WasmExpr.
-    pub fn build_expr(&mut self) -> WasmExpr {
-        let b = self.inner.take().expect("Builder already consumed");
-        WasmExpr::new(b.build())
+    pub fn build_expr(&mut self) -> Result<WasmExpr, JsValue> {
+        let b = take_owned(&mut self.inner, "CaseBuilder")?;
+        Ok(WasmExpr::new(b.build()))
     }
 
     /// Generate SQL string (generic dialect).
-    pub fn to_sql(&mut self) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "CaseBuilder")?;
         let expr = b.build();
-        expr.to_sql()
+        generate_sql(&expr.0, "generic")
     }
 }
 
@@ -1060,15 +1109,15 @@ impl WasmSetOpBuilder {
     }
 
     /// Generate SQL string for the given dialect.
-    pub fn to_sql(&mut self, dialect: &str) -> String {
-        let b = self.inner.take().expect("Builder already consumed");
+    pub fn to_sql(&mut self, dialect: &str) -> Result<String, JsValue> {
+        let b = take_owned(&mut self.inner, "SetOpBuilder")?;
         let expr = b.build();
         generate_sql(&expr, dialect)
     }
 
     /// Return the Expression AST as a JSON value.
     pub fn build(&mut self) -> Result<JsValue, JsValue> {
-        let b = self.inner.take().expect("Builder already consumed");
+        let b = take_owned(&mut self.inner, "SetOpBuilder")?;
         let expr = b.build();
         build_json(&expr)
     }
@@ -1085,7 +1134,7 @@ mod tests {
     #[test]
     fn test_wasm_col() {
         let c = wasm_col("users.id");
-        assert_eq!(c.to_sql(), "users.id");
+        assert_eq!(c.to_sql().unwrap(), "users.id");
     }
 
     // Note: wasm_lit() uses JsValue which only works on wasm32 targets.
@@ -1093,45 +1142,45 @@ mod tests {
     #[test]
     fn test_wasm_lit_string_via_core() {
         let l = WasmExpr::new(core_builder::lit("hello"));
-        assert_eq!(l.to_sql(), "'hello'");
+        assert_eq!(l.to_sql().unwrap(), "'hello'");
     }
 
     #[test]
     fn test_wasm_lit_int_via_core() {
         let l = WasmExpr::new(core_builder::lit(42));
-        assert_eq!(l.to_sql(), "42");
+        assert_eq!(l.to_sql().unwrap(), "42");
     }
 
     #[test]
     fn test_wasm_lit_float_via_core() {
         let l = WasmExpr::new(core_builder::lit(3.14));
-        assert_eq!(l.to_sql(), "3.14");
+        assert_eq!(l.to_sql().unwrap(), "3.14");
     }
 
     #[test]
     fn test_wasm_lit_bool_via_core() {
         let l = WasmExpr::new(core_builder::boolean(true));
-        assert_eq!(l.to_sql(), "TRUE");
+        assert_eq!(l.to_sql().unwrap(), "TRUE");
     }
 
     #[test]
     fn test_wasm_star() {
         let s = wasm_star();
-        assert_eq!(s.to_sql(), "*");
+        assert_eq!(s.to_sql().unwrap(), "*");
     }
 
     #[test]
     fn test_wasm_null() {
         let n = wasm_null();
-        assert_eq!(n.to_sql(), "NULL");
+        assert_eq!(n.to_sql().unwrap(), "NULL");
     }
 
     #[test]
     fn test_wasm_boolean() {
         let t = wasm_boolean(true);
         let f = wasm_boolean(false);
-        assert_eq!(t.to_sql(), "TRUE");
-        assert_eq!(f.to_sql(), "FALSE");
+        assert_eq!(t.to_sql().unwrap(), "TRUE");
+        assert_eq!(f.to_sql().unwrap(), "FALSE");
     }
 
     #[test]
@@ -1139,7 +1188,7 @@ mod tests {
         let left = wasm_col("age");
         let right = WasmExpr::new(core_builder::lit(18));
         let result = left.gte(&right);
-        assert_eq!(result.to_sql(), "age >= 18");
+        assert_eq!(result.to_sql().unwrap(), "age >= 18");
     }
 
     #[test]
@@ -1151,7 +1200,7 @@ mod tests {
         let left = a.eq(&b);
         let right = c.eq(&d);
         let result = left.and_(&right);
-        assert_eq!(result.to_sql(), "x = 1 AND y = 2");
+        assert_eq!(result.to_sql().unwrap(), "x = 1 AND y = 2");
     }
 
     #[test]
@@ -1159,29 +1208,29 @@ mod tests {
         let a = wasm_col("price");
         let b = wasm_col("qty");
         let result = a.mul(&b);
-        assert_eq!(result.to_sql(), "price * qty");
+        assert_eq!(result.to_sql().unwrap(), "price * qty");
     }
 
     #[test]
     fn test_wasm_expr_alias() {
         let e = wasm_col("name");
         let aliased = e.alias("n");
-        assert_eq!(aliased.to_sql(), "name AS n");
+        assert_eq!(aliased.to_sql().unwrap(), "name AS n");
     }
 
     #[test]
     fn test_wasm_expr_cast() {
         let e = wasm_col("id");
         let casted = e.cast("VARCHAR");
-        assert_eq!(casted.to_sql(), "CAST(id AS VARCHAR)");
+        assert_eq!(casted.to_sql().unwrap(), "CAST(id AS VARCHAR)");
     }
 
     #[test]
     fn test_wasm_expr_asc_desc() {
         let a = wasm_col("name").asc();
         let d = wasm_col("age").desc();
-        assert_eq!(a.to_sql(), "name ASC");
-        assert_eq!(d.to_sql(), "age DESC");
+        assert_eq!(a.to_sql().unwrap(), "name ASC");
+        assert_eq!(d.to_sql().unwrap(), "age DESC");
     }
 
     #[test]
@@ -1189,19 +1238,19 @@ mod tests {
         let e = wasm_col("name");
         let p = WasmExpr::new(core_builder::lit("%test%"));
         let result = e.like(&p);
-        assert_eq!(result.to_sql(), "name LIKE '%test%'");
+        assert_eq!(result.to_sql().unwrap(), "name LIKE '%test%'");
     }
 
     #[test]
     fn test_wasm_expr_is_null() {
         let e = wasm_col("x");
-        assert_eq!(e.is_null().to_sql(), "x IS NULL");
+        assert_eq!(e.is_null().to_sql().unwrap(), "x IS NULL");
     }
 
     #[test]
     fn test_wasm_expr_is_not_null() {
         let e = wasm_col("x");
-        assert_eq!(e.is_not_null().to_sql(), "NOT x IS NULL");
+        assert_eq!(e.is_not_null().to_sql().unwrap(), "NOT x IS NULL");
     }
 
     #[test]
@@ -1210,7 +1259,7 @@ mod tests {
         let low = WasmExpr::new(core_builder::lit(18));
         let high = WasmExpr::new(core_builder::lit(65));
         let result = e.between(&low, &high);
-        assert_eq!(result.to_sql(), "age BETWEEN 18 AND 65");
+        assert_eq!(result.to_sql().unwrap(), "age BETWEEN 18 AND 65");
     }
 
     #[test]
@@ -1220,7 +1269,7 @@ mod tests {
         arr.push_str("active");
         arr.push_str("pending");
         let result = e.in_list(&arr);
-        assert_eq!(result.to_sql(), "status IN ('active', 'pending')");
+        assert_eq!(result.to_sql().unwrap(), "status IN ('active', 'pending')");
     }
 
     #[test]
@@ -1228,7 +1277,7 @@ mod tests {
         let mut args = WasmExprArray::new();
         args.push(&wasm_col("name"));
         let result = wasm_func("UPPER", &args);
-        assert_eq!(result.to_sql(), "UPPER(name)");
+        assert_eq!(result.to_sql().unwrap(), "UPPER(name)");
     }
 
     #[test]
@@ -1237,7 +1286,7 @@ mod tests {
         b.select_col("id");
         b.select_col("name");
         b.from("users");
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "SELECT id, name FROM users");
     }
 
@@ -1248,8 +1297,34 @@ mod tests {
         b.from("users");
         let cond = wasm_col("id").eq(&WasmExpr::new(core_builder::lit(1)));
         b.where_expr(&cond);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "SELECT * FROM users WHERE id = 1");
+    }
+
+    #[test]
+    fn test_wasm_select_builder_not_in_is_canonical_in_generic() {
+        let mut b = WasmSelectBuilder::new();
+        b.select_col("id");
+        b.from("users");
+        let mut arr = WasmExprArray::new();
+        arr.push_str("deleted");
+        arr.push_str("banned");
+        let cond = wasm_col("status").not_in(&arr);
+        b.where_expr(&cond);
+        let sql = b.to_sql("generic").unwrap();
+        assert_eq!(
+            sql,
+            "SELECT id FROM users WHERE status NOT IN ('deleted', 'banned')"
+        );
+    }
+
+    #[test]
+    fn test_wasm_select_builder_to_sql_returns_error_when_consumed() {
+        let mut b = WasmSelectBuilder::new();
+        b.select_star();
+        b.from("users");
+        let _ = b.to_sql("generic").unwrap();
+        assert!(b.to_sql("generic").is_err());
     }
 
     #[test]
@@ -1262,8 +1337,11 @@ mod tests {
         b.order_by_exprs(&order);
         b.limit(10);
         b.offset(5);
-        let sql = b.to_sql("generic");
-        assert_eq!(sql, "SELECT name FROM users ORDER BY name ASC LIMIT 10 OFFSET 5");
+        let sql = b.to_sql("generic").unwrap();
+        assert_eq!(
+            sql,
+            "SELECT name FROM users ORDER BY name ASC LIMIT 10 OFFSET 5"
+        );
     }
 
     #[test]
@@ -1273,7 +1351,7 @@ mod tests {
         b.from("users");
         let on = wasm_col("u.id").eq(&wasm_col("o.user_id"));
         b.left_join("orders", &on);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert!(sql.contains("LEFT JOIN orders ON u.id = o.user_id"));
     }
 
@@ -1293,7 +1371,7 @@ mod tests {
         having_args.push_star();
         let having_cond = wasm_func("COUNT", &having_args).gt(&WasmExpr::new(core_builder::lit(5)));
         b.having(&having_cond);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert!(sql.contains("GROUP BY dept"));
         assert!(sql.contains("HAVING COUNT(*) > 5"));
     }
@@ -1304,7 +1382,7 @@ mod tests {
         b.select_col("name");
         b.from("users");
         b.distinct();
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "SELECT DISTINCT name FROM users");
     }
 
@@ -1314,7 +1392,7 @@ mod tests {
         b.select_star();
         b.from("users");
         b.limit(10);
-        let sql = b.to_sql("tsql");
+        let sql = b.to_sql("tsql").unwrap();
         // TSQL uses TOP instead of LIMIT
         assert!(sql.contains("TOP 10") || sql.contains("FETCH"));
     }
@@ -1327,7 +1405,7 @@ mod tests {
         vals.push_int(1);
         vals.push_str("Alice");
         b.values(&vals);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "INSERT INTO users (id, name) VALUES (1, 'Alice')");
     }
 
@@ -1339,8 +1417,8 @@ mod tests {
         q.select_col("id");
         q.select_col("name");
         q.from("users");
-        b.query(&mut q);
-        let sql = b.to_sql("generic");
+        b.query(&mut q).unwrap();
+        let sql = b.to_sql("generic").unwrap();
         assert!(sql.contains("INSERT INTO archive"));
         assert!(sql.contains("SELECT id, name FROM users"));
     }
@@ -1351,7 +1429,7 @@ mod tests {
         b.set("name", &WasmExpr::new(core_builder::lit("Bob")));
         let cond = wasm_col("id").eq(&WasmExpr::new(core_builder::lit(1)));
         b.where_expr(&cond);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "UPDATE users SET name = 'Bob' WHERE id = 1");
     }
 
@@ -1360,7 +1438,7 @@ mod tests {
         let mut b = WasmDeleteBuilder::new("users");
         let cond = wasm_col("id").eq(&WasmExpr::new(core_builder::lit(1)));
         b.where_expr(&cond);
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "DELETE FROM users WHERE id = 1");
     }
 
@@ -1372,8 +1450,11 @@ mod tests {
         b.when(&cond, &result);
         let else_result = WasmExpr::new(core_builder::lit("non-positive"));
         b.else_(&else_result);
-        let sql = b.to_sql();
-        assert_eq!(sql, "CASE WHEN x > 0 THEN 'positive' ELSE 'non-positive' END");
+        let sql = b.to_sql().unwrap();
+        assert_eq!(
+            sql,
+            "CASE WHEN x > 0 THEN 'positive' ELSE 'non-positive' END"
+        );
     }
 
     #[test]
@@ -1388,7 +1469,7 @@ mod tests {
             &WasmExpr::new(core_builder::lit(0)),
             &WasmExpr::new(core_builder::lit("inactive")),
         );
-        let sql = b.to_sql();
+        let sql = b.to_sql().unwrap();
         assert_eq!(
             sql,
             "CASE status WHEN 1 THEN 'active' WHEN 0 THEN 'inactive' END"
@@ -1403,12 +1484,12 @@ mod tests {
         let mut b = WasmSelectBuilder::new();
         b.select_col("id");
         b.from("b");
-        let mut set_op = a.union_all(&mut b);
+        let mut set_op = a.union_all(&mut b).unwrap();
         let mut order = WasmExprArray::new();
         order.push_col("id");
         set_op.order_by_exprs(&order);
         set_op.limit(10);
-        let sql = set_op.to_sql("generic");
+        let sql = set_op.to_sql("generic").unwrap();
         assert!(sql.contains("UNION ALL"));
         assert!(sql.contains("ORDER BY"));
         assert!(sql.contains("LIMIT 10"));
@@ -1431,7 +1512,7 @@ mod tests {
         vals.push(&wasm_col("source.name"));
         b.when_not_matched_insert(vec!["id".to_string(), "name".to_string()], &vals);
 
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert!(sql.contains("MERGE INTO"));
         assert!(sql.contains("USING source ON"));
         assert!(sql.contains("WHEN MATCHED"));
@@ -1441,7 +1522,7 @@ mod tests {
     fn test_wasm_expr_not() {
         let e = wasm_col("active");
         let result = e.not();
-        assert_eq!(result.to_sql(), "NOT active");
+        assert_eq!(result.to_sql().unwrap(), "NOT active");
     }
 
     #[test]
@@ -1449,7 +1530,7 @@ mod tests {
         let a = wasm_col("a");
         let b = wasm_col("b");
         let result = a.xor(&b);
-        assert_eq!(result.to_sql(), "a XOR b");
+        assert_eq!(result.to_sql().unwrap(), "a XOR b");
     }
 
     #[test]
@@ -1460,25 +1541,25 @@ mod tests {
         arr.push_int(2);
         arr.push_int(3);
         let result = e.not_in(&arr);
-        assert_eq!(result.to_sql(), "x NOT IN (1, 2, 3)");
+        assert_eq!(result.to_sql().unwrap(), "x NOT IN (1, 2, 3)");
     }
 
     #[test]
     fn test_wasm_sql_expr() {
         let e = wasm_sql_expr("COALESCE(a, b, 0)");
-        assert_eq!(e.to_sql(), "COALESCE(a, b, 0)");
+        assert_eq!(e.to_sql().unwrap(), "COALESCE(a, b, 0)");
     }
 
     #[test]
     fn test_wasm_count_distinct() {
         let e = wasm_count_distinct(&wasm_col("x"));
-        assert_eq!(e.to_sql(), "COUNT(DISTINCT x)");
+        assert_eq!(e.to_sql().unwrap(), "COUNT(DISTINCT x)");
     }
 
     #[test]
     fn test_wasm_extract() {
         let e = wasm_extract("YEAR", &wasm_col("created_at"));
-        assert_eq!(e.to_sql(), "EXTRACT(YEAR FROM created_at)");
+        assert_eq!(e.to_sql().unwrap(), "EXTRACT(YEAR FROM created_at)");
     }
 
     #[test]
@@ -1487,7 +1568,7 @@ mod tests {
         b.select_star();
         b.from("users");
         b.where_sql("age > 18 AND status = 'active'");
-        let sql = b.to_sql("generic");
+        let sql = b.to_sql("generic").unwrap();
         assert!(sql.contains("WHERE age > 18 AND status = 'active'"));
     }
 
@@ -1507,18 +1588,18 @@ mod tests {
     #[test]
     fn test_wasm_free_functions() {
         let and_result = wasm_and(&wasm_col("a"), &wasm_col("b"));
-        assert_eq!(and_result.to_sql(), "a AND b");
+        assert_eq!(and_result.to_sql().unwrap(), "a AND b");
 
         let or_result = wasm_or(&wasm_col("a"), &wasm_col("b"));
-        assert_eq!(or_result.to_sql(), "a OR b");
+        assert_eq!(or_result.to_sql().unwrap(), "a OR b");
 
         let not_result = wasm_not(&wasm_col("a"));
-        assert_eq!(not_result.to_sql(), "NOT a");
+        assert_eq!(not_result.to_sql().unwrap(), "NOT a");
 
         let cast_result = wasm_cast(&wasm_col("x"), "INT");
-        assert_eq!(cast_result.to_sql(), "CAST(x AS INT)");
+        assert_eq!(cast_result.to_sql().unwrap(), "CAST(x AS INT)");
 
         let alias_result = wasm_alias(&wasm_col("x"), "y");
-        assert_eq!(alias_result.to_sql(), "x AS y");
+        assert_eq!(alias_result.to_sql().unwrap(), "x AS y");
     }
 }

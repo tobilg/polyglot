@@ -27,7 +27,9 @@ impl DialectImpl for RedshiftDialect {
         // Redshift does NOT support nested comments
         config.nested_comments = false;
         // MINUS is an alias for EXCEPT in Redshift
-        config.keywords.insert("MINUS".to_string(), TokenType::Except);
+        config
+            .keywords
+            .insert("MINUS".to_string(), TokenType::Except);
         config
     }
 
@@ -47,12 +49,14 @@ impl DialectImpl for RedshiftDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Redshift
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL is native in Redshift, but we standardize to COALESCE for consistency
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -73,13 +77,15 @@ impl DialectImpl for RedshiftDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -134,16 +140,14 @@ impl DialectImpl for RedshiftDialect {
             Expression::Cast(c) => self.transform_cast(*c),
 
             // CONVERT -> CAST in Redshift
-            Expression::Convert(c) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: c.this,
-                    to: c.to,
-                    trailing_comments: Vec::new(),
-                    double_colon_syntax: false,
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Convert(c) => Ok(Expression::Cast(Box::new(Cast {
+                this: c.this,
+                to: c.to,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+            }))),
 
             // SELECT TOP n -> SELECT ... LIMIT n in Redshift (PostgreSQL-style)
             Expression::Select(mut select) => {
@@ -175,17 +179,20 @@ impl RedshiftDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE (supports 2+ args)
-            "NVL" if f.args.len() >= 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() >= 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -446,19 +453,38 @@ impl RedshiftDialect {
 
                 // Map type name to DataType
                 let data_type = match type_name.to_uppercase().as_str() {
-                    "INT" | "INTEGER" => DataType::Int { length: None, integer_spelling: false },
+                    "INT" | "INTEGER" => DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     "BIGINT" => DataType::BigInt { length: None },
                     "SMALLINT" => DataType::SmallInt { length: None },
                     "TINYINT" => DataType::TinyInt { length: None },
-                    "VARCHAR" => DataType::VarChar { length: None, parenthesized_length: false },
+                    "VARCHAR" => DataType::VarChar {
+                        length: None,
+                        parenthesized_length: false,
+                    },
                     "CHAR" => DataType::Char { length: None },
-                    "FLOAT" | "REAL" => DataType::Float { precision: None, scale: None, real_spelling: false },
-                    "DOUBLE" => DataType::Double { precision: None, scale: None },
+                    "FLOAT" | "REAL" => DataType::Float {
+                        precision: None,
+                        scale: None,
+                        real_spelling: false,
+                    },
+                    "DOUBLE" => DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
                     "BOOLEAN" | "BOOL" => DataType::Boolean,
                     "DATE" => DataType::Date,
-                    "TIMESTAMP" => DataType::Timestamp { precision: None, timezone: false },
+                    "TIMESTAMP" => DataType::Timestamp {
+                        precision: None,
+                        timezone: false,
+                    },
                     "TEXT" => DataType::Text,
-                    "DECIMAL" | "NUMERIC" => DataType::Decimal { precision: None, scale: None },
+                    "DECIMAL" | "NUMERIC" => DataType::Decimal {
+                        precision: None,
+                        scale: None,
+                    },
                     _ => return Ok(Expression::Function(Box::new(f))), // Unknown type, pass through
                 };
 
@@ -492,13 +518,15 @@ impl RedshiftDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 

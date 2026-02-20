@@ -27,7 +27,9 @@ impl DialectImpl for StarRocksDialect {
         config.quotes.insert("\"".to_string(), "\"".to_string());
         config.nested_comments = false;
         // LARGEINT maps to INT128
-        config.keywords.insert("LARGEINT".to_string(), TokenType::Int128);
+        config
+            .keywords
+            .insert("LARGEINT".to_string(), TokenType::Int128);
         config
     }
 
@@ -86,13 +88,15 @@ impl DialectImpl for StarRocksDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -150,28 +154,34 @@ impl StarRocksDialect {
             )))),
 
             // COALESCE is native in StarRocks
-            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NOW is native in StarRocks
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> NOW in StarRocks
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GROUP_CONCAT is native in StarRocks
             "GROUP_CONCAT" => Ok(Expression::Function(Box::new(f))),
 
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // LISTAGG -> GROUP_CONCAT
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -272,10 +282,9 @@ impl StarRocksDialect {
             "RLIKE" => Ok(Expression::Function(Box::new(f))),
 
             // REGEXP_LIKE -> REGEXP
-            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "REGEXP".to_string(),
-                f.args,
-            )))),
+            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("REGEXP".to_string(), f.args),
+            ))),
 
             // ARRAY_INTERSECTION -> ARRAY_INTERSECT
             "ARRAY_INTERSECTION" => Ok(Expression::Function(Box::new(Function::new(
@@ -284,10 +293,9 @@ impl StarRocksDialect {
             )))),
 
             // ST_MAKEPOINT -> ST_POINT
-            "ST_MAKEPOINT" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
-                "ST_POINT".to_string(),
-                f.args,
-            )))),
+            "ST_MAKEPOINT" if f.args.len() == 2 => Ok(Expression::Function(Box::new(
+                Function::new("ST_POINT".to_string(), f.args),
+            ))),
 
             // ST_DISTANCE(a, b) -> ST_DISTANCE_SPHERE(ST_X(a), ST_Y(a), ST_X(b), ST_Y(b))
             "ST_DISTANCE" if f.args.len() == 2 => {
@@ -296,9 +304,15 @@ impl StarRocksDialect {
                 Ok(Expression::Function(Box::new(Function::new(
                     "ST_DISTANCE_SPHERE".to_string(),
                     vec![
-                        Expression::Function(Box::new(Function::new("ST_X".to_string(), vec![a.clone()]))),
+                        Expression::Function(Box::new(Function::new(
+                            "ST_X".to_string(),
+                            vec![a.clone()],
+                        ))),
                         Expression::Function(Box::new(Function::new("ST_Y".to_string(), vec![a]))),
-                        Expression::Function(Box::new(Function::new("ST_X".to_string(), vec![b.clone()]))),
+                        Expression::Function(Box::new(Function::new(
+                            "ST_X".to_string(),
+                            vec![b.clone()],
+                        ))),
                         Expression::Function(Box::new(Function::new("ST_Y".to_string(), vec![b]))),
                     ],
                 ))))
@@ -324,13 +338,15 @@ impl StarRocksDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -346,14 +362,13 @@ impl StarRocksDialect {
         // StarRocks: CAST(x AS TIMESTAMP/TIMESTAMPTZ) -> TIMESTAMP(x) function
         // Similar to MySQL behavior
         match &c.to {
-            crate::expressions::DataType::Timestamp { .. } => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TIMESTAMP".to_string(),
-                    vec![c.this],
-                ))))
-            }
-            crate::expressions::DataType::Custom { name } if name.to_uppercase() == "TIMESTAMPTZ"
-                || name.to_uppercase() == "TIMESTAMPLTZ" => {
+            crate::expressions::DataType::Timestamp { .. } => Ok(Expression::Function(Box::new(
+                Function::new("TIMESTAMP".to_string(), vec![c.this]),
+            ))),
+            crate::expressions::DataType::Custom { name }
+                if name.to_uppercase() == "TIMESTAMPTZ"
+                    || name.to_uppercase() == "TIMESTAMPLTZ" =>
+            {
                 Ok(Expression::Function(Box::new(Function::new(
                     "TIMESTAMP".to_string(),
                     vec![c.this],

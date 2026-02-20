@@ -101,7 +101,9 @@ pub fn reorder_joins(expression: Expression) -> Expression {
         // Get topologically sorted order
         if let Ok(sorted) = tsort(dag) {
             // Get the FROM table name (to exclude from join reordering)
-            let from_name = select.from.as_ref()
+            let from_name = select
+                .from
+                .as_ref()
                 .and_then(|f| f.expressions.first())
                 .and_then(|e| get_table_name(e));
 
@@ -167,7 +169,10 @@ pub fn normalize_joins(expression: Expression) -> Expression {
 /// as the order affects which rows are included.
 pub fn is_reorderable(joins: &[Join]) -> bool {
     joins.iter().all(|j| {
-        matches!(j.kind, JoinKind::Inner | JoinKind::Cross | JoinKind::Natural)
+        matches!(
+            j.kind,
+            JoinKind::Inner | JoinKind::Cross | JoinKind::Natural
+        )
     })
 }
 
@@ -199,8 +204,12 @@ fn collect_table_names(expr: &Expression, tables: &mut HashSet<String>) {
             collect_table_names(&bin.left, tables);
             collect_table_names(&bin.right, tables);
         }
-        Expression::Eq(bin) | Expression::Neq(bin) | Expression::Lt(bin) |
-        Expression::Gt(bin) | Expression::Lte(bin) | Expression::Gte(bin) => {
+        Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Gt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gte(bin) => {
             collect_table_names(&bin.left, tables);
             collect_table_names(&bin.right, tables);
         }
@@ -226,12 +235,8 @@ fn get_table_name(expr: &Expression) -> Option<String> {
                 Some(table.name.name.clone())
             }
         }
-        Expression::Subquery(subquery) => {
-            subquery.alias.as_ref().map(|a| a.name.clone())
-        }
-        Expression::Alias(alias) => {
-            Some(alias.alias.name.clone())
-        }
+        Expression::Subquery(subquery) => subquery.alias.as_ref().map(|a| a.name.clone()),
+        Expression::Alias(alias) => Some(alias.alias.name.clone()),
         _ => None,
     }
 }

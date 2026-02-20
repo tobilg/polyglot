@@ -2,8 +2,66 @@
 //! Test runner utilities for SQLGlot compatibility tests
 
 use polyglot_sql::dialects::{Dialect, DialectType};
-use polyglot_sql::generator::Generator;
+use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::parser::Parser;
+
+fn has_formatting_newline(sql: &str) -> bool {
+    let mut in_string = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let chars: Vec<char> = sql.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+
+        if in_line_comment {
+            if c == '\n' {
+                in_line_comment = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_block_comment {
+            if c == '*' && next == Some('/') {
+                in_block_comment = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        if !in_string && c == '-' && next == Some('-') {
+            in_line_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if !in_string && c == '/' && next == Some('*') {
+            in_block_comment = true;
+            i += 2;
+            continue;
+        }
+
+        if c == '\'' && !in_string {
+            in_string = true;
+        } else if c == '\'' && in_string {
+            if i + 1 < chars.len() && chars[i + 1] == '\'' {
+                i += 1; // escaped quote in a string literal
+            } else {
+                in_string = false;
+            }
+        } else if c == '\n' && !in_string {
+            return true;
+        }
+        i += 1;
+    }
+
+    false
+}
 
 /// Run an identity test: parse SQL and verify it regenerates identically
 pub fn identity_test(sql: &str) -> Result<(), String> {
@@ -83,7 +141,15 @@ pub fn dialect_identity_test(
     // double-quote heuristic produces false positives on string literals containing quotes.
     let use_identify = if let Some(exp) = expected {
         // Skip identify mode for dialects that don't need it
-        let skip_identify = matches!(dialect, DialectType::StarRocks | DialectType::Exasol | DialectType::TSQL | DialectType::Fabric | DialectType::BigQuery | DialectType::Snowflake);
+        let skip_identify = matches!(
+            dialect,
+            DialectType::StarRocks
+                | DialectType::Exasol
+                | DialectType::TSQL
+                | DialectType::Fabric
+                | DialectType::BigQuery
+                | DialectType::Snowflake
+        );
         if skip_identify {
             false
         } else {
@@ -137,30 +203,7 @@ pub fn transpile_test(
     let source_dialect = Dialect::get(source);
 
     // If the expected output contains newlines outside of string literals, use pretty-printed generation
-    let use_pretty = {
-        let mut in_string = false;
-        let mut has_formatting_newline = false;
-        let chars: Vec<char> = expected.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            if c == '\'' && !in_string {
-                in_string = true;
-            } else if c == '\'' && in_string {
-                // Check for escaped quote ('')
-                if i + 1 < chars.len() && chars[i + 1] == '\'' {
-                    i += 1; // skip next quote
-                } else {
-                    in_string = false;
-                }
-            } else if c == '\n' && !in_string {
-                has_formatting_newline = true;
-                break;
-            }
-            i += 1;
-        }
-        has_formatting_newline
-    };
+    let use_pretty = has_formatting_newline(expected);
 
     let results = if use_pretty {
         source_dialect
@@ -236,7 +279,17 @@ pub fn normalization_test(sql: &str, expected: &str) -> Result<(), String> {
         return Err("No statements parsed".to_string());
     }
 
-    let output = Generator::sql(&ast[0]).map_err(|e| format!("Generate error: {}", e))?;
+    let output = if has_formatting_newline(expected) {
+        let config = GeneratorConfig {
+            pretty: true,
+            ..Default::default()
+        };
+        let mut gen = Generator::with_config(config);
+        gen.generate(&ast[0])
+            .map_err(|e| format!("Generate error: {}", e))?
+    } else {
+        Generator::sql(&ast[0]).map_err(|e| format!("Generate error: {}", e))?
+    };
 
     if output != expected {
         return Err(format!(

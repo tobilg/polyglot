@@ -5,7 +5,9 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{AggFunc, BinaryOp, Case, Cast, CollationExpr, DataType, Expression, Function, Paren, VarArgFunc};
+use crate::expressions::{
+    AggFunc, BinaryOp, Case, Cast, CollationExpr, DataType, Expression, Function, Paren, VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -90,13 +92,15 @@ impl DialectImpl for SingleStoreDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -109,7 +113,10 @@ impl DialectImpl for SingleStoreDialect {
                 // Cast to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -121,7 +128,10 @@ impl DialectImpl for SingleStoreDialect {
                 )));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -135,7 +145,10 @@ impl DialectImpl for SingleStoreDialect {
                 // Cast to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -147,7 +160,10 @@ impl DialectImpl for SingleStoreDialect {
                 )));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -161,7 +177,10 @@ impl DialectImpl for SingleStoreDialect {
                 // Cast to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -173,7 +192,10 @@ impl DialectImpl for SingleStoreDialect {
                 )));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -207,7 +229,8 @@ impl SingleStoreDialect {
             )))),
 
             // COALESCE is native in SingleStore
-            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -224,10 +247,9 @@ impl SingleStoreDialect {
             "GROUP_CONCAT" => Ok(Expression::Function(Box::new(f))),
 
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // LISTAGG -> GROUP_CONCAT
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -310,10 +332,9 @@ impl SingleStoreDialect {
             ))),
 
             // REGEXP_LIKE -> RLIKE
-            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "RLIKE".to_string(),
-                f.args,
-            )))),
+            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("RLIKE".to_string(), f.args),
+            ))),
 
             // RLIKE is native in SingleStore
             "RLIKE" => Ok(Expression::Function(Box::new(f))),
@@ -336,7 +357,10 @@ impl SingleStoreDialect {
                 // Cast date to TIME(6)
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -372,7 +396,10 @@ impl SingleStoreDialect {
                 // Cast date to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -386,7 +413,10 @@ impl SingleStoreDialect {
                 // Cast result to INT
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -400,7 +430,10 @@ impl SingleStoreDialect {
                 // Cast date to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -414,7 +447,10 @@ impl SingleStoreDialect {
                 // Cast result to INT
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -428,7 +464,10 @@ impl SingleStoreDialect {
                 // Cast date to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -442,7 +481,10 @@ impl SingleStoreDialect {
                 // Cast result to INT
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -456,7 +498,10 @@ impl SingleStoreDialect {
                 // Cast date to TIME(6) first
                 let cast_to_time = Expression::Cast(Box::new(Cast {
                     this: date,
-                    to: DataType::Time { precision: Some(6), timezone: false },
+                    to: DataType::Time {
+                        precision: Some(6),
+                        timezone: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -470,7 +515,10 @@ impl SingleStoreDialect {
                 // Cast result to INT
                 Ok(Expression::Cast(Box::new(Cast {
                     this: date_format,
-                    to: DataType::Int { length: None, integer_spelling: false },
+                    to: DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -487,10 +535,8 @@ impl SingleStoreDialect {
                     vec![date],
                 )));
                 // (DAYOFWEEK(date) + 5) - wrap in explicit parentheses
-                let add_five = Expression::Add(Box::new(BinaryOp::new(
-                    dayofweek,
-                    Expression::number(5),
-                )));
+                let add_five =
+                    Expression::Add(Box::new(BinaryOp::new(dayofweek, Expression::number(5))));
                 let add_five_paren = Expression::Paren(Box::new(Paren {
                     this: add_five,
                     trailing_comments: Vec::new(),
@@ -522,13 +568,15 @@ impl SingleStoreDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 

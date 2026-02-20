@@ -18,9 +18,9 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, BinaryOp, BooleanLiteral, Case, Cast, CeilFunc, DataType, DateTimeField,
-    Expression, ExtractFunc, Function, Interval, IntervalUnit, IntervalUnitSpec,
-    Join, JoinKind, Literal, Paren, UnaryFunc, VarArgFunc,
+    AggFunc, BinaryOp, BooleanLiteral, Case, Cast, CeilFunc, DataType, DateTimeField, Expression,
+    ExtractFunc, Function, Interval, IntervalUnit, IntervalUnitSpec, Join, JoinKind, Literal,
+    Paren, UnaryFunc, VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -30,18 +30,14 @@ use crate::tokens::TokenizerConfig;
 /// This matches Python sqlglot's WRAPPED_JSON_EXTRACT_EXPRESSIONS behavior
 fn wrap_if_json_arrow(expr: Expression) -> Expression {
     match &expr {
-        Expression::JsonExtract(f) if f.arrow_syntax => {
-            Expression::Paren(Box::new(Paren {
-                this: expr,
-                trailing_comments: Vec::new(),
-            }))
-        }
-        Expression::JsonExtractScalar(f) if f.arrow_syntax => {
-            Expression::Paren(Box::new(Paren {
-                this: expr,
-                trailing_comments: Vec::new(),
-            }))
-        }
+        Expression::JsonExtract(f) if f.arrow_syntax => Expression::Paren(Box::new(Paren {
+            this: expr,
+            trailing_comments: Vec::new(),
+        })),
+        Expression::JsonExtractScalar(f) if f.arrow_syntax => Expression::Paren(Box::new(Paren {
+            this: expr,
+            trailing_comments: Vec::new(),
+        })),
         _ => expr,
     }
 }
@@ -65,7 +61,9 @@ impl DialectImpl for PostgresDialect {
         config.nested_comments = true;
         // PostgreSQL treats EXEC as a generic command (not TSQL EXEC statement)
         // Note: EXECUTE is kept as-is since it's used in GRANT/REVOKE EXECUTE ON FUNCTION
-        config.keywords.insert("EXEC".to_string(), TokenType::Command);
+        config
+            .keywords
+            .insert("EXEC".to_string(), TokenType::Command);
         config
     }
 
@@ -95,8 +93,8 @@ impl DialectImpl for PostgresDialect {
             supports_unlogged_tables: true,
             // PostgreSQL doesn't support multi-arg DISTINCT
             multi_arg_distinct: false,
-            // PostgreSQL uses ANY(subquery) without space
-            quantified_no_paren_space: true,
+            // PostgreSQL uses ANY (subquery) with space
+            quantified_no_paren_space: false,
             // PostgreSQL supports window EXCLUDE clause
             supports_window_exclude: true,
             // PostgreSQL normalizes single-bound window frames to BETWEEN form
@@ -141,12 +139,14 @@ impl DialectImpl for PostgresDialect {
             // NULL HANDLING
             // ============================================
             // IFNULL -> COALESCE in PostgreSQL
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in PostgreSQL
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -287,13 +287,15 @@ impl DialectImpl for PostgresDialect {
             // ============================================
             // ArrayContainedBy (<@) -> ArrayContainsAll (@>) with swapped operands
             // a <@ b -> b @> a (PostgreSQL prefers @> syntax)
-            Expression::ArrayContainedBy(op) => Ok(Expression::ArrayContainsAll(Box::new(BinaryOp {
-                left: op.right,
-                right: op.left,
-                left_comments: Vec::new(),
-                operator_comments: Vec::new(),
-                trailing_comments: Vec::new(),
-            }))),
+            Expression::ArrayContainedBy(op) => {
+                Ok(Expression::ArrayContainsAll(Box::new(BinaryOp {
+                    left: op.right,
+                    right: op.left,
+                    left_comments: Vec::new(),
+                    operator_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                })))
+            }
 
             // ============================================
             // REGEXP OPERATIONS (PostgreSQL uses ~ and ~* operators)
@@ -353,7 +355,10 @@ impl DialectImpl for PostgresDialect {
                 let cast_ts = |e: Expression| -> Expression {
                     Expression::Cast(Box::new(Cast {
                         this: e,
-                        to: DataType::Timestamp { precision: None, timezone: false },
+                        to: DataType::Timestamp {
+                            precision: None,
+                            timezone: false,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -395,27 +400,29 @@ impl DialectImpl for PostgresDialect {
 
                 // Helper: EXTRACT(field FROM expr)
                 let extract = |field: DateTimeField, from: Expression| -> Expression {
-                    Expression::Extract(Box::new(ExtractFunc {
-                        this: from,
-                        field,
-                    }))
+                    Expression::Extract(Box::new(ExtractFunc { this: from, field }))
                 };
 
                 // Helper: number literal
-                let num = |n: i64| -> Expression {
-                    Expression::Literal(Literal::Number(n.to_string()))
-                };
+                let num =
+                    |n: i64| -> Expression { Expression::Literal(Literal::Number(n.to_string())) };
 
                 let epoch_field = DateTimeField::Custom("epoch".to_string());
 
                 let result = match unit {
                     IntervalUnit::Nanosecond => {
                         let epoch = extract(epoch_field.clone(), ts_diff());
-                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000000)))))
+                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(
+                            epoch,
+                            num(1000000000),
+                        ))))
                     }
                     IntervalUnit::Microsecond => {
                         let epoch = extract(epoch_field, ts_diff());
-                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000)))))
+                        cast_bigint(Expression::Mul(Box::new(BinaryOp::new(
+                            epoch,
+                            num(1000000),
+                        ))))
                     }
                     IntervalUnit::Millisecond => {
                         let epoch = extract(epoch_field, ts_diff());
@@ -446,21 +453,35 @@ impl DialectImpl for PostgresDialect {
                         cast_bigint(Expression::Div(Box::new(BinaryOp::new(days, num(7)))))
                     }
                     IntervalUnit::Month => {
-                        let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
-                        let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
-                        let year_months = Expression::Mul(Box::new(BinaryOp::new(year_part, num(12))));
-                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_months, month_part))))
+                        let year_part =
+                            extract(DateTimeField::Custom("year".to_string()), age_call());
+                        let month_part =
+                            extract(DateTimeField::Custom("month".to_string()), age_call());
+                        let year_months =
+                            Expression::Mul(Box::new(BinaryOp::new(year_part, num(12))));
+                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(
+                            year_months,
+                            month_part,
+                        ))))
                     }
                     IntervalUnit::Quarter => {
-                        let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
-                        let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
-                        let year_quarters = Expression::Mul(Box::new(BinaryOp::new(year_part, num(4))));
-                        let month_quarters = Expression::Div(Box::new(BinaryOp::new(month_part, num(3))));
-                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_quarters, month_quarters))))
+                        let year_part =
+                            extract(DateTimeField::Custom("year".to_string()), age_call());
+                        let month_part =
+                            extract(DateTimeField::Custom("month".to_string()), age_call());
+                        let year_quarters =
+                            Expression::Mul(Box::new(BinaryOp::new(year_part, num(4))));
+                        let month_quarters =
+                            Expression::Div(Box::new(BinaryOp::new(month_part, num(3))));
+                        cast_bigint(Expression::Add(Box::new(BinaryOp::new(
+                            year_quarters,
+                            month_quarters,
+                        ))))
                     }
-                    IntervalUnit::Year => {
-                        cast_bigint(extract(DateTimeField::Custom("year".to_string()), age_call()))
-                    }
+                    IntervalUnit::Year => cast_bigint(extract(
+                        DateTimeField::Custom("year".to_string()),
+                        age_call(),
+                    )),
                 };
                 Ok(result)
             }
@@ -578,7 +599,9 @@ impl DialectImpl for PostgresDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
@@ -646,9 +669,7 @@ impl DialectImpl for PostgresDialect {
             )))),
 
             // JSONPathRoot -> empty string ($ is implicit in PostgreSQL)
-            Expression::JSONPathRoot(_) => {
-                Ok(Expression::Literal(Literal::String(String::new())))
-            }
+            Expression::JSONPathRoot(_) => Ok(Expression::Literal(Literal::String(String::new()))),
 
             // ============================================
             // MISC FUNCTIONS
@@ -757,13 +778,13 @@ impl DialectImpl for PostgresDialect {
             // ============================================
             // JOIN TRANSFORMATIONS
             // ============================================
-            // CROSS APPLY -> CROSS JOIN LATERAL in PostgreSQL
+            // CROSS APPLY -> INNER JOIN LATERAL ... ON TRUE in PostgreSQL
             Expression::Join(join) if join.kind == JoinKind::CrossApply => {
                 Ok(Expression::Join(Box::new(Join {
                     this: join.this,
-                    on: None,
+                    on: Some(Expression::Boolean(BooleanLiteral { value: true })),
                     using: join.using,
-                    kind: JoinKind::Lateral,
+                    kind: JoinKind::CrossApply,
                     use_inner_keyword: false,
                     use_outer_keyword: false,
                     deferred_condition: false,
@@ -772,6 +793,7 @@ impl DialectImpl for PostgresDialect {
                     pivots: join.pivots,
                     comments: join.comments,
                     nesting_group: 0,
+                    directed: false,
                 })))
             }
 
@@ -781,7 +803,7 @@ impl DialectImpl for PostgresDialect {
                     this: join.this,
                     on: Some(Expression::Boolean(BooleanLiteral { value: true })),
                     using: join.using,
-                    kind: JoinKind::LeftLateral,
+                    kind: JoinKind::OuterApply,
                     use_inner_keyword: false,
                     use_outer_keyword: false,
                     deferred_condition: false,
@@ -790,6 +812,7 @@ impl DialectImpl for PostgresDialect {
                     pivots: join.pivots,
                     comments: join.comments,
                     nesting_group: 0,
+                    directed: false,
                 })))
             }
 
@@ -888,16 +911,14 @@ impl DialectImpl for PostgresDialect {
             }
 
             // b'a' -> CAST(e'a' AS BYTEA) for PostgreSQL
-            Expression::Literal(Literal::ByteString(s)) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::EscapeString(s)),
-                    to: DataType::VarBinary { length: None },
-                    trailing_comments: Vec::new(),
-                    double_colon_syntax: false,
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Literal(Literal::ByteString(s)) => Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Literal::EscapeString(s)),
+                to: DataType::VarBinary { length: None },
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+            }))),
 
             // Pass through everything else
             _ => Ok(expr),
@@ -967,7 +988,10 @@ impl PostgresDialect {
                         name: "REAL".to_string(),
                     },
                     // INT4 -> INTEGER (PostgreSQL alias)
-                    "INT4" => DataType::Int { length: None, integer_spelling: false },
+                    "INT4" => DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     // INT2 -> SMALLINT (PostgreSQL alias)
                     "INT2" => DataType::SmallInt { length: None },
                     _ => dt,
@@ -984,17 +1008,20 @@ impl PostgresDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL (SQL Server) -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -1032,10 +1059,12 @@ impl PostgresDialect {
             }))),
 
             // CHARACTER_LENGTH -> LENGTH in PostgreSQL
-            "CHARACTER_LENGTH" if f.args.len() == 1 => Ok(Expression::Length(Box::new(UnaryFunc {
-                this: f.args.into_iter().next().unwrap(),
-                original_name: None,
-            }))),
+            "CHARACTER_LENGTH" if f.args.len() == 1 => {
+                Ok(Expression::Length(Box::new(UnaryFunc {
+                    this: f.args.into_iter().next().unwrap(),
+                    original_name: None,
+                })))
+            }
 
             // CHARINDEX -> POSITION in PostgreSQL
             // CHARINDEX(substring, string) -> POSITION(substring IN string)
@@ -1054,17 +1083,26 @@ impl PostgresDialect {
 
             // GETDATE -> CURRENT_TIMESTAMP in PostgreSQL
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // SYSDATETIME -> CURRENT_TIMESTAMP in PostgreSQL
             "SYSDATETIME" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP in PostgreSQL (NOW() is also valid)
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NEWID -> GEN_RANDOM_UUID in PostgreSQL
@@ -1107,14 +1145,12 @@ impl PostgresDialect {
             "LEVENSHTEIN" => Ok(Expression::Function(Box::new(f))),
 
             // EDITDISTANCE -> LEVENSHTEIN_LESS_EQUAL (with max distance) or LEVENSHTEIN
-            "EDITDISTANCE" if f.args.len() == 3 => Ok(Expression::Function(Box::new(Function::new(
-                "LEVENSHTEIN_LESS_EQUAL".to_string(),
-                f.args,
-            )))),
-            "EDITDISTANCE" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
-                "LEVENSHTEIN".to_string(),
-                f.args,
-            )))),
+            "EDITDISTANCE" if f.args.len() == 3 => Ok(Expression::Function(Box::new(
+                Function::new("LEVENSHTEIN_LESS_EQUAL".to_string(), f.args),
+            ))),
+            "EDITDISTANCE" if f.args.len() == 2 => Ok(Expression::Function(Box::new(
+                Function::new("LEVENSHTEIN".to_string(), f.args),
+            ))),
 
             // TRIM(value, chars) -> TRIM(chars FROM value) for Postgres
             "TRIM" if f.args.len() == 2 => {
@@ -1149,7 +1185,9 @@ impl PostgresDialect {
                     // Extract unit name from identifier or column
                     let unit_name = match &unit_expr {
                         Expression::Identifier(id) => id.name.to_uppercase(),
-                        Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
+                        Expression::Column(col) if col.table.is_none() => {
+                            col.name.name.to_uppercase()
+                        }
                         _ => "DAY".to_string(),
                     };
 
@@ -1157,7 +1195,10 @@ impl PostgresDialect {
                     let cast_ts = |e: Expression| -> Expression {
                         Expression::Cast(Box::new(Cast {
                             this: e,
-                            to: DataType::Timestamp { precision: None, timezone: false },
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -1198,10 +1239,7 @@ impl PostgresDialect {
 
                     // Helper: EXTRACT(field FROM expr)
                     let extract = |field: DateTimeField, from: Expression| -> Expression {
-                        Expression::Extract(Box::new(ExtractFunc {
-                            this: from,
-                            field,
-                        }))
+                        Expression::Extract(Box::new(ExtractFunc { this: from, field }))
                     };
 
                     // Helper: number literal
@@ -1216,7 +1254,10 @@ impl PostgresDialect {
                         "MICROSECOND" => {
                             // CAST(EXTRACT(epoch FROM end_ts - start_ts) * 1000000 AS BIGINT)
                             let epoch = extract(epoch_field, ts_diff());
-                            cast_bigint(Expression::Mul(Box::new(BinaryOp::new(epoch, num(1000000)))))
+                            cast_bigint(Expression::Mul(Box::new(BinaryOp::new(
+                                epoch,
+                                num(1000000),
+                            ))))
                         }
                         "MILLISECOND" => {
                             let epoch = extract(epoch_field, ts_diff());
@@ -1244,27 +1285,44 @@ impl PostgresDialect {
                                 this: ts_diff(),
                                 trailing_comments: Vec::new(),
                             }));
-                            let days = extract(DateTimeField::Custom("days".to_string()), diff_parens);
+                            let days =
+                                extract(DateTimeField::Custom("days".to_string()), diff_parens);
                             cast_bigint(Expression::Div(Box::new(BinaryOp::new(days, num(7)))))
                         }
                         "MONTH" => {
                             // CAST(EXTRACT(year FROM AGE(...)) * 12 + EXTRACT(month FROM AGE(...)) AS BIGINT)
-                            let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
-                            let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
-                            let year_months = Expression::Mul(Box::new(BinaryOp::new(year_part, num(12))));
-                            cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_months, month_part))))
+                            let year_part =
+                                extract(DateTimeField::Custom("year".to_string()), age_call());
+                            let month_part =
+                                extract(DateTimeField::Custom("month".to_string()), age_call());
+                            let year_months =
+                                Expression::Mul(Box::new(BinaryOp::new(year_part, num(12))));
+                            cast_bigint(Expression::Add(Box::new(BinaryOp::new(
+                                year_months,
+                                month_part,
+                            ))))
                         }
                         "QUARTER" => {
                             // CAST(EXTRACT(year FROM AGE(...)) * 4 + EXTRACT(month FROM AGE(...)) / 3 AS BIGINT)
-                            let year_part = extract(DateTimeField::Custom("year".to_string()), age_call());
-                            let month_part = extract(DateTimeField::Custom("month".to_string()), age_call());
-                            let year_quarters = Expression::Mul(Box::new(BinaryOp::new(year_part, num(4))));
-                            let month_quarters = Expression::Div(Box::new(BinaryOp::new(month_part, num(3))));
-                            cast_bigint(Expression::Add(Box::new(BinaryOp::new(year_quarters, month_quarters))))
+                            let year_part =
+                                extract(DateTimeField::Custom("year".to_string()), age_call());
+                            let month_part =
+                                extract(DateTimeField::Custom("month".to_string()), age_call());
+                            let year_quarters =
+                                Expression::Mul(Box::new(BinaryOp::new(year_part, num(4))));
+                            let month_quarters =
+                                Expression::Div(Box::new(BinaryOp::new(month_part, num(3))));
+                            cast_bigint(Expression::Add(Box::new(BinaryOp::new(
+                                year_quarters,
+                                month_quarters,
+                            ))))
                         }
                         "YEAR" => {
                             // CAST(EXTRACT(year FROM AGE(...)) AS BIGINT)
-                            cast_bigint(extract(DateTimeField::Custom("year".to_string()), age_call()))
+                            cast_bigint(extract(
+                                DateTimeField::Custom("year".to_string()),
+                                age_call(),
+                            ))
                         }
                         _ => {
                             // Fallback: simple AGE
@@ -1372,17 +1430,26 @@ impl PostgresDialect {
                     let position = f.args[3].clone();
                     let occurrence = f.args[4].clone();
                     let params = &f.args[5];
-                    let mut flags = if let Expression::Literal(crate::expressions::Literal::String(s)) = params {
-                        s.clone()
-                    } else {
-                        String::new()
-                    };
+                    let mut flags =
+                        if let Expression::Literal(crate::expressions::Literal::String(s)) = params
+                        {
+                            s.clone()
+                        } else {
+                            String::new()
+                        };
                     if !flags.contains('g') {
                         flags.push('g');
                     }
                     Ok(Expression::Function(Box::new(Function::new(
                         "REGEXP_REPLACE".to_string(),
-                        vec![subject, pattern, replacement, position, occurrence, Expression::Literal(crate::expressions::Literal::String(flags))],
+                        vec![
+                            subject,
+                            pattern,
+                            replacement,
+                            position,
+                            occurrence,
+                            Expression::Literal(crate::expressions::Literal::String(flags)),
+                        ],
                     ))))
                 } else {
                     Ok(Expression::Function(Box::new(f)))
@@ -1411,7 +1478,9 @@ impl PostgresDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
@@ -1427,7 +1496,9 @@ impl PostgresDialect {
             ))),
 
             // STDEV -> STDDEV in PostgreSQL
-            "STDEV" if !f.args.is_empty() => Ok(Expression::Stddev(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+            "STDEV" if !f.args.is_empty() => Ok(Expression::Stddev(Box::new(AggFunc {
+                ignore_nulls: None,
+                having_max: None,
                 this: f.args.into_iter().next().unwrap(),
                 distinct: f.distinct,
                 filter: f.filter,
@@ -1437,7 +1508,9 @@ impl PostgresDialect {
             }))),
 
             // STDEVP -> STDDEV_POP in PostgreSQL
-            "STDEVP" if !f.args.is_empty() => Ok(Expression::StddevPop(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+            "STDEVP" if !f.args.is_empty() => Ok(Expression::StddevPop(Box::new(AggFunc {
+                ignore_nulls: None,
+                having_max: None,
                 this: f.args.into_iter().next().unwrap(),
                 distinct: f.distinct,
                 filter: f.filter,
@@ -1447,7 +1520,9 @@ impl PostgresDialect {
             }))),
 
             // VAR -> VAR_SAMP in PostgreSQL
-            "VAR" if !f.args.is_empty() => Ok(Expression::VarSamp(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+            "VAR" if !f.args.is_empty() => Ok(Expression::VarSamp(Box::new(AggFunc {
+                ignore_nulls: None,
+                having_max: None,
                 this: f.args.into_iter().next().unwrap(),
                 distinct: f.distinct,
                 filter: f.filter,
@@ -1457,7 +1532,9 @@ impl PostgresDialect {
             }))),
 
             // VARP -> VAR_POP in PostgreSQL
-            "VARP" if !f.args.is_empty() => Ok(Expression::VarPop(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+            "VARP" if !f.args.is_empty() => Ok(Expression::VarPop(Box::new(AggFunc {
+                ignore_nulls: None,
+                having_max: None,
                 this: f.args.into_iter().next().unwrap(),
                 distinct: f.distinct,
                 filter: f.filter,
@@ -1482,7 +1559,9 @@ impl PostgresDialect {
             "BOOL_OR" => Ok(Expression::AggregateFunction(f)),
 
             // VARIANCE -> VAR_SAMP in PostgreSQL
-            "VARIANCE" if !f.args.is_empty() => Ok(Expression::VarSamp(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+            "VARIANCE" if !f.args.is_empty() => Ok(Expression::VarSamp(Box::new(AggFunc {
+                ignore_nulls: None,
+                having_max: None,
                 this: f.args.into_iter().next().unwrap(),
                 distinct: f.distinct,
                 filter: f.filter,
@@ -1633,7 +1712,9 @@ mod tests {
     fn identity_postgres(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::PostgreSQL);
         let exprs = dialect.parse(sql).expect("Parse failed");
-        let transformed = dialect.transform(exprs[0].clone()).expect("Transform failed");
+        let transformed = dialect
+            .transform(exprs[0].clone())
+            .expect("Transform failed");
         dialect.generate(&transformed).expect("Generate failed")
     }
 

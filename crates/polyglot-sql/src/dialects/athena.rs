@@ -72,12 +72,14 @@ impl DialectImpl for AthenaDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Athena
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in Athena
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -113,13 +115,15 @@ impl DialectImpl for AthenaDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -165,28 +169,37 @@ impl AthenaDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // RAND -> RANDOM in Athena
@@ -343,13 +356,15 @@ impl AthenaDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 

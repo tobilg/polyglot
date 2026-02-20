@@ -45,9 +45,7 @@ impl LineageNode {
 
     /// Iterate over all nodes in the lineage graph using DFS
     pub fn walk(&self) -> LineageWalker<'_> {
-        LineageWalker {
-            stack: vec![self],
-        }
+        LineageWalker { stack: vec![self] }
     }
 
     /// Get all downstream column names
@@ -161,7 +159,16 @@ fn to_node(
     reference_node_name: &str,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    to_node_inner(column, scope, dialect, scope_name, source_name, reference_node_name, trim_selects, &[])
+    to_node_inner(
+        column,
+        scope,
+        dialect,
+        scope_name,
+        source_name,
+        reference_node_name,
+        trim_selects,
+        &[],
+    )
 }
 
 fn to_node_inner(
@@ -262,9 +269,8 @@ fn to_node_inner(
     }
 
     // 6. Subqueries in select — trace through scalar subqueries
-    let subqueries: Vec<&Expression> = select_expr.find_all(|e| {
-        matches!(e, Expression::Subquery(sq) if sq.alias.is_none())
-    });
+    let subqueries: Vec<&Expression> =
+        select_expr.find_all(|e| matches!(e, Expression::Subquery(sq) if sq.alias.is_none()));
     for sq_expr in subqueries {
         if let Expression::Subquery(sq) = sq_expr {
             for sq_scope in &scope.subquery_scopes {
@@ -427,7 +433,8 @@ fn resolve_qualified_column(
     }
 
     // Base table or unresolved — terminal node
-    node.downstream.push(make_table_column_node(table, col_name));
+    node.downstream
+        .push(make_table_column_node(table, col_name));
 }
 
 fn resolve_unqualified_column(
@@ -452,7 +459,16 @@ fn resolve_unqualified_column(
 
     if from_source_names.len() == 1 {
         let tbl = from_source_names[0];
-        resolve_qualified_column(node, scope, dialect, tbl, col_name, parent_name, trim_selects, all_cte_scopes);
+        resolve_qualified_column(
+            node,
+            scope,
+            dialect,
+            tbl,
+            col_name,
+            parent_name,
+            trim_selects,
+            all_cte_scopes,
+        );
         return;
     }
 
@@ -489,9 +505,7 @@ fn get_alias_or_name(expr: &Expression) -> Option<String> {
 fn resolve_column_name(column: &ColumnRef<'_>, select_expr: &Expression) -> String {
     match column {
         ColumnRef::Name(n) => n.to_string(),
-        ColumnRef::Index(_) => {
-            get_alias_or_name(select_expr).unwrap_or_else(|| "?".to_string())
-        }
+        ColumnRef::Index(_) => get_alias_or_name(select_expr).unwrap_or_else(|| "?".to_string()),
     }
 }
 
@@ -897,9 +911,7 @@ mod tests {
 
     #[test]
     fn test_lineage_cte_union() {
-        let expr = parse(
-            "WITH cte AS (SELECT a FROM t1 UNION SELECT a FROM t2) SELECT a FROM cte",
-        );
+        let expr = parse("WITH cte AS (SELECT a FROM t1 UNION SELECT a FROM t2) SELECT a FROM cte");
         let node = lineage("a", &expr, None, false).unwrap();
 
         // Should trace through CTE into both UNION branches

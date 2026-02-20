@@ -86,7 +86,11 @@ fn compute_ref_count(root: &Scope) -> HashMap<u64, usize> {
 fn collect_scopes(root: &Scope) -> Vec<&Scope> {
     let mut result = vec![root];
     result.extend(root.subquery_scopes.iter().flat_map(|s| collect_scopes(s)));
-    result.extend(root.derived_table_scopes.iter().flat_map(|s| collect_scopes(s)));
+    result.extend(
+        root.derived_table_scopes
+            .iter()
+            .flat_map(|s| collect_scopes(s)),
+    );
     result.extend(root.cte_scopes.iter().flat_map(|s| collect_scopes(s)));
     result.extend(root.union_scopes.iter().flat_map(|s| collect_scopes(s)));
     result
@@ -118,9 +122,7 @@ fn remove_ctes(expression: Expression, ctes_to_remove: &[String]) -> Expression 
 /// Check if a CTE is referenced anywhere in the query
 pub fn is_cte_referenced(expression: &Expression, cte_name: &str) -> bool {
     match expression {
-        Expression::Table(table) => {
-            table.name.name == cte_name
-        }
+        Expression::Table(table) => table.name.name == cte_name,
         Expression::Select(select) => {
             // Check FROM
             if let Some(ref from) = select.from {
@@ -150,14 +152,13 @@ pub fn is_cte_referenced(expression: &Expression, cte_name: &str) -> bool {
             }
             false
         }
-        Expression::Subquery(subquery) => {
-            is_cte_referenced(&subquery.this, cte_name)
-        }
+        Expression::Subquery(subquery) => is_cte_referenced(&subquery.this, cte_name),
         Expression::Union(union) => {
             is_cte_referenced(&union.left, cte_name) || is_cte_referenced(&union.right, cte_name)
         }
         Expression::Intersect(intersect) => {
-            is_cte_referenced(&intersect.left, cte_name) || is_cte_referenced(&intersect.right, cte_name)
+            is_cte_referenced(&intersect.left, cte_name)
+                || is_cte_referenced(&intersect.right, cte_name)
         }
         Expression::Except(except) => {
             is_cte_referenced(&except.left, cte_name) || is_cte_referenced(&except.right, cte_name)

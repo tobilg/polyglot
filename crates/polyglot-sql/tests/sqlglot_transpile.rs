@@ -136,6 +136,12 @@ fn test_sqlglot_transpile_all() {
             total.new_passes.extend(trans_results.new_passes);
 
             total.print_summary("SQLGlot Transpile (All)");
+
+            assert!(
+                total.total() == 0 || total.pass_rate() >= 1.0,
+                "Pass rate {:.1}% — all transpile tests must pass",
+                total.pass_rate() * 100.0
+            );
         })
         .unwrap();
     handle.join().unwrap();

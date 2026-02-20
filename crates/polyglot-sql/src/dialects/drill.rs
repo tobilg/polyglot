@@ -55,7 +55,10 @@ impl DialectImpl for DrillDialect {
 
             // CURRENT_TIMESTAMP without parentheses
             Expression::CurrentTimestamp(_) => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // ILIKE → `ILIKE` (backtick quoted function in Drill)
@@ -92,16 +95,16 @@ impl DrillDialect {
         match name_upper.as_str() {
             // CURRENT_TIMESTAMP without parentheses
             "CURRENT_TIMESTAMP" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // ARRAY_SIZE / ARRAY_LENGTH → REPEATED_COUNT
-            "ARRAY_SIZE" | "ARRAY_LENGTH" | "CARDINALITY" | "SIZE" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "REPEATED_COUNT".to_string(),
-                    f.args,
-                ))))
-            }
+            "ARRAY_SIZE" | "ARRAY_LENGTH" | "CARDINALITY" | "SIZE" => Ok(Expression::Function(
+                Box::new(Function::new("REPEATED_COUNT".to_string(), f.args)),
+            )),
 
             // ARRAY_CONTAINS → REPEATED_CONTAINS
             "ARRAY_CONTAINS" | "CONTAINS" => Ok(Expression::Function(Box::new(Function::new(

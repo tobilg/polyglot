@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use polyglot_sql::dialects::DialectType;
 use polyglot_sql::transpile;
 
@@ -104,12 +104,36 @@ fn bench_transpile_dialect_pairs(c: &mut Criterion) {
     let mut group = c.benchmark_group("transpile_dialect_pairs");
 
     let dialect_pairs = [
-        ("PostgreSQL_to_MySQL", DialectType::PostgreSQL, DialectType::MySQL),
-        ("PostgreSQL_to_BigQuery", DialectType::PostgreSQL, DialectType::BigQuery),
-        ("MySQL_to_PostgreSQL", DialectType::MySQL, DialectType::PostgreSQL),
-        ("BigQuery_to_Snowflake", DialectType::BigQuery, DialectType::Snowflake),
-        ("Snowflake_to_DuckDB", DialectType::Snowflake, DialectType::DuckDB),
-        ("Generic_to_PostgreSQL", DialectType::Generic, DialectType::PostgreSQL),
+        (
+            "PostgreSQL_to_MySQL",
+            DialectType::PostgreSQL,
+            DialectType::MySQL,
+        ),
+        (
+            "PostgreSQL_to_BigQuery",
+            DialectType::PostgreSQL,
+            DialectType::BigQuery,
+        ),
+        (
+            "MySQL_to_PostgreSQL",
+            DialectType::MySQL,
+            DialectType::PostgreSQL,
+        ),
+        (
+            "BigQuery_to_Snowflake",
+            DialectType::BigQuery,
+            DialectType::Snowflake,
+        ),
+        (
+            "Snowflake_to_DuckDB",
+            DialectType::Snowflake,
+            DialectType::DuckDB,
+        ),
+        (
+            "Generic_to_PostgreSQL",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        ),
     ];
 
     for (name, source, target) in dialect_pairs {
@@ -143,5 +167,10 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_transpile_by_query_size, bench_transpile_dialect_pairs, bench_roundtrip);
+criterion_group!(
+    benches,
+    bench_transpile_by_query_size,
+    bench_transpile_dialect_pairs,
+    bench_roundtrip
+);
 criterion_main!(benches);

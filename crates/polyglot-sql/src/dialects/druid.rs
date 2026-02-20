@@ -44,7 +44,10 @@ impl DialectImpl for DruidDialect {
         match expr {
             // CurrentTimestamp without args in Druid
             Expression::CurrentTimestamp(_) => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // Modulo -> MOD function in Druid
@@ -68,7 +71,10 @@ impl DruidDialect {
         match name_upper.as_str() {
             // CURRENT_TIMESTAMP without parentheses
             "CURRENT_TIMESTAMP" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // Pass through everything else

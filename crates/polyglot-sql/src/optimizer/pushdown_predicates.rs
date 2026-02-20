@@ -33,10 +33,7 @@ use crate::scope::{build_scope, Scope, SourceInfo};
 ///
 /// # Returns
 /// The optimized expression with predicates pushed down
-pub fn pushdown_predicates(
-    expression: Expression,
-    dialect: Option<DialectType>,
-) -> Expression {
+pub fn pushdown_predicates(expression: Expression, dialect: Option<DialectType>) -> Expression {
     let root = build_scope(&expression);
     let scope_ref_count = compute_ref_count(&root);
 
@@ -51,7 +48,13 @@ pub fn pushdown_predicates(
     let scopes = collect_scopes(&root);
 
     for scope in scopes.iter().rev() {
-        result = process_scope(&result, scope, &scope_ref_count, dialect, unnest_requires_cross_join);
+        result = process_scope(
+            &result,
+            scope,
+            &scope_ref_count,
+            dialect,
+            unnest_requires_cross_join,
+        );
     }
 
     result
@@ -116,7 +119,8 @@ fn process_scope(
     let result = expression.clone();
 
     // Extract data we need before processing
-    let (where_condition, join_conditions, join_index) = if let Expression::Select(select) = &result {
+    let (where_condition, join_conditions, join_index) = if let Expression::Select(select) = &result
+    {
         let where_cond = select.where_clause.as_ref().map(|w| w.this.clone());
 
         let mut idx: HashMap<String, usize> = HashMap::new();
@@ -126,9 +130,8 @@ fn process_scope(
             }
         }
 
-        let join_conds: Vec<Expression> = select.joins.iter()
-            .filter_map(|j| j.on.clone())
-            .collect();
+        let join_conds: Vec<Expression> =
+            select.joins.iter().filter_map(|j| j.on.clone()).collect();
 
         (where_cond, join_conds, idx)
     } else {
@@ -152,13 +155,7 @@ fn process_scope(
     // Process JOIN ON conditions
     for join_cond in join_conditions {
         let simplified = simplify(join_cond, dialect);
-        result = pushdown_impl(
-            result,
-            &simplified,
-            &scope.sources,
-            dialect,
-            None,
-        );
+        result = pushdown_impl(result, &simplified, &scope.sources, dialect, None);
     }
 
     result
@@ -174,7 +171,7 @@ fn pushdown_impl(
 ) -> Expression {
     // Check if condition is in CNF or DNF form
     let is_cnf = normalized(condition, false); // CNF check
-    let is_dnf = normalized(condition, true);  // DNF check
+    let is_dnf = normalized(condition, true); // DNF check
     let cnf_like = is_cnf || !is_dnf;
 
     // Flatten the condition into predicates
@@ -241,9 +238,9 @@ fn pushdown_cnf(
                     let predicate_tables = get_column_table_names(predicate);
 
                     // Don't push if predicate references tables from later joins
-                    let can_push = predicate_tables.iter().all(|t| {
-                        join_idx.get(t).map_or(true, |&idx| idx <= this_index)
-                    });
+                    let can_push = predicate_tables
+                        .iter()
+                        .all(|t| join_idx.get(t).map_or(true, |&idx| idx <= this_index));
 
                     if can_push {
                         result = push_predicate_to_node(&result, predicate, &node_expr);
@@ -271,12 +268,10 @@ fn pushdown_dnf(
     for a in predicates {
         let a_tables: HashSet<String> = get_column_table_names(a).into_iter().collect();
 
-        let common: HashSet<String> = predicates
-            .iter()
-            .fold(a_tables, |acc, b| {
-                let b_tables: HashSet<String> = get_column_table_names(b).into_iter().collect();
-                acc.intersection(&b_tables).cloned().collect()
-            });
+        let common: HashSet<String> = predicates.iter().fold(a_tables, |acc, b| {
+            let b_tables: HashSet<String> = get_column_table_names(b).into_iter().collect();
+            acc.intersection(&b_tables).cloned().collect()
+        });
 
         pushdown_tables.extend(common);
     }
@@ -370,8 +365,12 @@ fn collect_column_tables(expr: &Expression, tables: &mut Vec<String>) {
             collect_column_tables(&bin.left, tables);
             collect_column_tables(&bin.right, tables);
         }
-        Expression::Eq(bin) | Expression::Neq(bin) | Expression::Lt(bin) |
-        Expression::Lte(bin) | Expression::Gt(bin) | Expression::Gte(bin) => {
+        Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin) => {
             collect_column_tables(&bin.left, tables);
             collect_column_tables(&bin.right, tables);
         }
@@ -423,12 +422,8 @@ fn get_table_alias_or_name(expr: &Expression) -> Option<String> {
                 Some(table.name.name.clone())
             }
         }
-        Expression::Subquery(subquery) => {
-            subquery.alias.as_ref().map(|a| a.name.clone())
-        }
-        Expression::Alias(alias) => {
-            Some(alias.alias.name.clone())
-        }
+        Expression::Subquery(subquery) => subquery.alias.as_ref().map(|a| a.name.clone()),
+        Expression::Alias(alias) => Some(alias.alias.name.clone()),
         _ => None,
     }
 }
@@ -445,10 +440,7 @@ fn make_or(left: Expression, right: Expression) -> Expression {
 }
 
 /// Replace aliases in a predicate with the original expressions
-pub fn replace_aliases(
-    source: &Expression,
-    predicate: Expression,
-) -> Expression {
+pub fn replace_aliases(source: &Expression, predicate: Expression) -> Expression {
     // Build alias map from source SELECT expressions
     let mut aliases: HashMap<String, Expression> = HashMap::new();
 

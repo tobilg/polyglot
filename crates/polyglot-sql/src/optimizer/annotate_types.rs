@@ -93,97 +93,253 @@ impl<'a> TypeAnnotator<'a> {
         // Aggregate functions
         self.function_return_types
             .insert("COUNT".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("SUM".to_string(), DataType::Decimal {
+        self.function_return_types.insert(
+            "SUM".to_string(),
+            DataType::Decimal {
                 precision: None,
                 scale: None,
-            });
-        self.function_return_types
-            .insert("AVG".to_string(), DataType::Double { precision: None, scale: None });
+            },
+        );
+        self.function_return_types.insert(
+            "AVG".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
 
         // String functions
-        self.function_return_types
-            .insert("CONCAT".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("UPPER".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("LOWER".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("TRIM".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("LTRIM".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("RTRIM".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("SUBSTRING".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("SUBSTR".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("REPLACE".to_string(), DataType::VarChar { length: None, parenthesized_length: false });
-        self.function_return_types
-            .insert("LENGTH".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("CHAR_LENGTH".to_string(), DataType::Int { length: None, integer_spelling: false });
+        self.function_return_types.insert(
+            "CONCAT".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "UPPER".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "LOWER".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "TRIM".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "LTRIM".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "RTRIM".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "SUBSTRING".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "SUBSTR".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "REPLACE".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "LENGTH".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "CHAR_LENGTH".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
 
         // Date/Time functions
-        self.function_return_types
-            .insert("NOW".to_string(), DataType::Timestamp {
+        self.function_return_types.insert(
+            "NOW".to_string(),
+            DataType::Timestamp {
                 precision: None,
                 timezone: false,
-            });
-        self.function_return_types
-            .insert("CURRENT_TIMESTAMP".to_string(), DataType::Timestamp {
+            },
+        );
+        self.function_return_types.insert(
+            "CURRENT_TIMESTAMP".to_string(),
+            DataType::Timestamp {
                 precision: None,
                 timezone: false,
-            });
+            },
+        );
         self.function_return_types
             .insert("CURRENT_DATE".to_string(), DataType::Date);
-        self.function_return_types
-            .insert("CURRENT_TIME".to_string(), DataType::Time { precision: None, timezone: false });
+        self.function_return_types.insert(
+            "CURRENT_TIME".to_string(),
+            DataType::Time {
+                precision: None,
+                timezone: false,
+            },
+        );
         self.function_return_types
             .insert("DATE".to_string(), DataType::Date);
-        self.function_return_types
-            .insert("YEAR".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("MONTH".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("DAY".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("HOUR".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("MINUTE".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("SECOND".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("EXTRACT".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("DATE_DIFF".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("DATEDIFF".to_string(), DataType::Int { length: None, integer_spelling: false });
+        self.function_return_types.insert(
+            "YEAR".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "MONTH".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "DAY".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "HOUR".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "MINUTE".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "SECOND".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "EXTRACT".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "DATE_DIFF".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "DATEDIFF".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
 
         // Math functions
-        self.function_return_types
-            .insert("ABS".to_string(), DataType::Double { precision: None, scale: None });
-        self.function_return_types
-            .insert("ROUND".to_string(), DataType::Double { precision: None, scale: None });
+        self.function_return_types.insert(
+            "ABS".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "ROUND".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
         self.function_return_types
             .insert("FLOOR".to_string(), DataType::BigInt { length: None });
         self.function_return_types
             .insert("CEIL".to_string(), DataType::BigInt { length: None });
         self.function_return_types
             .insert("CEILING".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("SQRT".to_string(), DataType::Double { precision: None, scale: None });
-        self.function_return_types
-            .insert("POWER".to_string(), DataType::Double { precision: None, scale: None });
-        self.function_return_types
-            .insert("MOD".to_string(), DataType::Int { length: None, integer_spelling: false });
-        self.function_return_types
-            .insert("LOG".to_string(), DataType::Double { precision: None, scale: None });
-        self.function_return_types
-            .insert("LN".to_string(), DataType::Double { precision: None, scale: None });
-        self.function_return_types
-            .insert("EXP".to_string(), DataType::Double { precision: None, scale: None });
+        self.function_return_types.insert(
+            "SQRT".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "POWER".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "MOD".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        );
+        self.function_return_types.insert(
+            "LOG".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "LN".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "EXP".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
 
         // Null-handling functions return Unknown (infer from args)
         self.function_return_types
@@ -205,32 +361,45 @@ impl<'a> TypeAnnotator<'a> {
             Expression::Null(_) => None, // NULL has no type
 
             // Arithmetic binary operations
-            Expression::Add(op) | Expression::Sub(op) |
-            Expression::Mul(op) | Expression::Div(op) |
-            Expression::Mod(op) => self.annotate_arithmetic(op),
+            Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op) => self.annotate_arithmetic(op),
 
             // Comparison operations - always boolean
-            Expression::Eq(_) | Expression::Neq(_) |
-            Expression::Lt(_) | Expression::Lte(_) |
-            Expression::Gt(_) | Expression::Gte(_) |
-            Expression::Like(_) | Expression::ILike(_) => Some(DataType::Boolean),
+            Expression::Eq(_)
+            | Expression::Neq(_)
+            | Expression::Lt(_)
+            | Expression::Lte(_)
+            | Expression::Gt(_)
+            | Expression::Gte(_)
+            | Expression::Like(_)
+            | Expression::ILike(_) => Some(DataType::Boolean),
 
             // Logical operations - always boolean
             Expression::And(_) | Expression::Or(_) | Expression::Not(_) => Some(DataType::Boolean),
 
             // Predicates - always boolean
-            Expression::Between(_) | Expression::In(_) |
-            Expression::IsNull(_) | Expression::IsTrue(_) | Expression::IsFalse(_) |
-            Expression::Is(_) | Expression::Exists(_) => Some(DataType::Boolean),
+            Expression::Between(_)
+            | Expression::In(_)
+            | Expression::IsNull(_)
+            | Expression::IsTrue(_)
+            | Expression::IsFalse(_)
+            | Expression::Is(_)
+            | Expression::Exists(_) => Some(DataType::Boolean),
 
             // String concatenation
-            Expression::Concat(_) => Some(DataType::VarChar { length: None, parenthesized_length: false }),
+            Expression::Concat(_) => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
 
             // Bitwise operations - integer
-            Expression::BitwiseAnd(_) | Expression::BitwiseOr(_) |
-            Expression::BitwiseXor(_) | Expression::BitwiseNot(_) => {
-                Some(DataType::BigInt { length: None })
-            }
+            Expression::BitwiseAnd(_)
+            | Expression::BitwiseOr(_)
+            | Expression::BitwiseXor(_)
+            | Expression::BitwiseNot(_) => Some(DataType::BigInt { length: None }),
 
             // Negation preserves type
             Expression::Neg(op) => self.annotate(&op.this),
@@ -241,11 +410,17 @@ impl<'a> TypeAnnotator<'a> {
             // Typed aggregate functions
             Expression::Count(_) => Some(DataType::BigInt { length: None }),
             Expression::Sum(agg) => self.annotate_sum(&agg.this),
-            Expression::Avg(_) => Some(DataType::Double { precision: None, scale: None }),
+            Expression::Avg(_) => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
             Expression::Min(agg) => self.annotate(&agg.this),
             Expression::Max(agg) => self.annotate(&agg.this),
             Expression::GroupConcat(_) | Expression::StringAgg(_) | Expression::ListAgg(_) => {
-                Some(DataType::VarChar { length: None, parenthesized_length: false })
+                Some(DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false,
+                })
             }
 
             // Generic aggregate function
@@ -261,9 +436,7 @@ impl<'a> TypeAnnotator<'a> {
             Expression::Column(col) => {
                 if let Some(schema) = &self._schema {
                     let table_name = col.table.as_ref().map(|t| t.name.as_str()).unwrap_or("");
-                    schema
-                        .get_column_type(table_name, &col.name.name)
-                        .ok()
+                    schema.get_column_type(table_name, &col.name.name).ok()
                 } else {
                     None
                 }
@@ -321,14 +494,20 @@ impl<'a> TypeAnnotator<'a> {
             }
 
             // Interval expressions
-            Expression::Interval(_) => Some(DataType::Interval { unit: None, to: None }),
+            Expression::Interval(_) => Some(DataType::Interval {
+                unit: None,
+                to: None,
+            }),
 
             // Window functions inherit type from their function
             Expression::WindowFunction(window) => self.annotate(&window.this),
 
             // Date/time expressions
             Expression::CurrentDate(_) => Some(DataType::Date),
-            Expression::CurrentTime(_) => Some(DataType::Time { precision: None, timezone: false }),
+            Expression::CurrentTime(_) => Some(DataType::Time {
+                precision: None,
+                timezone: false,
+            }),
             Expression::CurrentTimestamp(_) | Expression::CurrentTimestampLTZ(_) => {
                 Some(DataType::Timestamp {
                     precision: None,
@@ -337,37 +516,64 @@ impl<'a> TypeAnnotator<'a> {
             }
 
             // Date functions
-            Expression::DateAdd(_) | Expression::DateSub(_) |
-            Expression::ToDate(_) | Expression::Date(_) => Some(DataType::Date),
-            Expression::DateDiff(_) | Expression::Extract(_) => Some(DataType::Int { length: None, integer_spelling: false }),
+            Expression::DateAdd(_)
+            | Expression::DateSub(_)
+            | Expression::ToDate(_)
+            | Expression::Date(_) => Some(DataType::Date),
+            Expression::DateDiff(_) | Expression::Extract(_) => Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            }),
             Expression::ToTimestamp(_) => Some(DataType::Timestamp {
                 precision: None,
                 timezone: false,
             }),
 
             // String functions
-            Expression::Upper(_) | Expression::Lower(_) | Expression::Trim(_) |
-            Expression::LTrim(_) | Expression::RTrim(_) | Expression::Replace(_) |
-            Expression::Substring(_) | Expression::Reverse(_) | Expression::Left(_) |
-            Expression::Right(_) | Expression::Repeat(_) | Expression::Lpad(_) |
-            Expression::Rpad(_) | Expression::ConcatWs(_) | Expression::Overlay(_) => {
-                Some(DataType::VarChar { length: None, parenthesized_length: false })
-            }
-            Expression::Length(_) => Some(DataType::Int { length: None, integer_spelling: false }),
+            Expression::Upper(_)
+            | Expression::Lower(_)
+            | Expression::Trim(_)
+            | Expression::LTrim(_)
+            | Expression::RTrim(_)
+            | Expression::Replace(_)
+            | Expression::Substring(_)
+            | Expression::Reverse(_)
+            | Expression::Left(_)
+            | Expression::Right(_)
+            | Expression::Repeat(_)
+            | Expression::Lpad(_)
+            | Expression::Rpad(_)
+            | Expression::ConcatWs(_)
+            | Expression::Overlay(_) => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
+            Expression::Length(_) => Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            }),
 
             // Math functions
-            Expression::Abs(_) | Expression::Sqrt(_) | Expression::Cbrt(_) |
-            Expression::Ln(_) | Expression::Exp(_) | Expression::Power(_) |
-            Expression::Log(_) => Some(DataType::Double { precision: None, scale: None }),
-            Expression::Round(_) => Some(DataType::Double { precision: None, scale: None }),
+            Expression::Abs(_)
+            | Expression::Sqrt(_)
+            | Expression::Cbrt(_)
+            | Expression::Ln(_)
+            | Expression::Exp(_)
+            | Expression::Power(_)
+            | Expression::Log(_) => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
+            Expression::Round(_) => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
             Expression::Floor(_) | Expression::Ceil(_) | Expression::Sign(_) => {
                 Some(DataType::BigInt { length: None })
             }
 
             // Greatest/Least - coerce argument types
-            Expression::Greatest(v) | Expression::Least(v) => {
-                self.coerce_arg_types(&v.expressions)
-            }
+            Expression::Greatest(v) | Expression::Least(v) => self.coerce_arg_types(&v.expressions),
 
             // Alias - type of the inner expression
             Expression::Alias(alias) => self.annotate(&alias.this),
@@ -417,9 +623,7 @@ impl<'a> TypeAnnotator<'a> {
             Expression::Intersect(intersect) => {
                 self.annotate_set_operation(&intersect.left, &intersect.right)
             }
-            Expression::Except(except) => {
-                self.annotate_set_operation(&except.left, &except.right)
-            }
+            Expression::Except(except) => self.annotate_set_operation(&except.left, &except.right),
 
             // ============================================
             // 3.1.12: UDTF Type Handling
@@ -444,8 +648,10 @@ impl<'a> TypeAnnotator<'a> {
                 // EXPLODE(array) - returns the element type
                 if let Some(DataType::Array { element_type, .. }) = self.annotate(&explode.this) {
                     Some(*element_type)
-                } else if let Some(DataType::Map { key_type, value_type }) =
-                    self.annotate(&explode.this)
+                } else if let Some(DataType::Map {
+                    key_type,
+                    value_type,
+                }) = self.annotate(&explode.this)
                 {
                     // EXPLODE(map) returns struct(key, value)
                     Some(DataType::Struct {
@@ -474,7 +680,10 @@ impl<'a> TypeAnnotator<'a> {
                 } else if let Some(ref end) = gs.end {
                     self.annotate(end)
                 } else {
-                    Some(DataType::Int { length: None, integer_spelling: false })
+                    Some(DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    })
                 }
             }
 
@@ -493,7 +702,10 @@ impl<'a> TypeAnnotator<'a> {
             DataType::Json | DataType::JsonB => Some(DataType::Json), // JSON indexing returns JSON
             DataType::VarChar { .. } | DataType::Text => {
                 // String indexing returns a character
-                Some(DataType::VarChar { length: Some(1), parenthesized_length: false })
+                Some(DataType::VarChar {
+                    length: Some(1),
+                    parenthesized_length: false,
+                })
             }
             _ => None,
         }
@@ -509,7 +721,10 @@ impl<'a> TypeAnnotator<'a> {
                 StructField::new(name.clone().unwrap_or_default(), field_type)
             })
             .collect();
-        Some(DataType::Struct { fields, nested: false })
+        Some(DataType::Struct {
+            fields,
+            nested: false,
+        })
     }
 
     /// Annotate a MAP literal
@@ -546,10 +761,7 @@ impl<'a> TypeAnnotator<'a> {
     }
 
     /// Annotate a LATERAL VIEW expression
-    fn annotate_lateral_view(
-        &mut self,
-        lv: &crate::expressions::LateralView,
-    ) -> Option<DataType> {
+    fn annotate_lateral_view(&mut self, lv: &crate::expressions::LateralView) -> Option<DataType> {
         // The type depends on the table-generating function
         self.annotate(&lv.this)
     }
@@ -557,17 +769,29 @@ impl<'a> TypeAnnotator<'a> {
     /// Annotate a literal value
     fn annotate_literal(&self, lit: &Literal) -> Option<DataType> {
         match lit {
-            Literal::String(_) | Literal::NationalString(_) |
-            Literal::TripleQuotedString(_, _) | Literal::EscapeString(_) |
-            Literal::DollarString(_) | Literal::RawString(_) => Some(DataType::VarChar { length: None, parenthesized_length: false }),
+            Literal::String(_)
+            | Literal::NationalString(_)
+            | Literal::TripleQuotedString(_, _)
+            | Literal::EscapeString(_)
+            | Literal::DollarString(_)
+            | Literal::RawString(_) => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
             Literal::Number(n) => {
                 // Try to determine if it's an integer or float
                 if n.contains('.') || n.contains('e') || n.contains('E') {
-                    Some(DataType::Double { precision: None, scale: None })
+                    Some(DataType::Double {
+                        precision: None,
+                        scale: None,
+                    })
                 } else {
                     // Check if it fits in an Int or needs BigInt
                     if let Ok(_) = n.parse::<i32>() {
-                        Some(DataType::Int { length: None, integer_spelling: false })
+                        Some(DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        })
                     } else {
                         Some(DataType::BigInt { length: None })
                     }
@@ -578,7 +802,10 @@ impl<'a> TypeAnnotator<'a> {
             }
             Literal::HexNumber(_) => Some(DataType::BigInt { length: None }),
             Literal::Date(_) => Some(DataType::Date),
-            Literal::Time(_) => Some(DataType::Time { precision: None, timezone: false }),
+            Literal::Time(_) => Some(DataType::Time {
+                precision: None,
+                timezone: false,
+            }),
             Literal::Timestamp(_) => Some(DataType::Timestamp {
                 precision: None,
                 timezone: false,
@@ -647,7 +874,11 @@ impl<'a> TypeAnnotator<'a> {
     }
 
     /// Get return type for aggregate functions
-    fn get_aggregate_return_type(&mut self, func_name: &str, args: &[Expression]) -> Option<DataType> {
+    fn get_aggregate_return_type(
+        &mut self,
+        func_name: &str,
+        args: &[Expression],
+    ) -> Option<DataType> {
         match func_name {
             "COUNT" | "COUNT_IF" => Some(DataType::BigInt { length: None }),
             "SUM" => {
@@ -660,18 +891,25 @@ impl<'a> TypeAnnotator<'a> {
                     })
                 }
             }
-            "AVG" => Some(DataType::Double { precision: None, scale: None }),
+            "AVG" => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
             "MIN" | "MAX" => {
                 // Preserves input type
                 args.first().and_then(|arg| self.annotate(arg))
             }
-            "STRING_AGG" | "GROUP_CONCAT" | "LISTAGG" | "ARRAY_AGG" => {
-                Some(DataType::VarChar { length: None, parenthesized_length: false })
-            }
+            "STRING_AGG" | "GROUP_CONCAT" | "LISTAGG" | "ARRAY_AGG" => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
             "BOOL_AND" | "BOOL_OR" | "EVERY" | "ANY" | "SOME" => Some(DataType::Boolean),
             "BIT_AND" | "BIT_OR" | "BIT_XOR" => Some(DataType::BigInt { length: None }),
             "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP" => {
-                Some(DataType::Double { precision: None, scale: None })
+                Some(DataType::Double {
+                    precision: None,
+                    scale: None,
+                })
             }
             "PERCENTILE_CONT" | "PERCENTILE_DISC" | "MEDIAN" => {
                 args.first().and_then(|arg| self.annotate(arg))
@@ -687,7 +925,12 @@ impl<'a> TypeAnnotator<'a> {
             | Some(DataType::SmallInt { .. })
             | Some(DataType::Int { .. }) => Some(DataType::BigInt { length: None }),
             Some(DataType::BigInt { .. }) => Some(DataType::BigInt { length: None }),
-            Some(DataType::Float { .. }) | Some(DataType::Double { .. }) => Some(DataType::Double { precision: None, scale: None }),
+            Some(DataType::Float { .. }) | Some(DataType::Double { .. }) => {
+                Some(DataType::Double {
+                    precision: None,
+                    scale: None,
+                })
+            }
             Some(DataType::Decimal { precision, scale }) => {
                 Some(DataType::Decimal { precision, scale })
             }
@@ -721,13 +964,25 @@ impl<'a> TypeAnnotator<'a> {
 
         // Special case: Interval + Date/Timestamp
         match (left, right) {
-            (DataType::Date, DataType::Interval { .. }) |
-            (DataType::Interval { .. }, DataType::Date) => return Some(DataType::Date),
-            (DataType::Timestamp { precision, timezone }, DataType::Interval { .. }) |
-            (DataType::Interval { .. }, DataType::Timestamp { precision, timezone }) => {
+            (DataType::Date, DataType::Interval { .. })
+            | (DataType::Interval { .. }, DataType::Date) => return Some(DataType::Date),
+            (
+                DataType::Timestamp {
+                    precision,
+                    timezone,
+                },
+                DataType::Interval { .. },
+            )
+            | (
+                DataType::Interval { .. },
+                DataType::Timestamp {
+                    precision,
+                    timezone,
+                },
+            ) => {
                 return Some(DataType::Timestamp {
                     precision: *precision,
-                    timezone: *timezone
+                    timezone: *timezone,
                 });
             }
             _ => {}
@@ -827,18 +1082,30 @@ mod tests {
         let int_expr = make_int_literal(42);
         assert_eq!(
             annotator.annotate(&int_expr),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
 
         // Float literal
         let float_expr = make_float_literal(3.14);
-        assert_eq!(annotator.annotate(&float_expr), Some(DataType::Double { precision: None, scale: None }));
+        assert_eq!(
+            annotator.annotate(&float_expr),
+            Some(DataType::Double {
+                precision: None,
+                scale: None
+            })
+        );
 
         // String literal
         let string_expr = make_string_literal("hello");
         assert_eq!(
             annotator.annotate(&string_expr),
-            Some(DataType::VarChar { length: None, parenthesized_length: false })
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            })
         );
 
         // Boolean literal
@@ -880,7 +1147,10 @@ mod tests {
         )));
         assert_eq!(
             annotator.annotate(&add_int),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
 
         // Int + Float = Double (wider type)
@@ -888,7 +1158,13 @@ mod tests {
             make_int_literal(1),
             make_float_literal(2.5), // Use 2.5 so the string has a decimal point
         )));
-        assert_eq!(annotator.annotate(&add_mixed), Some(DataType::Double { precision: None, scale: None }));
+        assert_eq!(
+            annotator.annotate(&add_mixed),
+            Some(DataType::Double {
+                precision: None,
+                scale: None
+            })
+        );
     }
 
     #[test]
@@ -902,7 +1178,10 @@ mod tests {
         )));
         assert_eq!(
             annotator.annotate(&concat),
-            Some(DataType::VarChar { length: None, parenthesized_length: false })
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            })
         );
     }
 
@@ -913,7 +1192,10 @@ mod tests {
         // CAST(1 AS VARCHAR)
         let cast = Expression::Cast(Box::new(Cast {
             this: make_int_literal(1),
-            to: DataType::VarChar { length: Some(10), parenthesized_length: false },
+            to: DataType::VarChar {
+                length: Some(10),
+                parenthesized_length: false,
+            },
             trailing_comments: vec![],
             double_colon_syntax: false,
             format: None,
@@ -921,7 +1203,10 @@ mod tests {
         }));
         assert_eq!(
             annotator.annotate(&cast),
-            Some(DataType::VarChar { length: Some(10), parenthesized_length: false })
+            Some(DataType::VarChar {
+                length: Some(10),
+                parenthesized_length: false
+            })
         );
     }
 
@@ -930,17 +1215,24 @@ mod tests {
         let mut annotator = TypeAnnotator::new(None, None);
 
         // COUNT returns BigInt
-        let count = Expression::Function(Box::new(Function::new("COUNT", vec![make_int_literal(1)])));
+        let count =
+            Expression::Function(Box::new(Function::new("COUNT", vec![make_int_literal(1)])));
         assert_eq!(
             annotator.annotate(&count),
             Some(DataType::BigInt { length: None })
         );
 
         // UPPER returns VarChar
-        let upper = Expression::Function(Box::new(Function::new("UPPER", vec![make_string_literal("hello")])));
+        let upper = Expression::Function(Box::new(Function::new(
+            "UPPER",
+            vec![make_string_literal("hello")],
+        )));
         assert_eq!(
             annotator.annotate(&upper),
-            Some(DataType::VarChar { length: None, parenthesized_length: false })
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            })
         );
 
         // NOW returns Timestamp
@@ -961,14 +1253,14 @@ mod tests {
         // COALESCE(NULL, 1) returns Int (type of first non-null arg)
         let coalesce = Expression::Function(Box::new(Function::new(
             "COALESCE",
-            vec![
-                Expression::Null(Null),
-                make_int_literal(1),
-            ],
+            vec![Expression::Null(Null), make_int_literal(1)],
         )));
         assert_eq!(
             annotator.annotate(&coalesce),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
     }
 
@@ -976,7 +1268,10 @@ mod tests {
     fn test_type_coercion_class() {
         // Text types
         assert_eq!(
-            TypeCoercionClass::from_data_type(&DataType::VarChar { length: None, parenthesized_length: false }),
+            TypeCoercionClass::from_data_type(&DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            }),
             Some(TypeCoercionClass::Text)
         );
         assert_eq!(
@@ -986,11 +1281,17 @@ mod tests {
 
         // Numeric types
         assert_eq!(
-            TypeCoercionClass::from_data_type(&DataType::Int { length: None, integer_spelling: false }),
+            TypeCoercionClass::from_data_type(&DataType::Int {
+                length: None,
+                integer_spelling: false
+            }),
             Some(TypeCoercionClass::Numeric)
         );
         assert_eq!(
-            TypeCoercionClass::from_data_type(&DataType::Double { precision: None, scale: None }),
+            TypeCoercionClass::from_data_type(&DataType::Double {
+                precision: None,
+                scale: None
+            }),
             Some(TypeCoercionClass::Numeric)
         );
 
@@ -1017,21 +1318,52 @@ mod tests {
 
         // Int vs BigInt -> BigInt
         let result = annotator.wider_numeric_type(
-            &DataType::Int { length: None, integer_spelling: false },
+            &DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
             &DataType::BigInt { length: None },
         );
         assert_eq!(result, DataType::BigInt { length: None });
 
         // Float vs Double -> Double
-        let result = annotator.wider_numeric_type(&DataType::Float { precision: None, scale: None, real_spelling: false }, &DataType::Double { precision: None, scale: None });
-        assert_eq!(result, DataType::Double { precision: None, scale: None });
+        let result = annotator.wider_numeric_type(
+            &DataType::Float {
+                precision: None,
+                scale: None,
+                real_spelling: false,
+            },
+            &DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        assert_eq!(
+            result,
+            DataType::Double {
+                precision: None,
+                scale: None
+            }
+        );
 
         // Int vs Double -> Double
         let result = annotator.wider_numeric_type(
-            &DataType::Int { length: None, integer_spelling: false },
-            &DataType::Double { precision: None, scale: None },
+            &DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+            &DataType::Double {
+                precision: None,
+                scale: None,
+            },
         );
-        assert_eq!(result, DataType::Double { precision: None, scale: None });
+        assert_eq!(
+            result,
+            DataType::Double {
+                precision: None,
+                scale: None
+            }
+        );
     }
 
     #[test]
@@ -1044,11 +1376,23 @@ mod tests {
 
         // AVG always returns Double
         let avg_type = annotator.get_aggregate_return_type("AVG", &[make_int_literal(1)]);
-        assert_eq!(avg_type, Some(DataType::Double { precision: None, scale: None }));
+        assert_eq!(
+            avg_type,
+            Some(DataType::Double {
+                precision: None,
+                scale: None
+            })
+        );
 
         // MIN/MAX preserve input type
         let min_type = annotator.get_aggregate_return_type("MIN", &[make_string_literal("a")]);
-        assert_eq!(min_type, Some(DataType::VarChar { length: None, parenthesized_length: false }));
+        assert_eq!(
+            min_type,
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            })
+        );
     }
 
     #[test]
@@ -1063,7 +1407,10 @@ mod tests {
         let time_expr = Expression::Literal(Literal::Time("10:30:00".to_string()));
         assert_eq!(
             annotator.annotate(&time_expr),
-            Some(DataType::Time { precision: None, timezone: false })
+            Some(DataType::Time {
+                precision: None,
+                timezone: false
+            })
         );
 
         // TIMESTAMP literal
@@ -1120,7 +1467,10 @@ mod tests {
         }));
         assert_eq!(
             annotator.annotate(&subscript),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
     }
 
@@ -1139,7 +1489,10 @@ mod tests {
         }));
         assert_eq!(
             annotator.annotate(&subscript),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
     }
 
@@ -1190,7 +1543,10 @@ mod tests {
         }));
         assert_eq!(
             annotator.annotate(&explode),
-            Some(DataType::Int { length: None, integer_spelling: false })
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false
+            })
         );
     }
 
@@ -1211,7 +1567,10 @@ mod tests {
         }));
         assert_eq!(
             annotator.annotate(&unnest),
-            Some(DataType::VarChar { length: None, parenthesized_length: false })
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            })
         );
     }
 

@@ -12,9 +12,9 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    Alias, BinaryOp, CeilFunc, Column, Exists, Expression, From, Function, FunctionBody, Identifier,
-    JsonExtractFunc, LikeOp, Literal, Select, SplitFunc, StringAggFunc, UnaryFunc, UnnestFunc, VarArgFunc,
-    Where,
+    Alias, BinaryOp, CeilFunc, Column, Exists, Expression, From, Function, FunctionBody,
+    Identifier, JsonExtractFunc, LikeOp, Literal, Select, SplitFunc, StringAggFunc, UnaryFunc,
+    UnnestFunc, VarArgFunc, Where,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -244,7 +244,9 @@ impl DialectImpl for BigQueryDialect {
             // ===== Random =====
             // RANDOM -> RAND in BigQuery
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // ===== UUID =====
@@ -309,16 +311,19 @@ impl DialectImpl for BigQueryDialect {
                     )))),
                     _ => {
                         // TIMESTAMP_SECONDS(CAST(value / POWER(10, scale) AS INT64))
-                        let div_expr = Expression::Div(Box::new(crate::expressions::BinaryOp::new(
-                            *f.this,
-                            Expression::Function(Box::new(Function::new(
-                                "POWER".to_string(),
-                                vec![Expression::number(10), Expression::number(scale)],
-                            ))),
-                        )));
+                        let div_expr =
+                            Expression::Div(Box::new(crate::expressions::BinaryOp::new(
+                                *f.this,
+                                Expression::Function(Box::new(Function::new(
+                                    "POWER".to_string(),
+                                    vec![Expression::number(10), Expression::number(scale)],
+                                ))),
+                            )));
                         let cast_expr = Expression::Cast(Box::new(crate::expressions::Cast {
                             this: div_expr,
-                            to: crate::expressions::DataType::Custom { name: "INT64".to_string() },
+                            to: crate::expressions::DataType::Custom {
+                                name: "INT64".to_string(),
+                            },
                             double_colon_syntax: false,
                             trailing_comments: vec![],
                             format: None,
@@ -671,7 +676,8 @@ impl DialectImpl for BigQueryDialect {
                     };
                     if let (Some(keys), Some(vals)) = (keys_exprs, vals_exprs) {
                         if keys.len() == vals.len() {
-                            let new_pairs: Vec<(Expression, Expression)> = keys.iter()
+                            let new_pairs: Vec<(Expression, Expression)> = keys
+                                .iter()
                                 .zip(vals.iter())
                                 .map(|(k, v)| (k.clone(), v.clone()))
                                 .collect();
@@ -730,9 +736,9 @@ impl DialectImpl for BigQueryDialect {
                     if rtb.starts_with("TABLE (") || rtb.starts_with("TABLE(") {
                         // Convert TABLE (...) to TABLE <...> with BigQuery types
                         let inner = if rtb.starts_with("TABLE (") {
-                            &rtb["TABLE (".len()..rtb.len()-1]
+                            &rtb["TABLE (".len()..rtb.len() - 1]
                         } else {
-                            &rtb["TABLE(".len()..rtb.len()-1]
+                            &rtb["TABLE(".len()..rtb.len() - 1]
                         };
                         // Convert common types to BigQuery equivalents
                         let converted = inner
@@ -748,7 +754,7 @@ impl DialectImpl for BigQueryDialect {
                             .replace(" TEXT", " STRING");
                         // Handle trailing type (no comma, no paren)
                         let converted = if converted.ends_with(" INT") {
-                            format!("{}{}", &converted[..converted.len()-4], " INT64")
+                            format!("{}{}", &converted[..converted.len() - 4], " INT64")
                         } else {
                             converted
                         };
@@ -852,7 +858,9 @@ impl BigQueryDialect {
             // For BigQuery identity: preserve TIMESTAMP/DATETIME as Custom types
             // This avoids the issue where parsed TIMESTAMP (timezone: false) would
             // be converted to DATETIME by the generator
-            DataType::Timestamp { timezone: false, .. } => DataType::Custom {
+            DataType::Timestamp {
+                timezone: false, ..
+            } => DataType::Custom {
                 name: "TIMESTAMP".to_string(),
             },
             DataType::Timestamp { timezone: true, .. } => DataType::Custom {
@@ -890,17 +898,20 @@ impl BigQueryDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE (both work in BigQuery)
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -917,12 +928,16 @@ impl BigQueryDialect {
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // CURRENT_DATE -> CURRENT_DATE() in BigQuery
             // Keep as Function when it has args (e.g., CURRENT_DATE('UTC'))
-            "CURRENT_DATE" if f.args.is_empty() => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+            "CURRENT_DATE" if f.args.is_empty() => {
+                Ok(Expression::CurrentDate(crate::expressions::CurrentDate))
+            }
             "CURRENT_DATE" => Ok(Expression::Function(Box::new(Function {
                 name: "CURRENT_DATE".to_string(),
                 args: f.args,
@@ -935,7 +950,10 @@ impl BigQueryDialect {
 
             // NOW -> CURRENT_TIMESTAMP in BigQuery
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // TO_DATE -> PARSE_DATE in BigQuery
@@ -989,7 +1007,10 @@ impl BigQueryDialect {
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // ARRAY_LENGTH -> ARRAY_LENGTH (native)
@@ -1054,22 +1075,32 @@ impl BigQueryDialect {
                 };
                 let unit = match unit_name.as_str() {
                     "YEAR" | "YEARS" | "YY" | "YYYY" => crate::expressions::IntervalUnit::Year,
-                    "QUARTER" | "QUARTERS" | "QQ" | "Q" => crate::expressions::IntervalUnit::Quarter,
+                    "QUARTER" | "QUARTERS" | "QQ" | "Q" => {
+                        crate::expressions::IntervalUnit::Quarter
+                    }
                     "MONTH" | "MONTHS" | "MM" | "M" => crate::expressions::IntervalUnit::Month,
                     "WEEK" | "WEEKS" | "WK" | "WW" => crate::expressions::IntervalUnit::Week,
-                    "DAY" | "DAYS" | "DD" | "D" | "DAYOFMONTH" => crate::expressions::IntervalUnit::Day,
+                    "DAY" | "DAYS" | "DD" | "D" | "DAYOFMONTH" => {
+                        crate::expressions::IntervalUnit::Day
+                    }
                     "HOUR" | "HOURS" | "HH" => crate::expressions::IntervalUnit::Hour,
                     "MINUTE" | "MINUTES" | "MI" | "N" => crate::expressions::IntervalUnit::Minute,
                     "SECOND" | "SECONDS" | "SS" | "S" => crate::expressions::IntervalUnit::Second,
-                    "MILLISECOND" | "MILLISECONDS" | "MS" => crate::expressions::IntervalUnit::Millisecond,
-                    "MICROSECOND" | "MICROSECONDS" | "US" => crate::expressions::IntervalUnit::Microsecond,
+                    "MILLISECOND" | "MILLISECONDS" | "MS" => {
+                        crate::expressions::IntervalUnit::Millisecond
+                    }
+                    "MICROSECOND" | "MICROSECONDS" | "US" => {
+                        crate::expressions::IntervalUnit::Microsecond
+                    }
                     _ => crate::expressions::IntervalUnit::Day,
                 };
-                Ok(Expression::DateAdd(Box::new(crate::expressions::DateAddFunc {
-                    this: date,
-                    interval: amount,
-                    unit,
-                })))
+                Ok(Expression::DateAdd(Box::new(
+                    crate::expressions::DateAddFunc {
+                        this: date,
+                        interval: amount,
+                        unit,
+                    },
+                )))
             }
             "DATE_ADD" => Ok(Expression::Function(Box::new(Function::new(
                 "DATE_ADD".to_string(),
@@ -1118,10 +1149,9 @@ impl BigQueryDialect {
             )))),
 
             // CHAR_LENGTH / CHARACTER_LENGTH -> LENGTH
-            "CHAR_LENGTH" | "CHARACTER_LENGTH" => Ok(Expression::Function(Box::new(Function::new(
-                "LENGTH".to_string(),
-                f.args,
-            )))),
+            "CHAR_LENGTH" | "CHARACTER_LENGTH" => Ok(Expression::Function(Box::new(
+                Function::new("LENGTH".to_string(), f.args),
+            ))),
 
             // OCTET_LENGTH -> BYTE_LENGTH in BigQuery
             "OCTET_LENGTH" => Ok(Expression::Function(Box::new(Function::new(
@@ -1178,7 +1208,10 @@ impl BigQueryDialect {
             // REGEXP_REPLACE - strip extra Snowflake-specific args
             "REGEXP_REPLACE" if f.args.len() > 3 => {
                 let args = f.args[..3].to_vec();
-                Ok(Expression::Function(Box::new(Function::new("REGEXP_REPLACE".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP_REPLACE".to_string(),
+                    args,
+                ))))
             }
 
             // OBJECT_CONSTRUCT_KEEP_NULL -> JSON_OBJECT
@@ -1194,17 +1227,20 @@ impl BigQueryDialect {
                 let max_dist = f.args[2].clone();
                 Ok(Expression::Function(Box::new(Function::new(
                     "EDIT_DISTANCE".to_string(),
-                    vec![col1, col2, Expression::NamedArgument(Box::new(crate::expressions::NamedArgument {
-                        name: crate::expressions::Identifier::new("max_distance".to_string()),
-                        value: max_dist,
-                        separator: crate::expressions::NamedArgSeparator::DArrow,
-                    }))],
+                    vec![
+                        col1,
+                        col2,
+                        Expression::NamedArgument(Box::new(crate::expressions::NamedArgument {
+                            name: crate::expressions::Identifier::new("max_distance".to_string()),
+                            value: max_dist,
+                            separator: crate::expressions::NamedArgSeparator::DArrow,
+                        })),
+                    ],
                 ))))
             }
-            "EDITDISTANCE" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
-                "EDIT_DISTANCE".to_string(),
-                f.args,
-            )))),
+            "EDITDISTANCE" if f.args.len() == 2 => Ok(Expression::Function(Box::new(
+                Function::new("EDIT_DISTANCE".to_string(), f.args),
+            ))),
 
             // HEX_DECODE_BINARY -> FROM_HEX
             "HEX_DECODE_BINARY" => Ok(Expression::Function(Box::new(Function::new(
@@ -1214,8 +1250,12 @@ impl BigQueryDialect {
 
             // BigQuery format string normalization for PARSE_DATE/DATETIME/TIMESTAMP functions
             // %Y-%m-%d -> %F and %H:%M:%S -> %T
-            "PARSE_DATE" | "PARSE_DATETIME" | "PARSE_TIMESTAMP"
-            | "SAFE.PARSE_DATE" | "SAFE.PARSE_DATETIME" | "SAFE.PARSE_TIMESTAMP" => {
+            "PARSE_DATE"
+            | "PARSE_DATETIME"
+            | "PARSE_TIMESTAMP"
+            | "SAFE.PARSE_DATE"
+            | "SAFE.PARSE_DATETIME"
+            | "SAFE.PARSE_TIMESTAMP" => {
                 let args = self.normalize_time_format_args(f.args);
                 Ok(Expression::Function(Box::new(Function {
                     name: f.name,
@@ -1330,9 +1370,7 @@ impl BigQueryDialect {
     /// %Y-%m-%d -> %F (ISO date)
     /// %H:%M:%S -> %T (time)
     fn normalize_time_format(&self, format: &str) -> String {
-        format
-            .replace("%Y-%m-%d", "%F")
-            .replace("%H:%M:%S", "%T")
+        format.replace("%Y-%m-%d", "%F").replace("%H:%M:%S", "%T")
     }
 }
 
@@ -1463,7 +1501,10 @@ mod tests {
     #[test]
     fn test_json_literal_to_parse_json() {
         // JSON 'string' literal syntax should be converted to PARSE_JSON()
-        bigquery_identity("SELECT JSON '\"foo\"' AS json_data", "SELECT PARSE_JSON('\"foo\"') AS json_data");
+        bigquery_identity(
+            "SELECT JSON '\"foo\"' AS json_data",
+            "SELECT PARSE_JSON('\"foo\"') AS json_data",
+        );
     }
 
     #[test]
@@ -1471,7 +1512,7 @@ mod tests {
         // GRANT is not a reserved keyword in BigQuery, should not be backtick-quoted
         bigquery_identity(
             "SELECT GRANT FROM (SELECT 'input' AS GRANT)",
-            "SELECT GRANT FROM (SELECT 'input' AS GRANT)"
+            "SELECT GRANT FROM (SELECT 'input' AS GRANT)",
         );
     }
 
@@ -1489,7 +1530,7 @@ mod tests {
         // Issue 1: DATE literal should become CAST syntax in BigQuery
         bigquery_identity(
             "EXTRACT(WEEK(THURSDAY) FROM DATE '2013-12-25')",
-            "EXTRACT(WEEK(THURSDAY) FROM CAST('2013-12-25' AS DATE))"
+            "EXTRACT(WEEK(THURSDAY) FROM CAST('2013-12-25' AS DATE))",
         );
     }
 
@@ -1498,7 +1539,7 @@ mod tests {
         // Issue 2: JSON literals in JSON_OBJECT should use PARSE_JSON, not CAST AS JSON
         bigquery_identity(
             "SELECT JSON_OBJECT('a', JSON '10') AS json_data",
-            "SELECT JSON_OBJECT('a', PARSE_JSON('10')) AS json_data"
+            "SELECT JSON_OBJECT('a', PARSE_JSON('10')) AS json_data",
         );
     }
 
@@ -1511,7 +1552,7 @@ mod tests {
         // SAFE.PARSE_DATE format string normalization: %Y-%m-%d -> %F
         bigquery_identity(
             "SAFE.PARSE_DATE('%Y-%m-%d', '2024-01-15')",
-            "SAFE.PARSE_DATE('%F', '2024-01-15')"
+            "SAFE.PARSE_DATE('%F', '2024-01-15')",
         );
     }
 
@@ -1520,7 +1561,7 @@ mod tests {
         // SAFE.PARSE_DATETIME format string normalization: %Y-%m-%d %H:%M:%S -> %F %T
         bigquery_identity(
             "SAFE.PARSE_DATETIME('%Y-%m-%d %H:%M:%S', '2024-01-15 10:30:00')",
-            "SAFE.PARSE_DATETIME('%F %T', '2024-01-15 10:30:00')"
+            "SAFE.PARSE_DATETIME('%F %T', '2024-01-15 10:30:00')",
         );
     }
 
@@ -1529,7 +1570,7 @@ mod tests {
         // SAFE.PARSE_TIMESTAMP format string normalization: %Y-%m-%d %H:%M:%S -> %F %T
         bigquery_identity(
             "SAFE.PARSE_TIMESTAMP('%Y-%m-%d %H:%M:%S', '2024-01-15 10:30:00')",
-            "SAFE.PARSE_TIMESTAMP('%F %T', '2024-01-15 10:30:00')"
+            "SAFE.PARSE_TIMESTAMP('%F %T', '2024-01-15 10:30:00')",
         );
     }
 
@@ -1538,17 +1579,13 @@ mod tests {
         // DATETIME 'value' literal should be converted to CAST('value' AS DATETIME)
         bigquery_identity(
             "LAST_DAY(DATETIME '2008-11-10 15:30:00', WEEK(SUNDAY))",
-            "LAST_DAY(CAST('2008-11-10 15:30:00' AS DATETIME), WEEK)"
+            "LAST_DAY(CAST('2008-11-10 15:30:00' AS DATETIME), WEEK)",
         );
     }
 
     #[test]
     fn test_last_day_week_modifier_stripped() {
         // WEEK(SUNDAY) should become WEEK in BigQuery LAST_DAY function
-        bigquery_identity(
-            "LAST_DAY(col, WEEK(MONDAY))",
-            "LAST_DAY(col, WEEK)"
-        );
+        bigquery_identity("LAST_DAY(col, WEEK(MONDAY))", "LAST_DAY(col, WEEK)");
     }
-
 }

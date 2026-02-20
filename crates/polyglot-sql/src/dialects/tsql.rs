@@ -12,7 +12,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{Alias, Cast, Cte, DataType, Expression, Function, Identifier, Join, JoinKind, LikeOp, Literal, StringAggFunc, Subquery, UnaryFunc};
+use crate::expressions::{
+    Alias, Cast, Cte, DataType, Expression, Function, Identifier, Join, JoinKind, LikeOp, Literal,
+    StringAggFunc, Subquery, UnaryFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -94,42 +97,53 @@ impl DialectImpl for TSQLDialect {
             // BUT: `SELECT @a = expr` is a variable assignment, not an alias!
             // Python sqlglot handles this at parser level via _parse_projections()
             Expression::Select(mut select) => {
-                select.expressions = select.expressions.into_iter().map(|e| {
-                    match e {
-                        Expression::Eq(op) => {
-                            // Check if left side is an identifier (column name)
-                            // Don't transform if it's a variable (starts with @)
-                            match &op.left {
-                                Expression::Column(col) if col.table.is_none() && !col.name.name.starts_with('@') => {
-                                    Expression::Alias(Box::new(Alias {
-                                        this: op.right,
-                                        alias: col.name.clone(),
-                                        column_aliases: Vec::new(),
-                                        pre_alias_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }))
+                select.expressions = select
+                    .expressions
+                    .into_iter()
+                    .map(|e| {
+                        match e {
+                            Expression::Eq(op) => {
+                                // Check if left side is an identifier (column name)
+                                // Don't transform if it's a variable (starts with @)
+                                match &op.left {
+                                    Expression::Column(col)
+                                        if col.table.is_none()
+                                            && !col.name.name.starts_with('@') =>
+                                    {
+                                        Expression::Alias(Box::new(Alias {
+                                            this: op.right,
+                                            alias: col.name.clone(),
+                                            column_aliases: Vec::new(),
+                                            pre_alias_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }))
+                                    }
+                                    Expression::Identifier(ident)
+                                        if !ident.name.starts_with('@') =>
+                                    {
+                                        Expression::Alias(Box::new(Alias {
+                                            this: op.right,
+                                            alias: ident.clone(),
+                                            column_aliases: Vec::new(),
+                                            pre_alias_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }))
+                                    }
+                                    _ => Expression::Eq(op),
                                 }
-                                Expression::Identifier(ident) if !ident.name.starts_with('@') => {
-                                    Expression::Alias(Box::new(Alias {
-                                        this: op.right,
-                                        alias: ident.clone(),
-                                        column_aliases: Vec::new(),
-                                        pre_alias_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }))
-                                }
-                                _ => Expression::Eq(op),
                             }
+                            other => other,
                         }
-                        other => other,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Transform CTEs in the WITH clause to add auto-aliases
                 if let Some(ref mut with) = select.with {
-                    with.ctes = with.ctes.drain(..).map(|cte| {
-                        self.transform_cte_inner(cte)
-                    }).collect();
+                    with.ctes = with
+                        .ctes
+                        .drain(..)
+                        .map(|cte| self.transform_cte_inner(cte))
+                        .collect();
                 }
 
                 Ok(Expression::Select(select))
@@ -165,7 +179,8 @@ impl DialectImpl for TSQLDialect {
                 }
             }
             Expression::IsFalse(it) => {
-                let zero = Expression::Literal(crate::expressions::Literal::Number("0".to_string()));
+                let zero =
+                    Expression::Literal(crate::expressions::Literal::Number("0".to_string()));
                 if it.not {
                     // a IS NOT FALSE -> NOT a = 0
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
@@ -201,9 +216,9 @@ impl DialectImpl for TSQLDialect {
 
             // COALESCE with 2 args -> ISNULL in SQL Server (optimization)
             // Note: COALESCE works in SQL Server, ISNULL is just more idiomatic
-            Expression::Coalesce(f) if f.expressions.len() == 2 => Ok(Expression::Function(Box::new(
-                Function::new("ISNULL".to_string(), f.expressions),
-            ))),
+            Expression::Coalesce(f) if f.expressions.len() == 2 => Ok(Expression::Function(
+                Box::new(Function::new("ISNULL".to_string(), f.expressions)),
+            )),
 
             // NVL -> ISNULL in SQL Server
             Expression::Nvl(f) => Ok(Expression::Function(Box::new(Function::new(
@@ -260,7 +275,9 @@ impl DialectImpl for TSQLDialect {
 
             // RANDOM -> RAND in SQL Server
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // UNNEST -> Not directly supported, use CROSS APPLY with STRING_SPLIT or OPENJSON
@@ -294,6 +311,7 @@ impl DialectImpl for TSQLDialect {
                     pivots: join.pivots,
                     comments: join.comments,
                     nesting_group: 0,
+                    directed: false,
                 })))
             }
 
@@ -312,6 +330,7 @@ impl DialectImpl for TSQLDialect {
                     pivots: join.pivots,
                     comments: join.comments,
                     nesting_group: 0,
+                    directed: false,
                 })))
             }
 
@@ -344,7 +363,8 @@ impl DialectImpl for TSQLDialect {
             // ===== Date/time =====
             // CurrentDate -> CAST(GETDATE() AS DATE) in SQL Server
             Expression::CurrentDate(_) => {
-                let getdate = Expression::Function(Box::new(Function::new("GETDATE".to_string(), vec![])));
+                let getdate =
+                    Expression::Function(Box::new(Function::new("GETDATE".to_string(), vec![])));
                 Ok(Expression::Cast(Box::new(crate::expressions::Cast {
                     this: getdate,
                     to: crate::expressions::DataType::Date,
@@ -425,7 +445,9 @@ impl DialectImpl for TSQLDialect {
             // ===== Conditional =====
             // IfFunc -> IIF in SQL Server
             Expression::IfFunc(f) => {
-                let false_val = f.false_value.unwrap_or(Expression::Null(crate::expressions::Null));
+                let false_val = f
+                    .false_value
+                    .unwrap_or(Expression::Null(crate::expressions::Null));
                 Ok(Expression::Function(Box::new(Function::new(
                     "IIF".to_string(),
                     vec![f.condition, f.true_value, false_val],
@@ -501,12 +523,9 @@ impl DialectImpl for TSQLDialect {
 
             // ===== DDL Column Constraints =====
             // AutoIncrementColumnConstraint -> IDENTITY in SQL Server
-            Expression::AutoIncrementColumnConstraint(_) => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "IDENTITY".to_string(),
-                    vec![],
-                ))))
-            }
+            Expression::AutoIncrementColumnConstraint(_) => Ok(Expression::Function(Box::new(
+                Function::new("IDENTITY".to_string(), vec![]),
+            ))),
 
             // ===== DDL three-part name stripping =====
             // TSQL strips database (catalog) prefix from 3-part names for CREATE VIEW/DROP VIEW
@@ -584,12 +603,10 @@ impl DialectImpl for TSQLDialect {
                 ))))
             }
             // Convert JsonValue struct to Function("JSON_VALUE", ...) for uniform handling
-            Expression::JsonValue(f) => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "JSON_VALUE".to_string(),
-                    vec![f.this, f.path],
-                ))))
-            }
+            Expression::JsonValue(f) => Ok(Expression::Function(Box::new(Function::new(
+                "JSON_VALUE".to_string(),
+                vec![f.this, f.path],
+            )))),
 
             // Pass through everything else
             _ => Ok(expr),
@@ -680,7 +697,9 @@ impl TSQLDialect {
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // NOW -> GETDATE or CURRENT_TIMESTAMP (both work)
@@ -701,7 +720,10 @@ impl TSQLDialect {
                 Ok(Expression::Function(Box::new(Function::new(
                     "CAST".to_string(),
                     vec![
-                        Expression::Function(Box::new(Function::new("GETDATE".to_string(), vec![]))),
+                        Expression::Function(Box::new(Function::new(
+                            "GETDATE".to_string(),
+                            vec![],
+                        ))),
                         Expression::Identifier(crate::expressions::Identifier::new("DATE")),
                     ],
                 ))))
@@ -740,7 +762,9 @@ impl TSQLDialect {
                     if let Expression::Literal(Literal::String(_)) = &args[1] {
                         args[1] = Expression::Cast(Box::new(Cast {
                             this: args[1].clone(),
-                            to: DataType::Custom { name: "DATETIME2".to_string() },
+                            to: DataType::Custom {
+                                name: "DATETIME2".to_string(),
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -791,12 +815,9 @@ impl TSQLDialect {
             "CHARINDEX" => Ok(Expression::Function(Box::new(f))),
 
             // CEILING -> CEILING (native)
-            "CEILING" | "CEIL" if f.args.len() == 1 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "CEILING".to_string(),
-                    f.args,
-                ))))
-            }
+            "CEILING" | "CEIL" if f.args.len() == 1 => Ok(Expression::Function(Box::new(
+                Function::new("CEILING".to_string(), f.args),
+            ))),
 
             // ARRAY functions don't exist in SQL Server
             // Would need JSON or table-valued parameters
@@ -948,9 +969,9 @@ impl TSQLDialect {
             )))),
 
             // SUSER_NAME(), SUSER_SNAME(), SYSTEM_USER() -> CURRENT_USER
-            "SUSER_NAME" | "SUSER_SNAME" | "SYSTEM_USER" => {
-                Ok(Expression::CurrentUser(Box::new(crate::expressions::CurrentUser { this: None })))
-            }
+            "SUSER_NAME" | "SUSER_SNAME" | "SYSTEM_USER" => Ok(Expression::CurrentUser(Box::new(
+                crate::expressions::CurrentUser { this: None },
+            ))),
 
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
@@ -1262,9 +1283,14 @@ mod tests {
     fn test_json_query_isnull_wrapper_simple() {
         // JSON_QUERY with two args needs ISNULL wrapper when transpiling to TSQL
         let dialect = Dialect::get(DialectType::TSQL);
-        let result = dialect.transpile_to(r#"JSON_QUERY(x, '$')"#, DialectType::TSQL)
+        let result = dialect
+            .transpile_to(r#"JSON_QUERY(x, '$')"#, DialectType::TSQL)
             .expect("transpile failed");
-        assert!(result[0].contains("ISNULL"), "JSON_QUERY should be wrapped with ISNULL: {}", result[0]);
+        assert!(
+            result[0].contains("ISNULL"),
+            "JSON_QUERY should be wrapped with ISNULL: {}",
+            result[0]
+        );
     }
 
     #[test]

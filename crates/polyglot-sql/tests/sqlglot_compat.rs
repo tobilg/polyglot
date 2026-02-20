@@ -4,8 +4,8 @@
 //! They cover parsing, generation, and transpilation between dialects.
 
 use polyglot_sql::dialects::{Dialect, DialectType};
-use polyglot_sql::parser::Parser;
 use polyglot_sql::generator::Generator;
+use polyglot_sql::parser::Parser;
 
 /// Helper function to test roundtrip: parse SQL and regenerate it
 fn roundtrip(sql: &str) -> String {
@@ -48,7 +48,10 @@ mod identity_tests {
         assert_eq!(roundtrip("SELECT 1 * 2"), "SELECT 1 * 2");
         assert_eq!(roundtrip("SELECT 1 / 2"), "SELECT 1 / 2");
         assert_eq!(roundtrip("SELECT 1 % 2"), "SELECT 1 % 2");
-        assert_eq!(roundtrip("SELECT (1 * 2) / (3 - 5)"), "SELECT (1 * 2) / (3 - 5)");
+        assert_eq!(
+            roundtrip("SELECT (1 * 2) / (3 - 5)"),
+            "SELECT (1 * 2) / (3 - 5)"
+        );
     }
 
     #[test]
@@ -64,7 +67,10 @@ mod identity_tests {
     #[test]
     fn test_boolean_logic() {
         assert_eq!(roundtrip("SELECT x = y OR x > 1"), "SELECT x = y OR x > 1");
-        assert_eq!(roundtrip("SELECT x = 1 AND y = 2"), "SELECT x = 1 AND y = 2");
+        assert_eq!(
+            roundtrip("SELECT x = 1 AND y = 2"),
+            "SELECT x = 1 AND y = 2"
+        );
         assert_eq!(roundtrip("SELECT NOT x"), "SELECT NOT x");
     }
 
@@ -100,8 +106,14 @@ mod identity_tests {
 
     #[test]
     fn test_between() {
-        assert_eq!(roundtrip("SELECT x BETWEEN 1 AND 10"), "SELECT x BETWEEN 1 AND 10");
-        assert_eq!(roundtrip("SELECT x BETWEEN -1 AND 1"), "SELECT x BETWEEN -1 AND 1");
+        assert_eq!(
+            roundtrip("SELECT x BETWEEN 1 AND 10"),
+            "SELECT x BETWEEN 1 AND 10"
+        );
+        assert_eq!(
+            roundtrip("SELECT x BETWEEN -1 AND 1"),
+            "SELECT x BETWEEN -1 AND 1"
+        );
     }
 
     #[test]
@@ -112,7 +124,10 @@ mod identity_tests {
 
     #[test]
     fn test_like() {
-        assert_eq!(roundtrip("SELECT x LIKE '%test%'"), "SELECT x LIKE '%test%'");
+        assert_eq!(
+            roundtrip("SELECT x LIKE '%test%'"),
+            "SELECT x LIKE '%test%'"
+        );
     }
 
     #[test]
@@ -134,7 +149,10 @@ mod identity_tests {
         assert_eq!(roundtrip("SELECT AVG(x)"), "SELECT AVG(x)");
         assert_eq!(roundtrip("SELECT MIN(x)"), "SELECT MIN(x)");
         assert_eq!(roundtrip("SELECT MAX(x)"), "SELECT MAX(x)");
-        assert_eq!(roundtrip("SELECT COALESCE(a, b, c)"), "SELECT COALESCE(a, b, c)");
+        assert_eq!(
+            roundtrip("SELECT COALESCE(a, b, c)"),
+            "SELECT COALESCE(a, b, c)"
+        );
         assert_eq!(roundtrip("SELECT GREATEST(x)"), "SELECT GREATEST(x)");
         assert_eq!(roundtrip("SELECT LEAST(y)"), "SELECT LEAST(y)");
     }
@@ -146,7 +164,9 @@ mod identity_tests {
             "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y)"
         );
         assert_eq!(
-            roundtrip("SELECT SUM(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"),
+            roundtrip(
+                "SELECT SUM(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+            ),
             "SELECT SUM(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
         );
     }
@@ -347,7 +367,10 @@ mod ddl_tests {
 
     #[test]
     fn test_create_schema() {
-        assert_eq!(roundtrip("CREATE SCHEMA my_schema"), "CREATE SCHEMA my_schema");
+        assert_eq!(
+            roundtrip("CREATE SCHEMA my_schema"),
+            "CREATE SCHEMA my_schema"
+        );
         assert_eq!(
             roundtrip("CREATE SCHEMA IF NOT EXISTS my_schema"),
             "CREATE SCHEMA IF NOT EXISTS my_schema"
@@ -503,7 +526,11 @@ mod transpile_tests {
     fn test_nvl_to_coalesce_postgres() {
         // NVL -> COALESCE in PostgreSQL
         assert_eq!(
-            transpile("SELECT NVL(a, b)", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT NVL(a, b)",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT COALESCE(a, b)"
         );
     }
@@ -512,7 +539,11 @@ mod transpile_tests {
     fn test_ifnull_to_coalesce_postgres() {
         // IFNULL -> COALESCE in PostgreSQL
         assert_eq!(
-            transpile("SELECT IFNULL(a, b)", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT IFNULL(a, b)",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT COALESCE(a, b)"
         );
     }
@@ -552,7 +583,11 @@ mod transpile_tests {
     fn test_substr_to_substring_postgres() {
         // SUBSTR -> SUBSTRING in PostgreSQL
         assert_eq!(
-            transpile("SELECT SUBSTR(name, 1, 5)", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT SUBSTR(name, 1, 5)",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT SUBSTRING(name, 1, 5)"
         );
     }
@@ -561,11 +596,19 @@ mod transpile_tests {
     #[test]
     fn test_basic_select_transpile() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT a, b FROM t"
         );
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::MySQL),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::MySQL
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -573,7 +616,11 @@ mod transpile_tests {
     #[test]
     fn test_select_with_where_transpile() {
         assert_eq!(
-            transpile("SELECT * FROM t WHERE x = 1", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT * FROM t WHERE x = 1",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT * FROM t WHERE x = 1"
         );
     }
@@ -613,10 +660,7 @@ mod dml_tests {
 
     #[test]
     fn test_update() {
-        assert_eq!(
-            roundtrip("UPDATE t SET a = 1"),
-            "UPDATE t SET a = 1"
-        );
+        assert_eq!(roundtrip("UPDATE t SET a = 1"), "UPDATE t SET a = 1");
         assert_eq!(
             roundtrip("UPDATE t SET a = 1 WHERE b = 2"),
             "UPDATE t SET a = 1 WHERE b = 2"
@@ -859,9 +903,9 @@ mod phase3_tests {
 #[cfg(test)]
 mod dialect_type_tests {
     use super::*;
-    use polyglot_sql::generator::{Generator, GeneratorConfig};
     use polyglot_sql::dialects::DialectType;
-    use polyglot_sql::expressions::{Expression, BooleanLiteral};
+    use polyglot_sql::expressions::{BooleanLiteral, Expression};
+    use polyglot_sql::generator::{Generator, GeneratorConfig};
 
     fn generate_with_dialect(expr: &Expression, dialect: DialectType) -> String {
         let config = GeneratorConfig {
@@ -899,8 +943,14 @@ mod dialect_type_tests {
         let false_expr = Expression::Boolean(BooleanLiteral { value: false });
 
         // PostgreSQL uses TRUE/FALSE
-        assert_eq!(generate_with_dialect(&true_expr, DialectType::PostgreSQL), "TRUE");
-        assert_eq!(generate_with_dialect(&false_expr, DialectType::PostgreSQL), "FALSE");
+        assert_eq!(
+            generate_with_dialect(&true_expr, DialectType::PostgreSQL),
+            "TRUE"
+        );
+        assert_eq!(
+            generate_with_dialect(&false_expr, DialectType::PostgreSQL),
+            "FALSE"
+        );
     }
 
     #[test]
@@ -909,8 +959,14 @@ mod dialect_type_tests {
         let false_expr = Expression::Boolean(BooleanLiteral { value: false });
 
         // MySQL uses TRUE/FALSE
-        assert_eq!(generate_with_dialect(&true_expr, DialectType::MySQL), "TRUE");
-        assert_eq!(generate_with_dialect(&false_expr, DialectType::MySQL), "FALSE");
+        assert_eq!(
+            generate_with_dialect(&true_expr, DialectType::MySQL),
+            "TRUE"
+        );
+        assert_eq!(
+            generate_with_dialect(&false_expr, DialectType::MySQL),
+            "FALSE"
+        );
     }
 
     // MINUS vs EXCEPT tests
@@ -918,7 +974,11 @@ mod dialect_type_tests {
     fn test_except_to_minus_oracle() {
         // EXCEPT should become MINUS in Oracle
         assert_eq!(
-            transpile("SELECT a FROM t1 EXCEPT SELECT a FROM t2", DialectType::Generic, DialectType::Oracle),
+            transpile(
+                "SELECT a FROM t1 EXCEPT SELECT a FROM t2",
+                DialectType::Generic,
+                DialectType::Oracle
+            ),
             "SELECT a FROM t1 MINUS SELECT a FROM t2"
         );
     }
@@ -927,7 +987,11 @@ mod dialect_type_tests {
     fn test_except_postgres() {
         // EXCEPT should stay EXCEPT in PostgreSQL
         assert_eq!(
-            transpile("SELECT a FROM t1 EXCEPT SELECT a FROM t2", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a FROM t1 EXCEPT SELECT a FROM t2",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT a FROM t1 EXCEPT SELECT a FROM t2"
         );
     }
@@ -936,7 +1000,11 @@ mod dialect_type_tests {
     fn test_except_all() {
         // EXCEPT ALL in PostgreSQL
         assert_eq!(
-            transpile("SELECT a FROM t1 EXCEPT ALL SELECT a FROM t2", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a FROM t1 EXCEPT ALL SELECT a FROM t2",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT a FROM t1 EXCEPT ALL SELECT a FROM t2"
         );
     }
@@ -946,7 +1014,11 @@ mod dialect_type_tests {
     fn test_limit_to_top_tsql() {
         // LIMIT should become TOP in SQL Server
         assert_eq!(
-            transpile("SELECT a FROM t LIMIT 10", DialectType::Generic, DialectType::TSQL),
+            transpile(
+                "SELECT a FROM t LIMIT 10",
+                DialectType::Generic,
+                DialectType::TSQL
+            ),
             "SELECT TOP (10) a FROM t"
         );
     }
@@ -955,7 +1027,11 @@ mod dialect_type_tests {
     fn test_limit_postgres() {
         // LIMIT should stay LIMIT in PostgreSQL
         assert_eq!(
-            transpile("SELECT a FROM t LIMIT 10", DialectType::Generic, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a FROM t LIMIT 10",
+                DialectType::Generic,
+                DialectType::PostgreSQL
+            ),
             "SELECT a FROM t LIMIT 10"
         );
     }
@@ -973,7 +1049,11 @@ mod dialect_type_tests {
     fn test_limit_with_offset_tsql() {
         // LIMIT with OFFSET in SQL Server uses OFFSET ... FETCH syntax
         assert_eq!(
-            transpile("SELECT a FROM t ORDER BY a LIMIT 10 OFFSET 5", DialectType::Generic, DialectType::TSQL),
+            transpile(
+                "SELECT a FROM t ORDER BY a LIMIT 10 OFFSET 5",
+                DialectType::Generic,
+                DialectType::TSQL
+            ),
             "SELECT a FROM t ORDER BY a OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY"
         );
     }
@@ -991,7 +1071,11 @@ mod new_dialect_tests {
     #[test]
     fn test_sqlite_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::SQLite),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::SQLite
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1000,7 +1084,11 @@ mod new_dialect_tests {
     fn test_sqlite_ifnull_to_coalesce() {
         // SQLite supports both IFNULL and COALESCE, but we normalize to COALESCE
         assert_eq!(
-            transpile("SELECT COALESCE(a, b) FROM t", DialectType::Generic, DialectType::SQLite),
+            transpile(
+                "SELECT COALESCE(a, b) FROM t",
+                DialectType::Generic,
+                DialectType::SQLite
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1009,7 +1097,11 @@ mod new_dialect_tests {
     #[test]
     fn test_presto_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Presto),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Presto
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1018,7 +1110,11 @@ mod new_dialect_tests {
     fn test_presto_nvl_to_coalesce() {
         // Presto uses COALESCE instead of NVL
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::MySQL, DialectType::Presto),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Presto
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1027,7 +1123,11 @@ mod new_dialect_tests {
     #[test]
     fn test_trino_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Trino),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Trino
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1036,7 +1136,11 @@ mod new_dialect_tests {
     fn test_trino_ifnull_to_coalesce() {
         // Trino uses COALESCE instead of IFNULL
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::Trino),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Trino
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1045,7 +1149,11 @@ mod new_dialect_tests {
     #[test]
     fn test_redshift_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Redshift),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Redshift
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1054,7 +1162,11 @@ mod new_dialect_tests {
     fn test_redshift_nvl_to_coalesce() {
         // Redshift supports NVL but we normalize to COALESCE
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::MySQL, DialectType::Redshift),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Redshift
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1064,7 +1176,11 @@ mod new_dialect_tests {
     fn test_clickhouse_basic_select() {
         // ClickHouse uses uppercase keywords (matching Python sqlglot behavior)
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::ClickHouse),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::ClickHouse
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1073,7 +1189,11 @@ mod new_dialect_tests {
     #[test]
     fn test_databricks_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Databricks),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Databricks
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1082,7 +1202,11 @@ mod new_dialect_tests {
     fn test_databricks_nvl_to_coalesce() {
         // Databricks uses COALESCE for null handling
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::MySQL, DialectType::Databricks),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Databricks
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1091,7 +1215,11 @@ mod new_dialect_tests {
     #[test]
     fn test_sqlite_to_postgres() {
         assert_eq!(
-            transpile("SELECT * FROM t WHERE a = 1", DialectType::SQLite, DialectType::PostgreSQL),
+            transpile(
+                "SELECT * FROM t WHERE a = 1",
+                DialectType::SQLite,
+                DialectType::PostgreSQL
+            ),
             "SELECT * FROM t WHERE a = 1"
         );
     }
@@ -1100,7 +1228,11 @@ mod new_dialect_tests {
     fn test_presto_to_trino() {
         // Presto and Trino are highly compatible
         assert_eq!(
-            transpile("SELECT COUNT(*) FROM t GROUP BY a", DialectType::Presto, DialectType::Trino),
+            transpile(
+                "SELECT COUNT(*) FROM t GROUP BY a",
+                DialectType::Presto,
+                DialectType::Trino
+            ),
             "SELECT COUNT(*) FROM t GROUP BY a"
         );
     }
@@ -1109,7 +1241,11 @@ mod new_dialect_tests {
     fn test_redshift_to_postgres() {
         // Redshift is PostgreSQL-based
         assert_eq!(
-            transpile("SELECT a, SUM(b) FROM t GROUP BY a", DialectType::Redshift, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a, SUM(b) FROM t GROUP BY a",
+                DialectType::Redshift,
+                DialectType::PostgreSQL
+            ),
             "SELECT a, SUM(b) FROM t GROUP BY a"
         );
     }
@@ -1118,7 +1254,11 @@ mod new_dialect_tests {
     fn test_databricks_to_spark() {
         // Databricks extends Spark
         assert_eq!(
-            transpile("SELECT * FROM t", DialectType::Databricks, DialectType::Spark),
+            transpile(
+                "SELECT * FROM t",
+                DialectType::Databricks,
+                DialectType::Spark
+            ),
             "SELECT * FROM t"
         );
     }
@@ -1127,7 +1267,11 @@ mod new_dialect_tests {
     #[test]
     fn test_athena_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Athena),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Athena
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1136,7 +1280,11 @@ mod new_dialect_tests {
     fn test_athena_ifnull_to_coalesce() {
         // Athena (Trino-based) uses COALESCE instead of IFNULL
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::Athena),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Athena
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1144,7 +1292,11 @@ mod new_dialect_tests {
     #[test]
     fn test_athena_nvl_to_coalesce() {
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::MySQL, DialectType::Athena),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Athena
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1153,7 +1305,11 @@ mod new_dialect_tests {
     #[test]
     fn test_teradata_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Teradata),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Teradata
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1162,7 +1318,11 @@ mod new_dialect_tests {
     fn test_teradata_ifnull_to_coalesce() {
         // Teradata uses COALESCE
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::Teradata),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Teradata
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1171,7 +1331,11 @@ mod new_dialect_tests {
     #[test]
     fn test_doris_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Doris),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Doris
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1180,7 +1344,11 @@ mod new_dialect_tests {
     fn test_doris_nvl_to_ifnull() {
         // Doris (MySQL-compatible) uses IFNULL
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::Generic, DialectType::Doris),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::Generic,
+                DialectType::Doris
+            ),
             "SELECT IFNULL(a, b) FROM t"
         );
     }
@@ -1189,7 +1357,11 @@ mod new_dialect_tests {
     #[test]
     fn test_starrocks_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::StarRocks),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::StarRocks
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1198,7 +1370,11 @@ mod new_dialect_tests {
     fn test_starrocks_nvl_to_ifnull() {
         // StarRocks (MySQL-compatible) uses IFNULL
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::Generic, DialectType::StarRocks),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::Generic,
+                DialectType::StarRocks
+            ),
             "SELECT IFNULL(a, b) FROM t"
         );
     }
@@ -1207,7 +1383,11 @@ mod new_dialect_tests {
     #[test]
     fn test_materialize_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::Materialize),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::Materialize
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1216,7 +1396,11 @@ mod new_dialect_tests {
     fn test_materialize_ifnull_to_coalesce() {
         // Materialize (PostgreSQL-compatible) uses COALESCE
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::Materialize),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::Materialize
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1225,7 +1409,11 @@ mod new_dialect_tests {
     #[test]
     fn test_risingwave_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::RisingWave),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::RisingWave
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1234,7 +1422,11 @@ mod new_dialect_tests {
     fn test_risingwave_ifnull_to_coalesce() {
         // RisingWave (PostgreSQL-compatible) uses COALESCE
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::RisingWave),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::RisingWave
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1243,7 +1435,11 @@ mod new_dialect_tests {
     #[test]
     fn test_singlestore_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::SingleStore),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::SingleStore
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1252,7 +1448,11 @@ mod new_dialect_tests {
     fn test_singlestore_nvl_to_ifnull() {
         // SingleStore (MySQL-compatible) uses IFNULL
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::Generic, DialectType::SingleStore),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::Generic,
+                DialectType::SingleStore
+            ),
             "SELECT IFNULL(a, b) FROM t"
         );
     }
@@ -1261,7 +1461,11 @@ mod new_dialect_tests {
     #[test]
     fn test_cockroachdb_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::CockroachDB),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::CockroachDB
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1270,7 +1474,11 @@ mod new_dialect_tests {
     fn test_cockroachdb_ifnull_to_coalesce() {
         // CockroachDB (PostgreSQL-compatible) uses COALESCE
         assert_eq!(
-            transpile("SELECT IFNULL(a, b) FROM t", DialectType::MySQL, DialectType::CockroachDB),
+            transpile(
+                "SELECT IFNULL(a, b) FROM t",
+                DialectType::MySQL,
+                DialectType::CockroachDB
+            ),
             "SELECT COALESCE(a, b) FROM t"
         );
     }
@@ -1279,7 +1487,11 @@ mod new_dialect_tests {
     #[test]
     fn test_tidb_basic_select() {
         assert_eq!(
-            transpile("SELECT a, b FROM t", DialectType::Generic, DialectType::TiDB),
+            transpile(
+                "SELECT a, b FROM t",
+                DialectType::Generic,
+                DialectType::TiDB
+            ),
             "SELECT a, b FROM t"
         );
     }
@@ -1288,7 +1500,11 @@ mod new_dialect_tests {
     fn test_tidb_nvl_to_ifnull() {
         // TiDB (MySQL-compatible) uses IFNULL
         assert_eq!(
-            transpile("SELECT NVL(a, b) FROM t", DialectType::Generic, DialectType::TiDB),
+            transpile(
+                "SELECT NVL(a, b) FROM t",
+                DialectType::Generic,
+                DialectType::TiDB
+            ),
             "SELECT IFNULL(a, b) FROM t"
         );
     }
@@ -1298,7 +1514,11 @@ mod new_dialect_tests {
     fn test_athena_to_trino() {
         // Athena is based on Trino
         assert_eq!(
-            transpile("SELECT COUNT(*) FROM t GROUP BY a", DialectType::Athena, DialectType::Trino),
+            transpile(
+                "SELECT COUNT(*) FROM t GROUP BY a",
+                DialectType::Athena,
+                DialectType::Trino
+            ),
             "SELECT COUNT(*) FROM t GROUP BY a"
         );
     }
@@ -1307,7 +1527,11 @@ mod new_dialect_tests {
     fn test_materialize_to_postgres() {
         // Materialize is PostgreSQL-compatible
         assert_eq!(
-            transpile("SELECT a, SUM(b) FROM t GROUP BY a", DialectType::Materialize, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a, SUM(b) FROM t GROUP BY a",
+                DialectType::Materialize,
+                DialectType::PostgreSQL
+            ),
             "SELECT a, SUM(b) FROM t GROUP BY a"
         );
     }
@@ -1316,7 +1540,11 @@ mod new_dialect_tests {
     fn test_risingwave_to_postgres() {
         // RisingWave is PostgreSQL-compatible
         assert_eq!(
-            transpile("SELECT a, SUM(b) FROM t GROUP BY a", DialectType::RisingWave, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a, SUM(b) FROM t GROUP BY a",
+                DialectType::RisingWave,
+                DialectType::PostgreSQL
+            ),
             "SELECT a, SUM(b) FROM t GROUP BY a"
         );
     }
@@ -1325,7 +1553,11 @@ mod new_dialect_tests {
     fn test_cockroachdb_to_postgres() {
         // CockroachDB is PostgreSQL-compatible
         assert_eq!(
-            transpile("SELECT a, SUM(b) FROM t GROUP BY a", DialectType::CockroachDB, DialectType::PostgreSQL),
+            transpile(
+                "SELECT a, SUM(b) FROM t GROUP BY a",
+                DialectType::CockroachDB,
+                DialectType::PostgreSQL
+            ),
             "SELECT a, SUM(b) FROM t GROUP BY a"
         );
     }
@@ -1334,7 +1566,11 @@ mod new_dialect_tests {
     fn test_tidb_to_mysql() {
         // TiDB is MySQL-compatible
         assert_eq!(
-            transpile("SELECT * FROM t WHERE a = 1", DialectType::TiDB, DialectType::MySQL),
+            transpile(
+                "SELECT * FROM t WHERE a = 1",
+                DialectType::TiDB,
+                DialectType::MySQL
+            ),
             "SELECT * FROM t WHERE a = 1"
         );
     }
@@ -1343,7 +1579,11 @@ mod new_dialect_tests {
     fn test_singlestore_to_mysql() {
         // SingleStore is MySQL-compatible
         assert_eq!(
-            transpile("SELECT * FROM t WHERE a = 1", DialectType::SingleStore, DialectType::MySQL),
+            transpile(
+                "SELECT * FROM t WHERE a = 1",
+                DialectType::SingleStore,
+                DialectType::MySQL
+            ),
             "SELECT * FROM t WHERE a = 1"
         );
     }
@@ -1352,7 +1592,11 @@ mod new_dialect_tests {
     fn test_doris_to_mysql() {
         // Doris is MySQL-compatible
         assert_eq!(
-            transpile("SELECT * FROM t WHERE a = 1", DialectType::Doris, DialectType::MySQL),
+            transpile(
+                "SELECT * FROM t WHERE a = 1",
+                DialectType::Doris,
+                DialectType::MySQL
+            ),
             "SELECT * FROM t WHERE a = 1"
         );
     }
@@ -1361,7 +1605,11 @@ mod new_dialect_tests {
     fn test_starrocks_to_mysql() {
         // StarRocks is MySQL-compatible
         assert_eq!(
-            transpile("SELECT * FROM t WHERE a = 1", DialectType::StarRocks, DialectType::MySQL),
+            transpile(
+                "SELECT * FROM t WHERE a = 1",
+                DialectType::StarRocks,
+                DialectType::MySQL
+            ),
             "SELECT * FROM t WHERE a = 1"
         );
     }
@@ -1403,7 +1651,8 @@ mod connect_by_tests {
     #[test]
     fn test_connect_by_nocycle() {
         // CONNECT BY with NOCYCLE
-        let result = roundtrip("SELECT * FROM employees CONNECT BY NOCYCLE PRIOR employee_id = manager_id");
+        let result =
+            roundtrip("SELECT * FROM employees CONNECT BY NOCYCLE PRIOR employee_id = manager_id");
         assert!(result.contains("CONNECT BY"));
         assert!(result.contains("NOCYCLE"));
         assert!(result.contains("PRIOR"));
@@ -1412,7 +1661,9 @@ mod connect_by_tests {
     #[test]
     fn test_connect_by_with_level() {
         // CONNECT BY with LEVEL pseudocolumn
-        let result = roundtrip("SELECT employee_id, LEVEL FROM employees CONNECT BY PRIOR employee_id = manager_id");
+        let result = roundtrip(
+            "SELECT employee_id, LEVEL FROM employees CONNECT BY PRIOR employee_id = manager_id",
+        );
         assert!(result.contains("LEVEL"));
         assert!(result.contains("CONNECT BY"));
     }
@@ -1465,7 +1716,7 @@ mod match_recognize_tests {
     fn test_match_recognize_basic() {
         // Basic MATCH_RECOGNIZE with PATTERN and DEFINE
         let result = roundtrip_oracle(
-            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10) AS mr"
+            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10) AS mr",
         );
         assert!(result.contains("MATCH_RECOGNIZE"));
         assert!(result.contains("PATTERN"));
@@ -1556,8 +1807,9 @@ mod match_recognize_tests {
     fn test_match_recognize_unsupported_dialect() {
         // MATCH_RECOGNIZE should generate comment for unsupported dialects
         let ast = Parser::parse_sql(
-            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10)"
-        ).expect("Failed to parse");
+            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10)",
+        )
+        .expect("Failed to parse");
         let config = GeneratorConfig {
             dialect: Some(DialectType::PostgreSQL),
             ..Default::default()

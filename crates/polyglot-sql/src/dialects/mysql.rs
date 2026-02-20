@@ -9,7 +9,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{BinaryFunc, BinaryOp, Cast, DataType, Expression, Function, JsonExtractFunc, LikeOp, Literal, Paren, UnaryFunc};
+use crate::expressions::{
+    BinaryFunc, BinaryOp, Cast, DataType, Expression, Function, JsonExtractFunc, LikeOp, Literal,
+    Paren, UnaryFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -18,18 +21,14 @@ use crate::tokens::TokenizerConfig;
 /// This matches Python sqlglot's WRAPPED_JSON_EXTRACT_EXPRESSIONS behavior
 fn wrap_if_json_arrow(expr: Expression) -> Expression {
     match &expr {
-        Expression::JsonExtract(f) if f.arrow_syntax => {
-            Expression::Paren(Box::new(Paren {
-                this: expr,
-                trailing_comments: Vec::new(),
-            }))
-        }
-        Expression::JsonExtractScalar(f) if f.arrow_syntax => {
-            Expression::Paren(Box::new(Paren {
-                this: expr,
-                trailing_comments: Vec::new(),
-            }))
-        }
+        Expression::JsonExtract(f) if f.arrow_syntax => Expression::Paren(Box::new(Paren {
+            this: expr,
+            trailing_comments: Vec::new(),
+        })),
+        Expression::JsonExtractScalar(f) if f.arrow_syntax => Expression::Paren(Box::new(Paren {
+            this: expr,
+            trailing_comments: Vec::new(),
+        })),
         _ => expr,
     }
 }
@@ -38,12 +37,9 @@ fn wrap_if_json_arrow(expr: Expression) -> Expression {
 /// This is needed for contexts like MEMBER OF where arrow syntax must become function form
 fn json_arrow_to_function(expr: Expression) -> Expression {
     match expr {
-        Expression::JsonExtract(f) if f.arrow_syntax => {
-            Expression::Function(Box::new(Function::new(
-                "JSON_EXTRACT".to_string(),
-                vec![f.this, f.path],
-            )))
-        }
+        Expression::JsonExtract(f) if f.arrow_syntax => Expression::Function(Box::new(
+            Function::new("JSON_EXTRACT".to_string(), vec![f.this, f.path]),
+        )),
         Expression::JsonExtractScalar(f) if f.arrow_syntax => {
             // ->> becomes JSON_UNQUOTE(JSON_EXTRACT(...)) but can be simplified to JSON_EXTRACT_SCALAR
             // For MySQL, use JSON_UNQUOTE(JSON_EXTRACT(...))
@@ -172,13 +168,13 @@ impl DialectImpl for MySQLDialect {
             // || (Concat operator) -> OR in MySQL
             // MySQL uses || as OR by default (unless PIPES_AS_CONCAT mode is set)
             // For identity preservation, we transform to OR
-            Expression::Concat(op) => {
-                Ok(Expression::Or(op))
-            }
+            Expression::Concat(op) => Ok(Expression::Or(op)),
 
             // RANDOM -> RAND in MySQL
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // ArrayAgg -> GROUP_CONCAT in MySQL
@@ -358,7 +354,9 @@ impl DialectImpl for MySQLDialect {
             )))),
 
             // CurrentDate -> CURRENT_DATE (no parentheses in MySQL) - keep as CurrentDate
-            Expression::CurrentDate(_) => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+            Expression::CurrentDate(_) => {
+                Ok(Expression::CurrentDate(crate::expressions::CurrentDate))
+            }
 
             // ===== Null-safe comparison =====
             // NullSafeNeq -> NOT (a <=> b) in MySQL
@@ -520,9 +518,7 @@ impl DialectImpl for MySQLDialect {
 
 impl MySQLDialect {
     fn normalize_mysql_date_format(fmt: &str) -> String {
-        fmt
-            .replace("%H:%i:%s", "%T")
-            .replace("%H:%i:%S", "%T")
+        fmt.replace("%H:%i:%s", "%T").replace("%H:%i:%S", "%T")
     }
 
     /// Convert bracket notation ["key with spaces"] to quoted dot notation ."key with spaces"
@@ -561,18 +557,23 @@ impl MySQLDialect {
         use crate::expressions::DataType;
         let transformed = match dt {
             // All TIMESTAMP variants (with or without timezone) -> TIMESTAMP in MySQL
-            DataType::Timestamp { precision, timezone: _ } => DataType::Timestamp {
+            DataType::Timestamp {
+                precision,
+                timezone: _,
+            } => DataType::Timestamp {
                 precision,
                 timezone: false,
             },
             // TIMESTAMPTZ / TIMESTAMPLTZ parsed as Custom -> normalize to TIMESTAMP
-            DataType::Custom { name } if name.to_uppercase() == "TIMESTAMPTZ"
-                || name.to_uppercase() == "TIMESTAMPLTZ" => {
+            DataType::Custom { name }
+                if name.to_uppercase() == "TIMESTAMPTZ"
+                    || name.to_uppercase() == "TIMESTAMPLTZ" =>
+            {
                 DataType::Timestamp {
                     precision: None,
                     timezone: false,
                 }
-            },
+            }
             // Keep native MySQL types as-is
             // MySQL supports TEXT, MEDIUMTEXT, LONGTEXT, BLOB, etc. natively
             other => other,
@@ -586,14 +587,14 @@ impl MySQLDialect {
     fn transform_cast(&self, cast: Cast) -> Result<Expression> {
         // CAST AS TIMESTAMP/TIMESTAMPTZ/TIMESTAMPLTZ -> TIMESTAMP() function
         match &cast.to {
-            DataType::Timestamp { .. } => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TIMESTAMP".to_string(),
-                    vec![cast.this],
-                ))))
-            }
-            DataType::Custom { name } if name.to_uppercase() == "TIMESTAMPTZ"
-                || name.to_uppercase() == "TIMESTAMPLTZ" => {
+            DataType::Timestamp { .. } => Ok(Expression::Function(Box::new(Function::new(
+                "TIMESTAMP".to_string(),
+                vec![cast.this],
+            )))),
+            DataType::Custom { name }
+                if name.to_uppercase() == "TIMESTAMPTZ"
+                    || name.to_uppercase() == "TIMESTAMPLTZ" =>
+            {
                 Ok(Expression::Function(Box::new(Function::new(
                     "TIMESTAMP".to_string(),
                     vec![cast.this],
@@ -614,11 +615,21 @@ impl MySQLDialect {
             DataType::Text => DataType::Char { length: None },
 
             // SIGNED_CAST_MAPPING: These integer types become SIGNED in MySQL CAST
-            DataType::BigInt { .. } => DataType::Custom { name: "SIGNED".to_string() },
-            DataType::Int { .. } => DataType::Custom { name: "SIGNED".to_string() },
-            DataType::SmallInt { .. } => DataType::Custom { name: "SIGNED".to_string() },
-            DataType::TinyInt { .. } => DataType::Custom { name: "SIGNED".to_string() },
-            DataType::Boolean => DataType::Custom { name: "SIGNED".to_string() },
+            DataType::BigInt { .. } => DataType::Custom {
+                name: "SIGNED".to_string(),
+            },
+            DataType::Int { .. } => DataType::Custom {
+                name: "SIGNED".to_string(),
+            },
+            DataType::SmallInt { .. } => DataType::Custom {
+                name: "SIGNED".to_string(),
+            },
+            DataType::TinyInt { .. } => DataType::Custom {
+                name: "SIGNED".to_string(),
+            },
+            DataType::Boolean => DataType::Custom {
+                name: "SIGNED".to_string(),
+            },
 
             // Custom types that need mapping
             DataType::Custom { name } => {
@@ -626,14 +637,17 @@ impl MySQLDialect {
                 match upper.as_str() {
                     // Text/Blob types -> keep as Custom for cross-dialect mapping
                     // MySQL generator will output CHAR for these in CAST context
-                    "LONGTEXT" | "MEDIUMTEXT" | "TINYTEXT" | "LONGBLOB" | "MEDIUMBLOB" | "TINYBLOB" => {
-                        DataType::Custom { name: upper }
-                    }
+                    "LONGTEXT" | "MEDIUMTEXT" | "TINYTEXT" | "LONGBLOB" | "MEDIUMBLOB"
+                    | "TINYBLOB" => DataType::Custom { name: upper },
                     // MEDIUMINT -> SIGNED in MySQL CAST
-                    "MEDIUMINT" => DataType::Custom { name: "SIGNED".to_string() },
+                    "MEDIUMINT" => DataType::Custom {
+                        name: "SIGNED".to_string(),
+                    },
                     // Unsigned integer types -> UNSIGNED
                     "UBIGINT" | "UINT" | "USMALLINT" | "UTINYINT" | "UMEDIUMINT" => {
-                        DataType::Custom { name: "UNSIGNED".to_string() }
+                        DataType::Custom {
+                            name: "UNSIGNED".to_string(),
+                        }
                     }
                     // Keep other custom types
                     _ => cast.to.clone(),
@@ -689,7 +703,8 @@ impl MySQLDialect {
                 let mut args = f.args;
                 let second = args.pop().unwrap();
                 let first = args.pop().unwrap();
-                Ok(Expression::IfNull(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::IfNull(Box::new(BinaryFunc {
+                    original_name: None,
                     this: first,
                     expression: second,
                 })))
@@ -708,26 +723,33 @@ impl MySQLDialect {
             }
 
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // CURRENT_TIMESTAMP -> NOW() or CURRENT_TIMESTAMP (both work)
             // Preserve precision if specified: CURRENT_TIMESTAMP(6)
             "CURRENT_TIMESTAMP" => {
-                let precision = if let Some(Expression::Literal(crate::expressions::Literal::Number(n))) = f.args.first() {
-                    n.parse::<u32>().ok()
-                } else {
-                    None
-                };
+                let precision =
+                    if let Some(Expression::Literal(crate::expressions::Literal::Number(n))) =
+                        f.args.first()
+                    {
+                        n.parse::<u32>().ok()
+                    } else {
+                        None
+                    };
                 Ok(Expression::CurrentTimestamp(
-                    crate::expressions::CurrentTimestamp { precision, sysdate: false },
+                    crate::expressions::CurrentTimestamp {
+                        precision,
+                        sysdate: false,
+                    },
                 ))
             }
 
@@ -840,10 +862,9 @@ impl MySQLDialect {
             "MAKETIME" => Ok(Expression::Function(Box::new(f))),
 
             // TIME_FROM_PARTS -> MAKETIME
-            "TIME_FROM_PARTS" if f.args.len() == 3 => Ok(Expression::Function(Box::new(Function::new(
-                "MAKETIME".to_string(),
-                f.args,
-            )))),
+            "TIME_FROM_PARTS" if f.args.len() == 3 => Ok(Expression::Function(Box::new(
+                Function::new("MAKETIME".to_string(), f.args),
+            ))),
 
             // STUFF -> INSERT in MySQL
             "STUFF" if f.args.len() == 4 => Ok(Expression::Function(Box::new(Function::new(
@@ -879,10 +900,9 @@ impl MySQLDialect {
             }
 
             // GEN_RANDOM_UUID / UUID -> UUID()
-            "GEN_RANDOM_UUID" | "GENERATE_UUID" => Ok(Expression::Function(Box::new(Function::new(
-                "UUID".to_string(),
-                vec![],
-            )))),
+            "GEN_RANDOM_UUID" | "GENERATE_UUID" => Ok(Expression::Function(Box::new(
+                Function::new("UUID".to_string(), vec![]),
+            ))),
 
             // DATABASE() -> SCHEMA() in MySQL (both return current database name)
             "DATABASE" => Ok(Expression::Function(Box::new(Function::new(
@@ -922,24 +942,30 @@ impl MySQLDialect {
                 }
 
                 // Extract sub-second precision from the string literal
-                let precision = if let Expression::Literal(crate::expressions::Literal::String(ref s)) = arg {
-                    // Find fractional seconds: look for .NNN pattern after HH:MM:SS
-                    if let Some(dot_pos) = s.rfind('.') {
-                        let after_dot = &s[dot_pos + 1..];
-                        // Count digits until non-digit
-                        let frac_digits = after_dot.chars().take_while(|c| c.is_ascii_digit()).count();
-                        if frac_digits > 0 {
-                            // Round up: 1-3 digits → 3, 4-6 digits → 6
-                            if frac_digits <= 3 { Some(3) } else { Some(6) }
+                let precision =
+                    if let Expression::Literal(crate::expressions::Literal::String(ref s)) = arg {
+                        // Find fractional seconds: look for .NNN pattern after HH:MM:SS
+                        if let Some(dot_pos) = s.rfind('.') {
+                            let after_dot = &s[dot_pos + 1..];
+                            // Count digits until non-digit
+                            let frac_digits =
+                                after_dot.chars().take_while(|c| c.is_ascii_digit()).count();
+                            if frac_digits > 0 {
+                                // Round up: 1-3 digits → 3, 4-6 digits → 6
+                                if frac_digits <= 3 {
+                                    Some(3)
+                                } else {
+                                    Some(6)
+                                }
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
                 let type_name = match precision {
                     Some(p) => format!("DATETIME({})", p),
@@ -1043,9 +1069,10 @@ impl MySQLDialect {
             }
 
             // REGEXP -> REGEXP_LIKE (MySQL standard form)
-            "REGEXP" if f.args.len() >= 2 => {
-                Ok(Expression::Function(Box::new(Function::new("REGEXP_LIKE".to_string(), f.args))))
-            }
+            "REGEXP" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
+                "REGEXP_LIKE".to_string(),
+                f.args,
+            )))),
 
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
@@ -1059,10 +1086,9 @@ impl MySQLDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // ARRAY_AGG -> GROUP_CONCAT
             "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -1181,22 +1207,34 @@ mod tests {
 
     #[test]
     fn test_day_of_month() {
-        mysql_identity("SELECT DAY_OF_MONTH('2023-01-01')", "SELECT DAYOFMONTH('2023-01-01')");
+        mysql_identity(
+            "SELECT DAY_OF_MONTH('2023-01-01')",
+            "SELECT DAYOFMONTH('2023-01-01')",
+        );
     }
 
     #[test]
     fn test_day_of_week() {
-        mysql_identity("SELECT DAY_OF_WEEK('2023-01-01')", "SELECT DAYOFWEEK('2023-01-01')");
+        mysql_identity(
+            "SELECT DAY_OF_WEEK('2023-01-01')",
+            "SELECT DAYOFWEEK('2023-01-01')",
+        );
     }
 
     #[test]
     fn test_day_of_year() {
-        mysql_identity("SELECT DAY_OF_YEAR('2023-01-01')", "SELECT DAYOFYEAR('2023-01-01')");
+        mysql_identity(
+            "SELECT DAY_OF_YEAR('2023-01-01')",
+            "SELECT DAYOFYEAR('2023-01-01')",
+        );
     }
 
     #[test]
     fn test_week_of_year() {
-        mysql_identity("SELECT WEEK_OF_YEAR('2023-01-01')", "SELECT WEEKOFYEAR('2023-01-01')");
+        mysql_identity(
+            "SELECT WEEK_OF_YEAR('2023-01-01')",
+            "SELECT WEEKOFYEAR('2023-01-01')",
+        );
     }
 
     #[test]
@@ -1219,5 +1257,4 @@ mod tests {
     fn test_or_operator() {
         mysql_identity("SELECT a || b", "SELECT a OR b");
     }
-
 }

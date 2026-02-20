@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use polyglot_sql::dialects::{Dialect, DialectType};
 
 const SIMPLE_SELECT: &str = "SELECT a, b, c FROM table1";
@@ -123,5 +123,9 @@ fn bench_parsing_by_dialect(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_parsing_by_query_size, bench_parsing_by_dialect);
+criterion_group!(
+    benches,
+    bench_parsing_by_query_size,
+    bench_parsing_by_dialect
+);
 criterion_main!(benches);

@@ -149,14 +149,101 @@ def find_dialect_name(tree: ast.AST) -> Optional[str]:
 def extract_pretty_tests(filepath: str) -> List[Dict[str, Any]]:
     """
     Extract pretty-print test cases from pretty.sql file.
-    Format: pairs of input/output separated by blank lines.
+    Format: mostly pairs of input/output separated by blank lines.
+    Some fixtures span across a blank-line boundary, so we keep a carry-over
+    input statement and pair it with the next block's first statement.
     """
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
+    def split_sql_statements(sql: str) -> List[str]:
+        """Split SQL text into statements terminated by ';' outside quotes/comments."""
+        statements: List[str] = []
+        buffer: List[str] = []
+        i = 0
+        n = len(sql)
+        in_single = False
+        in_double = False
+        in_backtick = False
+        in_line_comment = False
+        in_block_comment = False
+
+        while i < n:
+            c = sql[i]
+            next_c = sql[i + 1] if i + 1 < n else ''
+
+            if in_line_comment:
+                buffer.append(c)
+                if c == '\n':
+                    in_line_comment = False
+                i += 1
+                continue
+
+            if in_block_comment:
+                buffer.append(c)
+                if c == '*' and next_c == '/':
+                    buffer.append(next_c)
+                    in_block_comment = False
+                    i += 2
+                    continue
+                i += 1
+                continue
+
+            if not (in_single or in_double or in_backtick):
+                if c == '-' and next_c == '-':
+                    in_line_comment = True
+                    buffer.append(c)
+                    buffer.append(next_c)
+                    i += 2
+                    continue
+                if c == '/' and next_c == '*':
+                    in_block_comment = True
+                    buffer.append(c)
+                    buffer.append(next_c)
+                    i += 2
+                    continue
+
+            if c == "'" and not (in_double or in_backtick):
+                if in_single and next_c == "'":
+                    buffer.append(c)
+                    buffer.append(next_c)
+                    i += 2
+                    continue
+                in_single = not in_single
+                buffer.append(c)
+                i += 1
+                continue
+
+            if c == '"' and not (in_single or in_backtick):
+                in_double = not in_double
+                buffer.append(c)
+                i += 1
+                continue
+
+            if c == '`' and not (in_single or in_double):
+                in_backtick = not in_backtick
+                buffer.append(c)
+                i += 1
+                continue
+
+            buffer.append(c)
+            if c == ';' and not (in_single or in_double or in_backtick):
+                statement = ''.join(buffer).strip()
+                if statement:
+                    statements.append(statement)
+                buffer = []
+            i += 1
+
+        tail = ''.join(buffer).strip()
+        if tail:
+            statements.append(tail)
+
+        return statements
+
     tests = []
     blocks = content.split('\n\n')
     line_number = 1
+    carry_input: Optional[Tuple[int, str]] = None
 
     for block in blocks:
         trimmed = block.strip()
@@ -167,51 +254,44 @@ def extract_pretty_tests(filepath: str) -> List[Dict[str, Any]]:
         # Filter out comment lines starting with #
         lines = [l for l in trimmed.split('\n') if not l.startswith('#')]
 
-        if len(lines) < 2:
+        if not lines:
             line_number += block.count('\n') + 1
             continue
 
-        # Find where the input ends (first semicolon at paren depth 0)
-        input_end = 0
-        paren_depth = 0
-        found_semicolon = False
+        statements = split_sql_statements('\n'.join(lines))
+        statements = [s.strip() for s in statements if s.strip()]
 
-        for i, line in enumerate(lines):
-            for c in line:
-                if c == '(':
-                    paren_depth += 1
-                elif c == ')':
-                    paren_depth = max(0, paren_depth - 1)
-                elif c == ';' and paren_depth == 0:
-                    found_semicolon = True
-            if found_semicolon and paren_depth == 0:
-                input_end = i
-                break
+        idx = 0
+        if carry_input is not None and statements:
+            carry_line, input_sql = carry_input
+            tests.append({
+                'line': carry_line,
+                'input': input_sql,
+                'expected': statements[0],
+            })
+            carry_input = None
+            idx = 1
 
-        # Split into input and expected
-        if found_semicolon and input_end < len(lines) - 1:
-            input_sql = '\n'.join(lines[:input_end + 1]).strip()
-            expected = '\n'.join(lines[input_end + 1:]).strip()
+        if len(statements) - idx >= 2:
+            tests.append({
+                'line': line_number,
+                'input': statements[idx],
+                'expected': statements[idx + 1],
+            })
+            idx += 2
 
-            if input_sql and expected:
-                tests.append({
-                    'line': line_number,
-                    'input': input_sql,
-                    'expected': expected,
-                })
-        elif len(lines) >= 2:
-            # Fallback: first line is input, rest is output
-            input_sql = lines[0].strip()
-            expected = '\n'.join(lines[1:]).strip()
-
-            if input_sql and expected:
-                tests.append({
-                    'line': line_number,
-                    'input': input_sql,
-                    'expected': expected,
-                })
+        if len(statements) - idx == 1:
+            carry_input = (line_number, statements[idx])
 
         line_number += block.count('\n') + 1
+
+    if carry_input is not None:
+        carry_line, carry_sql = carry_input
+        print(
+            f"  Warning: Unpaired pretty fixture statement at line {carry_line}: "
+            f"{carry_sql.splitlines()[0][:80]}",
+            file=sys.stderr,
+        )
 
     return tests
 
@@ -340,6 +420,12 @@ def extract_transpile_tests(filepath: str) -> Dict[str, Any]:
             if 'normalize_functions' in kwargs:
                 skipped += 1
                 continue
+
+            if 'identify' in kwargs:
+                val = get_bool_value(kwargs['identify'])
+                if val is True:
+                    skipped += 1
+                    continue
 
             if 'pad' in kwargs or 'indent' in kwargs:
                 skipped += 1

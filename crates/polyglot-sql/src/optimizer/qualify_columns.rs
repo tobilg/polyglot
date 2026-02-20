@@ -6,7 +6,9 @@
 //! Ported from sqlglot's optimizer/qualify_columns.py
 
 use crate::dialects::DialectType;
-use crate::expressions::{Alias, Column, Expression, Identifier, Join, LateralView, Over, TableRef, With};
+use crate::expressions::{
+    Alias, Column, Expression, Identifier, Join, LateralView, Over, TableRef, With,
+};
 use crate::resolver::{Resolver, ResolverError};
 use crate::schema::Schema;
 use crate::scope::{traverse_scope, Scope};
@@ -300,10 +302,8 @@ fn expand_stars(scope: &Scope, resolver: &mut Resolver) -> QualifyColumnsResult<
                                 return Ok(());
                             }
                             for col_name in columns {
-                                _new_selections.push(create_qualified_column(
-                                    &col_name,
-                                    Some(source_name),
-                                ));
+                                _new_selections
+                                    .push(create_qualified_column(&col_name, Some(source_name)));
                             }
                         }
                     }
@@ -321,10 +321,8 @@ fn expand_stars(scope: &Scope, resolver: &mut Resolver) -> QualifyColumnsResult<
                                 return Ok(());
                             }
                             for col_name in columns {
-                                _new_selections.push(create_qualified_column(
-                                    &col_name,
-                                    Some(table_name),
-                                ));
+                                _new_selections
+                                    .push(create_qualified_column(&col_name, Some(table_name)));
                             }
                         }
                     }
@@ -386,165 +384,621 @@ fn get_reserved_words(dialect: Option<DialectType>) -> HashSet<&'static str> {
     // Core SQL reserved words that are common across all dialects
     let mut words: HashSet<&'static str> = [
         // SQL standard reserved words
-        "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BETWEEN", "BY",
-        "CASE", "CAST", "CHECK", "COLUMN", "CONSTRAINT", "CREATE", "CROSS",
-        "CURRENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
-        "CURRENT_USER", "DATABASE", "DEFAULT", "DELETE", "DESC", "DISTINCT",
-        "DROP", "ELSE", "END", "ESCAPE", "EXCEPT", "EXISTS", "FALSE",
-        "FETCH", "FOR", "FOREIGN", "FROM", "FULL", "GRANT", "GROUP",
-        "HAVING", "IF", "IN", "INDEX", "INNER", "INSERT", "INTERSECT",
-        "INTO", "IS", "JOIN", "KEY", "LEFT", "LIKE", "LIMIT", "NATURAL",
-        "NOT", "NULL", "OFFSET", "ON", "OR", "ORDER", "OUTER", "PRIMARY",
-        "REFERENCES", "REPLACE", "RETURNING", "RIGHT", "ROLLBACK", "ROW",
-        "ROWS", "SELECT", "SESSION_USER", "SET", "SOME", "TABLE", "THEN",
-        "TO", "TRUE", "TRUNCATE", "UNION", "UNIQUE", "UPDATE", "USING",
-        "VALUES", "VIEW", "WHEN", "WHERE", "WINDOW", "WITH",
-    ].iter().copied().collect();
+        "ADD",
+        "ALL",
+        "ALTER",
+        "AND",
+        "ANY",
+        "AS",
+        "ASC",
+        "BETWEEN",
+        "BY",
+        "CASE",
+        "CAST",
+        "CHECK",
+        "COLUMN",
+        "CONSTRAINT",
+        "CREATE",
+        "CROSS",
+        "CURRENT",
+        "CURRENT_DATE",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_USER",
+        "DATABASE",
+        "DEFAULT",
+        "DELETE",
+        "DESC",
+        "DISTINCT",
+        "DROP",
+        "ELSE",
+        "END",
+        "ESCAPE",
+        "EXCEPT",
+        "EXISTS",
+        "FALSE",
+        "FETCH",
+        "FOR",
+        "FOREIGN",
+        "FROM",
+        "FULL",
+        "GRANT",
+        "GROUP",
+        "HAVING",
+        "IF",
+        "IN",
+        "INDEX",
+        "INNER",
+        "INSERT",
+        "INTERSECT",
+        "INTO",
+        "IS",
+        "JOIN",
+        "KEY",
+        "LEFT",
+        "LIKE",
+        "LIMIT",
+        "NATURAL",
+        "NOT",
+        "NULL",
+        "OFFSET",
+        "ON",
+        "OR",
+        "ORDER",
+        "OUTER",
+        "PRIMARY",
+        "REFERENCES",
+        "REPLACE",
+        "RETURNING",
+        "RIGHT",
+        "ROLLBACK",
+        "ROW",
+        "ROWS",
+        "SELECT",
+        "SESSION_USER",
+        "SET",
+        "SOME",
+        "TABLE",
+        "THEN",
+        "TO",
+        "TRUE",
+        "TRUNCATE",
+        "UNION",
+        "UNIQUE",
+        "UPDATE",
+        "USING",
+        "VALUES",
+        "VIEW",
+        "WHEN",
+        "WHERE",
+        "WINDOW",
+        "WITH",
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     // Add dialect-specific reserved words
     match dialect {
         Some(DialectType::MySQL) => {
-            words.extend([
-                "ANALYZE", "BOTH", "CHANGE", "CONDITION", "DATABASES",
-                "DAY_HOUR", "DAY_MICROSECOND", "DAY_MINUTE", "DAY_SECOND",
-                "DELAYED", "DETERMINISTIC", "DIV", "DUAL", "EACH",
-                "ELSEIF", "ENCLOSED", "EXPLAIN", "FLOAT4", "FLOAT8",
-                "FORCE", "HOUR_MICROSECOND", "HOUR_MINUTE", "HOUR_SECOND",
-                "IGNORE", "INFILE", "INT1", "INT2", "INT3", "INT4", "INT8",
-                "ITERATE", "KEYS", "KILL", "LEADING", "LEAVE", "LINES",
-                "LOAD", "LOCK", "LONG", "LONGBLOB", "LONGTEXT", "LOOP",
-                "LOW_PRIORITY", "MATCH", "MEDIUMBLOB", "MEDIUMINT",
-                "MEDIUMTEXT", "MINUTE_MICROSECOND", "MINUTE_SECOND", "MOD",
-                "MODIFIES", "NO_WRITE_TO_BINLOG", "OPTIMIZE", "OPTIONALLY",
-                "OUT", "OUTFILE", "PURGE", "READS", "REGEXP", "RELEASE",
-                "RENAME", "REPEAT", "REQUIRE", "RESIGNAL", "RETURN",
-                "REVOKE", "RLIKE", "SCHEMA", "SCHEMAS", "SECOND_MICROSECOND",
-                "SENSITIVE", "SEPARATOR", "SHOW", "SIGNAL", "SPATIAL",
-                "SQL", "SQLEXCEPTION", "SQLSTATE", "SQLWARNING",
-                "SQL_BIG_RESULT", "SQL_CALC_FOUND_ROWS", "SQL_SMALL_RESULT",
-                "SSL", "STARTING", "STRAIGHT_JOIN", "TERMINATED",
-                "TINYBLOB", "TINYINT", "TINYTEXT", "TRAILING", "TRIGGER",
-                "UNDO", "UNLOCK", "UNSIGNED", "USAGE", "UTC_DATE",
-                "UTC_TIME", "UTC_TIMESTAMP", "VARBINARY", "VARCHARACTER",
-                "WHILE", "WRITE", "XOR", "YEAR_MONTH", "ZEROFILL",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ANALYZE",
+                    "BOTH",
+                    "CHANGE",
+                    "CONDITION",
+                    "DATABASES",
+                    "DAY_HOUR",
+                    "DAY_MICROSECOND",
+                    "DAY_MINUTE",
+                    "DAY_SECOND",
+                    "DELAYED",
+                    "DETERMINISTIC",
+                    "DIV",
+                    "DUAL",
+                    "EACH",
+                    "ELSEIF",
+                    "ENCLOSED",
+                    "EXPLAIN",
+                    "FLOAT4",
+                    "FLOAT8",
+                    "FORCE",
+                    "HOUR_MICROSECOND",
+                    "HOUR_MINUTE",
+                    "HOUR_SECOND",
+                    "IGNORE",
+                    "INFILE",
+                    "INT1",
+                    "INT2",
+                    "INT3",
+                    "INT4",
+                    "INT8",
+                    "ITERATE",
+                    "KEYS",
+                    "KILL",
+                    "LEADING",
+                    "LEAVE",
+                    "LINES",
+                    "LOAD",
+                    "LOCK",
+                    "LONG",
+                    "LONGBLOB",
+                    "LONGTEXT",
+                    "LOOP",
+                    "LOW_PRIORITY",
+                    "MATCH",
+                    "MEDIUMBLOB",
+                    "MEDIUMINT",
+                    "MEDIUMTEXT",
+                    "MINUTE_MICROSECOND",
+                    "MINUTE_SECOND",
+                    "MOD",
+                    "MODIFIES",
+                    "NO_WRITE_TO_BINLOG",
+                    "OPTIMIZE",
+                    "OPTIONALLY",
+                    "OUT",
+                    "OUTFILE",
+                    "PURGE",
+                    "READS",
+                    "REGEXP",
+                    "RELEASE",
+                    "RENAME",
+                    "REPEAT",
+                    "REQUIRE",
+                    "RESIGNAL",
+                    "RETURN",
+                    "REVOKE",
+                    "RLIKE",
+                    "SCHEMA",
+                    "SCHEMAS",
+                    "SECOND_MICROSECOND",
+                    "SENSITIVE",
+                    "SEPARATOR",
+                    "SHOW",
+                    "SIGNAL",
+                    "SPATIAL",
+                    "SQL",
+                    "SQLEXCEPTION",
+                    "SQLSTATE",
+                    "SQLWARNING",
+                    "SQL_BIG_RESULT",
+                    "SQL_CALC_FOUND_ROWS",
+                    "SQL_SMALL_RESULT",
+                    "SSL",
+                    "STARTING",
+                    "STRAIGHT_JOIN",
+                    "TERMINATED",
+                    "TINYBLOB",
+                    "TINYINT",
+                    "TINYTEXT",
+                    "TRAILING",
+                    "TRIGGER",
+                    "UNDO",
+                    "UNLOCK",
+                    "UNSIGNED",
+                    "USAGE",
+                    "UTC_DATE",
+                    "UTC_TIME",
+                    "UTC_TIMESTAMP",
+                    "VARBINARY",
+                    "VARCHARACTER",
+                    "WHILE",
+                    "WRITE",
+                    "XOR",
+                    "YEAR_MONTH",
+                    "ZEROFILL",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::PostgreSQL) | Some(DialectType::CockroachDB) => {
-            words.extend([
-                "ANALYSE", "ANALYZE", "ARRAY", "AUTHORIZATION", "BINARY",
-                "BOTH", "COLLATE", "CONCURRENTLY", "DO", "FREEZE",
-                "ILIKE", "INITIALLY", "ISNULL", "LATERAL", "LEADING",
-                "LOCALTIME", "LOCALTIMESTAMP", "NOTNULL", "ONLY", "OVERLAPS",
-                "PLACING", "SIMILAR", "SYMMETRIC", "TABLESAMPLE",
-                "TRAILING", "VARIADIC", "VERBOSE",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ANALYSE",
+                    "ANALYZE",
+                    "ARRAY",
+                    "AUTHORIZATION",
+                    "BINARY",
+                    "BOTH",
+                    "COLLATE",
+                    "CONCURRENTLY",
+                    "DO",
+                    "FREEZE",
+                    "ILIKE",
+                    "INITIALLY",
+                    "ISNULL",
+                    "LATERAL",
+                    "LEADING",
+                    "LOCALTIME",
+                    "LOCALTIMESTAMP",
+                    "NOTNULL",
+                    "ONLY",
+                    "OVERLAPS",
+                    "PLACING",
+                    "SIMILAR",
+                    "SYMMETRIC",
+                    "TABLESAMPLE",
+                    "TRAILING",
+                    "VARIADIC",
+                    "VERBOSE",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::BigQuery) => {
-            words.extend([
-                "ASSERT_ROWS_MODIFIED", "COLLATE", "CONTAINS", "CUBE",
-                "DEFINE", "ENUM", "EXTRACT", "FOLLOWING", "GROUPING",
-                "GROUPS", "HASH", "IGNORE", "LATERAL", "LOOKUP",
-                "MERGE", "NEW", "NO", "NULLS", "OF", "OVER", "PARTITION",
-                "PRECEDING", "PROTO", "RANGE", "RECURSIVE", "RESPECT",
-                "ROLLUP", "STRUCT", "TABLESAMPLE", "TREAT", "UNBOUNDED",
-                "WITHIN",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ASSERT_ROWS_MODIFIED",
+                    "COLLATE",
+                    "CONTAINS",
+                    "CUBE",
+                    "DEFINE",
+                    "ENUM",
+                    "EXTRACT",
+                    "FOLLOWING",
+                    "GROUPING",
+                    "GROUPS",
+                    "HASH",
+                    "IGNORE",
+                    "LATERAL",
+                    "LOOKUP",
+                    "MERGE",
+                    "NEW",
+                    "NO",
+                    "NULLS",
+                    "OF",
+                    "OVER",
+                    "PARTITION",
+                    "PRECEDING",
+                    "PROTO",
+                    "RANGE",
+                    "RECURSIVE",
+                    "RESPECT",
+                    "ROLLUP",
+                    "STRUCT",
+                    "TABLESAMPLE",
+                    "TREAT",
+                    "UNBOUNDED",
+                    "WITHIN",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::Snowflake) => {
-            words.extend([
-                "ACCOUNT", "BOTH", "CONNECT", "FOLLOWING", "ILIKE",
-                "INCREMENT", "ISSUE", "LATERAL", "LEADING", "LOCALTIME",
-                "LOCALTIMESTAMP", "MINUS", "QUALIFY", "REGEXP", "RLIKE",
-                "SOME", "START", "TABLESAMPLE", "TOP", "TRAILING",
-                "TRY_CAST",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ACCOUNT",
+                    "BOTH",
+                    "CONNECT",
+                    "FOLLOWING",
+                    "ILIKE",
+                    "INCREMENT",
+                    "ISSUE",
+                    "LATERAL",
+                    "LEADING",
+                    "LOCALTIME",
+                    "LOCALTIMESTAMP",
+                    "MINUS",
+                    "QUALIFY",
+                    "REGEXP",
+                    "RLIKE",
+                    "SOME",
+                    "START",
+                    "TABLESAMPLE",
+                    "TOP",
+                    "TRAILING",
+                    "TRY_CAST",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::TSQL) | Some(DialectType::Fabric) => {
-            words.extend([
-                "BACKUP", "BREAK", "BROWSE", "BULK", "CASCADE", "CHECKPOINT",
-                "CLOSE", "CLUSTERED", "COALESCE", "COMPUTE", "CONTAINS",
-                "CONTAINSTABLE", "CONTINUE", "CONVERT", "DBCC",
-                "DEALLOCATE", "DENY", "DISK", "DISTRIBUTED", "DUMP",
-                "ERRLVL", "EXEC", "EXECUTE", "EXIT", "EXTERNAL", "FILE",
-                "FILLFACTOR", "FREETEXT", "FREETEXTTABLE", "FUNCTION",
-                "GOTO", "HOLDLOCK", "IDENTITY", "IDENTITYCOL",
-                "IDENTITY_INSERT", "KILL", "LINENO", "MERGE",
-                "NONCLUSTERED", "NULLIF", "OF", "OFF", "OFFSETS",
-                "OPEN", "OPENDATASOURCE", "OPENQUERY", "OPENROWSET",
-                "OPENXML", "OVER", "PERCENT", "PIVOT", "PLAN", "PRINT",
-                "PROC", "PROCEDURE", "PUBLIC", "RAISERROR", "READ",
-                "READTEXT", "RECONFIGURE", "REPLICATION", "RESTORE",
-                "RESTRICT", "REVERT", "ROWCOUNT", "ROWGUIDCOL", "RULE",
-                "SAVE", "SECURITYAUDIT", "SEMANTICKEYPHRASETABLE",
-                "SEMANTICSIMILARITYDETAILSTABLE",
-                "SEMANTICSIMILARITYTABLE", "SETUSER", "SHUTDOWN",
-                "STATISTICS", "SYSTEM_USER", "TEXTSIZE", "TOP", "TRAN",
-                "TRANSACTION", "TRIGGER", "TSEQUAL", "UNPIVOT",
-                "UPDATETEXT", "WAITFOR", "WRITETEXT",
-            ].iter().copied());
+            words.extend(
+                [
+                    "BACKUP",
+                    "BREAK",
+                    "BROWSE",
+                    "BULK",
+                    "CASCADE",
+                    "CHECKPOINT",
+                    "CLOSE",
+                    "CLUSTERED",
+                    "COALESCE",
+                    "COMPUTE",
+                    "CONTAINS",
+                    "CONTAINSTABLE",
+                    "CONTINUE",
+                    "CONVERT",
+                    "DBCC",
+                    "DEALLOCATE",
+                    "DENY",
+                    "DISK",
+                    "DISTRIBUTED",
+                    "DUMP",
+                    "ERRLVL",
+                    "EXEC",
+                    "EXECUTE",
+                    "EXIT",
+                    "EXTERNAL",
+                    "FILE",
+                    "FILLFACTOR",
+                    "FREETEXT",
+                    "FREETEXTTABLE",
+                    "FUNCTION",
+                    "GOTO",
+                    "HOLDLOCK",
+                    "IDENTITY",
+                    "IDENTITYCOL",
+                    "IDENTITY_INSERT",
+                    "KILL",
+                    "LINENO",
+                    "MERGE",
+                    "NONCLUSTERED",
+                    "NULLIF",
+                    "OF",
+                    "OFF",
+                    "OFFSETS",
+                    "OPEN",
+                    "OPENDATASOURCE",
+                    "OPENQUERY",
+                    "OPENROWSET",
+                    "OPENXML",
+                    "OVER",
+                    "PERCENT",
+                    "PIVOT",
+                    "PLAN",
+                    "PRINT",
+                    "PROC",
+                    "PROCEDURE",
+                    "PUBLIC",
+                    "RAISERROR",
+                    "READ",
+                    "READTEXT",
+                    "RECONFIGURE",
+                    "REPLICATION",
+                    "RESTORE",
+                    "RESTRICT",
+                    "REVERT",
+                    "ROWCOUNT",
+                    "ROWGUIDCOL",
+                    "RULE",
+                    "SAVE",
+                    "SECURITYAUDIT",
+                    "SEMANTICKEYPHRASETABLE",
+                    "SEMANTICSIMILARITYDETAILSTABLE",
+                    "SEMANTICSIMILARITYTABLE",
+                    "SETUSER",
+                    "SHUTDOWN",
+                    "STATISTICS",
+                    "SYSTEM_USER",
+                    "TEXTSIZE",
+                    "TOP",
+                    "TRAN",
+                    "TRANSACTION",
+                    "TRIGGER",
+                    "TSEQUAL",
+                    "UNPIVOT",
+                    "UPDATETEXT",
+                    "WAITFOR",
+                    "WRITETEXT",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::ClickHouse) => {
-            words.extend([
-                "ANTI", "ARRAY", "ASOF", "FINAL", "FORMAT", "GLOBAL",
-                "INF", "KILL", "MATERIALIZED", "NAN", "PREWHERE",
-                "SAMPLE", "SEMI", "SETTINGS", "TOP",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ANTI",
+                    "ARRAY",
+                    "ASOF",
+                    "FINAL",
+                    "FORMAT",
+                    "GLOBAL",
+                    "INF",
+                    "KILL",
+                    "MATERIALIZED",
+                    "NAN",
+                    "PREWHERE",
+                    "SAMPLE",
+                    "SEMI",
+                    "SETTINGS",
+                    "TOP",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::DuckDB) => {
-            words.extend([
-                "ANALYSE", "ANALYZE", "ARRAY", "BOTH", "LATERAL",
-                "LEADING", "LOCALTIME", "LOCALTIMESTAMP", "PLACING",
-                "QUALIFY", "SIMILAR", "TABLESAMPLE", "TRAILING",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ANALYSE",
+                    "ANALYZE",
+                    "ARRAY",
+                    "BOTH",
+                    "LATERAL",
+                    "LEADING",
+                    "LOCALTIME",
+                    "LOCALTIMESTAMP",
+                    "PLACING",
+                    "QUALIFY",
+                    "SIMILAR",
+                    "TABLESAMPLE",
+                    "TRAILING",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::Hive) | Some(DialectType::Spark) | Some(DialectType::Databricks) => {
-            words.extend([
-                "BOTH", "CLUSTER", "DISTRIBUTE", "EXCHANGE", "EXTENDED",
-                "FUNCTION", "LATERAL", "LEADING", "MACRO", "OVER",
-                "PARTITION", "PERCENT", "RANGE", "READS", "REDUCE",
-                "REGEXP", "REVOKE", "RLIKE", "ROLLUP", "SEMI", "SORT",
-                "TABLESAMPLE", "TRAILING", "TRANSFORM", "UNBOUNDED",
-                "UNIQUEJOIN",
-            ].iter().copied());
+            words.extend(
+                [
+                    "BOTH",
+                    "CLUSTER",
+                    "DISTRIBUTE",
+                    "EXCHANGE",
+                    "EXTENDED",
+                    "FUNCTION",
+                    "LATERAL",
+                    "LEADING",
+                    "MACRO",
+                    "OVER",
+                    "PARTITION",
+                    "PERCENT",
+                    "RANGE",
+                    "READS",
+                    "REDUCE",
+                    "REGEXP",
+                    "REVOKE",
+                    "RLIKE",
+                    "ROLLUP",
+                    "SEMI",
+                    "SORT",
+                    "TABLESAMPLE",
+                    "TRAILING",
+                    "TRANSFORM",
+                    "UNBOUNDED",
+                    "UNIQUEJOIN",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::Trino) | Some(DialectType::Presto) | Some(DialectType::Athena) => {
-            words.extend([
-                "CUBE", "DEALLOCATE", "DESCRIBE", "EXECUTE", "EXTRACT",
-                "GROUPING", "LATERAL", "LOCALTIME", "LOCALTIMESTAMP",
-                "NORMALIZE", "PREPARE", "ROLLUP", "SOME",
-                "TABLESAMPLE", "UESCAPE", "UNNEST",
-            ].iter().copied());
+            words.extend(
+                [
+                    "CUBE",
+                    "DEALLOCATE",
+                    "DESCRIBE",
+                    "EXECUTE",
+                    "EXTRACT",
+                    "GROUPING",
+                    "LATERAL",
+                    "LOCALTIME",
+                    "LOCALTIMESTAMP",
+                    "NORMALIZE",
+                    "PREPARE",
+                    "ROLLUP",
+                    "SOME",
+                    "TABLESAMPLE",
+                    "UESCAPE",
+                    "UNNEST",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::Oracle) => {
-            words.extend([
-                "ACCESS", "AUDIT", "CLUSTER", "COMMENT", "COMPRESS",
-                "CONNECT", "EXCLUSIVE", "FILE", "IDENTIFIED", "IMMEDIATE",
-                "INCREMENT", "INITIAL", "LEVEL", "LOCK", "LONG",
-                "MAXEXTENTS", "MINUS", "MODE", "NOAUDIT", "NOCOMPRESS",
-                "NOWAIT", "NUMBER", "OF", "OFFLINE", "ONLINE", "PCTFREE",
-                "PRIOR", "RAW", "RENAME", "RESOURCE", "REVOKE",
-                "SHARE", "SIZE", "START", "SUCCESSFUL", "SYNONYM",
-                "SYSDATE", "TRIGGER", "UID", "VALIDATE", "VARCHAR2",
-                "WHENEVER",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ACCESS",
+                    "AUDIT",
+                    "CLUSTER",
+                    "COMMENT",
+                    "COMPRESS",
+                    "CONNECT",
+                    "EXCLUSIVE",
+                    "FILE",
+                    "IDENTIFIED",
+                    "IMMEDIATE",
+                    "INCREMENT",
+                    "INITIAL",
+                    "LEVEL",
+                    "LOCK",
+                    "LONG",
+                    "MAXEXTENTS",
+                    "MINUS",
+                    "MODE",
+                    "NOAUDIT",
+                    "NOCOMPRESS",
+                    "NOWAIT",
+                    "NUMBER",
+                    "OF",
+                    "OFFLINE",
+                    "ONLINE",
+                    "PCTFREE",
+                    "PRIOR",
+                    "RAW",
+                    "RENAME",
+                    "RESOURCE",
+                    "REVOKE",
+                    "SHARE",
+                    "SIZE",
+                    "START",
+                    "SUCCESSFUL",
+                    "SYNONYM",
+                    "SYSDATE",
+                    "TRIGGER",
+                    "UID",
+                    "VALIDATE",
+                    "VARCHAR2",
+                    "WHENEVER",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         Some(DialectType::Redshift) => {
-            words.extend([
-                "AZ64", "BZIP2", "DELTA", "DELTA32K", "DISTSTYLE",
-                "ENCODE", "GZIP", "ILIKE", "LIMIT", "LUNS", "LZO",
-                "LZOP", "MOSTLY13", "MOSTLY32", "MOSTLY8", "RAW",
-                "SIMILAR", "SNAPSHOT", "SORTKEY", "SYSDATE", "TOP",
-                "ZSTD",
-            ].iter().copied());
+            words.extend(
+                [
+                    "AZ64",
+                    "BZIP2",
+                    "DELTA",
+                    "DELTA32K",
+                    "DISTSTYLE",
+                    "ENCODE",
+                    "GZIP",
+                    "ILIKE",
+                    "LIMIT",
+                    "LUNS",
+                    "LZO",
+                    "LZOP",
+                    "MOSTLY13",
+                    "MOSTLY32",
+                    "MOSTLY8",
+                    "RAW",
+                    "SIMILAR",
+                    "SNAPSHOT",
+                    "SORTKEY",
+                    "SYSDATE",
+                    "TOP",
+                    "ZSTD",
+                ]
+                .iter()
+                .copied(),
+            );
         }
         _ => {
             // For Generic or unknown dialects, add a broad set of commonly reserved words
-            words.extend([
-                "ANALYZE", "ARRAY", "BOTH", "CUBE", "GROUPING", "LATERAL",
-                "LEADING", "LOCALTIME", "LOCALTIMESTAMP", "OVER", "PARTITION",
-                "QUALIFY", "RANGE", "ROLLUP", "SIMILAR", "SOME",
-                "TABLESAMPLE", "TRAILING",
-            ].iter().copied());
+            words.extend(
+                [
+                    "ANALYZE",
+                    "ARRAY",
+                    "BOTH",
+                    "CUBE",
+                    "GROUPING",
+                    "LATERAL",
+                    "LEADING",
+                    "LOCALTIME",
+                    "LOCALTIMESTAMP",
+                    "OVER",
+                    "PARTITION",
+                    "QUALIFY",
+                    "RANGE",
+                    "ROLLUP",
+                    "SIMILAR",
+                    "SOME",
+                    "TABLESAMPLE",
+                    "TRAILING",
+                ]
+                .iter()
+                .copied(),
+            );
         }
     }
 
@@ -884,22 +1338,42 @@ fn quote_identifiers_recursive(expr: &mut Expression, reserved_words: &HashSet<&
         }
 
         // ── Binary operations ─────────────────────────────────────
-        Expression::And(bin) | Expression::Or(bin) | Expression::Eq(bin) |
-        Expression::Neq(bin) | Expression::Lt(bin) | Expression::Lte(bin) |
-        Expression::Gt(bin) | Expression::Gte(bin) | Expression::Add(bin) |
-        Expression::Sub(bin) | Expression::Mul(bin) | Expression::Div(bin) |
-        Expression::Mod(bin) | Expression::BitwiseAnd(bin) |
-        Expression::BitwiseOr(bin) | Expression::BitwiseXor(bin) |
-        Expression::Concat(bin) | Expression::Adjacent(bin) |
-        Expression::TsMatch(bin) | Expression::PropertyEQ(bin) |
-        Expression::ArrayContainsAll(bin) | Expression::ArrayContainedBy(bin) |
-        Expression::ArrayOverlaps(bin) | Expression::JSONBContainsAllTopKeys(bin) |
-        Expression::JSONBContainsAnyTopKeys(bin) | Expression::JSONBDeleteAtPath(bin) |
-        Expression::ExtendsLeft(bin) | Expression::ExtendsRight(bin) |
-        Expression::Is(bin) | Expression::NullSafeEq(bin) |
-        Expression::NullSafeNeq(bin) | Expression::Glob(bin) |
-        Expression::Match(bin) | Expression::MemberOf(bin) |
-        Expression::BitwiseLeftShift(bin) | Expression::BitwiseRightShift(bin) => {
+        Expression::And(bin)
+        | Expression::Or(bin)
+        | Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin)
+        | Expression::Add(bin)
+        | Expression::Sub(bin)
+        | Expression::Mul(bin)
+        | Expression::Div(bin)
+        | Expression::Mod(bin)
+        | Expression::BitwiseAnd(bin)
+        | Expression::BitwiseOr(bin)
+        | Expression::BitwiseXor(bin)
+        | Expression::Concat(bin)
+        | Expression::Adjacent(bin)
+        | Expression::TsMatch(bin)
+        | Expression::PropertyEQ(bin)
+        | Expression::ArrayContainsAll(bin)
+        | Expression::ArrayContainedBy(bin)
+        | Expression::ArrayOverlaps(bin)
+        | Expression::JSONBContainsAllTopKeys(bin)
+        | Expression::JSONBContainsAnyTopKeys(bin)
+        | Expression::JSONBDeleteAtPath(bin)
+        | Expression::ExtendsLeft(bin)
+        | Expression::ExtendsRight(bin)
+        | Expression::Is(bin)
+        | Expression::NullSafeEq(bin)
+        | Expression::NullSafeNeq(bin)
+        | Expression::Glob(bin)
+        | Expression::Match(bin)
+        | Expression::MemberOf(bin)
+        | Expression::BitwiseLeftShift(bin)
+        | Expression::BitwiseRightShift(bin) => {
             quote_identifiers_recursive(&mut bin.left, reserved_words);
             quote_identifiers_recursive(&mut bin.right, reserved_words);
         }
@@ -1749,8 +2223,8 @@ mod tests {
         assert!(needs_quoting("my column", &reserved)); // space
         assert!(needs_quoting("my-column", &reserved)); // hyphen
         assert!(needs_quoting("my.column", &reserved)); // dot
-        assert!(needs_quoting("col@name", &reserved));  // at sign
-        assert!(needs_quoting("col#name", &reserved));  // hash
+        assert!(needs_quoting("col@name", &reserved)); // at sign
+        assert!(needs_quoting("col#name", &reserved)); // hash
     }
 
     #[test]
@@ -1846,7 +2320,10 @@ mod tests {
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
             assert!(!col.name.quoted, "Normal column should not be quoted");
-            assert!(!col.table.as_ref().unwrap().quoted, "Normal table should not be quoted");
+            assert!(
+                !col.table.as_ref().unwrap().quoted,
+                "Normal table should not be quoted"
+            );
         } else {
             panic!("Expected Column expression");
         }
@@ -1872,8 +2349,14 @@ mod tests {
         let result = quote_identifiers(expr, None);
         if let Expression::Table(tr) = &result {
             assert!(!tr.name.quoted, "Normal table name should not be quoted");
-            assert!(tr.schema.as_ref().unwrap().quoted, "Schema named 'from' should be quoted");
-            assert!(!tr.alias.as_ref().unwrap().quoted, "Normal alias should not be quoted");
+            assert!(
+                tr.schema.as_ref().unwrap().quoted,
+                "Schema named 'from' should be quoted"
+            );
+            assert!(
+                !tr.alias.as_ref().unwrap().quoted,
+                "Normal alias should not be quoted"
+            );
         } else {
             panic!("Expected Table expression");
         }
@@ -1908,7 +2391,10 @@ mod tests {
         let result = quote_identifiers(expr, None);
         if let Expression::Alias(alias) = &result {
             assert!(alias.alias.quoted, "Alias named 'select' should be quoted");
-            assert!(alias.column_aliases[0].quoted, "Column alias named 'from' should be quoted");
+            assert!(
+                alias.column_aliases[0].quoted,
+                "Column alias named 'from' should be quoted"
+            );
             // Inner column "val" should not be quoted
             if let Expression::Column(col) = &alias.this {
                 assert!(!col.name.quoted);
@@ -1941,7 +2427,10 @@ mod tests {
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
-            assert!(col.name.quoted, "Column starting with digit should be quoted");
+            assert!(
+                col.name.quoted,
+                "Column starting with digit should be quoted"
+            );
         } else {
             panic!("Expected Column expression");
         }
@@ -1999,12 +2488,19 @@ mod tests {
             pivots: vec![],
             comments: vec![],
             nesting_group: 0,
+            directed: false,
         };
         let reserved = get_reserved_words(None);
         quote_join(&mut join, &reserved);
         // "key" is reserved, "value" is not
-        assert!(join.using[0].quoted, "USING identifier 'key' should be quoted");
-        assert!(!join.using[1].quoted, "USING identifier 'value' should not be quoted");
+        assert!(
+            join.using[0].quoted,
+            "USING identifier 'key' should be quoted"
+        );
+        assert!(
+            !join.using[1].quoted,
+            "USING identifier 'value' should not be quoted"
+        );
     }
 
     #[test]
@@ -2031,7 +2527,10 @@ mod tests {
         }
         assert!(cte.alias.quoted, "CTE alias 'select' should be quoted");
         assert!(cte.columns[0].quoted, "CTE column 'from' should be quoted");
-        assert!(!cte.columns[1].quoted, "CTE column 'normal' should not be quoted");
+        assert!(
+            !cte.columns[1].quoted,
+            "CTE column 'normal' should not be quoted"
+        );
     }
 
     #[test]
@@ -2055,7 +2554,10 @@ mod tests {
         let result = quote_identifiers(expr, None);
         if let Expression::Add(bin) = &result {
             if let Expression::Column(left) = &bin.left {
-                assert!(left.name.quoted, "'select' column should be quoted in binary op");
+                assert!(
+                    left.name.quoted,
+                    "'select' column should be quoted in binary op"
+                );
             }
             if let Expression::Column(right) = &bin.right {
                 assert!(!right.name.quoted, "'normal' column should not be quoted");
@@ -2076,7 +2578,10 @@ mod tests {
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
-            assert!(col.name.quoted, "Already-quoted identifier should remain quoted");
+            assert!(
+                col.name.quoted,
+                "Already-quoted identifier should remain quoted"
+            );
         } else {
             panic!("Expected Column expression");
         }
@@ -2102,7 +2607,10 @@ mod tests {
         if let Expression::Select(sel) = &result {
             if let Expression::Column(col) = &sel.expressions[0] {
                 assert!(col.name.quoted, "Column named 'order' should be quoted");
-                assert!(!col.table.as_ref().unwrap().quoted, "Table 't' should not be quoted");
+                assert!(
+                    !col.table.as_ref().unwrap().quoted,
+                    "Table 't' should not be quoted"
+                );
             } else {
                 panic!("Expected Column in SELECT list");
             }
@@ -2133,8 +2641,14 @@ mod tests {
         for dialect in &dialects {
             let words = get_reserved_words(*dialect);
             // All dialects should have basic SQL reserved words
-            assert!(words.contains("SELECT"), "All dialects should have SELECT as reserved");
-            assert!(words.contains("FROM"), "All dialects should have FROM as reserved");
+            assert!(
+                words.contains("SELECT"),
+                "All dialects should have SELECT as reserved"
+            );
+            assert!(
+                words.contains("FROM"),
+                "All dialects should have FROM as reserved"
+            );
         }
     }
 }

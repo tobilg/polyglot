@@ -117,17 +117,13 @@ pub fn normalize_identifier(identifier: Identifier, strategy: NormalizationStrat
 /// Recursively normalize all identifiers in an expression.
 fn normalize_expression(expression: Expression, strategy: NormalizationStrategy) -> Expression {
     match expression {
-        Expression::Identifier(id) => {
-            Expression::Identifier(normalize_identifier(id, strategy))
-        }
-        Expression::Column(col) => {
-            Expression::Column(Column {
-                name: normalize_identifier(col.name, strategy),
-                table: col.table.map(|t| normalize_identifier(t, strategy)),
-                join_mark: col.join_mark,
-                trailing_comments: col.trailing_comments,
-            })
-        }
+        Expression::Identifier(id) => Expression::Identifier(normalize_identifier(id, strategy)),
+        Expression::Column(col) => Expression::Column(Column {
+            name: normalize_identifier(col.name, strategy),
+            table: col.table.map(|t| normalize_identifier(t, strategy)),
+            join_mark: col.join_mark,
+            trailing_comments: col.trailing_comments,
+        }),
         Expression::Table(mut table) => {
             table.name = normalize_identifier(table.name, strategy);
             if let Some(schema) = table.schema {
@@ -355,15 +351,10 @@ where
 /// Check if an identifier contains case-sensitive characters based on dialect rules.
 pub fn is_case_sensitive(text: &str, strategy: NormalizationStrategy) -> bool {
     match strategy {
-        NormalizationStrategy::CaseInsensitive | NormalizationStrategy::CaseInsensitiveUppercase => {
-            false
-        }
-        NormalizationStrategy::Uppercase => {
-            text.chars().any(|c| c.is_lowercase())
-        }
-        NormalizationStrategy::Lowercase => {
-            text.chars().any(|c| c.is_uppercase())
-        }
+        NormalizationStrategy::CaseInsensitive
+        | NormalizationStrategy::CaseInsensitiveUppercase => false,
+        NormalizationStrategy::Uppercase => text.chars().any(|c| c.is_lowercase()),
+        NormalizationStrategy::Lowercase => text.chars().any(|c| c.is_uppercase()),
         NormalizationStrategy::CaseSensitive => true,
     }
 }

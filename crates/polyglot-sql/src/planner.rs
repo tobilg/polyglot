@@ -35,7 +35,8 @@ impl Plan {
     }
 
     fn build_dag(&self, step: &Step, dag: &mut HashMap<usize, HashSet<usize>>, id: usize) {
-        let deps: HashSet<usize> = step.dependencies
+        let deps: HashSet<usize> = step
+            .dependencies
             .iter()
             .enumerate()
             .map(|(i, _)| id + i + 1)
@@ -142,10 +143,7 @@ impl Step {
     }
 
     /// Build a step from an expression
-    pub fn from_expression(
-        expression: &Expression,
-        ctes: &HashMap<String, Step>,
-    ) -> Option<Self> {
+    pub fn from_expression(expression: &Expression, ctes: &HashMap<String, Step>) -> Option<Self> {
         match expression {
             Expression::Select(select) => {
                 let mut step = Self::from_select(select, ctes)?;
@@ -160,7 +158,11 @@ impl Step {
                         aggregations: Vec::new(),
                         group_by: Vec::new(),
                         condition: None,
-                        order_by: order_by.expressions.iter().map(|o| o.this.clone()).collect(),
+                        order_by: order_by
+                            .expressions
+                            .iter()
+                            .map(|o| o.this.clone())
+                            .collect(),
                         limit: None,
                     };
                     step = sort_step;
@@ -296,7 +298,9 @@ impl Step {
                 projections: select.expressions.clone(),
                 dependencies: vec![step],
                 aggregations: extract_aggregations(&select.expressions),
-                group_by: select.group_by.as_ref()
+                group_by: select
+                    .group_by
+                    .as_ref()
                     .map(|g| g.expressions.clone())
                     .unwrap_or_default(),
                 condition: None,
@@ -311,10 +315,7 @@ impl Step {
         Some(step)
     }
 
-    fn from_table_expression(
-        expr: &Expression,
-        ctes: &HashMap<String, Step>,
-    ) -> Option<Self> {
+    fn from_table_expression(expr: &Expression, ctes: &HashMap<String, Step>) -> Option<Self> {
         match expr {
             Expression::Table(table) => {
                 // Check if this references a CTE
@@ -348,26 +349,49 @@ impl Step {
 fn contains_aggregate(expr: &Expression) -> bool {
     match expr {
         // Specific aggregate function variants
-        Expression::Sum(_) | Expression::Count(_) | Expression::Avg(_) |
-        Expression::Min(_) | Expression::Max(_) | Expression::ArrayAgg(_) |
-        Expression::StringAgg(_) | Expression::ListAgg(_) |
-        Expression::Stddev(_) | Expression::StddevPop(_) | Expression::StddevSamp(_) |
-        Expression::Variance(_) | Expression::VarPop(_) | Expression::VarSamp(_) |
-        Expression::Median(_) | Expression::Mode(_) | Expression::First(_) | Expression::Last(_) |
-        Expression::AnyValue(_) | Expression::ApproxDistinct(_) | Expression::ApproxCountDistinct(_) |
-        Expression::LogicalAnd(_) | Expression::LogicalOr(_) |
-        Expression::AggregateFunction(_) => true,
+        Expression::Sum(_)
+        | Expression::Count(_)
+        | Expression::Avg(_)
+        | Expression::Min(_)
+        | Expression::Max(_)
+        | Expression::ArrayAgg(_)
+        | Expression::StringAgg(_)
+        | Expression::ListAgg(_)
+        | Expression::Stddev(_)
+        | Expression::StddevPop(_)
+        | Expression::StddevSamp(_)
+        | Expression::Variance(_)
+        | Expression::VarPop(_)
+        | Expression::VarSamp(_)
+        | Expression::Median(_)
+        | Expression::Mode(_)
+        | Expression::First(_)
+        | Expression::Last(_)
+        | Expression::AnyValue(_)
+        | Expression::ApproxDistinct(_)
+        | Expression::ApproxCountDistinct(_)
+        | Expression::LogicalAnd(_)
+        | Expression::LogicalOr(_)
+        | Expression::AggregateFunction(_) => true,
 
         Expression::Alias(alias) => contains_aggregate(&alias.this),
-        Expression::Add(op) | Expression::Sub(op) |
-        Expression::Mul(op) | Expression::Div(op) => {
+        Expression::Add(op) | Expression::Sub(op) | Expression::Mul(op) | Expression::Div(op) => {
             contains_aggregate(&op.left) || contains_aggregate(&op.right)
         }
         Expression::Function(func) => {
             // Check for aggregate function names (fallback)
             let name = func.name.to_uppercase();
-            matches!(name.as_str(), "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" |
-                     "ARRAY_AGG" | "STRING_AGG" | "GROUP_CONCAT")
+            matches!(
+                name.as_str(),
+                "SUM"
+                    | "COUNT"
+                    | "AVG"
+                    | "MIN"
+                    | "MAX"
+                    | "ARRAY_AGG"
+                    | "STRING_AGG"
+                    | "GROUP_CONCAT"
+            )
         }
         _ => false,
     }
@@ -385,29 +409,52 @@ fn extract_aggregations(expressions: &[Expression]) -> Vec<Expression> {
 fn collect_aggregations(expr: &Expression, aggs: &mut Vec<Expression>) {
     match expr {
         // Specific aggregate function variants
-        Expression::Sum(_) | Expression::Count(_) | Expression::Avg(_) |
-        Expression::Min(_) | Expression::Max(_) | Expression::ArrayAgg(_) |
-        Expression::StringAgg(_) | Expression::ListAgg(_) |
-        Expression::Stddev(_) | Expression::StddevPop(_) | Expression::StddevSamp(_) |
-        Expression::Variance(_) | Expression::VarPop(_) | Expression::VarSamp(_) |
-        Expression::Median(_) | Expression::Mode(_) | Expression::First(_) | Expression::Last(_) |
-        Expression::AnyValue(_) | Expression::ApproxDistinct(_) | Expression::ApproxCountDistinct(_) |
-        Expression::LogicalAnd(_) | Expression::LogicalOr(_) |
-        Expression::AggregateFunction(_) => {
+        Expression::Sum(_)
+        | Expression::Count(_)
+        | Expression::Avg(_)
+        | Expression::Min(_)
+        | Expression::Max(_)
+        | Expression::ArrayAgg(_)
+        | Expression::StringAgg(_)
+        | Expression::ListAgg(_)
+        | Expression::Stddev(_)
+        | Expression::StddevPop(_)
+        | Expression::StddevSamp(_)
+        | Expression::Variance(_)
+        | Expression::VarPop(_)
+        | Expression::VarSamp(_)
+        | Expression::Median(_)
+        | Expression::Mode(_)
+        | Expression::First(_)
+        | Expression::Last(_)
+        | Expression::AnyValue(_)
+        | Expression::ApproxDistinct(_)
+        | Expression::ApproxCountDistinct(_)
+        | Expression::LogicalAnd(_)
+        | Expression::LogicalOr(_)
+        | Expression::AggregateFunction(_) => {
             aggs.push(expr.clone());
         }
         Expression::Alias(alias) => {
             collect_aggregations(&alias.this, aggs);
         }
-        Expression::Add(op) | Expression::Sub(op) |
-        Expression::Mul(op) | Expression::Div(op) => {
+        Expression::Add(op) | Expression::Sub(op) | Expression::Mul(op) | Expression::Div(op) => {
             collect_aggregations(&op.left, aggs);
             collect_aggregations(&op.right, aggs);
         }
         Expression::Function(func) => {
             let name = func.name.to_uppercase();
-            if matches!(name.as_str(), "SUM" | "COUNT" | "AVG" | "MIN" | "MAX" |
-                        "ARRAY_AGG" | "STRING_AGG" | "GROUP_CONCAT") {
+            if matches!(
+                name.as_str(),
+                "SUM"
+                    | "COUNT"
+                    | "AVG"
+                    | "MIN"
+                    | "MAX"
+                    | "ARRAY_AGG"
+                    | "STRING_AGG"
+                    | "GROUP_CONCAT"
+            ) {
                 aggs.push(expr.clone());
             } else {
                 for arg in &func.args {
@@ -473,7 +520,10 @@ mod tests {
 
         assert!(plan.is_some());
         let plan = plan.unwrap();
-        assert!(matches!(plan.root.kind, StepKind::SetOperation(SetOperationType::Union)));
+        assert!(matches!(
+            plan.root.kind,
+            StepKind::SetOperation(SetOperationType::Union)
+        ));
     }
 
     #[test]
@@ -482,8 +532,10 @@ mod tests {
         let select_with_agg = parse("SELECT SUM(x) FROM t");
         if let Expression::Select(ref sel) = select_with_agg {
             assert!(!sel.expressions.is_empty());
-            assert!(contains_aggregate(&sel.expressions[0]),
-                "Expected SUM to be detected as aggregate function");
+            assert!(
+                contains_aggregate(&sel.expressions[0]),
+                "Expected SUM to be detected as aggregate function"
+            );
         } else {
             panic!("Expected SELECT expression");
         }
@@ -492,8 +544,10 @@ mod tests {
         let select_without_agg = parse("SELECT x + 1 FROM t");
         if let Expression::Select(ref sel) = select_without_agg {
             assert!(!sel.expressions.is_empty());
-            assert!(!contains_aggregate(&sel.expressions[0]),
-                "Expected x + 1 to not be an aggregate function");
+            assert!(
+                !contains_aggregate(&sel.expressions[0]),
+                "Expected x + 1 to not be an aggregate function"
+            );
         } else {
             panic!("Expected SELECT expression");
         }

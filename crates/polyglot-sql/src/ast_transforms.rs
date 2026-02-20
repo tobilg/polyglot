@@ -405,7 +405,11 @@ mod tests {
         let result = remove_limit_offset(expr);
         let sql = result.sql();
         assert!(!sql.contains("LIMIT"), "Should not contain LIMIT: {}", sql);
-        assert!(!sql.contains("OFFSET"), "Should not contain OFFSET: {}", sql);
+        assert!(
+            !sql.contains("OFFSET"),
+            "Should not contain OFFSET: {}",
+            sql
+        );
     }
 
     #[test]
@@ -425,8 +429,11 @@ mod tests {
         let tables = crate::traversal::get_tables(&expr);
         // Verify our function finds the same tables as the traversal module
         let names = get_table_names(&expr);
-        assert_eq!(names.len(), tables.len(),
-            "get_table_names and get_tables should find same count");
+        assert_eq!(
+            names.len(),
+            tables.len(),
+            "get_table_names and get_tables should find same count"
+        );
     }
 
     #[test]
@@ -444,7 +451,11 @@ mod tests {
         let result = rename_columns(expr, &mapping);
         let sql = result.sql();
         assert!(sql.contains("new_name"), "Expected new_name in: {}", sql);
-        assert!(!sql.contains("old_name"), "Should not contain old_name: {}", sql);
+        assert!(
+            !sql.contains("old_name"),
+            "Should not contain old_name: {}",
+            sql
+        );
     }
 
     #[test]
@@ -470,7 +481,11 @@ mod tests {
         let expr = parse_one("SELECT a FROM t");
         let result = add_select_columns(expr, vec![Expression::column("b")]);
         let sql = result.sql();
-        assert!(sql.contains("a, b") || sql.contains("a,b"), "Expected a, b in: {}", sql);
+        assert!(
+            sql.contains("a, b") || sql.contains("a,b"),
+            "Expected a, b in: {}",
+            sql
+        );
     }
 
     #[test]
@@ -497,6 +512,10 @@ mod tests {
     fn test_get_aggregate_functions() {
         let expr = parse_one("SELECT COUNT(*), SUM(x) FROM t");
         let aggs = get_aggregate_functions(&expr);
-        assert!(aggs.len() >= 2, "Expected at least 2 aggregates, got {}", aggs.len());
+        assert!(
+            aggs.len() >= 2,
+            "Expected at least 2 aggregates, got {}",
+            aggs.len()
+        );
     }
 }

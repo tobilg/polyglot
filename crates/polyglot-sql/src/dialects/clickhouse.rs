@@ -5,7 +5,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{AggregateFunction, BinaryOp, Case, Cast, Expression, Function, In, IsNull, LikeOp, MapConstructor, Paren, UnaryOp};
+use crate::expressions::{
+    AggregateFunction, BinaryOp, Case, Cast, Expression, Function, In, IsNull, LikeOp,
+    MapConstructor, Paren, UnaryOp,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -113,7 +116,8 @@ impl DialectImpl for ClickHouseDialect {
 
         let unwrap_in_array = |mut expressions: Vec<Expression>,
                                query: &Option<Expression>,
-                               unnest: &Option<Box<Expression>>| -> Vec<Expression> {
+                               unnest: &Option<Box<Expression>>|
+         -> Vec<Expression> {
             if query.is_none() && unnest.is_none() && expressions.len() == 1 {
                 if matches!(expressions[0], Expression::ArrayFunc(_)) {
                     if let Expression::ArrayFunc(arr) = expressions.remove(0) {
@@ -189,7 +193,15 @@ impl DialectImpl for ClickHouseDialect {
                 if in_expr.global {
                     return Ok(Expression::In(in_expr));
                 }
-                let In { this, expressions, query, unnest, global, is_field, .. } = *in_expr;
+                let In {
+                    this,
+                    expressions,
+                    query,
+                    unnest,
+                    global,
+                    is_field,
+                    ..
+                } = *in_expr;
                 let expressions = unwrap_in_array(expressions, &query, &unnest);
                 let base = Expression::In(Box::new(In {
                     this: wrap_predicate_left(this),
@@ -219,7 +231,8 @@ impl DialectImpl for ClickHouseDialect {
             }
 
             Expression::In(mut in_expr) => {
-                in_expr.expressions = unwrap_in_array(in_expr.expressions, &in_expr.query, &in_expr.unnest);
+                in_expr.expressions =
+                    unwrap_in_array(in_expr.expressions, &in_expr.query, &in_expr.unnest);
                 in_expr.this = wrap_predicate_left(in_expr.this);
                 Ok(Expression::In(in_expr))
             }
@@ -336,17 +349,15 @@ impl ClickHouseDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
-            "CURRENTDATABASE" | "CURRENT_DATABASE" => Ok(Expression::Function(Box::new(Function::new(
-                "CURRENT_DATABASE".to_string(),
-                f.args,
-            )))),
-            "CURRENTSCHEMAS" | "CURRENT_SCHEMAS" => Ok(Expression::Function(Box::new(Function::new(
-                "CURRENT_SCHEMAS".to_string(),
-                f.args,
-            )))),
-            "LEVENSHTEIN" | "LEVENSHTEINDISTANCE" | "EDITDISTANCE" => Ok(Expression::Function(Box::new(
-                Function::new("editDistance".to_string(), f.args),
+            "CURRENTDATABASE" | "CURRENT_DATABASE" => Ok(Expression::Function(Box::new(
+                Function::new("CURRENT_DATABASE".to_string(), f.args),
             ))),
+            "CURRENTSCHEMAS" | "CURRENT_SCHEMAS" => Ok(Expression::Function(Box::new(
+                Function::new("CURRENT_SCHEMAS".to_string(), f.args),
+            ))),
+            "LEVENSHTEIN" | "LEVENSHTEINDISTANCE" | "EDITDISTANCE" => Ok(Expression::Function(
+                Box::new(Function::new("editDistance".to_string(), f.args)),
+            )),
             "CHAR" | "CHR" => Ok(Expression::Function(Box::new(Function::new(
                 "CHAR".to_string(),
                 f.args,
@@ -406,9 +417,12 @@ impl ClickHouseDialect {
                 "dateTrunc".to_string(),
                 f.args,
             )))),
-            "TOSTARTOFDAY" if f.args.len() == 1 => Ok(Expression::Function(Box::new(
-                Function::new("dateTrunc".to_string(), vec![Expression::string("DAY"), f.args[0].clone()]),
-            ))),
+            "TOSTARTOFDAY" if f.args.len() == 1 => {
+                Ok(Expression::Function(Box::new(Function::new(
+                    "dateTrunc".to_string(),
+                    vec![Expression::string("DAY"), f.args[0].clone()],
+                ))))
+            }
 
             // SUBSTRING_INDEX: preserve original case (substringIndex in ClickHouse)
             "SUBSTRING_INDEX" => Ok(Expression::Function(Box::new(Function::new(
@@ -451,9 +465,10 @@ impl ClickHouseDialect {
             )))),
 
             // ANY_VALUE -> any in ClickHouse
-            "ANY_VALUE" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("any".to_string(), f.args),
-            ))),
+            "ANY_VALUE" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "any".to_string(),
+                f.args,
+            )))),
 
             // GROUP_CONCAT -> groupArray + arrayStringConcat
             "GROUP_CONCAT" if !f.args.is_empty() => {
@@ -522,13 +537,14 @@ impl ClickHouseDialect {
             }
 
             // ARRAY_AGG -> groupArray
-            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("groupArray".to_string(), f.args),
-            ))),
+            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "groupArray".to_string(),
+                f.args,
+            )))),
 
             // STDDEV -> stddevSamp in ClickHouse (sample stddev)
-            "STDDEV" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "STDDEV" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "stddevSamp".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -536,12 +552,12 @@ impl ClickHouseDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // STDDEV_POP -> stddevPop
-            "STDDEV_POP" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "STDDEV_POP" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "stddevPop".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -549,12 +565,12 @@ impl ClickHouseDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // VARIANCE -> varSamp in ClickHouse
-            "VARIANCE" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VARIANCE" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "varSamp".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -562,12 +578,12 @@ impl ClickHouseDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // VAR_POP -> varPop
-            "VAR_POP" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VAR_POP" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "varPop".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -575,12 +591,12 @@ impl ClickHouseDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // MEDIAN -> median
-            "MEDIAN" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "MEDIAN" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "median".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -588,8 +604,8 @@ impl ClickHouseDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // APPROX_COUNT_DISTINCT -> uniq in ClickHouse
             "APPROX_COUNT_DISTINCT" if !f.args.is_empty() => Ok(Expression::Function(Box::new(

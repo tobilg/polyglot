@@ -138,31 +138,36 @@ cd packages/sdk && npm run build
 
 ## Testing
 
-Polyglot maintains compatibility with sqlglot through **8,455 fixture tests** extracted from the Python reference implementation. All test suites pass at **100%**.
+Polyglot currently runs **10,220 SQLGlot fixture cases** plus additional project-specific suites. All strict pass/fail suites are at **100%** in the latest verification run.
 
 | Category | Count | Pass Rate |
 |----------|------:|:---------:|
-| Generic identity | 955 | 100% |
-| Dialect identity | 3,461 | 100% |
-| Transpilation | 4,015 | 100% |
-| Pretty-print | 24 | 100% |
-| Lib unit tests | 704 | 100% |
-| **Total** | **9,159** | **100%** |
+| SQLGlot generic identity | 956 | 100% |
+| SQLGlot dialect identity | 3,554 | 100% |
+| SQLGlot transpilation | 5,513 | 100% |
+| SQLGlot transpile (generic) | 145 | 100% |
+| SQLGlot parser | 29 | 100% |
+| SQLGlot pretty-print | 23 | 100% |
+| Lib unit tests | 739 | 100% |
+| Custom dialect identity | 276 | 100% |
+| Custom dialect transpilation | 347 | 100% |
+| ClickHouse parser corpus (non-skipped) | 7,047 | 100% |
+| **Total (strict pass/fail case count)** | **18,629** | **100%** |
 
 ```bash
 # Setup fixtures (required once)
 make setup-fixtures
 
 # Run all tests
-make test-rust-all          # All 8,455 fixture tests
-make test-rust-lib          # 704 lib unit tests
-make test-rust-verify       # Full verification (lib + identity + dialect + transpilation)
+make test-rust-all          # All SQLGlot fixture suites
+make test-rust-lib          # Lib unit tests
+make test-rust-verify       # Full strict verification suite
 
 # Individual test suites
-make test-rust-identity     # 955 generic identity tests
-make test-rust-dialect      # 3,461 dialect identity tests
-make test-rust-transpile    # 4,015 transpilation tests
-make test-rust-pretty       # 24 pretty-print tests
+make test-rust-identity     # 956 generic identity cases
+make test-rust-dialect      # 3,554 dialect identity cases
+make test-rust-transpile    # 5,513 transpilation cases
+make test-rust-pretty       # 23 pretty-print cases
 
 # Additional tests
 make test-rust-roundtrip    # Organized roundtrip unit tests
@@ -203,8 +208,8 @@ cargo +nightly fuzz run fuzz_transpile
 | `make build-all` | Build WASM + Rust (release) |
 | `make build-wasm` | Build WASM package + TypeScript SDK |
 | `make test-rust` | Run all sqlglot compatibility tests |
-| `make test-rust-all` | Run all 6,284 fixture tests |
-| `make test-rust-lib` | Run 693 lib unit tests |
+| `make test-rust-all` | Run all 10,220 SQLGlot fixture cases |
+| `make test-rust-lib` | Run 739 lib unit tests |
 | `make test-rust-verify` | Full verification suite |
 | `make test-compare` | Compare against Python sqlglot |
 | `make bench-compare` | Performance comparison |

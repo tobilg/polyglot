@@ -6,13 +6,13 @@
 //!
 //! Based on the Python implementation in `sqlglot/transforms.py`.
 
-use crate::error::Result;
-use crate::dialects::{Dialect, DialectType};
 use crate::dialects::transform_recursive;
+use crate::dialects::{Dialect, DialectType};
+use crate::error::Result;
 use crate::expressions::{
-    Alias, BinaryOp, BooleanLiteral, Cast, DataType, Exists, Expression, From, Identifier, Join,
-    Function, JoinKind, Lateral, LateralView, Literal, NamedArgSeparator, NamedArgument, Over, Select, StructField,
-    Subquery, UnaryFunc, UnnestFunc, Where,
+    Alias, BinaryOp, BooleanLiteral, Cast, DataType, Exists, Expression, From, Function,
+    Identifier, Join, JoinKind, Lateral, LateralView, Literal, NamedArgSeparator, NamedArgument,
+    Over, Select, StructField, Subquery, UnaryFunc, UnnestFunc, Where,
 };
 use std::cell::RefCell;
 
@@ -68,10 +68,8 @@ fn make_udtf_expr(unnest: &UnnestFunc) -> Expression {
         // Multi-arg: INLINE(ARRAYS_ZIP(arg1, arg2, ...))
         let mut all_args = vec![unnest.this.clone()];
         all_args.extend(unnest.expressions.iter().cloned());
-        let arrays_zip = Expression::Function(Box::new(Function::new(
-            "ARRAYS_ZIP".to_string(),
-            all_args,
-        )));
+        let arrays_zip =
+            Expression::Function(Box::new(Function::new("ARRAYS_ZIP".to_string(), all_args)));
         Expression::Function(Box::new(Function::new(
             "INLINE".to_string(),
             vec![arrays_zip],
@@ -83,7 +81,9 @@ fn make_udtf_expr(unnest: &UnnestFunc) -> Expression {
 }
 
 fn unnest_to_explode_select_inner(expr: Expression) -> Result<Expression> {
-    let Expression::Select(mut select) = expr else { return Ok(expr); };
+    let Expression::Select(mut select) = expr else {
+        return Ok(expr);
+    };
 
     // Process FROM clause: UNNEST items need conversion
     if let Some(ref mut from) = select.from {
@@ -130,7 +130,9 @@ fn unnest_to_explode_select_inner(expr: Expression) -> Result<Expression> {
                     if let Expression::Lateral(lat) = join.this {
                         // Extract alias from Lateral struct
                         let alias = lat.alias.map(|s| Identifier::new(&s));
-                        let col_aliases: Vec<Identifier> = lat.column_aliases.iter()
+                        let col_aliases: Vec<Identifier> = lat
+                            .column_aliases
+                            .iter()
                             .map(|s| Identifier::new(s))
                             .collect();
                         (alias, col_aliases, *lat.this)
@@ -152,9 +154,7 @@ fn unnest_to_explode_select_inner(expr: Expression) -> Result<Expression> {
                 };
 
                 // Use "unnest" as default alias if none provided (for single-arg case)
-                let table_alias = final_alias.or_else(|| {
-                    Some(Identifier::new("unnest"))
-                });
+                let table_alias = final_alias.or_else(|| Some(Identifier::new("unnest")));
                 let col_aliases = if final_col_aliases.is_empty() {
                     vec![Identifier::new("unnest")]
                 } else {
@@ -200,19 +200,17 @@ fn check_join_unnest(expr: &Expression) -> (bool, bool) {
                 (false, false)
             }
         }
-        Expression::Lateral(lat) => {
-            match &*lat.this {
-                Expression::Unnest(_) => (true, true),
-                Expression::Alias(a) => {
-                    if matches!(a.this, Expression::Unnest(_)) {
-                        (true, true)
-                    } else {
-                        (false, true)
-                    }
+        Expression::Lateral(lat) => match &*lat.this {
+            Expression::Unnest(_) => (true, true),
+            Expression::Alias(a) => {
+                if matches!(a.this, Expression::Unnest(_)) {
+                    (true, true)
+                } else {
+                    (false, true)
                 }
-                _ => (false, true),
             }
-        }
+            _ => (false, true),
+        },
         _ => (false, false),
     }
 }
@@ -226,9 +224,7 @@ fn replace_from_unnest(from_item: Expression) -> Expression {
             }
             Expression::Alias(a)
         }
-        Expression::Unnest(unnest) => {
-            make_udtf_expr(&unnest)
-        }
+        Expression::Unnest(unnest) => make_udtf_expr(&unnest),
         other => other,
     }
 }
@@ -241,43 +237,47 @@ fn extract_unnest_info(expr: Expression) -> (Option<Identifier>, Vec<Identifier>
                 (Some(a.alias), a.column_aliases, *unnest)
             } else {
                 // Should not happen if we already checked is_unnest_expr
-                (Some(a.alias), a.column_aliases, UnnestFunc {
-                    this: a.this,
-                    expressions: Vec::new(),
-                    with_ordinality: false,
-                    alias: None,
-                    offset_alias: None,
-                })
+                (
+                    Some(a.alias),
+                    a.column_aliases,
+                    UnnestFunc {
+                        this: a.this,
+                        expressions: Vec::new(),
+                        with_ordinality: false,
+                        alias: None,
+                        offset_alias: None,
+                    },
+                )
             }
         }
         Expression::Unnest(unnest) => {
             let alias = unnest.alias.clone();
             (alias, Vec::new(), *unnest)
         }
-        _ => {
-            (None, Vec::new(), UnnestFunc {
+        _ => (
+            None,
+            Vec::new(),
+            UnnestFunc {
                 this: expr,
                 expressions: Vec::new(),
                 with_ordinality: false,
                 alias: None,
                 offset_alias: None,
-            })
-        }
+            },
+        ),
     }
 }
 
 /// Convert EXPLODE to UNNEST (for standard SQL compatibility)
 pub fn explode_to_unnest(expr: Expression) -> Result<Expression> {
     match expr {
-        Expression::Explode(explode) => {
-            Ok(Expression::Unnest(Box::new(UnnestFunc {
-                this: explode.this,
-                expressions: Vec::new(),
-                with_ordinality: false,
-                alias: None,
-                offset_alias: None,
-            })))
-        }
+        Expression::Explode(explode) => Ok(Expression::Unnest(Box::new(UnnestFunc {
+            this: explode.this,
+            expressions: Vec::new(),
+            with_ordinality: false,
+            alias: None,
+            offset_alias: None,
+        }))),
         _ => Ok(expr),
     }
 }
@@ -306,7 +306,6 @@ pub fn replace_int_with_bool(expr: Expression) -> Result<Expression> {
         _ => Ok(expr),
     }
 }
-
 
 /// Remove precision from parameterized types
 ///
@@ -348,15 +347,24 @@ fn strip_type_params_recursive(expr: Expression) -> Expression {
 fn strip_data_type_params(dt: DataType) -> DataType {
     match dt {
         // Numeric types with precision/scale
-        DataType::Decimal { .. } => DataType::Decimal { precision: None, scale: None },
+        DataType::Decimal { .. } => DataType::Decimal {
+            precision: None,
+            scale: None,
+        },
         DataType::TinyInt { .. } => DataType::TinyInt { length: None },
         DataType::SmallInt { .. } => DataType::SmallInt { length: None },
-        DataType::Int { .. } => DataType::Int { length: None, integer_spelling: false },
+        DataType::Int { .. } => DataType::Int {
+            length: None,
+            integer_spelling: false,
+        },
         DataType::BigInt { .. } => DataType::BigInt { length: None },
 
         // String types with length
         DataType::Char { .. } => DataType::Char { length: None },
-        DataType::VarChar { .. } => DataType::VarChar { length: None, parenthesized_length: false },
+        DataType::VarChar { .. } => DataType::VarChar {
+            length: None,
+            parenthesized_length: false,
+        },
 
         // Binary types with length
         DataType::Binary { .. } => DataType::Binary { length: None },
@@ -367,17 +375,29 @@ fn strip_data_type_params(dt: DataType) -> DataType {
         DataType::VarBit { .. } => DataType::VarBit { length: None },
 
         // Time types with precision
-        DataType::Time { .. } => DataType::Time { precision: None, timezone: false },
-        DataType::Timestamp { timezone, .. } => DataType::Timestamp { precision: None, timezone },
+        DataType::Time { .. } => DataType::Time {
+            precision: None,
+            timezone: false,
+        },
+        DataType::Timestamp { timezone, .. } => DataType::Timestamp {
+            precision: None,
+            timezone,
+        },
 
         // Array - recursively strip element type
-        DataType::Array { element_type, dimension } => DataType::Array {
+        DataType::Array {
+            element_type,
+            dimension,
+        } => DataType::Array {
             element_type: Box::new(strip_data_type_params(*element_type)),
             dimension,
         },
 
         // Map - recursively strip key and value types
-        DataType::Map { key_type, value_type } => DataType::Map {
+        DataType::Map {
+            key_type,
+            value_type,
+        } => DataType::Map {
             key_type: Box::new(strip_data_type_params(*key_type)),
             value_type: Box::new(strip_data_type_params(*value_type)),
         },
@@ -386,7 +406,13 @@ fn strip_data_type_params(dt: DataType) -> DataType {
         DataType::Struct { fields, nested } => DataType::Struct {
             fields: fields
                 .into_iter()
-                .map(|f| StructField::with_options(f.name, strip_data_type_params(f.data_type), f.options))
+                .map(|f| {
+                    StructField::with_options(
+                        f.name,
+                        strip_data_type_params(f.data_type),
+                        f.options,
+                    )
+                })
                 .collect(),
             nested,
         },
@@ -410,7 +436,6 @@ fn strip_data_type_params(dt: DataType) -> DataType {
         other => other,
     }
 }
-
 
 /// Eliminate QUALIFY clause by converting to a subquery with WHERE filter
 ///
@@ -442,37 +467,40 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
 
                 // Try to extract window function from comparison
                 // Pattern: WINDOW_FUNC = value -> inner adds WINDOW_FUNC AS _w, outer WHERE _w = value
-                let (window_expr, outer_where) = extract_window_from_condition(
-                    qualify_filter.clone(),
-                    &window_alias_ident,
-                );
+                let (window_expr, outer_where) =
+                    extract_window_from_condition(qualify_filter.clone(), &window_alias_ident);
 
                 if let Some(win_expr) = window_expr {
                     // Add window function as _w alias to inner select
-                    let window_alias_expr = Expression::Alias(Box::new(crate::expressions::Alias {
-                        this: win_expr,
-                        alias: window_alias_ident.clone(),
-                        column_aliases: vec![],
-                        pre_alias_comments: vec![],
-                        trailing_comments: vec![],
-                    }));
+                    let window_alias_expr =
+                        Expression::Alias(Box::new(crate::expressions::Alias {
+                            this: win_expr,
+                            alias: window_alias_ident.clone(),
+                            column_aliases: vec![],
+                            pre_alias_comments: vec![],
+                            trailing_comments: vec![],
+                        }));
 
                     // For the outer SELECT, replace aliased expressions with just the alias reference
                     // e.g., `1 AS other_id` in inner -> `other_id` in outer
                     // Non-aliased expressions (columns, identifiers) stay as-is
-                    let outer_exprs: Vec<Expression> = select.expressions.iter().map(|expr| {
-                        if let Expression::Alias(a) = expr {
-                            // Replace with just the alias identifier as a column reference
-                            Expression::Column(crate::expressions::Column {
-                                name: a.alias.clone(),
-                                table: None,
-                                join_mark: false,
-                                trailing_comments: vec![],
-                            })
-                        } else {
-                            expr.clone()
-                        }
-                    }).collect();
+                    let outer_exprs: Vec<Expression> = select
+                        .expressions
+                        .iter()
+                        .map(|expr| {
+                            if let Expression::Alias(a) = expr {
+                                // Replace with just the alias identifier as a column reference
+                                Expression::Column(crate::expressions::Column {
+                                    name: a.alias.clone(),
+                                    table: None,
+                                    join_mark: false,
+                                    trailing_comments: vec![],
+                                })
+                            } else {
+                                expr.clone()
+                            }
+                        })
+                        .collect();
                     select.expressions.push(window_alias_expr);
 
                     // Create the inner subquery
@@ -498,9 +526,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                         from: Some(From {
                             expressions: vec![Expression::Subquery(Box::new(subquery))],
                         }),
-                        where_clause: Some(Where {
-                            this: outer_where,
-                        }),
+                        where_clause: Some(Where { this: outer_where }),
                         ..Select::new()
                     };
 
@@ -578,110 +604,144 @@ fn extract_window_from_condition(
         // WINDOW_FUNC = value
         Expression::Eq(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Eq(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Eq(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Eq(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Eq(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         Expression::Neq(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Neq(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Neq(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Neq(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Neq(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         Expression::Lt(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Lt(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Lt(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Lt(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Lt(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         Expression::Lte(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Lte(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Lte(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Lte(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Lte(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         Expression::Gt(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Gt(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Gt(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Gt(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Gt(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         Expression::Gte(ref op) => {
             if is_window_expr(&op.left) {
-                (Some(op.left.clone()), Expression::Gte(Box::new(BinaryOp {
-                    left: alias_col,
-                    right: op.right.clone(),
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.left.clone()),
+                    Expression::Gte(Box::new(BinaryOp {
+                        left: alias_col,
+                        right: op.right.clone(),
+                        ..(**op).clone()
+                    })),
+                )
             } else if is_window_expr(&op.right) {
-                (Some(op.right.clone()), Expression::Gte(Box::new(BinaryOp {
-                    left: op.left.clone(),
-                    right: alias_col,
-                    ..(**op).clone()
-                })))
+                (
+                    Some(op.right.clone()),
+                    Expression::Gte(Box::new(BinaryOp {
+                        left: op.left.clone(),
+                        right: alias_col,
+                        ..(**op).clone()
+                    })),
+                )
             } else {
                 (None, condition)
             }
         }
         // If the condition is just a window function (bare QUALIFY expression)
-        _ if is_window_expr(&condition) => {
-            (Some(condition), alias_col)
-        }
+        _ if is_window_expr(&condition) => (Some(condition), alias_col),
         // Can't extract window function
         _ => (None, condition),
     }
@@ -718,11 +778,17 @@ pub fn eliminate_distinct_on(expr: Expression) -> Result<Expression> {
 ///
 /// For dialects where NULLs don't sort first by default in DESC ordering,
 /// we need to add explicit NULL ordering to preserve DISTINCT ON semantics.
-pub fn eliminate_distinct_on_for_dialect(expr: Expression, target: Option<DialectType>) -> Result<Expression> {
+pub fn eliminate_distinct_on_for_dialect(
+    expr: Expression,
+    target: Option<DialectType>,
+) -> Result<Expression> {
     use crate::expressions::Case;
 
     // PostgreSQL and DuckDB support DISTINCT ON natively - skip elimination
-    if matches!(target, Some(DialectType::PostgreSQL) | Some(DialectType::DuckDB)) {
+    if matches!(
+        target,
+        Some(DialectType::PostgreSQL) | Some(DialectType::DuckDB)
+    ) {
         return Ok(expr);
     }
 
@@ -731,15 +797,20 @@ pub fn eliminate_distinct_on_for_dialect(expr: Expression, target: Option<Dialec
     // BigQuery/Spark/Presto/Hive/etc: need explicit NULLS FIRST
     // MySQL/StarRocks/TSQL: no NULLS FIRST syntax -> use CASE WHEN IS NULL
     enum NullsMode {
-        None,         // Default NULLS FIRST behavior (Oracle, Redshift, Snowflake)
-        NullsFirst,   // Add explicit NULLS FIRST (BigQuery, Spark, Presto, Hive, etc.)
-        CaseExpr,     // Use CASE WHEN IS NULL for NULLS FIRST simulation (MySQL, StarRocks, TSQL)
+        None,       // Default NULLS FIRST behavior (Oracle, Redshift, Snowflake)
+        NullsFirst, // Add explicit NULLS FIRST (BigQuery, Spark, Presto, Hive, etc.)
+        CaseExpr,   // Use CASE WHEN IS NULL for NULLS FIRST simulation (MySQL, StarRocks, TSQL)
     }
 
     let nulls_mode = match target {
-        Some(DialectType::MySQL) | Some(DialectType::StarRocks) | Some(DialectType::SingleStore)
-        | Some(DialectType::TSQL) | Some(DialectType::Fabric) => NullsMode::CaseExpr,
-        Some(DialectType::Oracle) | Some(DialectType::Redshift) | Some(DialectType::Snowflake) => NullsMode::None,
+        Some(DialectType::MySQL)
+        | Some(DialectType::StarRocks)
+        | Some(DialectType::SingleStore)
+        | Some(DialectType::TSQL)
+        | Some(DialectType::Fabric) => NullsMode::CaseExpr,
+        Some(DialectType::Oracle) | Some(DialectType::Redshift) | Some(DialectType::Snowflake) => {
+            NullsMode::None
+        }
         // All other dialects that don't support DISTINCT ON: use NULLS FIRST
         _ => NullsMode::NullsFirst,
     };
@@ -773,14 +844,20 @@ pub fn eliminate_distinct_on_for_dialect(expr: Expression, target: Option<Dialec
                                         let null_check = Expression::Case(Box::new(Case {
                                             operand: None,
                                             whens: vec![(
-                                                Expression::IsNull(Box::new(crate::expressions::IsNull {
-                                                    this: ord.this.clone(),
-                                                    not: false,
-                                                    postfix_form: false,
-                                                })),
-                                                Expression::Literal(Literal::Number("1".to_string())),
+                                                Expression::IsNull(Box::new(
+                                                    crate::expressions::IsNull {
+                                                        this: ord.this.clone(),
+                                                        not: false,
+                                                        postfix_form: false,
+                                                    },
+                                                )),
+                                                Expression::Literal(Literal::Number(
+                                                    "1".to_string(),
+                                                )),
                                             )],
-                                            else_: Some(Expression::Literal(Literal::Number("0".to_string()))),
+                                            else_: Some(Expression::Literal(Literal::Number(
+                                                "0".to_string(),
+                                            ))),
                                             comments: Vec::new(),
                                         }));
                                         new_exprs.push(crate::expressions::Ordered {
@@ -812,8 +889,8 @@ pub fn eliminate_distinct_on_for_dialect(expr: Expression, target: Option<Dialec
                     };
 
                     // Create window function: ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)
-                    let row_number_func = Expression::WindowFunction(Box::new(
-                        crate::expressions::WindowFunction {
+                    let row_number_func =
+                        Expression::WindowFunction(Box::new(crate::expressions::WindowFunction {
                             this: Expression::RowNumber(crate::expressions::RowNumber),
                             over: Over {
                                 partition_by: distinct_cols,
@@ -823,8 +900,7 @@ pub fn eliminate_distinct_on_for_dialect(expr: Expression, target: Option<Dialec
                                 alias: None,
                             },
                             keep: None,
-                        },
-                    ));
+                        }));
 
                     // Build aliased inner expressions and outer column references
                     // Inner: SELECT a AS a, b AS b, ROW_NUMBER() OVER (...) AS _row_number
@@ -968,9 +1044,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                                 from: Some(From {
                                     expressions: vec![join.this],
                                 }),
-                                where_clause: Some(Where {
-                                    this: on_condition,
-                                }),
+                                where_clause: Some(Where { this: on_condition }),
                                 ..Select::new()
                             };
 
@@ -1005,9 +1079,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                                 from: Some(From {
                                     expressions: vec![join.this],
                                 }),
-                                where_clause: Some(Where {
-                                    this: on_condition,
-                                }),
+                                where_clause: Some(Where { this: on_condition }),
                                 ..Select::new()
                             };
 
@@ -1102,7 +1174,11 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
 
             if let Some(idx) = full_outer_join_idx {
                 // We only handle queries with a single FULL OUTER join
-                let full_join_count = select.joins.iter().filter(|j| j.kind == JoinKind::Full).count();
+                let full_join_count = select
+                    .joins
+                    .iter()
+                    .filter(|j| j.kind == JoinKind::Full)
+                    .count();
                 if full_join_count != 1 {
                     return Ok(Expression::Select(select));
                 }
@@ -1124,9 +1200,13 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                 if let (Some(ref from), Some(ref join_cond)) = (&select.from, &join_condition) {
                     if !from.expressions.is_empty() {
                         let anti_subquery = Expression::Select(Box::new(Select {
-                            expressions: vec![Expression::Literal(Literal::Number("1".to_string()))],
+                            expressions: vec![Expression::Literal(Literal::Number(
+                                "1".to_string(),
+                            ))],
                             from: Some(from.clone()),
-                            where_clause: Some(Where { this: join_cond.clone() }),
+                            where_clause: Some(Where {
+                                this: join_cond.clone(),
+                            }),
                             ..Select::new()
                         }));
 
@@ -1221,7 +1301,12 @@ pub fn move_ctes_to_top_level(expr: Expression) -> Result<Expression> {
             let mut collected_ctes: Vec<crate::expressions::Cte> = Vec::new();
             let mut has_recursive = false;
 
-            collect_nested_ctes(&Expression::Select(select.clone()), &mut collected_ctes, &mut has_recursive, true);
+            collect_nested_ctes(
+                &Expression::Select(select.clone()),
+                &mut collected_ctes,
+                &mut has_recursive,
+                true,
+            );
 
             // Phase 2: Flatten CTEs nested inside top-level CTE definitions
             // This handles: WITH c AS (WITH b AS (...) SELECT ...) -> WITH b AS (...), c AS (SELECT ...)
@@ -1268,7 +1353,10 @@ pub fn move_ctes_to_top_level(expr: Expression) -> Result<Expression> {
                     let mut new_ctes: Vec<crate::expressions::Cte> = Vec::new();
                     for mut cte in top_with.ctes.drain(..) {
                         // Check if this CTE has nested CTEs to insert before it
-                        if let Some(pos) = cte_body_collected.iter().position(|(name, _)| *name == cte.alias.name) {
+                        if let Some(pos) = cte_body_collected
+                            .iter()
+                            .position(|(name, _)| *name == cte.alias.name)
+                        {
                             let (_, mut nested) = cte_body_collected.remove(pos);
                             // Strip WITH from each nested CTE's body too
                             for nested_cte in nested.iter_mut() {
@@ -1514,9 +1602,10 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
     match expr {
         Expression::Select(mut select) => {
             // Check if there are any join marks in the WHERE clause
-            let has_join_marks = select.where_clause.as_ref().map_or(false, |w| {
-                contains_join_mark(&w.this)
-            });
+            let has_join_marks = select
+                .where_clause
+                .as_ref()
+                .map_or(false, |w| contains_join_mark(&w.this));
 
             if !has_join_marks {
                 return Ok(Expression::Select(select));
@@ -1567,9 +1656,11 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
 
                     // Find the table in FROM and move it to a JOIN
                     if let Some(ref mut from) = select.from {
-                        if let Some(pos) = from.expressions.iter().position(|e| {
-                            get_table_name(e).map_or(false, |n| n == table_name)
-                        }) {
+                        if let Some(pos) = from
+                            .expressions
+                            .iter()
+                            .position(|e| get_table_name(e).map_or(false, |n| n == table_name))
+                        {
                             if from.expressions.len() > 1 {
                                 let join_table = from.expressions.remove(pos);
                                 new_joins.push(crate::expressions::Join {
@@ -1585,6 +1676,7 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
                                     pivots: Vec::new(),
                                     comments: Vec::new(),
                                     nesting_group: 0,
+                                    directed: false,
                                 });
                             }
                         }
@@ -1626,10 +1718,12 @@ fn contains_join_mark(expr: &Expression) -> bool {
         Expression::And(op) | Expression::Or(op) => {
             contains_join_mark(&op.left) || contains_join_mark(&op.right)
         }
-        Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op)
-        | Expression::Lte(op) | Expression::Gt(op) | Expression::Gte(op) => {
-            contains_join_mark(&op.left) || contains_join_mark(&op.right)
-        }
+        Expression::Eq(op)
+        | Expression::Neq(op)
+        | Expression::Lt(op)
+        | Expression::Lte(op)
+        | Expression::Gt(op)
+        | Expression::Gte(op) => contains_join_mark(&op.left) || contains_join_mark(&op.right),
         Expression::Not(op) => contains_join_mark(&op.this),
         _ => false,
     }
@@ -1671,8 +1765,12 @@ fn extract_join_mark_conditions(
 /// Get the table name of a column with join mark in an expression
 fn get_join_mark_table(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op)
-        | Expression::Lte(op) | Expression::Gt(op) | Expression::Gte(op) => {
+        Expression::Eq(op)
+        | Expression::Neq(op)
+        | Expression::Lt(op)
+        | Expression::Lte(op)
+        | Expression::Gt(op)
+        | Expression::Gte(op) => {
             // Check both sides for join mark columns
             if let Expression::Column(col) = &op.left {
                 if col.join_mark {
@@ -1706,8 +1804,12 @@ fn clear_join_marks(expr: &mut Expression) {
             clear_join_marks(&mut op.left);
             clear_join_marks(&mut op.right);
         }
-        Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op)
-        | Expression::Lte(op) | Expression::Gt(op) | Expression::Gte(op) => {
+        Expression::Eq(op)
+        | Expression::Neq(op)
+        | Expression::Lt(op)
+        | Expression::Lte(op)
+        | Expression::Gt(op)
+        | Expression::Gte(op) => {
             clear_join_marks(&mut op.left);
             clear_join_marks(&mut op.right);
         }
@@ -1850,11 +1952,15 @@ pub fn ensure_bools(expr: Expression) -> Result<Expression> {
 fn ensure_bools_in_case(expr: Expression) -> Expression {
     match expr {
         Expression::Case(mut case) => {
-            case.whens = case.whens.into_iter().map(|(condition, result)| {
-                let new_condition = ensure_bool_condition(ensure_bools_in_case(condition));
-                let new_result = ensure_bools_in_case(result);
-                (new_condition, new_result)
-            }).collect();
+            case.whens = case
+                .whens
+                .into_iter()
+                .map(|(condition, result)| {
+                    let new_condition = ensure_bool_condition(ensure_bools_in_case(condition));
+                    let new_result = ensure_bools_in_case(result);
+                    (new_condition, new_result)
+                })
+                .collect();
             if let Some(else_expr) = case.else_ {
                 case.else_ = Some(ensure_bools_in_case(else_expr));
             }
@@ -1862,7 +1968,11 @@ fn ensure_bools_in_case(expr: Expression) -> Expression {
         }
         Expression::Select(mut select) => {
             // Recursively process expressions in the SELECT list
-            select.expressions = select.expressions.into_iter().map(ensure_bools_in_case).collect();
+            select.expressions = select
+                .expressions
+                .into_iter()
+                .map(ensure_bools_in_case)
+                .collect();
             // Process WHERE/HAVING are handled by ensure_bools main function
             Expression::Select(select)
         }
@@ -2066,11 +2176,19 @@ fn unqualify_columns_recursive(expr: Expression) -> Expression {
         Expression::Div(op) => Expression::Div(Box::new(unqualify_binary_op(*op))),
         // Functions
         Expression::Function(mut func) => {
-            func.args = func.args.into_iter().map(unqualify_columns_recursive).collect();
+            func.args = func
+                .args
+                .into_iter()
+                .map(unqualify_columns_recursive)
+                .collect();
             Expression::Function(func)
         }
         Expression::AggregateFunction(mut func) => {
-            func.args = func.args.into_iter().map(unqualify_columns_recursive).collect();
+            func.args = func
+                .args
+                .into_iter()
+                .map(unqualify_columns_recursive)
+                .collect();
             Expression::AggregateFunction(func)
         }
         Expression::Case(mut case) => {
@@ -2136,7 +2254,9 @@ pub fn unnest_generate_date_array_using_recursive_cte(expr: Expression) -> Resul
             // Process FROM clause
             if let Some(ref mut from) = select.from {
                 for table_expr in &mut from.expressions {
-                    if let Some((cte, replacement)) = try_convert_generate_date_array(table_expr, &mut cte_count) {
+                    if let Some((cte, replacement)) =
+                        try_convert_generate_date_array(table_expr, &mut cte_count)
+                    {
                         new_ctes.push(cte);
                         *table_expr = replacement;
                     }
@@ -2145,7 +2265,9 @@ pub fn unnest_generate_date_array_using_recursive_cte(expr: Expression) -> Resul
 
             // Process JOINs
             for join in &mut select.joins {
-                if let Some((cte, replacement)) = try_convert_generate_date_array(&join.this, &mut cte_count) {
+                if let Some((cte, replacement)) =
+                    try_convert_generate_date_array(&join.this, &mut cte_count)
+                {
                     new_ctes.push(cte);
                     join.this = replacement;
                 }
@@ -2185,7 +2307,9 @@ fn process_expression_for_gda(
             // Process FROM clause
             if let Some(ref mut from) = select.from {
                 for table_expr in &mut from.expressions {
-                    if let Some((cte, replacement)) = try_convert_generate_date_array(table_expr, cte_count) {
+                    if let Some((cte, replacement)) =
+                        try_convert_generate_date_array(table_expr, cte_count)
+                    {
                         new_ctes.push(cte);
                         *table_expr = replacement;
                     }
@@ -2193,7 +2317,9 @@ fn process_expression_for_gda(
             }
             // Process JOINs
             for join in &mut select.joins {
-                if let Some((cte, replacement)) = try_convert_generate_date_array(&join.this, cte_count) {
+                if let Some((cte, replacement)) =
+                    try_convert_generate_date_array(&join.this, cte_count)
+                {
                     new_ctes.push(cte);
                     join.this = replacement;
                 }
@@ -2225,7 +2351,9 @@ fn try_convert_generate_date_array_with_name(
     column_name_override: Option<&str>,
 ) -> Option<(crate::expressions::Cte, Expression)> {
     // Helper: extract (start, end, step) from GENERATE_DATE_ARRAY/GenerateSeries variants
-    fn extract_gda_args(inner: &Expression) -> Option<(&Expression, &Expression, Option<&Expression>)> {
+    fn extract_gda_args(
+        inner: &Expression,
+    ) -> Option<(&Expression, &Expression, Option<&Expression>)> {
         match inner {
             Expression::GenerateDateArray(gda) => {
                 let start = gda.start.as_ref()?;
@@ -2268,9 +2396,8 @@ fn try_convert_generate_date_array_with_name(
             };
             *cte_count += 1;
 
-            let column_name = Identifier::new(
-                column_name_override.unwrap_or("date_value").to_string()
-            );
+            let column_name =
+                Identifier::new(column_name_override.unwrap_or("date_value").to_string());
 
             // Helper: wrap expression in CAST(... AS DATE) unless already a date literal or CAST to DATE
             let cast_to_date = |expr: &Expression| -> Expression {
@@ -2332,7 +2459,7 @@ fn try_convert_generate_date_array_with_name(
 
             // Build recursive case: DateAdd(date_value, count, unit) from CTE where result <= end
             // Extract interval unit and count from step expression
-            let normalized_step = step.map(|s| normalize_interval(s)).unwrap_or_else(||
+            let normalized_step = step.map(|s| normalize_interval(s)).unwrap_or_else(|| {
                 Expression::Interval(Box::new(crate::expressions::Interval {
                     this: Some(Expression::Literal(Literal::Number("1".to_string()))),
                     unit: Some(crate::expressions::IntervalUnitSpec::Simple {
@@ -2340,7 +2467,7 @@ fn try_convert_generate_date_array_with_name(
                         use_plural: false,
                     }),
                 }))
-            );
+            });
 
             // Extract unit and count from interval expression to build DateAddFunc
             let (add_unit, add_count) = extract_interval_unit_and_count(&normalized_step);
@@ -2368,7 +2495,9 @@ fn try_convert_generate_date_array_with_name(
             let recursive_select = Select {
                 expressions: vec![cast_date_add.clone()],
                 from: Some(From {
-                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(&cte_name))],
+                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(
+                        &cte_name,
+                    ))],
                 }),
                 where_clause: Some(Where {
                     this: Expression::Lte(Box::new(BinaryOp {
@@ -2423,7 +2552,9 @@ fn try_convert_generate_date_array_with_name(
                     trailing_comments: vec![],
                 })],
                 from: Some(From {
-                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(&cte_name))],
+                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(
+                        &cte_name,
+                    ))],
                 }),
                 ..Select::new()
             };
@@ -2450,9 +2581,10 @@ fn try_convert_generate_date_array_with_name(
     // Also check for aliased UNNEST like UNNEST(...) AS _q(date_week)
     if let Expression::Alias(alias) = expr {
         // Extract column name from alias column_aliases if present
-        let col_name = alias.column_aliases.first()
-            .map(|id| id.name.as_str());
-        if let Some((cte, replacement)) = try_convert_generate_date_array_with_name(&alias.this, cte_count, col_name) {
+        let col_name = alias.column_aliases.first().map(|id| id.name.as_str());
+        if let Some((cte, replacement)) =
+            try_convert_generate_date_array_with_name(&alias.this, cte_count, col_name)
+        {
             // If we extracted a column name from the alias, don't preserve the outer alias
             // since the CTE now uses that column name directly
             if col_name.is_some() {
@@ -2476,7 +2608,9 @@ fn try_convert_generate_date_array_with_name(
 /// Handles both structured intervals (with separate unit field) and
 /// string-encoded intervals like `INTERVAL '1 WEEK'` where unit is None
 /// and the value contains both count and unit.
-fn extract_interval_unit_and_count(expr: &Expression) -> (crate::expressions::IntervalUnit, Expression) {
+fn extract_interval_unit_and_count(
+    expr: &Expression,
+) -> (crate::expressions::IntervalUnit, Expression) {
     use crate::expressions::{IntervalUnit, IntervalUnitSpec, Literal};
 
     if let Expression::Interval(ref iv) = expr {
@@ -2494,7 +2628,8 @@ fn extract_interval_unit_and_count(expr: &Expression) -> (crate::expressions::In
         // Second try: parse from string value like "1 WEEK" or "1"
         if let Some(ref val_expr) = iv.this {
             match val_expr {
-                Expression::Literal(Literal::String(s)) | Expression::Literal(Literal::Number(s)) => {
+                Expression::Literal(Literal::String(s))
+                | Expression::Literal(Literal::Number(s)) => {
                     // Try to parse "count unit" format like "1 WEEK", "1 MONTH"
                     let parts: Vec<&str> = s.trim().splitn(2, char::is_whitespace).collect();
                     if parts.len() == 2 {
@@ -2513,11 +2648,17 @@ fn extract_interval_unit_and_count(expr: &Expression) -> (crate::expressions::In
                             "MICROSECOND" | "MICROSECONDS" => IntervalUnit::Microsecond,
                             _ => IntervalUnit::Day,
                         };
-                        return (unit, Expression::Literal(Literal::Number(count_str.to_string())));
+                        return (
+                            unit,
+                            Expression::Literal(Literal::Number(count_str.to_string())),
+                        );
                     }
                     // Just a number with no unit - default to Day
                     if s.parse::<f64>().is_ok() {
-                        return (IntervalUnit::Day, Expression::Literal(Literal::Number(s.clone())));
+                        return (
+                            IntervalUnit::Day,
+                            Expression::Literal(Literal::Number(s.clone())),
+                        );
                     }
                 }
                 _ => {}
@@ -2525,9 +2666,15 @@ fn extract_interval_unit_and_count(expr: &Expression) -> (crate::expressions::In
         }
 
         // Fallback
-        (IntervalUnit::Day, Expression::Literal(Literal::Number("1".to_string())))
+        (
+            IntervalUnit::Day,
+            Expression::Literal(Literal::Number("1".to_string())),
+        )
     } else {
-        (IntervalUnit::Day, Expression::Literal(Literal::Number("1".to_string())))
+        (
+            IntervalUnit::Day,
+            Expression::Literal(Literal::Number("1".to_string())),
+        )
     }
 }
 
@@ -2587,9 +2734,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
 /// Reference: `generator.py:no_trycast_sql()`
 pub fn no_trycast_sql(expr: Expression) -> Result<Expression> {
     match expr {
-        Expression::TryCast(try_cast) => {
-            Ok(Expression::Cast(try_cast))
-        }
+        Expression::TryCast(try_cast) => Ok(Expression::Cast(try_cast)),
         other => Ok(other),
     }
 }
@@ -2600,9 +2745,7 @@ pub fn no_trycast_sql(expr: Expression) -> Result<Expression> {
 /// this converts SAFE_CAST to regular CAST.
 pub fn no_safe_cast_sql(expr: Expression) -> Result<Expression> {
     match expr {
-        Expression::SafeCast(safe_cast) => {
-            Ok(Expression::Cast(safe_cast))
-        }
+        Expression::SafeCast(safe_cast) => Ok(Expression::Cast(safe_cast)),
         other => Ok(other),
     }
 }
@@ -2909,7 +3052,11 @@ pub fn pushdown_cte_column_names(expr: Expression) -> Result<Expression> {
                             let new_exprs: Vec<Expression> = inner_select
                                 .expressions
                                 .drain(..)
-                                .zip(column_names.into_iter().chain(std::iter::repeat_with(|| Identifier::new(""))))
+                                .zip(
+                                    column_names
+                                        .into_iter()
+                                        .chain(std::iter::repeat_with(|| Identifier::new(""))),
+                                )
                                 .map(|(expr, col_name)| {
                                     if col_name.name.is_empty() {
                                         return expr;
@@ -3063,7 +3210,7 @@ pub fn propagate_struct_field_names(expr: Expression) -> Result<Expression> {
 }
 
 fn propagate_struct_names_in_expr(expr: Expression) -> Result<Expression> {
-    use crate::expressions::{Alias, Function, Identifier, ArrayConstructor};
+    use crate::expressions::{Alias, ArrayConstructor, Function, Identifier};
 
     /// Helper to propagate struct field names within an array of expressions
     fn propagate_in_elements(elements: &[Expression]) -> Option<Vec<Expression>> {
@@ -3074,13 +3221,17 @@ fn propagate_struct_names_in_expr(expr: Expression) -> Result<Expression> {
         if let Some(Expression::Function(ref first_struct)) = elements.first() {
             if first_struct.name.eq_ignore_ascii_case("STRUCT") {
                 // Extract field names from first struct
-                let field_names: Vec<Option<String>> = first_struct.args.iter().map(|arg| {
-                    if let Expression::Alias(a) = arg {
-                        Some(a.alias.name.clone())
-                    } else {
-                        None
-                    }
-                }).collect();
+                let field_names: Vec<Option<String>> = first_struct
+                    .args
+                    .iter()
+                    .map(|arg| {
+                        if let Expression::Alias(a) = arg {
+                            Some(a.alias.name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
                 // Only propagate if first struct has at least one named field
                 if field_names.iter().any(|n| n.is_some()) {
@@ -3089,24 +3240,32 @@ fn propagate_struct_names_in_expr(expr: Expression) -> Result<Expression> {
 
                     for elem in &elements[1..] {
                         if let Expression::Function(ref s) = elem {
-                            if s.name.eq_ignore_ascii_case("STRUCT") && s.args.len() == field_names.len() {
+                            if s.name.eq_ignore_ascii_case("STRUCT")
+                                && s.args.len() == field_names.len()
+                            {
                                 // Check if this struct has NO names (all unnamed)
-                                let all_unnamed = s.args.iter().all(|a| !matches!(a, Expression::Alias(_)));
+                                let all_unnamed =
+                                    s.args.iter().all(|a| !matches!(a, Expression::Alias(_)));
                                 if all_unnamed {
                                     // Apply names from first struct
-                                    let new_args: Vec<Expression> = s.args.iter().zip(field_names.iter()).map(|(val, name)| {
-                                        if let Some(n) = name {
-                                            Expression::Alias(Box::new(Alias::new(
-                                                val.clone(),
-                                                Identifier::new(n.clone()),
-                                            )))
-                                        } else {
-                                            val.clone()
-                                        }
-                                    }).collect();
-                                    new_elements.push(Expression::Function(Box::new(Function::new(
-                                        "STRUCT".to_string(), new_args,
-                                    ))));
+                                    let new_args: Vec<Expression> = s
+                                        .args
+                                        .iter()
+                                        .zip(field_names.iter())
+                                        .map(|(val, name)| {
+                                            if let Some(n) = name {
+                                                Expression::Alias(Box::new(Alias::new(
+                                                    val.clone(),
+                                                    Identifier::new(n.clone()),
+                                                )))
+                                            } else {
+                                                val.clone()
+                                            }
+                                        })
+                                        .collect();
+                                    new_elements.push(Expression::Function(Box::new(
+                                        Function::new("STRUCT".to_string(), new_args),
+                                    )));
                                     continue;
                                 }
                             }
@@ -3189,6 +3348,7 @@ fn unnest_from_to_cross_join_single_select(expr: Expression) -> Result<Expressio
                                 pivots: Vec::new(),
                                 comments: Vec::new(),
                                 nesting_group: 0,
+                                directed: false,
                             });
                         } else {
                             new_from_exprs.push(from_item);
@@ -3298,6 +3458,7 @@ fn unnest_alias_transform_single_select(expr: Expression) -> Result<Expression> 
                                 pivots: Vec::new(),
                                 comments: Vec::new(),
                                 nesting_group: 0,
+                                directed: false,
                             });
                         } else {
                             // Keep non-UNNEST items in FROM
@@ -3365,7 +3526,10 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                             let arg = func.args[0].clone();
                             // Get alias names: default pos, col
                             let (pos_name, col_name) = if alias_box.column_aliases.len() == 2 {
-                                (alias_box.column_aliases[0].name.clone(), alias_box.column_aliases[1].name.clone())
+                                (
+                                    alias_box.column_aliases[0].name.clone(),
+                                    alias_box.column_aliases[1].name.clone(),
+                                )
                             } else if !alias_box.alias.is_empty() {
                                 // Single alias like AS x - use as col name, "pos" for position
                                 ("pos".to_string(), alias_box.alias.name.clone())
@@ -3376,7 +3540,10 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                             // GENERATE_SUBSCRIPTS(x, 1) - 1 AS pos_name
                             let gen_subscripts = Expression::Function(Box::new(Function::new(
                                 "GENERATE_SUBSCRIPTS".to_string(),
-                                vec![arg.clone(), Expression::Literal(Literal::Number("1".to_string()))],
+                                vec![
+                                    arg.clone(),
+                                    Expression::Literal(Literal::Number("1".to_string())),
+                                ],
                             )));
                             let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                                 gen_subscripts,
@@ -3424,7 +3591,10 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                         // GENERATE_SUBSCRIPTS(x, 1) - 1 AS pos
                         let gen_subscripts = Expression::Function(Box::new(Function::new(
                             "GENERATE_SUBSCRIPTS".to_string(),
-                            vec![arg.clone(), Expression::Literal(Literal::Number("1".to_string()))],
+                            vec![
+                                arg.clone(),
+                                Expression::Literal(Literal::Number("1".to_string())),
+                            ],
                         )));
                         let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                             gen_subscripts,
@@ -3497,7 +3667,10 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                 if func.name.eq_ignore_ascii_case("POSEXPLODE") && func.args.len() == 1 {
                     let arg = func.args[0].clone();
                     let (pos_name, col_name) = if alias_box.column_aliases.len() == 2 {
-                        (alias_box.column_aliases[0].name.clone(), alias_box.column_aliases[1].name.clone())
+                        (
+                            alias_box.column_aliases[0].name.clone(),
+                            alias_box.column_aliases[1].name.clone(),
+                        )
                     } else {
                         ("pos".to_string(), "col".to_string())
                     };
@@ -3505,7 +3678,10 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                     // Create subquery: (SELECT GENERATE_SUBSCRIPTS(x, 1) - 1 AS a, UNNEST(x) AS b)
                     let gen_subscripts = Expression::Function(Box::new(Function::new(
                         "GENERATE_SUBSCRIPTS".to_string(),
-                        vec![arg.clone(), Expression::Literal(Literal::Number("1".to_string()))],
+                        vec![
+                            arg.clone(),
+                            Expression::Literal(Literal::Number("1".to_string())),
+                        ],
                     )));
                     let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                         gen_subscripts,
@@ -3565,7 +3741,10 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                 // Create subquery: (SELECT GENERATE_SUBSCRIPTS(x, 1) - 1 AS pos, UNNEST(x) AS col)
                 let gen_subscripts = Expression::Function(Box::new(Function::new(
                     "GENERATE_SUBSCRIPTS".to_string(),
-                    vec![arg.clone(), Expression::Literal(Literal::Number("1".to_string()))],
+                    vec![
+                        arg.clone(),
+                        Expression::Literal(Literal::Number("1".to_string())),
+                    ],
                 )));
                 let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                     gen_subscripts,
@@ -3639,9 +3818,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
 /// - Presto (index_offset=1) and BigQuery (index_offset=0) variants
 pub fn explode_projection_to_unnest(expr: Expression, target: DialectType) -> Result<Expression> {
     match expr {
-        Expression::Select(select) => {
-            explode_projection_to_unnest_impl(*select, target)
-        }
+        Expression::Select(select) => explode_projection_to_unnest_impl(*select, target),
         other => Ok(other),
     }
 }
@@ -3698,11 +3875,31 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
     for (idx, input_expr) in flattened_inputs.into_iter().enumerate() {
         // Match sqlglot naming: first pair is _u/_u_2 with pos/pos_2 and entity.
         let is_first = idx == 0;
-        let series_alias = if is_first { "pos".to_string() } else { format!("pos_{}", idx + 1) };
-        let series_source_alias = if is_first { "_u".to_string() } else { format!("_u_{}", idx * 2 + 1) };
-        let unnest_source_alias = if is_first { "_u_2".to_string() } else { format!("_u_{}", idx * 2 + 2) };
-        let pos2_alias = if is_first { "pos_2".to_string() } else { format!("{}_2", series_alias) };
-        let entity_alias = if is_first { "entity".to_string() } else { format!("entity_{}", idx + 1) };
+        let series_alias = if is_first {
+            "pos".to_string()
+        } else {
+            format!("pos_{}", idx + 1)
+        };
+        let series_source_alias = if is_first {
+            "_u".to_string()
+        } else {
+            format!("_u_{}", idx * 2 + 1)
+        };
+        let unnest_source_alias = if is_first {
+            "_u_2".to_string()
+        } else {
+            format!("_u_{}", idx * 2 + 2)
+        };
+        let pos2_alias = if is_first {
+            "pos_2".to_string()
+        } else {
+            format!("{}_2", series_alias)
+        };
+        let entity_alias = if is_first {
+            "entity".to_string()
+        } else {
+            format!("entity_{}", idx + 1)
+        };
 
         let array_size_call = Expression::Function(Box::new(Function::new(
             "ARRAY_SIZE".to_string(),
@@ -3731,7 +3928,10 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
 
         let series_range = Expression::Function(Box::new(Function::new(
             "ARRAY_GENERATE_RANGE".to_string(),
-            vec![Expression::Literal(Literal::Number("0".to_string())), series_end],
+            vec![
+                Expression::Literal(Literal::Number("0".to_string())),
+                series_end,
+            ],
         )));
 
         let series_flatten = Expression::Function(Box::new(Function::new(
@@ -3776,6 +3976,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
 
         let entity_flatten = Expression::Function(Box::new(Function::new(
@@ -3820,10 +4021,13 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
 
-        let pos_col = Expression::qualified_column(series_source_alias.clone(), series_alias.clone());
-        let pos2_col = Expression::qualified_column(unnest_source_alias.clone(), pos2_alias.clone());
+        let pos_col =
+            Expression::qualified_column(series_source_alias.clone(), series_alias.clone());
+        let pos2_col =
+            Expression::qualified_column(unnest_source_alias.clone(), pos2_alias.clone());
 
         let eq = Expression::Eq(Box::new(BinaryOp::new(pos_col.clone(), pos2_col.clone())));
         let size_minus_1 = Expression::Paren(Box::new(crate::expressions::Paren {
@@ -3911,7 +4115,10 @@ struct ExplodeInfo {
 }
 
 fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Result<Expression> {
-    let is_presto = matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena);
+    let is_presto = matches!(
+        target,
+        DialectType::Presto | DialectType::Trino | DialectType::Athena
+    );
     let is_bigquery = matches!(target, DialectType::BigQuery);
 
     if !is_presto && !is_bigquery {
@@ -3974,7 +4181,9 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
 
         if let Some((is_posexplode, arg_expr, explicit_alias, explicit_pos_alias)) = explode_data {
             // Generate the argument SQL in target dialect
-            let arg_sql = target_dialect.generate(&arg_expr).unwrap_or_else(|_| "NULL".to_string());
+            let arg_sql = target_dialect
+                .generate(&arg_expr)
+                .unwrap_or_else(|_| "NULL".to_string());
 
             let unnest_source_alias = new_name(&mut taken_source_names, "_u");
 
@@ -4003,9 +4212,12 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
                 // Presto: IF(_u.pos = _u_2.pos_2, _u_2.col) AS col
                 let if_col = format!(
                     "IF({}.{} = {}.{}, {}.{}) AS {}",
-                    series_source_alias, series_alias,
-                    unnest_source_alias, pos_alias,
-                    unnest_source_alias, explode_alias,
+                    series_source_alias,
+                    series_alias,
+                    unnest_source_alias,
+                    pos_alias,
+                    unnest_source_alias,
+                    explode_alias,
                     explode_alias
                 );
                 new_projections.push(if_col);
@@ -4014,9 +4226,12 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
                 if is_posexplode {
                     let if_pos = format!(
                         "IF({}.{} = {}.{}, {}.{}) AS {}",
-                        series_source_alias, series_alias,
-                        unnest_source_alias, pos_alias,
-                        unnest_source_alias, pos_alias,
+                        series_source_alias,
+                        series_alias,
+                        unnest_source_alias,
+                        pos_alias,
+                        unnest_source_alias,
+                        pos_alias,
                         pos_alias
                     );
                     new_projections.push(if_pos);
@@ -4025,8 +4240,7 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
                 // BigQuery: IF(pos = pos_2, col, NULL) AS col
                 let if_col = format!(
                     "IF({} = {}, {}, NULL) AS {}",
-                    series_alias, pos_alias,
-                    explode_alias, explode_alias
+                    series_alias, pos_alias, explode_alias, explode_alias
                 );
                 new_projections.push(if_col);
 
@@ -4034,8 +4248,7 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
                 if is_posexplode {
                     let if_pos = format!(
                         "IF({} = {}, {}, NULL) AS {}",
-                        series_alias, pos_alias,
-                        pos_alias, pos_alias
+                        series_alias, pos_alias, pos_alias, pos_alias
                     );
                     new_projections.push(if_pos);
                 }
@@ -4049,7 +4262,9 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
             });
         } else {
             // Not an EXPLODE expression, generate as-is
-            let sel_sql = target_dialect.generate(sel_expr).unwrap_or_else(|_| "*".to_string());
+            let sel_sql = target_dialect
+                .generate(sel_expr)
+                .unwrap_or_else(|_| "*".to_string());
             new_projections.push(sel_sql);
         }
     }
@@ -4070,13 +4285,16 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
     }
 
     // Build the size expressions for the series generator
-    let size_exprs: Vec<String> = explode_infos.iter().map(|info| {
-        if is_presto {
-            format!("CARDINALITY({})", info.arg_sql)
-        } else {
-            format!("ARRAY_LENGTH({})", info.arg_sql)
-        }
-    }).collect();
+    let size_exprs: Vec<String> = explode_infos
+        .iter()
+        .map(|info| {
+            if is_presto {
+                format!("CARDINALITY({})", info.arg_sql)
+            } else {
+                format!("ARRAY_LENGTH({})", info.arg_sql)
+            }
+        })
+        .collect();
 
     let greatest_arg = if size_exprs.len() == 1 {
         size_exprs[0].clone()
@@ -4089,22 +4307,30 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
     let series_sql = if is_presto {
         // SEQUENCE(1, GREATEST(CARDINALITY(x))) for single, SEQUENCE(1, GREATEST(C(a), C(b))) for multiple
         if size_exprs.len() == 1 {
-            format!("UNNEST(SEQUENCE(1, GREATEST({}))) AS {}({})",
-                greatest_arg, series_source_alias, series_alias)
+            format!(
+                "UNNEST(SEQUENCE(1, GREATEST({}))) AS {}({})",
+                greatest_arg, series_source_alias, series_alias
+            )
         } else {
             // greatest_arg already has GREATEST(...) wrapper
-            format!("UNNEST(SEQUENCE(1, {})) AS {}({})",
-                greatest_arg, series_source_alias, series_alias)
+            format!(
+                "UNNEST(SEQUENCE(1, {})) AS {}({})",
+                greatest_arg, series_source_alias, series_alias
+            )
         }
     } else {
         // GENERATE_ARRAY(0, GREATEST(ARRAY_LENGTH(x)) - 1) for single
         if size_exprs.len() == 1 {
-            format!("UNNEST(GENERATE_ARRAY(0, GREATEST({}) - 1)) AS {}",
-                greatest_arg, series_alias)
+            format!(
+                "UNNEST(GENERATE_ARRAY(0, GREATEST({}) - 1)) AS {}",
+                greatest_arg, series_alias
+            )
         } else {
             // greatest_arg already has GREATEST(...) wrapper
-            format!("UNNEST(GENERATE_ARRAY(0, {} - 1)) AS {}",
-                greatest_arg, series_alias)
+            format!(
+                "UNNEST(GENERATE_ARRAY(0, {} - 1)) AS {}",
+                greatest_arg, series_alias
+            )
         }
     };
 
@@ -4156,7 +4382,11 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
     let where_sql = if where_conditions.len() == 1 {
         where_conditions[0].clone()
     } else {
-        where_conditions.iter().map(|c| format!("({})", c)).collect::<Vec<_>>().join(" AND ")
+        where_conditions
+            .iter()
+            .map(|c| format!("({})", c))
+            .collect::<Vec<_>>()
+            .join(" AND ")
     };
 
     // Build the complete SQL
@@ -4167,9 +4397,12 @@ fn explode_projection_to_unnest_impl(select: Select, target: DialectType) -> Res
         // No original FROM: series is the FROM source, everything else is CROSS JOIN
         format!("FROM {} {}", series_sql, cross_joins.join(" "))
     } else {
-        format!("FROM {} {} {}", from_parts.join(", "),
+        format!(
+            "FROM {} {} {}",
+            from_parts.join(", "),
             format!("CROSS JOIN {}", series_sql),
-            cross_joins.join(" "))
+            cross_joins.join(" ")
+        )
     };
 
     let full_sql = format!(
@@ -4288,15 +4521,13 @@ fn find_explode_in_expr(expr: &Expression) -> Option<Expression> {
 
 /// Extract explode data from a SELECT expression.
 /// Returns (is_posexplode, arg_expression, explicit_col_alias, explicit_pos_alias)
-fn extract_explode_data(expr: &Expression) -> Option<(bool, Expression, Option<String>, Option<String>)> {
+fn extract_explode_data(
+    expr: &Expression,
+) -> Option<(bool, Expression, Option<String>, Option<String>)> {
     match expr {
         // Bare EXPLODE(x) without alias
-        Expression::Explode(uf) => {
-            Some((false, uf.this.clone(), None, None))
-        }
-        Expression::ExplodeOuter(uf) => {
-            Some((false, uf.this.clone(), None, None))
-        }
+        Expression::Explode(uf) => Some((false, uf.this.clone(), None, None)),
+        Expression::ExplodeOuter(uf) => Some((false, uf.this.clone(), None, None)),
         // Bare POSEXPLODE(x) without alias
         Expression::Function(f) => {
             let name = f.name.to_uppercase();
@@ -4467,12 +4698,14 @@ fn wrap_duckdb_unnest_struct_single(expr: Expression) -> Result<Expression> {
 fn is_struct_array_unnest_arg(expr: &Expression) -> bool {
     match expr {
         // Array literal containing struct elements
-        Expression::Array(arr) => {
-            arr.expressions.iter().any(|e| matches!(e, Expression::Struct(_)))
-        }
-        Expression::ArrayFunc(arr) => {
-            arr.expressions.iter().any(|e| matches!(e, Expression::Struct(_)))
-        }
+        Expression::Array(arr) => arr
+            .expressions
+            .iter()
+            .any(|e| matches!(e, Expression::Struct(_))),
+        Expression::ArrayFunc(arr) => arr
+            .expressions
+            .iter()
+            .any(|e| matches!(e, Expression::Struct(_))),
         // CAST to struct array type, e.g. CAST([] AS STRUCT(x BIGINT)[])
         Expression::Cast(c) => {
             matches!(&c.to, DataType::Array { element_type, .. } if matches!(**element_type, DataType::Struct { .. }))
@@ -4520,10 +4753,8 @@ fn make_unnest_subquery(unnest: UnnestFunc, alias: Option<Identifier>) -> Expres
     unnest_args.extend(unnest.expressions);
     unnest_args.push(max_depth_arg);
 
-    let unnest_func = Expression::Function(Box::new(Function::new(
-        "UNNEST".to_string(),
-        unnest_args,
-    )));
+    let unnest_func =
+        Expression::Function(Box::new(Function::new("UNNEST".to_string(), unnest_args)));
 
     // Build SELECT UNNEST(...)
     let mut inner_select = Select::new();
@@ -4570,7 +4801,10 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
             if u.order_by.is_none() && u.limit.is_none() && u.offset.is_none() {
                 // Find the rightmost Select and check for ORDER BY/LIMIT
                 if let Expression::Select(ref mut right_select) = u.right {
-                    if right_select.order_by.is_some() || right_select.limit.is_some() || right_select.offset.is_some() {
+                    if right_select.order_by.is_some()
+                        || right_select.limit.is_some()
+                        || right_select.offset.is_some()
+                    {
                         // Move ORDER BY/LIMIT from right Select to Union
                         u.order_by = right_select.order_by.take();
                         u.limit = right_select.limit.take().map(|l| Box::new(l.this));
@@ -4579,7 +4813,8 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
                 }
             }
 
-            let has_order_or_limit = u.order_by.is_some() || u.limit.is_some() || u.offset.is_some();
+            let has_order_or_limit =
+                u.order_by.is_some() || u.limit.is_some() || u.offset.is_some();
             if has_order_or_limit {
                 // Extract ORDER BY, LIMIT, OFFSET from the Union
                 let order_by: Option<OrderBy> = u.order_by.take();
@@ -4727,23 +4962,27 @@ pub fn qualify_derived_table_outputs(expr: Expression) -> Result<Expression> {
     use crate::expressions::Alias;
 
     fn add_self_aliases_to_select(select: &mut Select) {
-        let new_expressions: Vec<Expression> = select.expressions.iter().map(|e| {
-            match e {
-                // Column reference without alias -> add self-alias
-                Expression::Column(col) => {
-                    let alias_name = col.name.clone();
-                    Expression::Alias(Box::new(Alias {
-                        this: e.clone(),
-                        alias: alias_name,
-                        column_aliases: Vec::new(),
-                        pre_alias_comments: Vec::new(),
-                        trailing_comments: Vec::new(),
-                    }))
+        let new_expressions: Vec<Expression> = select
+            .expressions
+            .iter()
+            .map(|e| {
+                match e {
+                    // Column reference without alias -> add self-alias
+                    Expression::Column(col) => {
+                        let alias_name = col.name.clone();
+                        Expression::Alias(Box::new(Alias {
+                            this: e.clone(),
+                            alias: alias_name,
+                            column_aliases: Vec::new(),
+                            pre_alias_comments: Vec::new(),
+                            trailing_comments: Vec::new(),
+                        }))
+                    }
+                    // Already aliased or star or other -> keep as is
+                    _ => e.clone(),
                 }
-                // Already aliased or star or other -> keep as is
-                _ => e.clone(),
-            }
-        }).collect();
+            })
+            .collect();
         select.expressions = new_expressions;
     }
 
@@ -4800,9 +5039,10 @@ pub fn qualify_derived_table_outputs(expr: Expression) -> Result<Expression> {
                 if subquery.alias.is_some() && subquery.column_aliases.is_empty() {
                     if let Expression::Select(ref mut inner_select) = subquery.this {
                         // Check the inner select doesn't use *
-                        let has_star = inner_select.expressions.iter().any(|e| {
-                            matches!(e, Expression::Star(_))
-                        });
+                        let has_star = inner_select
+                            .expressions
+                            .iter()
+                            .any(|e| matches!(e, Expression::Star(_)));
                         if !has_star {
                             add_self_aliases_to_select(inner_select);
                         }
@@ -4967,9 +5207,18 @@ mod tests {
         );
 
         // Test VarChar
-        let varchar = DataType::VarChar { length: Some(255), parenthesized_length: false };
+        let varchar = DataType::VarChar {
+            length: Some(255),
+            parenthesized_length: false,
+        };
         let stripped = strip_data_type_params(varchar);
-        assert_eq!(stripped, DataType::VarChar { length: None, parenthesized_length: false });
+        assert_eq!(
+            stripped,
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false
+            }
+        );
 
         // Test Char
         let char_type = DataType::Char { length: Some(10) };
@@ -4992,14 +5241,20 @@ mod tests {
 
         // Test Array (recursive)
         let array = DataType::Array {
-            element_type: Box::new(DataType::VarChar { length: Some(100), parenthesized_length: false }),
+            element_type: Box::new(DataType::VarChar {
+                length: Some(100),
+                parenthesized_length: false,
+            }),
             dimension: None,
         };
         let stripped = strip_data_type_params(array);
         assert_eq!(
             stripped,
             DataType::Array {
-                element_type: Box::new(DataType::VarChar { length: None, parenthesized_length: false }),
+                element_type: Box::new(DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false
+                }),
                 dimension: None,
             }
         );
@@ -5044,7 +5299,10 @@ mod tests {
         // Create a CAST('hello' AS VARCHAR(10)) expression
         let cast_expr = Expression::Cast(Box::new(Cast {
             this: Expression::Literal(Literal::String("hello".to_string())),
-            to: DataType::VarChar { length: Some(10), parenthesized_length: false },
+            to: DataType::VarChar {
+                length: Some(10),
+                parenthesized_length: false,
+            },
             trailing_comments: vec![],
             double_colon_syntax: false,
             format: None,
@@ -5053,7 +5311,13 @@ mod tests {
 
         let result = remove_precision_parameterized_types(cast_expr).unwrap();
         if let Expression::Cast(cast) = result {
-            assert_eq!(cast.to, DataType::VarChar { length: None, parenthesized_length: false });
+            assert_eq!(
+                cast.to,
+                DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false
+                }
+            );
         } else {
             panic!("Expected Cast expression");
         }
@@ -5164,9 +5428,18 @@ mod tests {
             precision: None,
             timezone: false
         }));
-        assert!(is_temporal_type(&DataType::Time { precision: None, timezone: false }));
-        assert!(!is_temporal_type(&DataType::Int { length: None, integer_spelling: false }));
-        assert!(!is_temporal_type(&DataType::VarChar { length: None, parenthesized_length: false }));
+        assert!(is_temporal_type(&DataType::Time {
+            precision: None,
+            timezone: false
+        }));
+        assert!(!is_temporal_type(&DataType::Int {
+            length: None,
+            integer_spelling: false
+        }));
+        assert!(!is_temporal_type(&DataType::VarChar {
+            length: None,
+            parenthesized_length: false
+        }));
     }
 
     #[test]
@@ -5213,6 +5486,7 @@ mod tests {
                 pivots: Vec::new(),
                 comments: Vec::new(),
                 nesting_group: 0,
+                directed: false,
             }],
             ..Select::new()
         }));
@@ -5269,7 +5543,10 @@ mod tests {
         // Test TryCast conversion to Cast
         let trycast_expr = Expression::TryCast(Box::new(Cast {
             this: Expression::Literal(Literal::String("123".to_string())),
-            to: DataType::Int { length: None, integer_spelling: false },
+            to: DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
             trailing_comments: vec![],
             double_colon_syntax: false,
             format: None,
@@ -5285,7 +5562,10 @@ mod tests {
         // Test SafeCast conversion to Cast
         let safe_cast_expr = Expression::SafeCast(Box::new(Cast {
             this: Expression::Literal(Literal::String("123".to_string())),
-            to: DataType::Int { length: None, integer_spelling: false },
+            to: DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
             trailing_comments: vec![],
             double_colon_syntax: false,
             format: None,
@@ -5299,7 +5579,9 @@ mod tests {
     #[test]
     fn test_explode_to_unnest_presto() {
         let spark = Dialect::get(DialectType::Spark);
-        let result = spark.transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::Presto).unwrap();
+        let result = spark
+            .transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::Presto)
+            .unwrap();
         assert_eq!(
             result[0],
             "SELECT IF(_u.pos = _u_2.pos_2, _u_2.col) AS col FROM tbl CROSS JOIN UNNEST(SEQUENCE(1, GREATEST(CARDINALITY(x)))) AS _u(pos) CROSS JOIN UNNEST(x) WITH ORDINALITY AS _u_2(col, pos_2) WHERE _u.pos = _u_2.pos_2 OR (_u.pos > CARDINALITY(x) AND _u_2.pos_2 = CARDINALITY(x))"
@@ -5309,11 +5591,12 @@ mod tests {
     #[test]
     fn test_explode_to_unnest_bigquery() {
         let spark = Dialect::get(DialectType::Spark);
-        let result = spark.transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::BigQuery).unwrap();
+        let result = spark
+            .transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::BigQuery)
+            .unwrap();
         assert_eq!(
             result[0],
             "SELECT IF(pos = pos_2, col, NULL) AS col FROM tbl CROSS JOIN UNNEST(GENERATE_ARRAY(0, GREATEST(ARRAY_LENGTH(x)) - 1)) AS pos CROSS JOIN UNNEST(x) AS col WITH OFFSET AS pos_2 WHERE pos = pos_2 OR (pos > (ARRAY_LENGTH(x) - 1) AND pos_2 = (ARRAY_LENGTH(x) - 1))"
         );
     }
-
 }

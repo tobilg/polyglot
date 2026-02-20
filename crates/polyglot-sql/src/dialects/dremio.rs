@@ -78,12 +78,9 @@ impl DremioDialect {
             )))),
 
             // TimeToStr → TO_CHAR
-            "DATE_FORMAT" | "TIME_TO_STR" | "STRFTIME" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TO_CHAR".to_string(),
-                    f.args,
-                ))))
-            }
+            "DATE_FORMAT" | "TIME_TO_STR" | "STRFTIME" => Ok(Expression::Function(Box::new(
+                Function::new("TO_CHAR".to_string(), f.args),
+            ))),
 
             // TO_DATE is native
             "TO_DATE" => Ok(Expression::Function(Box::new(f))),
@@ -124,20 +121,16 @@ impl DremioDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // BitwiseAndAgg → BIT_AND
-            "BITWISE_AND_AGG" | "BIT_AND_AGG" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "BIT_AND".to_string(),
-                    f.args,
-                ))))
-            }
+            "BITWISE_AND_AGG" | "BIT_AND_AGG" => Ok(Expression::Function(Box::new(Function::new(
+                "BIT_AND".to_string(),
+                f.args,
+            )))),
 
             // BitwiseOrAgg → BIT_OR
-            "BITWISE_OR_AGG" | "BIT_OR_AGG" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "BIT_OR".to_string(),
-                    f.args,
-                ))))
-            }
+            "BITWISE_OR_AGG" | "BIT_OR_AGG" => Ok(Expression::Function(Box::new(Function::new(
+                "BIT_OR".to_string(),
+                f.args,
+            )))),
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

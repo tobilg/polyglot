@@ -5,7 +5,7 @@
 
 use polyglot_sql::dialects::{CustomDialectBuilder, Dialect, DialectType};
 use polyglot_sql::generator::NormalizeFunctions;
-use polyglot_sql::{unregister_custom_dialect, transpile_by_name, parse_by_name, generate_by_name};
+use polyglot_sql::{generate_by_name, parse_by_name, transpile_by_name, unregister_custom_dialect};
 
 /// Helper to ensure cleanup after each test, even on panic.
 struct DialectGuard(&'static str);
@@ -32,8 +32,16 @@ fn test_custom_dialect_lowercase_functions() {
     let exprs = d.parse("SELECT COUNT(*), MAX(id) FROM users").unwrap();
     let sql = d.generate(&exprs[0]).unwrap();
 
-    assert!(sql.contains("count("), "Expected lowercase 'count(' in: {}", sql);
-    assert!(sql.contains("max("), "Expected lowercase 'max(' in: {}", sql);
+    assert!(
+        sql.contains("count("),
+        "Expected lowercase 'count(' in: {}",
+        sql
+    );
+    assert!(
+        sql.contains("max("),
+        "Expected lowercase 'max(' in: {}",
+        sql
+    );
 }
 
 #[test]
@@ -52,7 +60,11 @@ fn test_custom_dialect_uppercase_keywords() {
     let exprs = d.parse("select 1").unwrap();
     let sql = d.generate(&exprs[0]).unwrap();
 
-    assert!(sql.starts_with("SELECT"), "Expected uppercase SELECT in: {}", sql);
+    assert!(
+        sql.starts_with("SELECT"),
+        "Expected uppercase SELECT in: {}",
+        sql
+    );
 }
 
 #[test]
@@ -112,7 +124,10 @@ fn test_builtin_name_collision() {
         .based_on(DialectType::Generic)
         .register();
 
-    assert!(result.is_err(), "Should reject built-in dialect name 'postgresql'");
+    assert!(
+        result.is_err(),
+        "Should reject built-in dialect name 'postgresql'"
+    );
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("collides with built-in"),
@@ -128,19 +143,19 @@ fn test_builtin_name_collision_alias() {
         .based_on(DialectType::Generic)
         .register();
 
-    assert!(result.is_err(), "Should reject built-in dialect alias 'postgres'");
+    assert!(
+        result.is_err(),
+        "Should reject built-in dialect alias 'postgres'"
+    );
 }
 
 #[test]
 fn test_duplicate_registration() {
     let _guard = DialectGuard("test_dup");
 
-    CustomDialectBuilder::new("test_dup")
-        .register()
-        .unwrap();
+    CustomDialectBuilder::new("test_dup").register().unwrap();
 
-    let result = CustomDialectBuilder::new("test_dup")
-        .register();
+    let result = CustomDialectBuilder::new("test_dup").register();
 
     assert!(result.is_err(), "Should reject duplicate registration");
     let err_msg = result.unwrap_err().to_string();
@@ -205,9 +220,7 @@ fn test_transpile_by_name_unknown_dialect() {
 
 #[test]
 fn test_unregister() {
-    CustomDialectBuilder::new("test_unreg")
-        .register()
-        .unwrap();
+    CustomDialectBuilder::new("test_unreg").register().unwrap();
 
     assert!(Dialect::get_by_name("test_unreg").is_some());
 
@@ -218,7 +231,10 @@ fn test_unregister() {
 
     // Double unregister should return false
     let removed2 = unregister_custom_dialect("test_unreg");
-    assert!(!removed2, "Should return false when dialect already removed");
+    assert!(
+        !removed2,
+        "Should return false when dialect already removed"
+    );
 }
 
 #[test]

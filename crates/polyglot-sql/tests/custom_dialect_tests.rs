@@ -29,11 +29,7 @@ fn load_dialect_fixtures(dir: &Path) -> Vec<CustomDialectFixtureFile> {
                     Ok(content) => match serde_json::from_str::<CustomDialectFixtureFile>(&content)
                     {
                         Ok(fixture) => files.push(fixture),
-                        Err(e) => eprintln!(
-                            "  WARNING: Failed to parse {}: {}",
-                            path.display(),
-                            e
-                        ),
+                        Err(e) => eprintln!("  WARNING: Failed to parse {}: {}", path.display(), e),
                     },
                     Err(e) => {
                         eprintln!("  WARNING: Failed to read {}: {}", path.display(), e)
@@ -75,9 +71,7 @@ static ALL_CUSTOM_FIXTURES: Lazy<AllCustomFixtures> = Lazy::new(|| {
 });
 
 /// Collect and run all identity tests for a dialect, returning (passed, failed, total, failures).
-fn run_identity_tests(
-    fixtures: &CustomDialectFixtures,
-) -> (usize, usize, usize, Vec<String>) {
+fn run_identity_tests(fixtures: &CustomDialectFixtures) -> (usize, usize, usize, Vec<String>) {
     let dialect_type = match parse_dialect(&fixtures.dialect) {
         Some(dt) => dt,
         None => {
@@ -113,9 +107,7 @@ fn run_identity_tests(
 
 /// Collect and run all transpilation tests for a dialect.
 /// Supports sqlglot-compatible `write` (forward) and `read` (reverse) maps.
-fn run_transpilation_tests(
-    fixtures: &CustomDialectFixtures,
-) -> (usize, usize, usize, Vec<String>) {
+fn run_transpilation_tests(fixtures: &CustomDialectFixtures) -> (usize, usize, usize, Vec<String>) {
     let file_dialect = match parse_dialect(&fixtures.dialect) {
         Some(dt) => dt,
         None => {

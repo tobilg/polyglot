@@ -28,7 +28,10 @@ mod syntax_errors {
     #[test]
     fn test_unbalanced_parentheses_nested() {
         let result = Parser::parse_sql("SELECT ((1 + 2)");
-        assert!(result.is_err(), "Expected error for unbalanced nested parentheses");
+        assert!(
+            result.is_err(),
+            "Expected error for unbalanced nested parentheses"
+        );
     }
 
     #[test]
@@ -125,7 +128,10 @@ mod syntax_errors {
     fn test_trailing_comma_in_select() {
         // Trailing comma before FROM is tolerated by the parser
         let result = Parser::parse_sql("SELECT a, b, FROM users");
-        assert!(result.is_ok(), "Trailing comma before FROM should be tolerated");
+        assert!(
+            result.is_ok(),
+            "Trailing comma before FROM should be tolerated"
+        );
     }
 }
 
@@ -182,7 +188,10 @@ mod empty_input {
     fn test_only_block_comment() {
         let result = Parser::parse_sql("/* block comment */");
         match result {
-            Ok(stmts) => assert!(stmts.is_empty(), "Block comment should produce no statements"),
+            Ok(stmts) => assert!(
+                stmts.is_empty(),
+                "Block comment should produce no statements"
+            ),
             Err(_) => {} // Also acceptable
         }
     }
@@ -320,7 +329,10 @@ mod nesting_tests {
     }
 
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode")]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
+    )]
     fn test_complex_nested_expression() {
         let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
         let result = Parser::parse_sql(sql);

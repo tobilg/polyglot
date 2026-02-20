@@ -129,7 +129,10 @@ fn builder_api() {
     // UPDATE
     let query = update("users")
         .set("name", lit("Bob"))
-        .set("updated_at", func("NOW", std::iter::empty::<polyglot_sql::builder::Expr>()))
+        .set(
+            "updated_at",
+            func("NOW", std::iter::empty::<polyglot_sql::builder::Expr>()),
+        )
         .where_(col("id").eq(lit(1)))
         .build();
     println!("Update:  {}", Generator::sql(&query).unwrap());

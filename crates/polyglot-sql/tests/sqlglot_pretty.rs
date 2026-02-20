@@ -35,7 +35,10 @@ static PRETTY_FIXTURES: Lazy<Option<PrettyFixtures>> = Lazy::new(|| {
 
 /// Test all pretty-print fixtures
 #[test]
-#[cfg_attr(debug_assertions, ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode")]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
+)]
 fn test_sqlglot_pretty_all() {
     let fixtures = match PRETTY_FIXTURES.as_ref() {
         Some(f) => f,
@@ -58,8 +61,7 @@ fn test_sqlglot_pretty_all() {
 
     results.print_summary("SQLGlot Pretty-Print");
 
-    // Start with a low threshold and increase as implementation improves
-    let min_pass_rate = 0.05; // 5% minimum
+    let min_pass_rate = 1.0; // 100% required
 
     assert!(
         results.pass_rate() >= min_pass_rate,
@@ -71,7 +73,10 @@ fn test_sqlglot_pretty_all() {
 
 /// Test a sample of pretty-print fixtures for quick verification
 #[test]
-#[cfg_attr(debug_assertions, ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode")]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
+)]
 fn test_sqlglot_pretty_sample() {
     let fixtures = match PRETTY_FIXTURES.as_ref() {
         Some(f) => f,
@@ -124,51 +129,13 @@ fn test_debug_pretty_sql() {
     ];
 
     for (input, expected, line) in &cases {
-        println!("\n\n=== Line {} Input ===\n{}", line, input);
-        println!("=== Expected ===\n{}", expected);
+        let stmts =
+            Parser::parse_sql(input).unwrap_or_else(|e| panic!("line {} parse error: {}", line, e));
+        assert!(!stmts.is_empty(), "line {} parsed no statements", line);
 
-        // Show tokens
-        let tokenizer = polyglot_sql::tokens::Tokenizer::default();
-        let tokens = tokenizer.tokenize(input).unwrap();
-        for (i, t) in tokens.iter().enumerate() {
-            let mut info = format!("  Token[{}]: {:?} {:?}", i, t.token_type, t.text);
-            if !t.comments.is_empty() {
-                info += &format!(" comments={:?}", t.comments);
-            }
-            if !t.trailing_comments.is_empty() {
-                info += &format!(" trailing={:?}", t.trailing_comments);
-            }
-            println!("{}", info);
-        }
+        let output = Generator::pretty_sql(&stmts[0])
+            .unwrap_or_else(|e| panic!("line {} generate error: {}", line, e));
 
-        match Parser::parse_sql(input) {
-            Ok(stmts) if !stmts.is_empty() => {
-                match Generator::pretty_sql(&stmts[0]) {
-                    Ok(output) => {
-                        println!("=== Pretty Output ===\n{}", output);
-                        if output == *expected {
-                            println!("=== PASS ===");
-                        } else {
-                            println!("=== FAIL ===");
-                            // Show character differences
-                            for (i, (a, b)) in output.chars().zip(expected.chars()).enumerate() {
-                                if a != b {
-                                    println!("  First diff at char {}: got {:?}, expected {:?}", i, a, b);
-                                    println!("  Got context:      ...{}...", &output[i.saturating_sub(20)..output.len().min(i+30)]);
-                                    println!("  Expected context: ...{}...", &expected[i.saturating_sub(20)..expected.len().min(i+30)]);
-                                    break;
-                                }
-                            }
-                            if output.len() != expected.len() {
-                                println!("  Length diff: got {}, expected {}", output.len(), expected.len());
-                            }
-                        }
-                    }
-                    Err(e) => println!("Generate error: {}", e),
-                }
-            }
-            Ok(_) => println!("No statements parsed"),
-            Err(e) => println!("Parse error: {}", e),
-        }
+        assert_eq!(output, *expected, "line {} pretty output mismatch", line);
     }
 }

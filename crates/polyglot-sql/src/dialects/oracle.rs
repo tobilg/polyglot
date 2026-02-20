@@ -65,7 +65,8 @@ impl DialectImpl for OracleDialect {
                 let mut exprs = f.expressions;
                 let second = exprs.pop().unwrap();
                 let first = exprs.pop().unwrap();
-                Ok(Expression::Nvl(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::Nvl(Box::new(BinaryFunc {
+                    original_name: None,
                     this: first,
                     expression: second,
                 })))
@@ -141,7 +142,8 @@ impl OracleDialect {
                 let mut args = f.args;
                 let second = args.pop().unwrap();
                 let first = args.pop().unwrap();
-                Ok(Expression::Nvl(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::Nvl(Box::new(BinaryFunc {
+                    original_name: None,
                     this: first,
                     expression: second,
                 })))
@@ -152,7 +154,8 @@ impl OracleDialect {
                 let mut args = f.args;
                 let second = args.pop().unwrap();
                 let first = args.pop().unwrap();
-                Ok(Expression::Nvl(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::Nvl(Box::new(BinaryFunc {
+                    original_name: None,
                     this: first,
                     expression: second,
                 })))
@@ -163,7 +166,8 @@ impl OracleDialect {
                 let mut args = f.args;
                 let second = args.pop().unwrap();
                 let first = args.pop().unwrap();
-                Ok(Expression::Nvl(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::Nvl(Box::new(BinaryFunc {
+                    original_name: None,
                     this: first,
                     expression: second,
                 })))
@@ -178,10 +182,9 @@ impl OracleDialect {
             ))),
 
             // STRING_AGG -> LISTAGG in Oracle
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "LISTAGG".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("LISTAGG".to_string(), f.args),
+            ))),
 
             // LISTAGG is native to Oracle
             "LISTAGG" => Ok(Expression::Function(Box::new(f))),
@@ -211,7 +214,10 @@ impl OracleDialect {
 
             // NOW -> SYSDATE or CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> SYSDATE
@@ -225,14 +231,21 @@ impl OracleDialect {
             "CURRENT_TIMESTAMP" => {
                 if f.args.is_empty() {
                     Ok(Expression::CurrentTimestamp(
-                        crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                        crate::expressions::CurrentTimestamp {
+                            precision: None,
+                            sysdate: false,
+                        },
                     ))
                 } else if f.args.len() == 1 {
                     // Check if the argument is a numeric literal
-                    if let Expression::Literal(crate::expressions::Literal::Number(n)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::Number(n)) = &f.args[0]
+                    {
                         if let Ok(precision) = n.parse::<u32>() {
                             return Ok(Expression::CurrentTimestamp(
-                                crate::expressions::CurrentTimestamp { precision: Some(precision), sysdate: false },
+                                crate::expressions::CurrentTimestamp {
+                                    precision: Some(precision),
+                                    sysdate: false,
+                                },
                             ));
                         }
                     }
@@ -279,7 +292,9 @@ impl OracleDialect {
             // Python sqlglot: "TRUNC": lambda args: exp.DateTrunc(unit=seq_get(args, 1) or exp.Literal.string("DD"), ...)
             "TRUNC" if f.args.len() == 1 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(crate::expressions::Literal::String("DD".to_string())));
+                args.push(Expression::Literal(crate::expressions::Literal::String(
+                    "DD".to_string(),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "TRUNC".to_string(),
                     args,
@@ -423,10 +438,9 @@ impl OracleDialect {
             ))),
 
             // STRING_AGG -> LISTAGG
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "LISTAGG".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("LISTAGG".to_string(), f.args),
+            ))),
 
             // ARRAY_AGG -> Not directly supported in Oracle
             // Would need COLLECT (for nested tables)

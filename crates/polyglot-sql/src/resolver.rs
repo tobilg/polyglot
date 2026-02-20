@@ -114,7 +114,9 @@ impl<'a> Resolver<'a> {
             }
             self.all_columns_cache = Some(all);
         }
-        self.all_columns_cache.as_ref().expect("cache populated above")
+        self.all_columns_cache
+            .as_ref()
+            .expect("cache populated above")
     }
 
     /// Get column names for a source.
@@ -271,7 +273,9 @@ impl<'a> Resolver<'a> {
                     self.unambiguous_columns_cache =
                         Some(self.compute_unambiguous_columns(&all_source_columns));
                 }
-                self.unambiguous_columns_cache.clone().expect("cache populated above")
+                self.unambiguous_columns_cache
+                    .clone()
+                    .expect("cache populated above")
             }
         };
 
@@ -391,7 +395,13 @@ mod tests {
             .add_table(
                 "users",
                 &[
-                    ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
+                    (
+                        "id".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
                     ("name".to_string(), DataType::Text),
                     ("email".to_string(), DataType::Text),
                 ],
@@ -402,9 +412,27 @@ mod tests {
             .add_table(
                 "orders",
                 &[
-                    ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
-                    ("user_id".to_string(), DataType::Int { length: None, integer_spelling: false }),
-                    ("amount".to_string(), DataType::Double { precision: None, scale: None }),
+                    (
+                        "id".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    (
+                        "user_id".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    (
+                        "amount".to_string(),
+                        DataType::Double {
+                            precision: None,
+                            scale: None,
+                        },
+                    ),
                 ],
                 None,
             )
@@ -475,9 +503,8 @@ mod tests {
 
     #[test]
     fn test_sources_for_column() {
-        let ast =
-            Parser::parse_sql("SELECT * FROM users JOIN orders ON users.id = orders.user_id")
-                .expect("Failed to parse");
+        let ast = Parser::parse_sql("SELECT * FROM users JOIN orders ON users.id = orders.user_id")
+            .expect("Failed to parse");
         let scope = build_scope(&ast[0]);
         let schema = create_test_schema();
         let mut resolver = Resolver::new(&scope, &schema, true);

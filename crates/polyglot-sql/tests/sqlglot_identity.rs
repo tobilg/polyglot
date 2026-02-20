@@ -5,9 +5,7 @@
 
 mod common;
 
-use common::{
-    identity_known_failures, identity_test, IdentityFixtures, TestResults,
-};
+use common::{identity_known_failures, identity_test, IdentityFixtures, TestResults};
 use once_cell::sync::Lazy;
 use std::fs;
 
@@ -73,15 +71,10 @@ fn test_sqlglot_identity_all() {
         .expect("Test thread panicked");
 
     if let Some(pass_rate) = result {
-        // Assert minimum pass rate - adjust this threshold as bugs are fixed
-        // Start at a low threshold and increase as implementation improves
-        let min_pass_rate = 0.10; // 10% minimum
-
         assert!(
-            pass_rate >= min_pass_rate,
-            "Pass rate {:.1}% is below threshold {:.1}%",
-            pass_rate * 100.0,
-            min_pass_rate * 100.0
+            pass_rate >= 1.0,
+            "Pass rate {:.1}% — all identity tests must pass",
+            pass_rate * 100.0
         );
     }
 }
@@ -126,15 +119,7 @@ mod by_category {
     /// Test simple expressions (numbers, strings, identifiers)
     #[test]
     fn test_identity_simple_expressions() {
-        let test_cases = [
-            "1",
-            "(1)",
-            "1.0",
-            "'x'",
-            "''",
-            "a",
-            "a.b",
-        ];
+        let test_cases = ["1", "(1)", "1.0", "'x'", "''", "a", "a.b"];
 
         let mut results = TestResults::default();
 
@@ -144,19 +129,16 @@ mod by_category {
         }
 
         results.print_summary("Simple Expressions");
-        assert!(results.pass_rate() >= 0.5, "Simple expressions should mostly pass");
+        assert!(
+            results.pass_rate() >= 0.5,
+            "Simple expressions should mostly pass"
+        );
     }
 
     /// Test arithmetic operations
     #[test]
     fn test_identity_arithmetic() {
-        let test_cases = [
-            "1 + 2",
-            "1 - 2",
-            "1 * 2",
-            "1 / 2",
-            "(1 + 2) * 3",
-        ];
+        let test_cases = ["1 + 2", "1 - 2", "1 * 2", "1 / 2", "(1 + 2) * 3"];
 
         let mut results = TestResults::default();
 
@@ -192,13 +174,7 @@ mod by_category {
     /// Test function calls
     #[test]
     fn test_identity_functions() {
-        let test_cases = [
-            "SUM(1)",
-            "COUNT(*)",
-            "MAX(a)",
-            "MIN(b)",
-            "COALESCE(a, b)",
-        ];
+        let test_cases = ["SUM(1)", "COUNT(*)", "MAX(a)", "MIN(b)", "COALESCE(a, b)"];
 
         let mut results = TestResults::default();
 
@@ -226,11 +202,11 @@ mod by_category {
             // Line 483: CROSS JOIN with parens
             "SELECT * FROM ((SELECT 1 AS x) CROSS JOIN (SELECT 2 AS y)) AS z",
             // Remaining failures
-            "''''",  // Line 19: Four single quotes
-            "SELECT * FROM ((SELECT 1))",  // Line 440: Double-parenthesized subquery
-            "SELECT * FROM ((SELECT 1) AS a(b))",  // Line 447: Subquery alias with column aliases
-            "SELECT a FROM test PIVOT(SUM(x) FOR y IN ('z', 'q')) UNPIVOT(x FOR y IN (z, q)) AS x",  // Line 355: PIVOT...UNPIVOT with alias
-            "SELECT * FROM ((SELECT 1) AS a UNION ALL (SELECT 2) AS b)",  // Line 446: Aliased subqueries in UNION
+            "''''",                               // Line 19: Four single quotes
+            "SELECT * FROM ((SELECT 1))",         // Line 440: Double-parenthesized subquery
+            "SELECT * FROM ((SELECT 1) AS a(b))", // Line 447: Subquery alias with column aliases
+            "SELECT a FROM test PIVOT(SUM(x) FOR y IN ('z', 'q')) UNPIVOT(x FOR y IN (z, q)) AS x", // Line 355: PIVOT...UNPIVOT with alias
+            "SELECT * FROM ((SELECT 1) AS a UNION ALL (SELECT 2) AS b)", // Line 446: Aliased subqueries in UNION
         ];
         for sql in &test_cases {
             println!("\nInput:  {}", sql);

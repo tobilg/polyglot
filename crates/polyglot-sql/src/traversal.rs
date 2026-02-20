@@ -776,7 +776,10 @@ is_type!(is_drop_view, Expression::DropView(_));
 pub fn is_query(expr: &Expression) -> bool {
     matches!(
         expr,
-        Expression::Select(_) | Expression::Insert(_) | Expression::Update(_) | Expression::Delete(_)
+        Expression::Select(_)
+            | Expression::Insert(_)
+            | Expression::Update(_)
+            | Expression::Delete(_)
     )
 }
 

@@ -25,23 +25,58 @@ impl DialectImpl for TeradataDialect {
         // Teradata does NOT support nested comments
         config.nested_comments = false;
         // Teradata-specific keywords and operators
-        config.keywords.insert("SEL".to_string(), crate::tokens::TokenType::Select);
-        config.keywords.insert("UPD".to_string(), crate::tokens::TokenType::Update);
-        config.keywords.insert("DEL".to_string(), crate::tokens::TokenType::Delete);
-        config.keywords.insert("INS".to_string(), crate::tokens::TokenType::Insert);
-        config.keywords.insert("SAMPLE".to_string(), crate::tokens::TokenType::Sample);
-        config.keywords.insert("LOCKING".to_string(), crate::tokens::TokenType::Lock);
-        config.keywords.insert("HELP".to_string(), crate::tokens::TokenType::Command);
-        config.keywords.insert("COLLECT".to_string(), crate::tokens::TokenType::Command);
-        config.keywords.insert("EQ".to_string(), crate::tokens::TokenType::Eq);
-        config.keywords.insert("NE".to_string(), crate::tokens::TokenType::Neq);
-        config.keywords.insert("GE".to_string(), crate::tokens::TokenType::Gte);
-        config.keywords.insert("GT".to_string(), crate::tokens::TokenType::Gt);
-        config.keywords.insert("LE".to_string(), crate::tokens::TokenType::Lte);
-        config.keywords.insert("LT".to_string(), crate::tokens::TokenType::Lt);
-        config.keywords.insert("MOD".to_string(), crate::tokens::TokenType::Mod);
-        config.keywords.insert("BYTEINT".to_string(), crate::tokens::TokenType::SmallInt);
-        config.keywords.insert("ST_GEOMETRY".to_string(), crate::tokens::TokenType::Geometry);
+        config
+            .keywords
+            .insert("SEL".to_string(), crate::tokens::TokenType::Select);
+        config
+            .keywords
+            .insert("UPD".to_string(), crate::tokens::TokenType::Update);
+        config
+            .keywords
+            .insert("DEL".to_string(), crate::tokens::TokenType::Delete);
+        config
+            .keywords
+            .insert("INS".to_string(), crate::tokens::TokenType::Insert);
+        config
+            .keywords
+            .insert("SAMPLE".to_string(), crate::tokens::TokenType::Sample);
+        config
+            .keywords
+            .insert("LOCKING".to_string(), crate::tokens::TokenType::Lock);
+        config
+            .keywords
+            .insert("HELP".to_string(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("COLLECT".to_string(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("EQ".to_string(), crate::tokens::TokenType::Eq);
+        config
+            .keywords
+            .insert("NE".to_string(), crate::tokens::TokenType::Neq);
+        config
+            .keywords
+            .insert("GE".to_string(), crate::tokens::TokenType::Gte);
+        config
+            .keywords
+            .insert("GT".to_string(), crate::tokens::TokenType::Gt);
+        config
+            .keywords
+            .insert("LE".to_string(), crate::tokens::TokenType::Lte);
+        config
+            .keywords
+            .insert("LT".to_string(), crate::tokens::TokenType::Lt);
+        config
+            .keywords
+            .insert("MOD".to_string(), crate::tokens::TokenType::Mod);
+        config
+            .keywords
+            .insert("BYTEINT".to_string(), crate::tokens::TokenType::SmallInt);
+        config.keywords.insert(
+            "ST_GEOMETRY".to_string(),
+            crate::tokens::TokenType::Geometry,
+        );
         // Teradata does not support % as modulo operator
         config.single_tokens.remove(&'%');
         // Teradata treats 0x prefix as hex string literals
@@ -65,12 +100,14 @@ impl DialectImpl for TeradataDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Teradata
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in Teradata
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -94,13 +131,15 @@ impl DialectImpl for TeradataDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -134,28 +173,37 @@ impl TeradataDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // RAND -> RANDOM in Teradata
@@ -258,13 +306,15 @@ impl TeradataDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -298,19 +348,23 @@ impl TeradataDialect {
                     let strftime_fmt = Self::teradata_to_strftime(&teradata_fmt);
 
                     if is_date {
-                        return Ok(Expression::StrToDate(Box::new(crate::expressions::StrToDate {
-                            this: Box::new(c.this),
-                            format: Some(strftime_fmt),
-                            safe: None,
-                        })));
+                        return Ok(Expression::StrToDate(Box::new(
+                            crate::expressions::StrToDate {
+                                this: Box::new(c.this),
+                                format: Some(strftime_fmt),
+                                safe: None,
+                            },
+                        )));
                     } else {
-                        return Ok(Expression::StrToTime(Box::new(crate::expressions::StrToTime {
-                            this: Box::new(c.this),
-                            format: strftime_fmt,
-                            zone: None,
-                            safe: None,
-                            target_type: None,
-                        })));
+                        return Ok(Expression::StrToTime(Box::new(
+                            crate::expressions::StrToTime {
+                                this: Box::new(c.this),
+                                format: strftime_fmt,
+                                zone: None,
+                                safe: None,
+                                target_type: None,
+                            },
+                        )));
                     }
                 }
             }

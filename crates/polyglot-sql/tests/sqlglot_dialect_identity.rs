@@ -78,9 +78,7 @@ fn run_dialect_identity_tests(dialect_name: &str) -> TestResults {
     let dialect_name = dialect_name.to_string();
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024) // 16MB stack
-        .spawn(move || {
-            run_dialect_identity_tests_impl(&dialect_name)
-        })
+        .spawn(move || run_dialect_identity_tests_impl(&dialect_name))
         .expect("Failed to spawn test thread")
         .join()
         .expect("Test thread panicked")
@@ -140,14 +138,10 @@ fn test_sqlglot_dialect_identity_all() {
 
     total_results.print_summary("SQLGlot Dialect Identity (All)");
 
-    // Assert minimum pass rate
-    let min_pass_rate = 0.05; // 5% minimum (dialect tests are harder)
-
     assert!(
-        total_results.total() == 0 || total_results.pass_rate() >= min_pass_rate,
-        "Pass rate {:.1}% is below threshold {:.1}%",
-        total_results.pass_rate() * 100.0,
-        min_pass_rate * 100.0
+        total_results.total() == 0 || total_results.pass_rate() >= 1.0,
+        "Pass rate {:.1}% — all dialect identity tests must pass",
+        total_results.pass_rate() * 100.0
     );
 }
 

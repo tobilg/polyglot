@@ -33,17 +33,27 @@ pub mod transforms;
 pub mod traversal;
 pub mod trie;
 
-pub use dialects::{Dialect, DialectType, CustomDialectBuilder, unregister_custom_dialect};
+pub use ast_transforms::{
+    add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
+    get_identifiers, get_literals, get_subqueries, get_table_names, get_window_functions,
+    node_count, qualify_columns, remove_limit_offset, remove_nodes, remove_select_columns,
+    remove_where, rename_columns, rename_tables, replace_by_type, replace_nodes, set_distinct,
+    set_limit, set_offset,
+};
+pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
 pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
 pub use expressions::Expression;
 pub use generator::Generator;
 pub use helper::{
-    csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime,
-    merge_ranges, name_sequence, seq_get, split_num_words, tsort, while_changing, DATE_UNITS,
+    csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,
+    name_sequence, seq_get, split_num_words, tsort, while_changing, DATE_UNITS,
 };
+pub use optimizer::{annotate_types, TypeAnnotator, TypeCoercionClass};
 pub use parser::Parser;
 pub use resolver::{is_column_ambiguous, resolve_column, Resolver, ResolverError, ResolverResult};
-pub use schema::{ensure_schema, from_simple_map, normalize_name, MappingSchema, Schema, SchemaError};
+pub use schema::{
+    ensure_schema, from_simple_map, normalize_name, MappingSchema, Schema, SchemaError,
+};
 pub use scope::{
     build_scope, find_all_in_scope, find_in_scope, traverse_scope, walk_in_scope, ColumnRef, Scope,
     ScopeType, SourceInfo,
@@ -51,37 +61,100 @@ pub use scope::{
 pub use time::{format_time, is_valid_timezone, subsecond_precision, TIMEZONES};
 pub use tokens::{Token, TokenType, Tokenizer};
 pub use traversal::{
-    contains_aggregate, contains_subquery, contains_window_function, find_ancestor, find_parent,
-    get_columns, get_tables, is_aggregate, is_column, is_function, is_literal, is_select,
-    is_subquery, is_window_function, transform, transform_map, BfsIter, DfsIter, ExpressionWalk,
-    ParentInfo, TreeContext,
+    contains_aggregate,
+    contains_subquery,
+    contains_window_function,
+    find_ancestor,
+    find_parent,
+    get_columns,
+    get_tables,
+    is_add,
+    is_aggregate,
+    is_alias,
+    is_alter_table,
+    is_and,
+    is_arithmetic,
+    is_avg,
+    is_between,
+    is_boolean,
+    is_case,
+    is_cast,
+    is_coalesce,
+    is_column,
+    is_comparison,
+    is_concat,
+    is_count,
+    is_create_index,
+    is_create_table,
+    is_create_view,
+    is_cte,
+    is_ddl,
+    is_delete,
+    is_div,
+    is_drop_index,
+    is_drop_table,
+    is_drop_view,
+    is_eq,
+    is_except,
+    is_exists,
+    is_from,
+    is_function,
+    is_group_by,
+    is_gt,
+    is_gte,
+    is_having,
+    is_identifier,
+    is_ilike,
+    is_in,
     // Extended type predicates
-    is_insert, is_update, is_delete, is_union, is_intersect, is_except,
-    is_boolean, is_null_literal, is_star, is_identifier, is_table,
-    is_eq, is_neq, is_lt, is_lte, is_gt, is_gte, is_like, is_ilike,
-    is_add, is_sub, is_mul, is_div, is_mod, is_concat,
-    is_and, is_or, is_not,
-    is_in, is_between, is_is_null, is_exists,
-    is_count, is_sum, is_avg, is_min_func, is_max_func, is_coalesce, is_null_if,
-    is_cast, is_try_cast, is_safe_cast, is_case,
-    is_from, is_join, is_where, is_group_by, is_having, is_order_by, is_limit, is_offset,
-    is_with, is_cte, is_alias, is_paren, is_ordered,
-    is_create_table, is_drop_table, is_alter_table, is_create_index, is_drop_index,
-    is_create_view, is_drop_view,
+    is_insert,
+    is_intersect,
+    is_is_null,
+    is_join,
+    is_like,
+    is_limit,
+    is_literal,
+    is_logical,
+    is_lt,
+    is_lte,
+    is_max_func,
+    is_min_func,
+    is_mod,
+    is_mul,
+    is_neq,
+    is_not,
+    is_null_if,
+    is_null_literal,
+    is_offset,
+    is_or,
+    is_order_by,
+    is_ordered,
+    is_paren,
     // Composite predicates
-    is_query, is_set_operation, is_comparison, is_arithmetic, is_logical, is_ddl,
-};
-pub use ast_transforms::{
-    add_select_columns, remove_select_columns, set_distinct,
-    add_where, remove_where,
-    set_limit, set_offset, remove_limit_offset,
-    rename_columns, rename_tables, qualify_columns,
-    replace_nodes, replace_by_type, remove_nodes,
-    get_column_names, get_table_names, get_identifiers, get_functions, get_literals,
-    get_subqueries, get_aggregate_functions, get_window_functions, node_count,
+    is_query,
+    is_safe_cast,
+    is_select,
+    is_set_operation,
+    is_star,
+    is_sub,
+    is_subquery,
+    is_sum,
+    is_table,
+    is_try_cast,
+    is_union,
+    is_update,
+    is_where,
+    is_window_function,
+    is_with,
+    transform,
+    transform_map,
+    BfsIter,
+    DfsIter,
+    ExpressionWalk,
+    ParentInfo,
+    TreeContext,
 };
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
-pub use optimizer::{annotate_types, TypeAnnotator, TypeCoercionClass};
 
 /// Transpile SQL from one dialect to another.
 ///
@@ -183,9 +256,9 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
             for expr in &expressions {
                 if !expr.is_statement() {
                     let msg = format!("Invalid expression / Unexpected token");
-                    return ValidationResult::with_errors(vec![
-                        ValidationError::error(msg, "E004"),
-                    ]);
+                    return ValidationResult::with_errors(vec![ValidationError::error(
+                        msg, "E004",
+                    )]);
                 }
             }
             ValidationResult::success()

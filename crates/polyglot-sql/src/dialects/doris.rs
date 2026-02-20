@@ -61,13 +61,15 @@ impl DialectImpl for DorisDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -80,7 +82,10 @@ impl DialectImpl for DorisDialect {
                 if let Some(flags) = r.flags {
                     args.push(flags);
                 }
-                Ok(Expression::Function(Box::new(Function::new("REGEXP".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP".to_string(),
+                    args,
+                ))))
             }
 
             // Generic function transformations
@@ -103,49 +108,54 @@ impl DorisDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // NVL -> IFNULL
-            "NVL" if f.args.len() == 2 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "IFNULL".to_string(),
-                    f.args,
-                ))))
-            }
+            "NVL" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
+                "IFNULL".to_string(),
+                f.args,
+            )))),
 
             // ISNULL -> IFNULL
-            "ISNULL" if f.args.len() == 2 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "IFNULL".to_string(),
-                    f.args,
-                ))))
-            }
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
+                "IFNULL".to_string(),
+                f.args,
+            )))),
 
             // COALESCE is native in Doris
-            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NOW is native in Doris
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> NOW in Doris
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURRENT_TIMESTAMP is native
             "CURRENT_TIMESTAMP" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GROUP_CONCAT is native in Doris
             "GROUP_CONCAT" => Ok(Expression::Function(Box::new(f))),
 
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // LISTAGG -> GROUP_CONCAT
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -247,10 +257,9 @@ impl DorisDialect {
             "RLIKE" => Ok(Expression::Function(Box::new(f))),
 
             // REGEXP_LIKE -> REGEXP
-            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "REGEXP".to_string(),
-                f.args,
-            )))),
+            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("REGEXP".to_string(), f.args),
+            ))),
 
             // MONTHS_ADD is native in Doris
             "MONTHS_ADD" => Ok(Expression::Function(Box::new(f))),
@@ -281,13 +290,15 @@ impl DorisDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 

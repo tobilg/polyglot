@@ -56,7 +56,10 @@ pub fn transpile(sql: &str, read_dialect: &str, write_dialect: &str) -> String {
 
     let result = transpile_internal(sql, read_dialect, write_dialect);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -112,7 +115,10 @@ pub fn parse(sql: &str, dialect: &str) -> String {
 
     let result = parse_internal(sql, dialect);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -164,7 +170,10 @@ pub fn generate(ast_json: &str, dialect: &str) -> String {
 
     let result = generate_internal(ast_json, dialect);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -192,10 +201,7 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
     };
 
     let d = Dialect::get(dialect_type);
-    let results: Result<Vec<String>, _> = expressions
-        .iter()
-        .map(|expr| d.generate(expr))
-        .collect();
+    let results: Result<Vec<String>, _> = expressions.iter().map(|expr| d.generate(expr)).collect();
 
     match results {
         Ok(sql) => TranspileResult {
@@ -291,7 +297,10 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                         error: None,
                     };
                     serde_json::to_string(&result).unwrap_or_else(|e| {
-                        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+                        format!(
+                            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+                            e
+                        )
                     })
                 }
                 Err(e) => {
@@ -301,7 +310,10 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                         error: Some(e.to_string()),
                     };
                     serde_json::to_string(&result).unwrap_or_else(|e| {
-                        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+                        format!(
+                            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+                            e
+                        )
                     })
                 }
             }
@@ -313,7 +325,10 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                 error: Some(e.to_string()),
             };
             serde_json::to_string(&result).unwrap_or_else(|e| {
-                format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+                format!(
+                    r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+                    e
+                )
             })
         }
     }
@@ -344,9 +359,10 @@ fn validate_internal(sql: &str, dialect: &str) -> CoreValidationResult {
     let dialect_type = match dialect.parse::<DialectType>() {
         Ok(d) => d,
         Err(e) => {
-            return CoreValidationResult::with_errors(vec![
-                polyglot_sql::ValidationError::error(format!("Invalid dialect: {}", e), "E000")
-            ]);
+            return CoreValidationResult::with_errors(vec![polyglot_sql::ValidationError::error(
+                format!("Invalid dialect: {}", e),
+                "E000",
+            )]);
         }
     };
 
@@ -437,16 +453,14 @@ pub fn lineage_sql(sql: &str, column: &str, dialect: &str, trim_selects: bool) -
 
     let result = lineage_internal(sql, column, dialect, trim_selects);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
-fn lineage_internal(
-    sql: &str,
-    column: &str,
-    dialect: &str,
-    trim_selects: bool,
-) -> LineageResult {
+fn lineage_internal(sql: &str, column: &str, dialect: &str, trim_selects: bool) -> LineageResult {
     let (expr, dialect_type) = match parse_first(sql, dialect) {
         Ok(v) => v,
         Err(e) => {
@@ -493,7 +507,10 @@ pub fn source_tables(sql: &str, column: &str, dialect: &str) -> String {
 
     let result = source_tables_internal(sql, column, dialect);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -563,7 +580,10 @@ pub fn diff_sql(
 
     let result = diff_internal(source_sql, target_sql, dialect, delta_only, f, t);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -635,7 +655,10 @@ pub fn plan(sql: &str, dialect: &str) -> String {
 
     let result = plan_internal(sql, dialect);
     serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
     })
 }
 
@@ -710,7 +733,10 @@ pub struct ScalarResult {
 }
 
 fn serialize_error_json(e: impl std::fmt::Display) -> String {
-    format!(r#"{{"success":false,"error":"Serialization error: {}"}}"#, e)
+    format!(
+        r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+        e
+    )
 }
 
 // ============================================================================
@@ -724,9 +750,17 @@ pub fn ast_get_column_names(ast_json: &str) -> String {
     let result = match serde_json::from_str::<Expression>(ast_json) {
         Ok(expr) => {
             let names = ast_transforms::get_column_names(&expr);
-            StringArrayResult { success: true, result: Some(names), error: None }
+            StringArrayResult {
+                success: true,
+                result: Some(names),
+                error: None,
+            }
         }
-        Err(e) => StringArrayResult { success: false, result: None, error: Some(e.to_string()) },
+        Err(e) => StringArrayResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -738,9 +772,17 @@ pub fn ast_get_table_names(ast_json: &str) -> String {
     let result = match serde_json::from_str::<Expression>(ast_json) {
         Ok(expr) => {
             let names = ast_transforms::get_table_names(&expr);
-            StringArrayResult { success: true, result: Some(names), error: None }
+            StringArrayResult {
+                success: true,
+                result: Some(names),
+                error: None,
+            }
         }
-        Err(e) => StringArrayResult { success: false, result: None, error: Some(e.to_string()) },
+        Err(e) => StringArrayResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -754,11 +796,23 @@ pub fn ast_get_aggregate_functions(ast_json: &str) -> String {
             let exprs = ast_transforms::get_aggregate_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
             match serde_json::to_string(&cloned) {
-                Ok(json) => AstResult { success: true, ast: Some(json), error: None },
-                Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
             }
         }
-        Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -772,11 +826,23 @@ pub fn ast_get_window_functions(ast_json: &str) -> String {
             let exprs = ast_transforms::get_window_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
             match serde_json::to_string(&cloned) {
-                Ok(json) => AstResult { success: true, ast: Some(json), error: None },
-                Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
             }
         }
-        Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -790,11 +856,23 @@ pub fn ast_get_functions(ast_json: &str) -> String {
             let exprs = ast_transforms::get_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
             match serde_json::to_string(&cloned) {
-                Ok(json) => AstResult { success: true, ast: Some(json), error: None },
-                Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
             }
         }
-        Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -808,11 +886,23 @@ pub fn ast_get_subqueries(ast_json: &str) -> String {
             let exprs = ast_transforms::get_subqueries(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
             match serde_json::to_string(&cloned) {
-                Ok(json) => AstResult { success: true, ast: Some(json), error: None },
-                Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
             }
         }
-        Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -826,11 +916,23 @@ pub fn ast_get_literals(ast_json: &str) -> String {
             let exprs = ast_transforms::get_literals(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
             match serde_json::to_string(&cloned) {
-                Ok(json) => AstResult { success: true, ast: Some(json), error: None },
-                Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
             }
         }
-        Err(e) => AstResult { success: false, ast: None, error: Some(e.to_string()) },
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -848,7 +950,11 @@ pub fn ast_node_count(ast_json: &str) -> String {
                 error: None,
             }
         }
-        Err(e) => ScalarResult { success: false, result: None, error: Some(e.to_string()) },
+        Err(e) => ScalarResult {
+            success: false,
+            result: None,
+            error: Some(e.to_string()),
+        },
     };
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
@@ -863,11 +969,21 @@ pub fn ast_rename_columns(ast_json: &str, mapping_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
-        let mapping: HashMap<String, String> = serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
+        let mapping: HashMap<String, String> =
+            serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::rename_columns(expr, &mapping);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -877,11 +993,21 @@ pub fn ast_rename_tables(ast_json: &str, mapping_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
-        let mapping: HashMap<String, String> = serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
+        let mapping: HashMap<String, String> =
+            serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::rename_tables(expr, &mapping);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -893,8 +1019,17 @@ pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::qualify_columns(expr, table_name);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -904,11 +1039,21 @@ pub fn ast_add_where(ast_json: &str, condition_json: &str, use_or: bool) -> Stri
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
-        let condition: Expression = serde_json::from_str(condition_json).map_err(|e| e.to_string())?;
+        let condition: Expression =
+            serde_json::from_str(condition_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::add_where(expr, condition, use_or);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -920,8 +1065,17 @@ pub fn ast_remove_where(ast_json: &str) -> String {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::remove_where(expr);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -933,8 +1087,17 @@ pub fn ast_set_limit(ast_json: &str, limit: u32) -> String {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::set_limit(expr, limit as usize);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -946,8 +1109,17 @@ pub fn ast_set_distinct(ast_json: &str, distinct: bool) -> String {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::set_distinct(expr, distinct);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
-        Ok(AstResult { success: true, ast: Some(json), error: None })
-    })().unwrap_or_else(|e| AstResult { success: false, ast: None, error: Some(e) });
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
@@ -1069,7 +1241,11 @@ mod tests {
     fn test_transpile_invalid_sql() {
         let result = transpile("SELECT (", "generic", "postgres");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
-        assert!(result.contains("error"), "Expected error message: {}", result);
+        assert!(
+            result.contains("error"),
+            "Expected error message: {}",
+            result
+        );
     }
 
     #[test]
@@ -1077,7 +1253,11 @@ mod tests {
     fn test_parse_invalid_sql() {
         let result = parse("SELECT (", "generic");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
-        assert!(result.contains("error"), "Expected error message: {}", result);
+        assert!(
+            result.contains("error"),
+            "Expected error message: {}",
+            result
+        );
     }
 
     #[test]
@@ -1085,7 +1265,11 @@ mod tests {
     fn test_format_invalid_sql() {
         let result = format_sql("SELECT (", "generic");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
-        assert!(result.contains("error"), "Expected error message: {}", result);
+        assert!(
+            result.contains("error"),
+            "Expected error message: {}",
+            result
+        );
     }
 
     // Test with different invalid SQL that doesn't cause panic
@@ -1094,7 +1278,11 @@ mod tests {
         let result = transpile("SELECT * users", "generic", "postgres");
         // This may succeed or fail depending on parser behavior
         let parsed: serde_json::Value = serde_json::from_str(&result).expect("Valid JSON");
-        assert!(parsed.get("success").is_some(), "Should return success field: {}", result);
+        assert!(
+            parsed.get("success").is_some(),
+            "Should return success field: {}",
+            result
+        );
     }
 
     #[test]
@@ -1207,9 +1395,21 @@ mod tests {
         let result2 = transpile("SELECT 1", "Generic", "PostgreSQL");
         let result3 = transpile("SELECT 1", "generic", "postgresql");
 
-        assert!(result1.contains("\"success\":true"), "Uppercase failed: {}", result1);
-        assert!(result2.contains("\"success\":true"), "Mixed case failed: {}", result2);
-        assert!(result3.contains("\"success\":true"), "Lowercase failed: {}", result3);
+        assert!(
+            result1.contains("\"success\":true"),
+            "Uppercase failed: {}",
+            result1
+        );
+        assert!(
+            result2.contains("\"success\":true"),
+            "Mixed case failed: {}",
+            result2
+        );
+        assert!(
+            result3.contains("\"success\":true"),
+            "Lowercase failed: {}",
+            result3
+        );
     }
 
     #[test]
@@ -1220,8 +1420,16 @@ mod tests {
         let tsql3 = transpile("SELECT 1", "generic", "sqlserver");
 
         assert!(tsql1.contains("\"success\":true"), "tsql failed: {}", tsql1);
-        assert!(tsql2.contains("\"success\":true"), "mssql failed: {}", tsql2);
-        assert!(tsql3.contains("\"success\":true"), "sqlserver failed: {}", tsql3);
+        assert!(
+            tsql2.contains("\"success\":true"),
+            "mssql failed: {}",
+            tsql2
+        );
+        assert!(
+            tsql3.contains("\"success\":true"),
+            "sqlserver failed: {}",
+            tsql3
+        );
     }
 
     // ============================================================================
@@ -1233,7 +1441,11 @@ mod tests {
         let result = transpile("SELECT '日本語', '你好世界'", "generic", "postgres");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
         // Unicode should be preserved
-        assert!(result.contains("日本語") || result.contains(r"\u"), "Unicode not preserved: {}", result);
+        assert!(
+            result.contains("日本語") || result.contains(r"\u"),
+            "Unicode not preserved: {}",
+            result
+        );
     }
 
     #[test]
@@ -1393,7 +1605,11 @@ mod tests {
     fn test_source_tables() {
         let result = source_tables("SELECT t.a FROM t JOIN s ON t.id = s.id", "a", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"t\""), "Should contain table t: {}", result);
+        assert!(
+            result.contains("\"t\""),
+            "Should contain table t: {}",
+            result
+        );
     }
 
     #[test]
@@ -1408,24 +1624,57 @@ mod tests {
 
     #[test]
     fn test_diff_identical() {
-        let result = diff_sql("SELECT a FROM t", "SELECT a FROM t", "generic", false, 0.6, 0.6);
+        let result = diff_sql(
+            "SELECT a FROM t",
+            "SELECT a FROM t",
+            "generic",
+            false,
+            0.6,
+            0.6,
+        );
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"type\":\"keep\""), "Should have keep edits: {}", result);
+        assert!(
+            result.contains("\"type\":\"keep\""),
+            "Should have keep edits: {}",
+            result
+        );
     }
 
     #[test]
     fn test_diff_changes() {
-        let result = diff_sql("SELECT col_a FROM t", "SELECT col_b FROM t", "generic", true, 0.6, 0.6);
+        let result = diff_sql(
+            "SELECT col_a FROM t",
+            "SELECT col_b FROM t",
+            "generic",
+            true,
+            0.6,
+            0.6,
+        );
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"type\":\"update\""), "Should have update edits: {}", result);
+        assert!(
+            result.contains("\"type\":\"update\""),
+            "Should have update edits: {}",
+            result
+        );
     }
 
     #[test]
     fn test_diff_delta_only() {
-        let result = diff_sql("SELECT a FROM t", "SELECT a FROM t", "generic", true, 0.6, 0.6);
+        let result = diff_sql(
+            "SELECT a FROM t",
+            "SELECT a FROM t",
+            "generic",
+            true,
+            0.6,
+            0.6,
+        );
         assert!(result.contains("\"success\":true"), "Result: {}", result);
         // delta_only=true → no keep edits
-        assert!(!result.contains("\"type\":\"keep\""), "Should not have keep edits: {}", result);
+        assert!(
+            !result.contains("\"type\":\"keep\""),
+            "Should not have keep edits: {}",
+            result
+        );
     }
 
     #[test]
@@ -1442,21 +1691,33 @@ mod tests {
     fn test_plan_simple() {
         let result = plan("SELECT a, b FROM t", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"kind\":\"scan\""), "Should have scan step: {}", result);
+        assert!(
+            result.contains("\"kind\":\"scan\""),
+            "Should have scan step: {}",
+            result
+        );
     }
 
     #[test]
     fn test_plan_join() {
         let result = plan("SELECT t1.a FROM t1 JOIN t2 ON t1.id = t2.id", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"join\""), "Should have join step: {}", result);
+        assert!(
+            result.contains("\"join\""),
+            "Should have join step: {}",
+            result
+        );
     }
 
     #[test]
     fn test_plan_aggregate() {
         let result = plan("SELECT x, SUM(y) FROM t GROUP BY x", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
-        assert!(result.contains("\"kind\":\"aggregate\""), "Should have aggregate: {}", result);
+        assert!(
+            result.contains("\"kind\":\"aggregate\""),
+            "Should have aggregate: {}",
+            result
+        );
     }
 
     #[test]
@@ -1501,7 +1762,8 @@ mod tests {
         let result = ast_get_aggregate_functions(&ast);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
-        let exprs: Vec<serde_json::Value> = serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let exprs: Vec<serde_json::Value> =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
         assert_eq!(exprs.len(), 2);
     }
 
@@ -1511,7 +1773,8 @@ mod tests {
         let result = ast_get_window_functions(&ast);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
-        let exprs: Vec<serde_json::Value> = serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let exprs: Vec<serde_json::Value> =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
         assert_eq!(exprs.len(), 1);
     }
 
@@ -1537,7 +1800,8 @@ mod tests {
         let result = ast_get_literals(&ast);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
-        let exprs: Vec<serde_json::Value> = serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let exprs: Vec<serde_json::Value> =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
         assert_eq!(exprs.len(), 3);
     }
 

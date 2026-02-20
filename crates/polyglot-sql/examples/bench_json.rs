@@ -233,21 +233,13 @@ fn main() {
             DialectType::PostgreSQL,
             DialectType::BigQuery,
         ),
-        (
-            "mysql_to_pg",
-            DialectType::MySQL,
-            DialectType::PostgreSQL,
-        ),
+        ("mysql_to_pg", DialectType::MySQL, DialectType::PostgreSQL),
         (
             "bq_to_snowflake",
             DialectType::BigQuery,
             DialectType::Snowflake,
         ),
-        (
-            "sf_to_duckdb",
-            DialectType::Snowflake,
-            DialectType::DuckDB,
-        ),
+        ("sf_to_duckdb", DialectType::Snowflake, DialectType::DuckDB),
         (
             "generic_to_pg",
             DialectType::Generic,

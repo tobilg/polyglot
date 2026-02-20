@@ -69,11 +69,13 @@ impl DialectImpl for ExasolDialect {
             )))),
 
             // COALESCE is native, but also support transformations from other forms
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -156,7 +158,8 @@ impl ExasolDialect {
 
             // IFNULL/ISNULL/NVL → COALESCE (native in Exasol)
             "IFNULL" | "ISNULL" | "NVL" if f.args.len() == 2 => {
-                Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+                Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                    original_name: None,
                     expressions: f.args,
                 })))
             }
@@ -186,12 +189,9 @@ impl ExasolDialect {
             "DATE_TRUNC" | "TRUNC" => Ok(Expression::Function(Box::new(f))),
 
             // LEVENSHTEIN → EDIT_DISTANCE
-            "LEVENSHTEIN" | "LEVENSHTEIN_DISTANCE" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "EDIT_DISTANCE".to_string(),
-                    f.args,
-                ))))
-            }
+            "LEVENSHTEIN" | "LEVENSHTEIN_DISTANCE" => Ok(Expression::Function(Box::new(
+                Function::new("EDIT_DISTANCE".to_string(), f.args),
+            ))),
 
             // REGEXP_EXTRACT → REGEXP_SUBSTR
             "REGEXP_EXTRACT" => Ok(Expression::Function(Box::new(Function::new(
@@ -215,7 +215,11 @@ impl ExasolDialect {
             "SHA256" | "SHA2" => {
                 // SHA2 in some dialects takes a length parameter
                 // HASH_SHA256 in Exasol just takes the value
-                let arg = f.args.into_iter().next().unwrap_or(Expression::Null(crate::expressions::Null));
+                let arg = f
+                    .args
+                    .into_iter()
+                    .next()
+                    .unwrap_or(Expression::Null(crate::expressions::Null));
                 Ok(Expression::Function(Box::new(Function::new(
                     "HASH_SHA256".to_string(),
                     vec![arg],
@@ -235,20 +239,14 @@ impl ExasolDialect {
             )))),
 
             // APPROX_DISTINCT → APPROXIMATE_COUNT_DISTINCT
-            "APPROX_DISTINCT" | "APPROX_COUNT_DISTINCT" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "APPROXIMATE_COUNT_DISTINCT".to_string(),
-                    f.args,
-                ))))
-            }
+            "APPROX_DISTINCT" | "APPROX_COUNT_DISTINCT" => Ok(Expression::Function(Box::new(
+                Function::new("APPROXIMATE_COUNT_DISTINCT".to_string(), f.args),
+            ))),
 
             // TO_CHAR is native for date formatting
-            "TO_CHAR" | "DATE_FORMAT" | "STRFTIME" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TO_CHAR".to_string(),
-                    f.args,
-                ))))
-            }
+            "TO_CHAR" | "DATE_FORMAT" | "STRFTIME" => Ok(Expression::Function(Box::new(
+                Function::new("TO_CHAR".to_string(), f.args),
+            ))),
 
             // TO_DATE is native but format specifiers need uppercasing
             "TO_DATE" => {
@@ -319,20 +317,14 @@ impl ExasolDialect {
             "TO_TIMESTAMP" => Ok(Expression::Function(Box::new(f))),
 
             // CONVERT_TZ for timezone conversion
-            "CONVERT_TIMEZONE" | "AT_TIME_ZONE" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "CONVERT_TZ".to_string(),
-                    f.args,
-                ))))
-            }
+            "CONVERT_TIMEZONE" | "AT_TIME_ZONE" => Ok(Expression::Function(Box::new(
+                Function::new("CONVERT_TZ".to_string(), f.args),
+            ))),
 
             // STRPOS/POSITION → INSTR
-            "STRPOS" | "POSITION" | "CHARINDEX" | "LOCATE" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "INSTR".to_string(),
-                    f.args,
-                ))))
-            }
+            "STRPOS" | "POSITION" | "CHARINDEX" | "LOCATE" => Ok(Expression::Function(Box::new(
+                Function::new("INSTR".to_string(), f.args),
+            ))),
 
             // WEEK_OF_YEAR → WEEK
             "WEEK_OF_YEAR" | "WEEKOFYEAR" => Ok(Expression::Function(Box::new(Function::new(
@@ -374,12 +366,9 @@ impl ExasolDialect {
             "LISTAGG" => Ok(Expression::AggregateFunction(f)),
 
             // APPROX_DISTINCT → APPROXIMATE_COUNT_DISTINCT
-            "APPROX_DISTINCT" | "APPROX_COUNT_DISTINCT" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "APPROXIMATE_COUNT_DISTINCT".to_string(),
-                    f.args,
-                ))))
-            }
+            "APPROX_DISTINCT" | "APPROX_COUNT_DISTINCT" => Ok(Expression::Function(Box::new(
+                Function::new("APPROXIMATE_COUNT_DISTINCT".to_string(), f.args),
+            ))),
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

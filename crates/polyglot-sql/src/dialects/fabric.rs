@@ -132,10 +132,11 @@ impl DialectImpl for FabricDialect {
                     }));
 
                     // Create new AT TIME ZONE with DATETIMEOFFSET
-                    let new_at_tz = Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
-                        this: datetimeoffset_cast,
-                        zone: at_tz.zone.clone(),
-                    }));
+                    let new_at_tz =
+                        Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
+                            this: datetimeoffset_cast,
+                            zone: at_tz.zone.clone(),
+                        }));
 
                     // Wrap in outer DATETIME2 cast
                     return Ok(Expression::Cast(Box::new(Cast {

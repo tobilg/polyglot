@@ -57,7 +57,9 @@ impl DialectImpl for TiDBDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
@@ -102,28 +104,34 @@ impl TiDBDialect {
             )))),
 
             // COALESCE is native in TiDB
-            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NOW is native in TiDB
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> NOW
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GROUP_CONCAT is native in TiDB
             "GROUP_CONCAT" => Ok(Expression::Function(Box::new(f))),
 
             // STRING_AGG -> GROUP_CONCAT
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "GROUP_CONCAT".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("GROUP_CONCAT".to_string(), f.args),
+            ))),
 
             // LISTAGG -> GROUP_CONCAT
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -213,10 +221,9 @@ impl TiDBDialect {
             "RLIKE" => Ok(Expression::Function(Box::new(f))),
 
             // REGEXP_LIKE -> REGEXP
-            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "REGEXP".to_string(),
-                f.args,
-            )))),
+            "REGEXP_LIKE" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("REGEXP".to_string(), f.args),
+            ))),
 
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
@@ -238,7 +245,9 @@ impl TiDBDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,

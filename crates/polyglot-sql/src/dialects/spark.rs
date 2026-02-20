@@ -13,7 +13,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{CeilFunc, CurrentTimestamp, DataType, DateTimeField, Expression, ExtractFunc, Function, Literal, StructField, UnaryFunc, VarArgFunc};
+use crate::expressions::{
+    CeilFunc, CurrentTimestamp, DataType, DateTimeField, Expression, ExtractFunc, Function,
+    Literal, StructField, UnaryFunc, VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -35,14 +38,28 @@ impl DialectImpl for SparkDialect {
         // Spark (like Hive) uses backslash escapes in strings (STRING_ESCAPES = ["\\"])
         config.string_escapes.push('\\');
         // Spark supports DIV keyword for integer division (inherited from Hive)
-        config.keywords.insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("DIV".to_string(), crate::tokens::TokenType::Div);
         // Spark numeric literal suffixes (same as Hive): 1L -> BIGINT, 1S -> SMALLINT, etc.
-        config.numeric_literals.insert("L".to_string(), "BIGINT".to_string());
-        config.numeric_literals.insert("S".to_string(), "SMALLINT".to_string());
-        config.numeric_literals.insert("Y".to_string(), "TINYINT".to_string());
-        config.numeric_literals.insert("D".to_string(), "DOUBLE".to_string());
-        config.numeric_literals.insert("F".to_string(), "FLOAT".to_string());
-        config.numeric_literals.insert("BD".to_string(), "DECIMAL".to_string());
+        config
+            .numeric_literals
+            .insert("L".to_string(), "BIGINT".to_string());
+        config
+            .numeric_literals
+            .insert("S".to_string(), "SMALLINT".to_string());
+        config
+            .numeric_literals
+            .insert("Y".to_string(), "TINYINT".to_string());
+        config
+            .numeric_literals
+            .insert("D".to_string(), "DOUBLE".to_string());
+        config
+            .numeric_literals
+            .insert("F".to_string(), "FLOAT".to_string());
+        config
+            .numeric_literals
+            .insert("BD".to_string(), "DECIMAL".to_string());
         // Spark allows identifiers to start with digits (e.g., 1a, 1_a)
         config.identifiers_can_start_with_digit = true;
         // Spark: STRING_ESCAPES_ALLOWED_IN_RAW_STRINGS = False
@@ -75,12 +92,14 @@ impl DialectImpl for SparkDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Spark
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL is supported in Spark (from Hive), but COALESCE is standard
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -127,7 +146,9 @@ impl DialectImpl for SparkDialect {
 
             // RANDOM -> RAND in Spark
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // Rand is native to Spark
@@ -148,7 +169,9 @@ impl DialectImpl for SparkDialect {
             Expression::AggregateFunction(f) => self.transform_aggregate_function(f),
 
             // $N parameters -> ${N} in Spark (DollarBrace style)
-            Expression::Parameter(mut p) if p.style == crate::expressions::ParameterStyle::Dollar => {
+            Expression::Parameter(mut p)
+                if p.style == crate::expressions::ParameterStyle::Dollar =>
+            {
                 p.style = crate::expressions::ParameterStyle::DollarBrace;
                 // Convert index to name for DollarBrace format
                 if let Some(idx) = p.index {
@@ -185,18 +208,26 @@ impl SparkDialect {
     /// - TEXT -> STRING
     fn normalize_spark_type(dt: DataType) -> DataType {
         match dt {
-            DataType::VarChar { length: None, .. } | DataType::Char { length: None } | DataType::Text => {
-                DataType::Custom { name: "STRING".to_string() }
-            }
+            DataType::VarChar { length: None, .. }
+            | DataType::Char { length: None }
+            | DataType::Text => DataType::Custom {
+                name: "STRING".to_string(),
+            },
             // VARCHAR(n) and CHAR(n) with length are kept as-is
             DataType::VarChar { .. } | DataType::Char { .. } => dt,
             // Also normalize struct fields recursively
             DataType::Struct { fields, nested } => {
-                let normalized_fields: Vec<StructField> = fields.into_iter().map(|mut f| {
-                    f.data_type = Self::normalize_spark_type(f.data_type);
-                    f
-                }).collect();
-                DataType::Struct { fields: normalized_fields, nested }
+                let normalized_fields: Vec<StructField> = fields
+                    .into_iter()
+                    .map(|mut f| {
+                        f.data_type = Self::normalize_spark_type(f.data_type);
+                        f
+                    })
+                    .collect();
+                DataType::Struct {
+                    fields: normalized_fields,
+                    nested,
+                }
             }
             _ => dt,
         }
@@ -206,17 +237,20 @@ impl SparkDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -232,10 +266,9 @@ impl SparkDialect {
 
             // STRING_AGG is supported in Spark 4+
             // For older versions, fall back to CONCAT_WS + COLLECT_LIST
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "COLLECT_LIST".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("COLLECT_LIST".to_string(), f.args),
+            ))),
 
             // LISTAGG -> STRING_AGG in Spark 4+ (or COLLECT_LIST for older)
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
@@ -256,27 +289,40 @@ impl SparkDialect {
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // RAND is native to Spark
             "RAND" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURRENT_TIMESTAMP is native
             "CURRENT_TIMESTAMP" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURRENT_DATE is native
@@ -286,7 +332,10 @@ impl SparkDialect {
             "TO_DATE" if f.args.len() == 2 => {
                 let is_default_format = matches!(&f.args[1], Expression::Literal(crate::expressions::Literal::String(s)) if s == "yyyy-MM-dd");
                 if is_default_format {
-                    Ok(Expression::Function(Box::new(Function::new("TO_DATE".to_string(), vec![f.args.into_iter().next().unwrap()]))))
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "TO_DATE".to_string(),
+                        vec![f.args.into_iter().next().unwrap()],
+                    ))))
                 } else {
                     Ok(Expression::Function(Box::new(f)))
                 }
@@ -350,8 +399,12 @@ impl SparkDialect {
             "STR_TO_MAP" => {
                 if f.args.len() == 1 {
                     let mut args = f.args;
-                    args.push(Expression::Literal(crate::expressions::Literal::String(",".to_string())));
-                    args.push(Expression::Literal(crate::expressions::Literal::String(":".to_string())));
+                    args.push(Expression::Literal(crate::expressions::Literal::String(
+                        ",".to_string(),
+                    )));
+                    args.push(Expression::Literal(crate::expressions::Literal::String(
+                        ":".to_string(),
+                    )));
                     Ok(Expression::Function(Box::new(Function::new(
                         "STR_TO_MAP".to_string(),
                         args,
@@ -536,47 +589,49 @@ impl SparkDialect {
             "ARRAY" => Ok(Expression::Function(Box::new(f))),
 
             // ROW -> STRUCT for Spark (cross-dialect, no auto-naming)
-            "ROW" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "STRUCT".to_string(),
-                    f.args,
-                ))))
-            }
+            "ROW" => Ok(Expression::Function(Box::new(Function::new(
+                "STRUCT".to_string(),
+                f.args,
+            )))),
 
             // STRUCT is native to Spark - auto-name unnamed args as col1, col2, etc.
             "STRUCT" => {
                 let mut col_idx = 1usize;
-                let named_args: Vec<Expression> = f.args.into_iter().map(|arg| {
-                    let current_idx = col_idx;
-                    col_idx += 1;
-                    // Check if arg already has an alias (AS name) or is Star
-                    match &arg {
-                        Expression::Alias(_) => arg, // already named
-                        Expression::Star(_) => arg, // STRUCT(*) - keep as-is
-                        Expression::Column(c) if c.table.is_none() => {
-                            // Column reference: use column name as the struct field name
-                            let name = c.name.name.clone();
-                            Expression::Alias(Box::new(crate::expressions::Alias {
-                                this: arg,
-                                alias: crate::expressions::Identifier::new(&name),
-                                column_aliases: Vec::new(),
-                                pre_alias_comments: Vec::new(),
-                                trailing_comments: Vec::new(),
-                            }))
+                let named_args: Vec<Expression> = f
+                    .args
+                    .into_iter()
+                    .map(|arg| {
+                        let current_idx = col_idx;
+                        col_idx += 1;
+                        // Check if arg already has an alias (AS name) or is Star
+                        match &arg {
+                            Expression::Alias(_) => arg, // already named
+                            Expression::Star(_) => arg,  // STRUCT(*) - keep as-is
+                            Expression::Column(c) if c.table.is_none() => {
+                                // Column reference: use column name as the struct field name
+                                let name = c.name.name.clone();
+                                Expression::Alias(Box::new(crate::expressions::Alias {
+                                    this: arg,
+                                    alias: crate::expressions::Identifier::new(&name),
+                                    column_aliases: Vec::new(),
+                                    pre_alias_comments: Vec::new(),
+                                    trailing_comments: Vec::new(),
+                                }))
+                            }
+                            _ => {
+                                // Unnamed literal/expression: auto-name as colN
+                                let name = format!("col{}", current_idx);
+                                Expression::Alias(Box::new(crate::expressions::Alias {
+                                    this: arg,
+                                    alias: crate::expressions::Identifier::new(&name),
+                                    column_aliases: Vec::new(),
+                                    pre_alias_comments: Vec::new(),
+                                    trailing_comments: Vec::new(),
+                                }))
+                            }
                         }
-                        _ => {
-                            // Unnamed literal/expression: auto-name as colN
-                            let name = format!("col{}", current_idx);
-                            Expression::Alias(Box::new(crate::expressions::Alias {
-                                this: arg,
-                                alias: crate::expressions::Identifier::new(&name),
-                                column_aliases: Vec::new(),
-                                pre_alias_comments: Vec::new(),
-                                trailing_comments: Vec::new(),
-                            }))
-                        }
-                    }
-                }).collect();
+                    })
+                    .collect();
                 Ok(Expression::Function(Box::new(Function {
                     name: "STRUCT".to_string(),
                     args: named_args,
@@ -650,7 +705,8 @@ impl SparkDialect {
 
             // ARRAY_CONSTRUCT_COMPACT(1, null, 2) -> ARRAY_COMPACT(ARRAY(1, NULL, 2))
             "ARRAY_CONSTRUCT_COMPACT" => {
-                let inner = Expression::Function(Box::new(Function::new("ARRAY".to_string(), f.args)));
+                let inner =
+                    Expression::Function(Box::new(Function::new("ARRAY".to_string(), f.args)));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ARRAY_COMPACT".to_string(),
                     vec![inner],
@@ -676,21 +732,19 @@ impl SparkDialect {
                             arr.expressions.clone(),
                         ))))
                     }
-                    _ => {
-                        Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
-                            condition: Expression::IsNull(Box::new(crate::expressions::IsNull {
-                                this: x.clone(),
-                                not: false,
-                                postfix_form: false,
-                            })),
-                            true_value: Expression::Null(crate::expressions::Null),
-                            false_value: Some(Expression::Function(Box::new(Function::new(
-                                "ARRAY".to_string(),
-                                vec![x],
-                            )))),
-                            original_name: Some("IF".to_string()),
-                        })))
-                    }
+                    _ => Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
+                        condition: Expression::IsNull(Box::new(crate::expressions::IsNull {
+                            this: x.clone(),
+                            not: false,
+                            postfix_form: false,
+                        })),
+                        true_value: Expression::Null(crate::expressions::Null),
+                        false_value: Some(Expression::Function(Box::new(Function::new(
+                            "ARRAY".to_string(),
+                            vec![x],
+                        )))),
+                        original_name: Some("IF".to_string()),
+                    }))),
                 }
             }
 
@@ -872,10 +926,9 @@ impl SparkDialect {
             ))),
 
             // STRING_AGG -> COLLECT_LIST (or STRING_AGG in Spark 4+)
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "COLLECT_LIST".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("COLLECT_LIST".to_string(), f.args),
+            ))),
 
             // LISTAGG -> COLLECT_LIST
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(

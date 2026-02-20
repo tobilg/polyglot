@@ -264,10 +264,7 @@ mod tests {
 
     #[test]
     fn test_get_value() {
-        let trie = new_trie([
-            ("foo".to_string(), 42),
-            ("bar".to_string(), 100),
-        ]);
+        let trie = new_trie([("foo".to_string(), 42), ("bar".to_string(), 100)]);
 
         assert_eq!(trie.get("foo"), Some(&42));
         assert_eq!(trie.get("bar"), Some(&100));

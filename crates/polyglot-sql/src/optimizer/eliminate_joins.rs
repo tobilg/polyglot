@@ -391,9 +391,8 @@ mod tests {
 
     #[test]
     fn test_eliminate_one_of_multiple_joins() {
-        let expr = parse(
-            "SELECT x.a, z.d FROM x LEFT JOIN y ON x.b = y.b LEFT JOIN z ON x.c = z.c",
-        );
+        let expr =
+            parse("SELECT x.a, z.d FROM x LEFT JOIN y ON x.b = y.b LEFT JOIN z ON x.c = z.c");
         let result = eliminate_joins(expr);
         let sql = gen(&result);
 
@@ -409,11 +408,7 @@ mod tests {
             "Expected JOIN y to be removed, got: {}",
             sql
         );
-        assert!(
-            sql.contains("z"),
-            "Expected z to remain, got: {}",
-            sql
-        );
+        assert!(sql.contains("z"), "Expected z to remain, got: {}", sql);
     }
 
     // -----------------------------------------------------------------------
@@ -472,9 +467,7 @@ mod tests {
 
     #[test]
     fn test_keep_left_join_column_in_group_by() {
-        let expr = parse(
-            "SELECT x.a, COUNT(*) FROM x LEFT JOIN y ON x.b = y.b GROUP BY y.c",
-        );
+        let expr = parse("SELECT x.a, COUNT(*) FROM x LEFT JOIN y ON x.b = y.b GROUP BY y.c");
         let result = eliminate_joins(expr);
         let sql = gen(&result);
 

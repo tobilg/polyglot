@@ -14,7 +14,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{BinaryOp, CeilFunc, DateTimeField, Expression, ExtractFunc, Function, LikeOp, Literal, Paren, UnaryFunc, VarArgFunc};
+use crate::expressions::{
+    BinaryOp, CeilFunc, DateTimeField, Expression, ExtractFunc, Function, LikeOp, Literal, Paren,
+    UnaryFunc, VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -36,14 +39,28 @@ impl DialectImpl for HiveDialect {
         // Hive uses backslash escapes in strings (STRING_ESCAPES = ["\\"])
         config.string_escapes.push('\\');
         // Hive supports DIV keyword for integer division
-        config.keywords.insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("DIV".to_string(), crate::tokens::TokenType::Div);
         // Hive numeric literal suffixes: 1L -> BIGINT, 1S -> SMALLINT, etc.
-        config.numeric_literals.insert("L".to_string(), "BIGINT".to_string());
-        config.numeric_literals.insert("S".to_string(), "SMALLINT".to_string());
-        config.numeric_literals.insert("Y".to_string(), "TINYINT".to_string());
-        config.numeric_literals.insert("D".to_string(), "DOUBLE".to_string());
-        config.numeric_literals.insert("F".to_string(), "FLOAT".to_string());
-        config.numeric_literals.insert("BD".to_string(), "DECIMAL".to_string());
+        config
+            .numeric_literals
+            .insert("L".to_string(), "BIGINT".to_string());
+        config
+            .numeric_literals
+            .insert("S".to_string(), "SMALLINT".to_string());
+        config
+            .numeric_literals
+            .insert("Y".to_string(), "TINYINT".to_string());
+        config
+            .numeric_literals
+            .insert("D".to_string(), "DOUBLE".to_string());
+        config
+            .numeric_literals
+            .insert("F".to_string(), "FLOAT".to_string());
+        config
+            .numeric_literals
+            .insert("BD".to_string(), "DECIMAL".to_string());
         // Hive allows identifiers to start with digits (e.g., 1a, 1_a)
         config.identifiers_can_start_with_digit = true;
         config
@@ -70,12 +87,14 @@ impl DialectImpl for HiveDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Hive (or NVL which is also supported)
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE (NVL is actually supported in Hive, but COALESCE is standard)
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -108,7 +127,9 @@ impl DialectImpl for HiveDialect {
 
             // RANDOM is native to Hive
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // Rand is native to Hive
@@ -143,17 +164,20 @@ impl HiveDialect {
             )))),
 
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE (NVL is supported but COALESCE is standard)
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -196,27 +220,40 @@ impl HiveDialect {
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // RAND is native to Hive
             "RAND" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURRENT_TIMESTAMP is native
             "CURRENT_TIMESTAMP" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURRENT_DATE is native
@@ -355,12 +392,9 @@ impl HiveDialect {
             "COLLECT_SET" => Ok(Expression::Function(Box::new(f))),
 
             // ARRAY_LENGTH -> SIZE in Hive
-            "ARRAY_LENGTH" | "ARRAY_SIZE" | "CARDINALITY" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "SIZE".to_string(),
-                    f.args,
-                ))))
-            }
+            "ARRAY_LENGTH" | "ARRAY_SIZE" | "CARDINALITY" => Ok(Expression::Function(Box::new(
+                Function::new("SIZE".to_string(), f.args),
+            ))),
 
             // SIZE is native to Hive
             "SIZE" => Ok(Expression::Function(Box::new(f))),
@@ -371,7 +405,10 @@ impl HiveDialect {
             // REGEXP_REPLACE - strip extra Snowflake-specific args (position, occurrence, params)
             "REGEXP_REPLACE" if f.args.len() > 3 => {
                 let args = f.args[..3].to_vec();
-                Ok(Expression::Function(Box::new(Function::new("REGEXP_REPLACE".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP_REPLACE".to_string(),
+                    args,
+                ))))
             }
             // REGEXP_REPLACE is native to Hive
             "REGEXP_REPLACE" => Ok(Expression::Function(Box::new(f))),
@@ -382,7 +419,8 @@ impl HiveDialect {
                 let pattern = f.args[1].clone();
                 let group = if f.args.len() >= 6 {
                     let g = &f.args[5];
-                    if matches!(g, Expression::Literal(crate::expressions::Literal::Number(n)) if n == "1") {
+                    if matches!(g, Expression::Literal(crate::expressions::Literal::Number(n)) if n == "1")
+                    {
                         None
                     } else {
                         Some(g.clone())
@@ -394,7 +432,10 @@ impl HiveDialect {
                 if let Some(g) = group {
                     args.push(g);
                 }
-                Ok(Expression::Function(Box::new(Function::new("REGEXP_EXTRACT".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP_EXTRACT".to_string(),
+                    args,
+                ))))
             }
 
             // REGEXP_EXTRACT is native to Hive
@@ -446,7 +487,9 @@ impl HiveDialect {
 
                 // Wrap in parens only if the interval is a complex expression (not literal/column)
                 let effective_interval = match &interval_arg {
-                    Expression::Literal(_) | Expression::Column(_) | Expression::Identifier(_) => interval_arg,
+                    Expression::Literal(_) | Expression::Column(_) | Expression::Identifier(_) => {
+                        interval_arg
+                    }
                     _ => Expression::Paren(Box::new(Paren {
                         this: interval_arg,
                         trailing_comments: Vec::new(),
@@ -527,10 +570,9 @@ impl HiveDialect {
             ))),
 
             // STRING_AGG -> COLLECT_LIST
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "COLLECT_LIST".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("COLLECT_LIST".to_string(), f.args),
+            ))),
 
             // LISTAGG -> COLLECT_LIST
             "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(

@@ -169,8 +169,13 @@ impl Scope {
 
     /// Add a source to this scope
     pub fn add_source(&mut self, name: String, expression: Expression, is_scope: bool) {
-        self.sources
-            .insert(name, SourceInfo { expression, is_scope });
+        self.sources.insert(
+            name,
+            SourceInfo {
+                expression,
+                is_scope,
+            },
+        );
         self.clear_cache();
     }
 
@@ -183,7 +188,13 @@ impl Scope {
                 is_scope,
             },
         );
-        self.sources.insert(name, SourceInfo { expression, is_scope });
+        self.sources.insert(
+            name,
+            SourceInfo {
+                expression,
+                is_scope,
+            },
+        );
         self.clear_cache();
     }
 
@@ -409,15 +420,23 @@ fn collect_columns(expr: &Expression, columns: &mut Vec<ColumnRef>) {
             // as those create their own scopes
         }
         // Binary operations
-        Expression::And(bin) | Expression::Or(bin) |
-        Expression::Add(bin) | Expression::Sub(bin) |
-        Expression::Mul(bin) | Expression::Div(bin) |
-        Expression::Mod(bin) | Expression::Eq(bin) |
-        Expression::Neq(bin) | Expression::Lt(bin) |
-        Expression::Lte(bin) | Expression::Gt(bin) |
-        Expression::Gte(bin) | Expression::BitwiseAnd(bin) |
-        Expression::BitwiseOr(bin) | Expression::BitwiseXor(bin) |
-        Expression::Concat(bin) => {
+        Expression::And(bin)
+        | Expression::Or(bin)
+        | Expression::Add(bin)
+        | Expression::Sub(bin)
+        | Expression::Mul(bin)
+        | Expression::Div(bin)
+        | Expression::Mod(bin)
+        | Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin)
+        | Expression::BitwiseAnd(bin)
+        | Expression::BitwiseOr(bin)
+        | Expression::BitwiseXor(bin)
+        | Expression::Concat(bin) => {
             collect_columns(&bin.left, columns);
             collect_columns(&bin.right, columns);
         }
@@ -520,10 +539,8 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
             if let Some(with) = &select.with {
                 for cte in &with.ctes {
                     let cte_name = cte.alias.name.clone();
-                    let mut cte_scope = current_scope.branch(
-                        Expression::Cte(Box::new(cte.clone())),
-                        ScopeType::Cte,
-                    );
+                    let mut cte_scope = current_scope
+                        .branch(Expression::Cte(Box::new(cte.clone())), ScopeType::Cte);
                     build_scope_impl(&cte.this, &mut cte_scope);
                     current_scope.add_cte_source(cte_name, Expression::Cte(Box::new(cte.clone())));
                     current_scope.cte_scopes.push(cte_scope);
@@ -546,48 +563,34 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
             collect_subqueries(expression, current_scope);
         }
         Expression::Union(union) => {
-            let mut left_scope = current_scope.branch(
-                union.left.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut left_scope = current_scope.branch(union.left.clone(), ScopeType::SetOperation);
             build_scope_impl(&union.left, &mut left_scope);
 
-            let mut right_scope = current_scope.branch(
-                union.right.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut right_scope =
+                current_scope.branch(union.right.clone(), ScopeType::SetOperation);
             build_scope_impl(&union.right, &mut right_scope);
 
             current_scope.union_scopes.push(left_scope);
             current_scope.union_scopes.push(right_scope);
         }
         Expression::Intersect(intersect) => {
-            let mut left_scope = current_scope.branch(
-                intersect.left.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut left_scope =
+                current_scope.branch(intersect.left.clone(), ScopeType::SetOperation);
             build_scope_impl(&intersect.left, &mut left_scope);
 
-            let mut right_scope = current_scope.branch(
-                intersect.right.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut right_scope =
+                current_scope.branch(intersect.right.clone(), ScopeType::SetOperation);
             build_scope_impl(&intersect.right, &mut right_scope);
 
             current_scope.union_scopes.push(left_scope);
             current_scope.union_scopes.push(right_scope);
         }
         Expression::Except(except) => {
-            let mut left_scope = current_scope.branch(
-                except.left.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut left_scope = current_scope.branch(except.left.clone(), ScopeType::SetOperation);
             build_scope_impl(&except.left, &mut left_scope);
 
-            let mut right_scope = current_scope.branch(
-                except.right.clone(),
-                ScopeType::SetOperation,
-            );
+            let mut right_scope =
+                current_scope.branch(except.right.clone(), ScopeType::SetOperation);
             build_scope_impl(&except.right, &mut right_scope);
 
             current_scope.union_scopes.push(left_scope);
@@ -600,20 +603,21 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
 fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
     match expr {
         Expression::Table(table) => {
-            let name = table.alias.as_ref()
+            let name = table
+                .alias
+                .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| table.name.name.clone());
             scope.add_source(name, expr.clone(), false);
         }
         Expression::Subquery(subquery) => {
-            let name = subquery.alias.as_ref()
+            let name = subquery
+                .alias
+                .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_default();
 
-            let mut derived_scope = scope.branch(
-                subquery.this.clone(),
-                ScopeType::DerivedTable,
-            );
+            let mut derived_scope = scope.branch(subquery.this.clone(), ScopeType::DerivedTable);
             build_scope_impl(&subquery.this, &mut derived_scope);
 
             scope.add_source(name.clone(), expr.clone(), true);
@@ -650,42 +654,41 @@ fn collect_subqueries_in_expr(expr: &Expression, parent_scope: &mut Scope) {
     match expr {
         Expression::Subquery(subquery) if subquery.alias.is_none() => {
             // This is a scalar subquery or IN subquery (not a derived table)
-            let mut sub_scope = parent_scope.branch(
-                subquery.this.clone(),
-                ScopeType::Subquery,
-            );
+            let mut sub_scope = parent_scope.branch(subquery.this.clone(), ScopeType::Subquery);
             build_scope_impl(&subquery.this, &mut sub_scope);
             parent_scope.subquery_scopes.push(sub_scope);
         }
         Expression::In(in_expr) => {
             collect_subqueries_in_expr(&in_expr.this, parent_scope);
             if let Some(query) = &in_expr.query {
-                let mut sub_scope = parent_scope.branch(
-                    query.clone(),
-                    ScopeType::Subquery,
-                );
+                let mut sub_scope = parent_scope.branch(query.clone(), ScopeType::Subquery);
                 build_scope_impl(query, &mut sub_scope);
                 parent_scope.subquery_scopes.push(sub_scope);
             }
         }
         Expression::Exists(exists) => {
-            let mut sub_scope = parent_scope.branch(
-                exists.this.clone(),
-                ScopeType::Subquery,
-            );
+            let mut sub_scope = parent_scope.branch(exists.this.clone(), ScopeType::Subquery);
             build_scope_impl(&exists.this, &mut sub_scope);
             parent_scope.subquery_scopes.push(sub_scope);
         }
         // Binary operations
-        Expression::And(bin) | Expression::Or(bin) |
-        Expression::Add(bin) | Expression::Sub(bin) |
-        Expression::Mul(bin) | Expression::Div(bin) |
-        Expression::Mod(bin) | Expression::Eq(bin) |
-        Expression::Neq(bin) | Expression::Lt(bin) |
-        Expression::Lte(bin) | Expression::Gt(bin) |
-        Expression::Gte(bin) | Expression::BitwiseAnd(bin) |
-        Expression::BitwiseOr(bin) | Expression::BitwiseXor(bin) |
-        Expression::Concat(bin) => {
+        Expression::And(bin)
+        | Expression::Or(bin)
+        | Expression::Add(bin)
+        | Expression::Sub(bin)
+        | Expression::Mul(bin)
+        | Expression::Div(bin)
+        | Expression::Mod(bin)
+        | Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin)
+        | Expression::BitwiseAnd(bin)
+        | Expression::BitwiseOr(bin)
+        | Expression::BitwiseXor(bin)
+        | Expression::Concat(bin) => {
             collect_subqueries_in_expr(&bin.left, parent_scope);
             collect_subqueries_in_expr(&bin.right, parent_scope);
         }
@@ -1003,7 +1006,11 @@ impl<'a> Iterator for WalkInScopeIter<'a> {
 ///
 /// # Returns
 /// The first matching expression, or None
-pub fn find_in_scope<'a, F>(expression: &'a Expression, predicate: F, bfs: bool) -> Option<&'a Expression>
+pub fn find_in_scope<'a, F>(
+    expression: &'a Expression,
+    predicate: F,
+    bfs: bool,
+) -> Option<&'a Expression>
 where
     F: Fn(&Expression) -> bool,
 {
@@ -1021,11 +1028,17 @@ where
 ///
 /// # Returns
 /// A vector of matching expressions
-pub fn find_all_in_scope<'a, F>(expression: &'a Expression, predicate: F, bfs: bool) -> Vec<&'a Expression>
+pub fn find_all_in_scope<'a, F>(
+    expression: &'a Expression,
+    predicate: F,
+    bfs: bool,
+) -> Vec<&'a Expression>
 where
     F: Fn(&Expression) -> bool,
 {
-    walk_in_scope(expression, bfs).filter(|e| predicate(e)).collect()
+    walk_in_scope(expression, bfs)
+        .filter(|e| predicate(e))
+        .collect()
 }
 
 /// Traverse an expression by its "scopes".
@@ -1074,9 +1087,7 @@ mod tests {
 
     #[test]
     fn test_derived_table_scope() {
-        let mut scope = parse_and_build_scope(
-            "SELECT x.a FROM (SELECT a FROM t) AS x"
-        );
+        let mut scope = parse_and_build_scope("SELECT x.a FROM (SELECT a FROM t) AS x");
 
         assert!(scope.sources.contains_key("x"));
         assert_eq!(scope.derived_table_scopes.len(), 1);
@@ -1088,9 +1099,7 @@ mod tests {
 
     #[test]
     fn test_non_correlated_subquery() {
-        let mut scope = parse_and_build_scope(
-            "SELECT * FROM t WHERE EXISTS (SELECT b FROM s)"
-        );
+        let mut scope = parse_and_build_scope("SELECT * FROM t WHERE EXISTS (SELECT b FROM s)");
 
         assert_eq!(scope.subquery_scopes.len(), 1);
 
@@ -1105,9 +1114,8 @@ mod tests {
 
     #[test]
     fn test_correlated_subquery() {
-        let mut scope = parse_and_build_scope(
-            "SELECT * FROM t WHERE EXISTS (SELECT b FROM s WHERE s.x = t.y)"
-        );
+        let mut scope =
+            parse_and_build_scope("SELECT * FROM t WHERE EXISTS (SELECT b FROM s WHERE s.x = t.y)");
 
         assert_eq!(scope.subquery_scopes.len(), 1);
 
@@ -1124,9 +1132,7 @@ mod tests {
 
     #[test]
     fn test_cte_scope() {
-        let scope = parse_and_build_scope(
-            "WITH cte AS (SELECT a FROM t) SELECT * FROM cte"
-        );
+        let scope = parse_and_build_scope("WITH cte AS (SELECT a FROM t) SELECT * FROM cte");
 
         assert_eq!(scope.cte_scopes.len(), 1);
         assert!(scope.cte_sources.contains_key("cte"));
@@ -1137,9 +1143,7 @@ mod tests {
 
     #[test]
     fn test_multiple_sources() {
-        let scope = parse_and_build_scope(
-            "SELECT t.a, s.b FROM t JOIN s ON t.id = s.id"
-        );
+        let scope = parse_and_build_scope("SELECT t.a, s.b FROM t JOIN s ON t.id = s.id");
 
         assert!(scope.sources.contains_key("t"));
         assert!(scope.sources.contains_key("s"));

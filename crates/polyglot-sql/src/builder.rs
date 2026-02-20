@@ -981,15 +981,15 @@ impl Expr {
 
     /// Produce a `self IS NOT NULL` predicate (implemented as `NOT (self IS NULL)`).
     pub fn is_not_null(self) -> Expr {
-        Expr(Expression::Not(Box::new(UnaryOp::new(
-            Expression::Is(Box::new(BinaryOp {
+        Expr(Expression::Not(Box::new(UnaryOp::new(Expression::Is(
+            Box::new(BinaryOp {
                 left: self.0,
                 right: Expression::Null(Null),
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
-            })),
-        ))))
+            }),
+        )))))
     }
 
     /// Produce a `self IN (values...)` membership test.
@@ -1193,6 +1193,7 @@ impl SelectBuilder {
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
         self
     }
@@ -1212,6 +1213,7 @@ impl SelectBuilder {
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
         self
     }
@@ -1243,7 +1245,10 @@ impl SelectBuilder {
 
     /// Set the HAVING clause to filter groups by the given condition.
     pub fn having(mut self, condition: Expr) -> Self {
-        self.select.having = Some(Having { this: condition.0, comments: Vec::new() });
+        self.select.having = Some(Having {
+            this: condition.0,
+            comments: Vec::new(),
+        });
         self
     }
 
@@ -1376,6 +1381,7 @@ impl SelectBuilder {
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
         self
     }
@@ -1395,6 +1401,7 @@ impl SelectBuilder {
             pivots: Vec::new(),
             comments: Vec::new(),
             nesting_group: 0,
+            directed: false,
         });
         self
     }
@@ -1452,7 +1459,9 @@ impl SelectBuilder {
     /// databases (PostgreSQL, MySQL, Oracle) to lock selected rows for update.
     pub fn for_update(mut self) -> Self {
         self.select.locks.push(Lock {
-            update: Some(Box::new(Expression::Boolean(BooleanLiteral { value: true }))),
+            update: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                value: true,
+            }))),
             expressions: vec![],
             wait: None,
             key: None,
@@ -1692,9 +1701,7 @@ impl UpdateBuilder {
     ///
     /// Call this method multiple times to set multiple columns.
     pub fn set(mut self, column: &str, value: Expr) -> Self {
-        self.update
-            .set
-            .push((Identifier::new(column), value.0));
+        self.update.set.push((Identifier::new(column), value.0));
         self
     }
 
@@ -2385,7 +2392,9 @@ impl MergeBuilder {
         }));
 
         let when = Expression::When(Box::new(When {
-            matched: Some(Box::new(Expression::Boolean(BooleanLiteral { value: true }))),
+            matched: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                value: true,
+            }))),
             source: None,
             condition: None,
             then: Box::new(action),
@@ -2428,7 +2437,9 @@ impl MergeBuilder {
         }));
 
         let when = Expression::When(Box::new(When {
-            matched: Some(Box::new(Expression::Boolean(BooleanLiteral { value: true }))),
+            matched: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                value: true,
+            }))),
             source: None,
             condition: Some(Box::new(condition.0)),
             then: Box::new(action),
@@ -2444,7 +2455,9 @@ impl MergeBuilder {
         }));
 
         let when = Expression::When(Box::new(When {
-            matched: Some(Box::new(Expression::Boolean(BooleanLiteral { value: true }))),
+            matched: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                value: true,
+            }))),
             source: None,
             condition: None,
             then: Box::new(action),
@@ -2530,7 +2543,11 @@ fn parse_simple_data_type(name: &str) -> DataType {
         "BIGINT" => DataType::BigInt { length: None },
         "SMALLINT" => DataType::SmallInt { length: None },
         "TINYINT" => DataType::TinyInt { length: None },
-        "FLOAT" => DataType::Float { precision: None, scale: None, real_spelling: false },
+        "FLOAT" => DataType::Float {
+            precision: None,
+            scale: None,
+            real_spelling: false,
+        },
         "DOUBLE" => DataType::Double {
             precision: None,
             scale: None,
@@ -2549,7 +2566,9 @@ fn parse_simple_data_type(name: &str) -> DataType {
         "CHAR" => DataType::Char { length: None },
         _ => {
             // Try to parse as a full type via the parser for complex types
-            if let Ok(ast) = crate::parser::Parser::parse_sql(&format!("SELECT CAST(x AS {})", name)) {
+            if let Ok(ast) =
+                crate::parser::Parser::parse_sql(&format!("SELECT CAST(x AS {})", name))
+            {
                 if let Expression::Select(s) = &ast[0] {
                     if let Some(Expression::Cast(c)) = s.expressions.first() {
                         return c.to.clone();
@@ -2557,7 +2576,9 @@ fn parse_simple_data_type(name: &str) -> DataType {
                 }
             }
             // Fallback: treat as a custom type
-            DataType::Custom { name: name.to_string() }
+            DataType::Custom {
+                name: name.to_string(),
+            }
         }
     }
 }
@@ -2664,17 +2685,12 @@ mod tests {
             .set("age", lit(30))
             .where_(col("id").eq(lit(1)))
             .to_sql();
-        assert_eq!(
-            sql,
-            "UPDATE users SET name = 'Bob', age = 30 WHERE id = 1"
-        );
+        assert_eq!(sql, "UPDATE users SET name = 'Bob', age = 30 WHERE id = 1");
     }
 
     #[test]
     fn test_delete() {
-        let sql = delete("users")
-            .where_(col("id").eq(lit(1)))
-            .to_sql();
+        let sql = delete("users").where_(col("id").eq(lit(1))).to_sql();
         assert_eq!(sql, "DELETE FROM users WHERE id = 1");
     }
 
@@ -2683,7 +2699,8 @@ mod tests {
         let sql = select(["id"])
             .from("users")
             .where_(
-                col("age").gte(lit(18))
+                col("age")
+                    .gte(lit(18))
                     .and(col("active").eq(boolean(true)))
                     .and(col("name").like(lit("%test%"))),
             )
@@ -2737,9 +2754,7 @@ mod tests {
 
     #[test]
     fn test_cast() {
-        let sql = select([col("id").cast("VARCHAR")])
-            .from("users")
-            .to_sql();
+        let sql = select([col("id").cast("VARCHAR")]).from("users").to_sql();
         assert_eq!(sql, "SELECT CAST(id AS VARCHAR) FROM users");
     }
 
@@ -2751,9 +2766,7 @@ mod tests {
 
     #[test]
     fn test_qualified_column() {
-        let sql = select([col("u.id"), col("u.name")])
-            .from("users")
-            .to_sql();
+        let sql = select([col("u.id"), col("u.name")]).from("users").to_sql();
         assert_eq!(sql, "SELECT u.id, u.name FROM users");
     }
 
@@ -2808,20 +2821,14 @@ mod tests {
     #[test]
     fn test_sql_expr_simple() {
         let expr = sql_expr("age > 18");
-        let sql = select(["id"])
-            .from("users")
-            .where_(expr)
-            .to_sql();
+        let sql = select(["id"]).from("users").where_(expr).to_sql();
         assert_eq!(sql, "SELECT id FROM users WHERE age > 18");
     }
 
     #[test]
     fn test_sql_expr_compound() {
         let expr = sql_expr("a > 1 AND b < 10");
-        let sql = select(["*"])
-            .from("t")
-            .where_(expr)
-            .to_sql();
+        let sql = select(["*"]).from("t").where_(expr).to_sql();
         assert_eq!(sql, "SELECT * FROM t WHERE a > 1 AND b < 10");
     }
 
@@ -2856,7 +2863,10 @@ mod tests {
             .from("users")
             .where_(col("name").rlike(lit("^[A-Z]")))
             .to_sql();
-        assert_eq!(sql, "SELECT id FROM users WHERE REGEXP_LIKE(name, '^[A-Z]')");
+        assert_eq!(
+            sql,
+            "SELECT id FROM users WHERE REGEXP_LIKE(name, '^[A-Z]')"
+        );
     }
 
     #[test]
@@ -2902,9 +2912,7 @@ mod tests {
 
     #[test]
     fn test_case_no_else() {
-        let expr = case()
-            .when(col("x").gt(lit(0)), lit("yes"))
-            .build();
+        let expr = case().when(col("x").gt(lit(0)), lit("yes")).build();
         let sql = select([expr]).from("t").to_sql();
         assert_eq!(sql, "SELECT CASE WHEN x > 0 THEN 'yes' END FROM t");
     }
@@ -2913,7 +2921,9 @@ mod tests {
 
     #[test]
     fn test_subquery_in_from() {
-        let inner = select(["id", "name"]).from("users").where_(col("active").eq(boolean(true)));
+        let inner = select(["id", "name"])
+            .from("users")
+            .where_(col("active").eq(boolean(true)));
         let outer = select(["sub.id"])
             .from_expr(subquery(inner, "sub"))
             .to_sql();
@@ -2941,53 +2951,34 @@ mod tests {
 
     #[test]
     fn test_union() {
-        let sql = union(
-            select(["id"]).from("a"),
-            select(["id"]).from("b"),
-        )
-        .to_sql();
+        let sql = union(select(["id"]).from("a"), select(["id"]).from("b")).to_sql();
         assert_eq!(sql, "SELECT id FROM a UNION SELECT id FROM b");
     }
 
     #[test]
     fn test_union_all() {
-        let sql = union_all(
-            select(["id"]).from("a"),
-            select(["id"]).from("b"),
-        )
-        .to_sql();
+        let sql = union_all(select(["id"]).from("a"), select(["id"]).from("b")).to_sql();
         assert_eq!(sql, "SELECT id FROM a UNION ALL SELECT id FROM b");
     }
 
     #[test]
     fn test_intersect_builder() {
-        let sql = intersect(
-            select(["id"]).from("a"),
-            select(["id"]).from("b"),
-        )
-        .to_sql();
+        let sql = intersect(select(["id"]).from("a"), select(["id"]).from("b")).to_sql();
         assert_eq!(sql, "SELECT id FROM a INTERSECT SELECT id FROM b");
     }
 
     #[test]
     fn test_except_builder() {
-        let sql = except_(
-            select(["id"]).from("a"),
-            select(["id"]).from("b"),
-        )
-        .to_sql();
+        let sql = except_(select(["id"]).from("a"), select(["id"]).from("b")).to_sql();
         assert_eq!(sql, "SELECT id FROM a EXCEPT SELECT id FROM b");
     }
 
     #[test]
     fn test_union_with_order_limit() {
-        let sql = union(
-            select(["id"]).from("a"),
-            select(["id"]).from("b"),
-        )
-        .order_by(["id"])
-        .limit(10)
-        .to_sql();
+        let sql = union(select(["id"]).from("a"), select(["id"]).from("b"))
+            .order_by(["id"])
+            .limit(10)
+            .to_sql();
         assert!(sql.contains("UNION"));
         assert!(sql.contains("ORDER BY"));
         assert!(sql.contains("LIMIT"));
@@ -3010,10 +3001,7 @@ mod tests {
             .from("users")
             .qualify(col("rn").eq(lit(1)))
             .to_sql();
-        assert_eq!(
-            sql,
-            "SELECT id, name FROM users QUALIFY rn = 1"
-        );
+        assert_eq!(sql, "SELECT id, name FROM users QUALIFY rn = 1");
     }
 
     #[test]
@@ -3030,10 +3018,7 @@ mod tests {
 
     #[test]
     fn test_cross_join() {
-        let sql = select(["a.x", "b.y"])
-            .from("a")
-            .cross_join("b")
-            .to_sql();
+        let sql = select(["a.x", "b.y"]).from("a").cross_join("b").to_sql();
         assert_eq!(sql, "SELECT a.x, b.y FROM a CROSS JOIN b");
     }
 
@@ -3111,15 +3096,24 @@ mod tests {
         let sql = merge_into("target")
             .using("source", col("target.id").eq(col("source.id")))
             .when_matched_update(vec![("name", col("source.name"))])
-            .when_not_matched_insert(
-                &["id", "name"],
-                vec![col("source.id"), col("source.name")],
-            )
+            .when_not_matched_insert(&["id", "name"], vec![col("source.id"), col("source.name")])
             .to_sql();
-        assert!(sql.contains("MERGE INTO"), "Expected MERGE INTO in: {}", sql);
+        assert!(
+            sql.contains("MERGE INTO"),
+            "Expected MERGE INTO in: {}",
+            sql
+        );
         assert!(sql.contains("USING"), "Expected USING in: {}", sql);
-        assert!(sql.contains("WHEN MATCHED"), "Expected WHEN MATCHED in: {}", sql);
-        assert!(sql.contains("UPDATE SET"), "Expected UPDATE SET in: {}", sql);
+        assert!(
+            sql.contains("WHEN MATCHED"),
+            "Expected WHEN MATCHED in: {}",
+            sql
+        );
+        assert!(
+            sql.contains("UPDATE SET"),
+            "Expected UPDATE SET in: {}",
+            sql
+        );
         assert!(
             sql.contains("WHEN NOT MATCHED"),
             "Expected WHEN NOT MATCHED in: {}",
@@ -3134,8 +3128,16 @@ mod tests {
             .using("source", col("target.id").eq(col("source.id")))
             .when_matched_delete()
             .to_sql();
-        assert!(sql.contains("MERGE INTO"), "Expected MERGE INTO in: {}", sql);
-        assert!(sql.contains("WHEN MATCHED THEN DELETE"), "Expected WHEN MATCHED THEN DELETE in: {}", sql);
+        assert!(
+            sql.contains("MERGE INTO"),
+            "Expected MERGE INTO in: {}",
+            sql
+        );
+        assert!(
+            sql.contains("WHEN MATCHED THEN DELETE"),
+            "Expected WHEN MATCHED THEN DELETE in: {}",
+            sql
+        );
     }
 
     #[test]
@@ -3147,7 +3149,15 @@ mod tests {
                 vec![("name", col("source.name"))],
             )
             .to_sql();
-        assert!(sql.contains("MERGE INTO"), "Expected MERGE INTO in: {}", sql);
-        assert!(sql.contains("AND source.active = TRUE"), "Expected condition in: {}", sql);
+        assert!(
+            sql.contains("MERGE INTO"),
+            "Expected MERGE INTO in: {}",
+            sql
+        );
+        assert!(
+            sql.contains("AND source.active = TRUE"),
+            "Expected condition in: {}",
+            sql
+        );
     }
 }

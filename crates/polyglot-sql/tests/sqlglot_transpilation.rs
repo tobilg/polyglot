@@ -117,7 +117,7 @@ fn run_dialect_transpilation_tests(source_dialect: &str) -> TestResults {
 fn test_sqlglot_transpilation_all() {
     // Run in a thread with larger stack to avoid stack overflow during recursive Drop
     let handle = std::thread::Builder::new()
-        .stack_size(8 * 1024 * 1024) // 8MB stack
+        .stack_size(16 * 1024 * 1024) // 16MB stack
         .spawn(|| {
             if DIALECT_FIXTURES.is_empty() {
                 println!("Skipping transpilation tests - fixtures not available");
@@ -138,14 +138,10 @@ fn test_sqlglot_transpilation_all() {
 
             total_results.print_summary("SQLGlot Transpilation (All)");
 
-            // Assert minimum pass rate
-            let min_pass_rate = 0.01; // 1% minimum (transpilation tests are the hardest)
-
             assert!(
-                total_results.total() == 0 || total_results.pass_rate() >= min_pass_rate,
-                "Pass rate {:.1}% is below threshold {:.1}%",
-                total_results.pass_rate() * 100.0,
-                min_pass_rate * 100.0
+                total_results.total() == 0 || total_results.pass_rate() >= 1.0,
+                "Pass rate {:.1}% — all transpilation tests must pass",
+                total_results.pass_rate() * 100.0
             );
         })
         .unwrap();
@@ -228,7 +224,11 @@ mod dialect_pairs {
             }
         }
 
-        results.print_summary(&format!("{} -> {}", source.to_uppercase(), target.to_uppercase()));
+        results.print_summary(&format!(
+            "{} -> {}",
+            source.to_uppercase(),
+            target.to_uppercase()
+        ));
     }
 
     #[test]
@@ -267,7 +267,10 @@ mod dialect_pairs {
     }
 
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode")]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
+    )]
     fn test_postgres_to_duckdb() {
         test_dialect_pair("postgres", "duckdb");
     }

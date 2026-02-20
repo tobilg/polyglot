@@ -147,6 +147,7 @@ col('email').isNull();
 col('email').isNotNull();
 col('age').between(lit(18), lit(65));
 col('status').inList(lit('active'), lit('pending'));
+col('status').notIn(lit('deleted'), lit('banned'));
 
 // Transform
 col('total').alias('grand_total');  // or .as('grand_total')

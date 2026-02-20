@@ -182,10 +182,8 @@ fn qualify_table_expression(
             // Add db if specified and not already present
             if let Some(ref db) = options.db {
                 if table.schema.is_none() {
-                    table.schema = Some(normalize_identifier(
-                        Identifier::new(db.clone()),
-                        strategy,
-                    ));
+                    table.schema =
+                        Some(normalize_identifier(Identifier::new(db.clone()), strategy));
                 }
             }
 
@@ -257,20 +255,24 @@ fn ensure_table_alias(
     if options.canonicalize_table_aliases {
         // Use canonical alias (_0, _1, etc.)
         let new_alias = next_alias();
-        let old_alias = table.alias.as_ref().map(|a| a.name.clone()).unwrap_or(table_name.clone());
+        let old_alias = table
+            .alias
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or(table_name.clone());
         canonical_aliases.insert(old_alias, new_alias.clone());
         table.alias = Some(normalize_identifier(Identifier::new(new_alias), strategy));
     } else if table.alias.is_none() {
         // Use table name as alias
-        table.alias = Some(normalize_identifier(
-            Identifier::new(table_name),
-            strategy,
-        ));
+        table.alias = Some(normalize_identifier(Identifier::new(table_name), strategy));
     }
 }
 
 /// Update column references to use canonical aliases
-fn update_column_references(mut select: Select, canonical_aliases: &HashMap<String, String>) -> Select {
+fn update_column_references(
+    mut select: Select,
+    canonical_aliases: &HashMap<String, String>,
+) -> Select {
     // Update SELECT expressions
     select.expressions = select
         .expressions

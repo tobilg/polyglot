@@ -141,6 +141,12 @@ fn test_sqlglot_parser_all() {
             total.new_passes.extend(err_results.new_passes);
 
             total.print_summary("SQLGlot Parser (All)");
+
+            assert!(
+                total.total() == 0 || total.pass_rate() >= 1.0,
+                "Pass rate {:.1}% — all parser tests must pass",
+                total.pass_rate() * 100.0
+            );
         })
         .unwrap();
     handle.join().unwrap();

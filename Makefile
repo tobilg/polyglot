@@ -163,7 +163,7 @@ test-rust-dialect:
 
 # Run transpilation tests
 test-rust-transpile:
-	cargo test -p polyglot-sql sqlglot_transpilation -- --nocapture
+	RUST_MIN_STACK=16777216 cargo test -p polyglot-sql sqlglot_transpilation -- --nocapture
 
 # Run pretty-printing tests (24 tests)
 test-rust-pretty:
@@ -193,17 +193,23 @@ test-rust-verify:
 	@echo "=== Transpilation tests ==="
 	@cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
 	@echo ""
-	@echo "=== Transpile generic tests (test_transpile.py) ==="
+	@echo "=== Transpile generic tests ==="
 	@cargo test --test sqlglot_transpile test_sqlglot_transpile_all -p polyglot-sql -- --nocapture
 	@echo ""
-	@echo "=== Parser tests (test_parser.py) ==="
+	@echo "=== Parser tests ==="
 	@cargo test --test sqlglot_parser test_sqlglot_parser_all -p polyglot-sql -- --nocapture
 	@echo ""
 	@echo "=== Pretty-print tests ==="
-	@cargo test --test sqlglot_pretty -p polyglot-sql -- --nocapture
+	@RUST_MIN_STACK=16777216 cargo test --test sqlglot_pretty test_sqlglot_pretty_all -p polyglot-sql --release -- --nocapture
 	@echo ""
 	@echo "=== Custom dialect tests ==="
 	@cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
+	@echo ""
+	@echo "=== ClickHouse parser tests ==="
+	@RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+	@echo ""
+	@echo "=== ClickHouse coverage tests ==="
+	@RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 
 # Run normalization/transpile tests from test_transpile.py
 test-rust-transpile-generic:

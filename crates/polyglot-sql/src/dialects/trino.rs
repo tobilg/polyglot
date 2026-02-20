@@ -6,7 +6,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, AggregateFunction, Case, Cast, DataType, Expression, Function, IntervalUnit, IntervalUnitSpec, LikeOp, Literal, UnaryFunc, VarArgFunc,
+    AggFunc, AggregateFunction, Case, Cast, DataType, Expression, Function, IntervalUnit,
+    IntervalUnitSpec, LikeOp, Literal, UnaryFunc, VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -46,12 +47,14 @@ impl DialectImpl for TrinoDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Trino
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in Trino
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -171,35 +174,50 @@ impl TrinoDialect {
             "MICROSECOND" | "MICROSECONDS" => IntervalUnit::Microsecond,
             _ => return None,
         };
-        Some((value, IntervalUnitSpec::Simple { unit, use_plural: false }))
+        Some((
+            value,
+            IntervalUnitSpec::Simple {
+                unit,
+                use_plural: false,
+            },
+        ))
     }
 
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // RAND -> RANDOM in Trino
@@ -300,7 +318,10 @@ impl TrinoDialect {
                 if f.args.len() == 1 {
                     Ok(Expression::Cast(Box::new(Cast {
                         this: f.args.into_iter().next().unwrap(),
-                        to: DataType::Timestamp { precision: None, timezone: false },
+                        to: DataType::Timestamp {
+                            precision: None,
+                            timezone: false,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -348,10 +369,8 @@ impl TrinoDialect {
 
             // COLLECT_SET -> ARRAY_DISTINCT(ARRAY_AGG())
             "COLLECT_SET" if !f.args.is_empty() => {
-                let array_agg = Expression::Function(Box::new(Function::new(
-                    "ARRAY_AGG".to_string(),
-                    f.args,
-                )));
+                let array_agg =
+                    Expression::Function(Box::new(Function::new("ARRAY_AGG".to_string(), f.args)));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ARRAY_DISTINCT".to_string(),
                     vec![array_agg],
@@ -399,13 +418,15 @@ impl TrinoDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -426,8 +447,8 @@ impl TrinoDialect {
             ))),
 
             // VAR -> VAR_POP in Trino
-            "VAR" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VAR" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "VAR_POP".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -435,12 +456,12 @@ impl TrinoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // VARIANCE -> VAR_SAMP in Trino
-            "VARIANCE" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VARIANCE" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "VAR_SAMP".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -448,8 +469,8 @@ impl TrinoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

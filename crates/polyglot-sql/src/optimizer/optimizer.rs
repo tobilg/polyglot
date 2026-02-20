@@ -156,39 +156,22 @@ fn apply_rule(
         OptimizationRule::Normalize => {
             // Use CNF (dnf=false) with default max distance
             let original = expression.clone();
-            normalize(expression, false, super::normalize::DEFAULT_MAX_DISTANCE)
-                .unwrap_or(original)
+            normalize(expression, false, super::normalize::DEFAULT_MAX_DISTANCE).unwrap_or(original)
         }
-        OptimizationRule::UnnestSubqueries => {
-            unnest_subqueries(expression)
-        }
-        OptimizationRule::PushdownPredicates => {
-            pushdown_predicates(expression, config.dialect)
-        }
-        OptimizationRule::OptimizeJoins => {
-            optimize_joins(expression)
-        }
-        OptimizationRule::EliminateSubqueries => {
-            eliminate_subqueries_opt(expression)
-        }
-        OptimizationRule::MergeSubqueries => {
-            merge_subqueries(expression, config.isolate_tables)
-        }
-        OptimizationRule::EliminateCtes => {
-            eliminate_ctes(expression)
-        }
+        OptimizationRule::UnnestSubqueries => unnest_subqueries(expression),
+        OptimizationRule::PushdownPredicates => pushdown_predicates(expression, config.dialect),
+        OptimizationRule::OptimizeJoins => optimize_joins(expression),
+        OptimizationRule::EliminateSubqueries => eliminate_subqueries_opt(expression),
+        OptimizationRule::MergeSubqueries => merge_subqueries(expression, config.isolate_tables),
+        OptimizationRule::EliminateCtes => eliminate_ctes(expression),
         OptimizationRule::AnnotateTypes => {
             // annotate_types is used for type inference, not expression transformation
             // For now, just return the expression unchanged
             let _ = annotate_types(&expression, config.schema, config.dialect);
             expression
         }
-        OptimizationRule::Canonicalize => {
-            canonicalize(expression, config.dialect)
-        }
-        OptimizationRule::Simplify => {
-            simplify(expression, config.dialect)
-        }
+        OptimizationRule::Canonicalize => canonicalize(expression, config.dialect),
+        OptimizationRule::Simplify => simplify(expression, config.dialect),
     }
 }
 
@@ -204,10 +187,7 @@ pub fn quick_optimize(expression: Expression, dialect: Option<DialectType>) -> E
         ..Default::default()
     };
 
-    let rules = &[
-        OptimizationRule::Simplify,
-        OptimizationRule::Canonicalize,
-    ];
+    let rules = &[OptimizationRule::Simplify, OptimizationRule::Canonicalize];
 
     optimize_with_rules(expression, &config, rules)
 }

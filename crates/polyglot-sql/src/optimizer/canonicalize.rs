@@ -400,7 +400,10 @@ fn remove_redundant_casts(expression: Expression) -> Expression {
         if let Expression::Literal(Literal::Number(_)) = &cast.this {
             if matches!(
                 &cast.to,
-                DataType::Int { .. } | DataType::BigInt { .. } | DataType::Decimal { .. } | DataType::Float { .. }
+                DataType::Int { .. }
+                    | DataType::BigInt { .. }
+                    | DataType::Decimal { .. }
+                    | DataType::Float { .. }
             ) {
                 // Could potentially remove cast, but be conservative
             }

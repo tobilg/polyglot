@@ -11,7 +11,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{AggFunc, BinaryOp, Cast, CeilFunc, DataType, Expression, Function, IntervalUnit, ListAggFunc, Literal, UnaryFunc, VarArgFunc};
+use crate::expressions::{
+    AggFunc, BinaryOp, Cast, CeilFunc, DataType, Expression, Function, IntervalUnit, ListAggFunc,
+    Literal, UnaryFunc, VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -106,12 +109,29 @@ impl DialectImpl for SnowflakeDialect {
             // See: https://docs.snowflake.com/en/sql-reference/functions/in
             Expression::In(in_expr) if in_expr.not && in_expr.query.is_some() => {
                 // Transform NOT IN (subquery) -> <> ALL (subquery)
-                let subquery = in_expr.query.unwrap();
-                Ok(Expression::All(Box::new(crate::expressions::QuantifiedExpr {
-                    this: in_expr.this,
-                    subquery,
-                    op: Some(crate::expressions::QuantifiedOp::Neq),
-                })))
+                let inner = in_expr.query.unwrap();
+                // Wrap in Subquery so generator outputs ALL (subquery) with space
+                let subquery = Expression::Subquery(Box::new(crate::expressions::Subquery {
+                    this: inner,
+                    alias: None,
+                    column_aliases: Vec::new(),
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    lateral: false,
+                    modifiers_inside: false,
+                    trailing_comments: Vec::new(),
+                }));
+                Ok(Expression::All(Box::new(
+                    crate::expressions::QuantifiedExpr {
+                        this: in_expr.this,
+                        subquery,
+                        op: Some(crate::expressions::QuantifiedOp::Neq),
+                    },
+                )))
             }
 
             // NOT IN (values) -> NOT x IN (values)
@@ -133,18 +153,18 @@ impl DialectImpl for SnowflakeDialect {
 
             // ===== Interval unit expansion =====
             // Expand abbreviated units in interval string values (e.g., '1 w' -> '1 WEEK')
-            Expression::Interval(interval) => {
-                self.transform_interval(*interval)
-            }
+            Expression::Interval(interval) => self.transform_interval(*interval),
 
             // ===== Null handling =====
             // IFNULL -> COALESCE (both work in Snowflake, but COALESCE is standard)
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE (both work in Snowflake, but COALESCE is standard)
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -172,18 +192,13 @@ impl DialectImpl for SnowflakeDialect {
                 // First, recursively transform the inner expression
                 let transformed_this = self.transform_expr(c.this)?;
                 match &c.to {
-                    DataType::Geography { .. } => {
-                        Ok(Expression::Function(Box::new(Function::new(
-                            "TO_GEOGRAPHY".to_string(),
-                            vec![transformed_this],
-                        ))))
-                    }
-                    DataType::Geometry { .. } => {
-                        Ok(Expression::Function(Box::new(Function::new(
-                            "TO_GEOMETRY".to_string(),
-                            vec![transformed_this],
-                        ))))
-                    }
+                    DataType::Geography { .. } => Ok(Expression::Function(Box::new(
+                        Function::new("TO_GEOGRAPHY".to_string(), vec![transformed_this]),
+                    ))),
+                    DataType::Geometry { .. } => Ok(Expression::Function(Box::new(Function::new(
+                        "TO_GEOMETRY".to_string(),
+                        vec![transformed_this],
+                    )))),
                     _ => {
                         // Transform the data type
                         let transformed_dt = match self.transform_data_type(c.to.clone())? {
@@ -193,7 +208,7 @@ impl DialectImpl for SnowflakeDialect {
                         Ok(Expression::Cast(Box::new(Cast {
                             this: transformed_this,
                             to: transformed_dt,
-                            double_colon_syntax: false,  // Normalize :: to CAST()
+                            double_colon_syntax: false, // Normalize :: to CAST()
                             trailing_comments: c.trailing_comments,
                             format: c.format,
                             default: c.default,
@@ -209,7 +224,7 @@ impl DialectImpl for SnowflakeDialect {
                 Ok(Expression::TryCast(Box::new(Cast {
                     this: transformed_this,
                     to: c.to,
-                    double_colon_syntax: false,  // Normalize :: to CAST()
+                    double_colon_syntax: false, // Normalize :: to CAST()
                     trailing_comments: c.trailing_comments,
                     format: c.format,
                     default: c.default,
@@ -220,9 +235,13 @@ impl DialectImpl for SnowflakeDialect {
             // Also convert TIMESTAMP to TIMESTAMPTZ (BigQuery TIMESTAMP = tz-aware)
             Expression::SafeCast(c) => {
                 let to = match c.to {
-                    DataType::Timestamp { .. } => DataType::Custom { name: "TIMESTAMPTZ".to_string() },
+                    DataType::Timestamp { .. } => DataType::Custom {
+                        name: "TIMESTAMPTZ".to_string(),
+                    },
                     DataType::Custom { name } if name.eq_ignore_ascii_case("TIMESTAMP") => {
-                        DataType::Custom { name: "TIMESTAMPTZ".to_string() }
+                        DataType::Custom {
+                            name: "TIMESTAMPTZ".to_string(),
+                        }
                     }
                     other => other,
                 };
@@ -239,52 +258,52 @@ impl DialectImpl for SnowflakeDialect {
 
             // ===== Typed Literals -> CAST =====
             // TIMESTAMP '...' -> CAST('...' AS TIMESTAMP)
-            Expression::Literal(Literal::Timestamp(s)) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(s)),
-                    to: DataType::Timestamp { precision: None, timezone: false },
-                    double_colon_syntax: false,
-                    trailing_comments: Vec::new(),
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Literal(Literal::Timestamp(s)) => Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Literal::String(s)),
+                to: DataType::Timestamp {
+                    precision: None,
+                    timezone: false,
+                },
+                double_colon_syntax: false,
+                trailing_comments: Vec::new(),
+                format: None,
+                default: None,
+            }))),
 
             // DATE '...' -> CAST('...' AS DATE)
-            Expression::Literal(Literal::Date(s)) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(s)),
-                    to: DataType::Date,
-                    double_colon_syntax: false,
-                    trailing_comments: Vec::new(),
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Literal(Literal::Date(s)) => Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Literal::String(s)),
+                to: DataType::Date,
+                double_colon_syntax: false,
+                trailing_comments: Vec::new(),
+                format: None,
+                default: None,
+            }))),
 
             // TIME '...' -> CAST('...' AS TIME)
-            Expression::Literal(Literal::Time(s)) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(s)),
-                    to: DataType::Time { precision: None, timezone: false },
-                    double_colon_syntax: false,
-                    trailing_comments: Vec::new(),
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Literal(Literal::Time(s)) => Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Literal::String(s)),
+                to: DataType::Time {
+                    precision: None,
+                    timezone: false,
+                },
+                double_colon_syntax: false,
+                trailing_comments: Vec::new(),
+                format: None,
+                default: None,
+            }))),
 
             // DATETIME '...' -> CAST('...' AS DATETIME)
-            Expression::Literal(Literal::Datetime(s)) => {
-                Ok(Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(s)),
-                    to: DataType::Custom { name: "DATETIME".to_string() },
-                    double_colon_syntax: false,
-                    trailing_comments: Vec::new(),
-                    format: None,
-                    default: None,
-                })))
-            }
+            Expression::Literal(Literal::Datetime(s)) => Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Literal::String(s)),
+                to: DataType::Custom {
+                    name: "DATETIME".to_string(),
+                },
+                double_colon_syntax: false,
+                trailing_comments: Vec::new(),
+                format: None,
+                default: None,
+            }))),
 
             // ===== Pattern matching =====
             // ILIKE is native to Snowflake (no transformation needed)
@@ -306,11 +325,12 @@ impl DialectImpl for SnowflakeDialect {
             // UNNEST -> TABLE(FLATTEN(INPUT => x)) AS _t0(seq, key, path, index, value, this)
             Expression::Unnest(f) => {
                 // Create INPUT => x named argument
-                let input_arg = Expression::NamedArgument(Box::new(crate::expressions::NamedArgument {
-                    name: crate::expressions::Identifier::new("INPUT"),
-                    value: f.this,
-                    separator: crate::expressions::NamedArgSeparator::DArrow,
-                }));
+                let input_arg =
+                    Expression::NamedArgument(Box::new(crate::expressions::NamedArgument {
+                        name: crate::expressions::Identifier::new("INPUT"),
+                        value: f.this,
+                        separator: crate::expressions::NamedArgSeparator::DArrow,
+                    }));
 
                 // Create FLATTEN(INPUT => x)
                 let flatten = Expression::Function(Box::new(Function::new(
@@ -319,13 +339,14 @@ impl DialectImpl for SnowflakeDialect {
                 )));
 
                 // Wrap in TABLE(...)
-                let table_func = Expression::TableFromRows(Box::new(crate::expressions::TableFromRows {
-                    this: Box::new(flatten),
-                    alias: None,
-                    joins: vec![],
-                    pivots: None,
-                    sample: None,
-                }));
+                let table_func =
+                    Expression::TableFromRows(Box::new(crate::expressions::TableFromRows {
+                        this: Box::new(flatten),
+                        alias: None,
+                        joins: vec![],
+                        pivots: None,
+                        sample: None,
+                    }));
 
                 // Add alias _t0(seq, key, path, index, value, this)
                 Ok(Expression::Alias(Box::new(crate::expressions::Alias {
@@ -551,7 +572,9 @@ impl DialectImpl for SnowflakeDialect {
                 let mut args = vec![];
                 // If unit is set (from cross-dialect normalize), use unit as first arg, this as second, expression as third
                 if let Some(ref unit_str) = f.unit {
-                    args.push(Expression::Identifier(crate::expressions::Identifier::new(unit_str.clone())));
+                    args.push(Expression::Identifier(crate::expressions::Identifier::new(
+                        unit_str.clone(),
+                    )));
                     args.push(*f.this);
                     args.push(*f.expression);
                 } else {
@@ -568,7 +591,9 @@ impl DialectImpl for SnowflakeDialect {
             Expression::TimestampAdd(f) => {
                 let mut args = vec![];
                 if let Some(ref unit_str) = f.unit {
-                    args.push(Expression::Identifier(crate::expressions::Identifier::new(unit_str.clone())));
+                    args.push(Expression::Identifier(crate::expressions::Identifier::new(
+                        unit_str.clone(),
+                    )));
                     args.push(*f.this);
                     args.push(*f.expression);
                 } else {
@@ -612,7 +637,9 @@ impl DialectImpl for SnowflakeDialect {
                 // Negate using val * -1 format (matching Python sqlglot output)
                 let neg_expr = Expression::Mul(Box::new(crate::expressions::BinaryOp::new(
                     f.interval,
-                    Expression::Neg(Box::new(crate::expressions::UnaryOp { this: Expression::number(1) })),
+                    Expression::Neg(Box::new(crate::expressions::UnaryOp {
+                        this: Expression::number(1),
+                    })),
                 )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEADD".to_string(),
@@ -622,7 +649,8 @@ impl DialectImpl for SnowflakeDialect {
 
             // DateDiff -> DATEDIFF
             Expression::DateDiff(f) => {
-                let unit_str = interval_unit_to_str(&f.unit.unwrap_or(crate::expressions::IntervalUnit::Day));
+                let unit_str =
+                    interval_unit_to_str(&f.unit.unwrap_or(crate::expressions::IntervalUnit::Day));
                 let unit = Expression::Identifier(crate::expressions::Identifier {
                     name: unit_str,
                     quoted: false,
@@ -810,14 +838,15 @@ impl DialectImpl for SnowflakeDialect {
 
             // ===== Conditional =====
             // IfFunc -> keep as IfFunc with IFF name for Snowflake
-            Expression::IfFunc(f) => {
-                Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
-                    condition: f.condition,
-                    true_value: f.true_value,
-                    false_value: Some(f.false_value.unwrap_or(Expression::Null(crate::expressions::Null))),
-                    original_name: Some("IFF".to_string()),
-                })))
-            }
+            Expression::IfFunc(f) => Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
+                condition: f.condition,
+                true_value: f.true_value,
+                false_value: Some(
+                    f.false_value
+                        .unwrap_or(Expression::Null(crate::expressions::Null)),
+                ),
+                original_name: Some("IFF".to_string()),
+            }))),
 
             // ===== Aggregate functions =====
             // ApproxDistinct -> APPROX_COUNT_DISTINCT
@@ -911,15 +940,13 @@ impl DialectImpl for SnowflakeDialect {
 
             // ===== JSON Path =====
             // JSONPathRoot -> empty string ($ is implicit in Snowflake)
-            Expression::JSONPathRoot(_) => Ok(Expression::Literal(crate::expressions::Literal::String(
-                String::new(),
-            ))),
+            Expression::JSONPathRoot(_) => Ok(Expression::Literal(
+                crate::expressions::Literal::String(String::new()),
+            )),
 
             // ===== VarSamp -> VARIANCE (Snowflake) =====
             // Snowflake uses VARIANCE instead of VAR_SAMP
-            Expression::VarSamp(agg) => {
-                Ok(Expression::Variance(agg))
-            }
+            Expression::VarSamp(agg) => Ok(Expression::Variance(agg)),
 
             // ===== VarPop -> keep as VarPop =====
             // The generator handles dialect-specific naming (VARIANCE_POP for Snowflake)
@@ -941,17 +968,19 @@ impl DialectImpl for SnowflakeDialect {
                     DateTimeField::Millisecond => "MILLISECOND",
                     DateTimeField::Microsecond => "MICROSECOND",
                     DateTimeField::Week => "WEEK",
-                    DateTimeField::WeekWithModifier(m) => return Ok(Expression::Function(Box::new(Function::new(
-                        "DATE_PART".to_string(),
-                        vec![
-                            Expression::Identifier(crate::expressions::Identifier {
-                                name: format!("WEEK({})", m),
-                                quoted: false,
-                                trailing_comments: Vec::new(),
-                            }),
-                            transformed_this,
-                        ],
-                    )))),
+                    DateTimeField::WeekWithModifier(m) => {
+                        return Ok(Expression::Function(Box::new(Function::new(
+                            "DATE_PART".to_string(),
+                            vec![
+                                Expression::Identifier(crate::expressions::Identifier {
+                                    name: format!("WEEK({})", m),
+                                    quoted: false,
+                                    trailing_comments: Vec::new(),
+                                }),
+                                transformed_this,
+                            ],
+                        ))))
+                    }
                     DateTimeField::DayOfWeek => "DAYOFWEEK",
                     DateTimeField::DayOfYear => "DAYOFYEAR",
                     DateTimeField::Quarter => "QUARTER",
@@ -972,17 +1001,20 @@ impl DialectImpl for SnowflakeDialect {
                             "EPOCH_MILLISECOND" | "EPOCH_MILLISECONDS" => "EPOCH_MILLISECOND",
                             "EPOCH_MICROSECOND" | "EPOCH_MICROSECONDS" => "EPOCH_MICROSECOND",
                             "EPOCH_NANOSECOND" | "EPOCH_NANOSECONDS" => "EPOCH_NANOSECOND",
-                            _ => return {
-                                let field_ident = Expression::Identifier(crate::expressions::Identifier {
-                                    name: s.to_string(),
-                                    quoted: false,
-                                    trailing_comments: Vec::new(),
-                                });
-                                Ok(Expression::Function(Box::new(Function::new(
-                                    "DATE_PART".to_string(),
-                                    vec![field_ident, transformed_this],
-                                ))))
-                            },
+                            _ => {
+                                return {
+                                    let field_ident =
+                                        Expression::Identifier(crate::expressions::Identifier {
+                                            name: s.to_string(),
+                                            quoted: false,
+                                            trailing_comments: Vec::new(),
+                                        });
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "DATE_PART".to_string(),
+                                        vec![field_ident, transformed_this],
+                                    ))))
+                                }
+                            }
                         }
                     }
                 };
@@ -1012,17 +1044,21 @@ impl DialectImpl for SnowflakeDialect {
             // Handle NamedArgument - recursively transform the value
             Expression::NamedArgument(na) => {
                 let transformed_value = self.transform_expr(na.value)?;
-                Ok(Expression::NamedArgument(Box::new(crate::expressions::NamedArgument {
-                    name: na.name,
-                    value: transformed_value,
-                    separator: na.separator,
-                })))
+                Ok(Expression::NamedArgument(Box::new(
+                    crate::expressions::NamedArgument {
+                        name: na.name,
+                        value: transformed_value,
+                        separator: na.separator,
+                    },
+                )))
             }
 
             // Handle CreateTable - transform column data types and default/computed expressions
             Expression::CreateTable(mut ct) => {
                 for col in &mut ct.columns {
-                    if let Expression::DataType(new_dt) = self.transform_data_type(col.data_type.clone())? {
+                    if let Expression::DataType(new_dt) =
+                        self.transform_data_type(col.data_type.clone())?
+                    {
                         col.data_type = new_dt;
                     }
                     // Also transform computed/default expressions (e.g., AS (parse_json(x):COL3::number))
@@ -1031,7 +1067,8 @@ impl DialectImpl for SnowflakeDialect {
                     }
                     // Transform expressions in column constraints (computed columns)
                     for constraint in &mut col.constraints {
-                        if let crate::expressions::ColumnConstraint::ComputedColumn(cc) = constraint {
+                        if let crate::expressions::ColumnConstraint::ComputedColumn(cc) = constraint
+                        {
                             let transformed = self.transform_expr(*cc.expression.clone())?;
                             cc.expression = Box::new(transformed);
                         }
@@ -1040,10 +1077,13 @@ impl DialectImpl for SnowflakeDialect {
 
                 // For EXTERNAL tables, convert with_properties to Raw properties
                 // with proper Snowflake formatting (no WITH wrapper, specific key casing)
-                if ct.table_modifier.as_deref() == Some("EXTERNAL") && !ct.with_properties.is_empty() {
+                if ct.table_modifier.as_deref() == Some("EXTERNAL")
+                    && !ct.with_properties.is_empty()
+                {
                     for (key, value) in ct.with_properties.drain(..) {
                         let formatted = Self::format_external_table_property(&key, &value);
-                        ct.properties.push(Expression::Raw(crate::expressions::Raw { sql: formatted }));
+                        ct.properties
+                            .push(Expression::Raw(crate::expressions::Raw { sql: formatted }));
                     }
                 }
 
@@ -1054,7 +1094,9 @@ impl DialectImpl for SnowflakeDialect {
             Expression::AlterTable(mut at) => {
                 for action in &mut at.actions {
                     if let crate::expressions::AlterTableAction::AddColumn { column, .. } = action {
-                        if let Expression::DataType(new_dt) = self.transform_data_type(column.data_type.clone())? {
+                        if let Expression::DataType(new_dt) =
+                            self.transform_data_type(column.data_type.clone())?
+                        {
                             column.data_type = new_dt;
                         }
                     }
@@ -1080,10 +1122,12 @@ impl DialectImpl for SnowflakeDialect {
             Expression::Subscript(s) => {
                 let transformed_this = self.transform_expr(s.this)?;
                 let transformed_index = self.transform_expr(s.index)?;
-                Ok(Expression::Subscript(Box::new(crate::expressions::Subscript {
-                    this: transformed_this,
-                    index: transformed_index,
-                })))
+                Ok(Expression::Subscript(Box::new(
+                    crate::expressions::Subscript {
+                        this: transformed_this,
+                        index: transformed_index,
+                    },
+                )))
             }
 
             // Recursively transform parenthesized expressions
@@ -1139,8 +1183,12 @@ impl DialectImpl for SnowflakeDialect {
                 if is_flatten && lat.column_aliases.is_empty() {
                     // Add default column aliases
                     lat.column_aliases = vec![
-                        "SEQ".to_string(), "KEY".to_string(), "PATH".to_string(),
-                        "INDEX".to_string(), "VALUE".to_string(), "THIS".to_string(),
+                        "SEQ".to_string(),
+                        "KEY".to_string(),
+                        "PATH".to_string(),
+                        "INDEX".to_string(),
+                        "VALUE".to_string(),
+                        "THIS".to_string(),
                     ];
                     // If no alias, add _flattened
                     if lat.alias.is_none() {
@@ -1225,7 +1273,10 @@ impl SnowflakeDialect {
         use crate::expressions::DataType;
         let transformed = match dt {
             // TEXT -> VARCHAR
-            DataType::Text => DataType::VarChar { length: None, parenthesized_length: false },
+            DataType::Text => DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
             // STRUCT -> OBJECT
             DataType::Struct { fields, .. } => {
                 // Snowflake uses OBJECT for struct types
@@ -1240,38 +1291,71 @@ impl SnowflakeDialect {
                 match upper_name.as_str() {
                     // NVARCHAR -> VARCHAR (SQL Server type)
                     "NVARCHAR" | "NCHAR" | "NATIONAL CHARACTER VARYING" | "NATIONAL CHAR" => {
-                        DataType::VarChar { length: None, parenthesized_length: false }
+                        DataType::VarChar {
+                            length: None,
+                            parenthesized_length: false,
+                        }
                     }
                     // STRING -> VARCHAR (Snowflake accepts both, but normalizes to VARCHAR)
-                    "STRING" => DataType::VarChar { length: None, parenthesized_length: false },
+                    "STRING" => DataType::VarChar {
+                        length: None,
+                        parenthesized_length: false,
+                    },
                     // BIGDECIMAL -> DOUBLE
-                    "BIGDECIMAL" => DataType::Double { precision: None, scale: None },
+                    "BIGDECIMAL" => DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
                     // NESTED -> OBJECT
                     "NESTED" => DataType::Custom {
                         name: "OBJECT".to_string(),
                     },
                     // BYTEINT -> INT
-                    "BYTEINT" => DataType::Int { length: None, integer_spelling: false },
+                    "BYTEINT" => DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
                     // CHAR VARYING -> VARCHAR
-                    "CHAR VARYING" | "CHARACTER VARYING" => DataType::VarChar { length: None, parenthesized_length: false },
+                    "CHAR VARYING" | "CHARACTER VARYING" => DataType::VarChar {
+                        length: None,
+                        parenthesized_length: false,
+                    },
                     // SQL_DOUBLE -> DOUBLE
-                    "SQL_DOUBLE" => DataType::Double { precision: None, scale: None },
+                    "SQL_DOUBLE" => DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
                     // SQL_VARCHAR -> VARCHAR
-                    "SQL_VARCHAR" => DataType::VarChar { length: None, parenthesized_length: false },
+                    "SQL_VARCHAR" => DataType::VarChar {
+                        length: None,
+                        parenthesized_length: false,
+                    },
                     // TIMESTAMP_NTZ -> TIMESTAMPNTZ (normalize underscore form)
-                    "TIMESTAMP_NTZ" => DataType::Custom { name: "TIMESTAMPNTZ".to_string() },
+                    "TIMESTAMP_NTZ" => DataType::Custom {
+                        name: "TIMESTAMPNTZ".to_string(),
+                    },
                     // TIMESTAMP_LTZ -> TIMESTAMPLTZ (normalize underscore form)
-                    "TIMESTAMP_LTZ" => DataType::Custom { name: "TIMESTAMPLTZ".to_string() },
+                    "TIMESTAMP_LTZ" => DataType::Custom {
+                        name: "TIMESTAMPLTZ".to_string(),
+                    },
                     // TIMESTAMP_TZ -> TIMESTAMPTZ (normalize underscore form)
-                    "TIMESTAMP_TZ" => DataType::Custom { name: "TIMESTAMPTZ".to_string() },
+                    "TIMESTAMP_TZ" => DataType::Custom {
+                        name: "TIMESTAMPTZ".to_string(),
+                    },
                     // NCHAR VARYING -> VARCHAR
-                    "NCHAR VARYING" => DataType::VarChar { length: None, parenthesized_length: false },
+                    "NCHAR VARYING" => DataType::VarChar {
+                        length: None,
+                        parenthesized_length: false,
+                    },
                     // NUMBER -> DECIMAL(38, 0) (Snowflake's default NUMBER is DECIMAL(38, 0))
-                    "NUMBER" => DataType::Decimal { precision: Some(38), scale: Some(0) },
+                    "NUMBER" => DataType::Decimal {
+                        precision: Some(38),
+                        scale: Some(0),
+                    },
                     _ if name.starts_with("NUMBER(") => {
                         // NUMBER(precision, scale) -> DECIMAL(precision, scale)
                         // Parse: "NUMBER(38, 0)" -> precision=38, scale=0
-                        let inner = &name[7..name.len()-1]; // strip "NUMBER(" and ")"
+                        let inner = &name[7..name.len() - 1]; // strip "NUMBER(" and ")"
                         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
                         let precision = parts.first().and_then(|p| p.parse::<u32>().ok());
                         let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
@@ -1281,9 +1365,18 @@ impl SnowflakeDialect {
                 }
             }
             // DECIMAL without precision -> DECIMAL(38, 0) (Snowflake default)
-            DataType::Decimal { precision: None, scale: None } => DataType::Decimal { precision: Some(38), scale: Some(0) },
+            DataType::Decimal {
+                precision: None,
+                scale: None,
+            } => DataType::Decimal {
+                precision: Some(38),
+                scale: Some(0),
+            },
             // FLOAT -> DOUBLE (Snowflake FLOAT is actually 64-bit DOUBLE)
-            DataType::Float { .. } => DataType::Double { precision: None, scale: None },
+            DataType::Float { .. } => DataType::Double {
+                precision: None,
+                scale: None,
+            },
             // Keep all other types as-is (Snowflake is quite flexible)
             other => other,
         };
@@ -1316,9 +1409,11 @@ impl SnowflakeDialect {
             // Second
             "S" | "SEC" | "SECONDS" | "SECS" => Some("SECOND"),
             // Millisecond
-            "MS" | "MSEC" | "MSECS" | "MSECOND" | "MSECONDS" | "MILLISEC" | "MILLISECS" | "MILLISECON" | "MILLISECONDS" => Some("MILLISECOND"),
+            "MS" | "MSEC" | "MSECS" | "MSECOND" | "MSECONDS" | "MILLISEC" | "MILLISECS"
+            | "MILLISECON" | "MILLISECONDS" => Some("MILLISECOND"),
             // Microsecond
-            "US" | "USEC" | "USECS" | "MICROSEC" | "MICROSECS" | "USECOND" | "USECONDS" | "MICROSECONDS" => Some("MICROSECOND"),
+            "US" | "USEC" | "USECS" | "MICROSEC" | "MICROSECS" | "USECOND" | "USECONDS"
+            | "MICROSECONDS" => Some("MICROSECOND"),
             // Nanosecond
             "NS" | "NSEC" | "NANOSEC" | "NSECOND" | "NSECONDS" | "NANOSECS" => Some("NANOSECOND"),
             // Epoch variants
@@ -1574,7 +1669,8 @@ impl SnowflakeDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE (standardize to COALESCE)
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -1593,10 +1689,9 @@ impl SnowflakeDialect {
             ))),
 
             // STRING_AGG -> LISTAGG in Snowflake
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "LISTAGG".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("LISTAGG".to_string(), f.args),
+            ))),
 
             // SUBSTR -> SUBSTRING (both work in Snowflake)
             "SUBSTR" => Ok(Expression::Function(Box::new(Function::new(
@@ -1626,7 +1721,8 @@ impl SnowflakeDialect {
                 distinct: false,
                 trailing_comments: Vec::new(),
                 use_bracket_syntax: false,
-                no_parens: f.no_parens, quoted: false,
+                no_parens: f.no_parens,
+                quoted: false,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP (preserving parens style)
@@ -1636,28 +1732,32 @@ impl SnowflakeDialect {
                 distinct: false,
                 trailing_comments: Vec::new(),
                 use_bracket_syntax: false,
-                no_parens: f.no_parens, quoted: false,
+                no_parens: f.no_parens,
+                quoted: false,
             }))),
 
             // CURRENT_TIMESTAMP - always output with parens in Snowflake
             // Note: LOCALTIMESTAMP converts to CURRENT_TIMESTAMP without parens,
             // but explicit CURRENT_TIMESTAMP calls should have parens
-            "CURRENT_TIMESTAMP" if f.args.is_empty() => Ok(Expression::Function(Box::new(Function {
-                name: "CURRENT_TIMESTAMP".to_string(),
-                args: Vec::new(),
-                distinct: false,
-                trailing_comments: Vec::new(),
-                use_bracket_syntax: false,
-                no_parens: false,  // Always output with parens
-                quoted: false,
-            }))),
+            "CURRENT_TIMESTAMP" if f.args.is_empty() => {
+                Ok(Expression::Function(Box::new(Function {
+                    name: "CURRENT_TIMESTAMP".to_string(),
+                    args: Vec::new(),
+                    distinct: false,
+                    trailing_comments: Vec::new(),
+                    use_bracket_syntax: false,
+                    no_parens: false, // Always output with parens
+                    quoted: false,
+                })))
+            }
 
             // TO_DATE with single string arg that looks like a date -> CAST(arg AS DATE)
             // Per Python SQLGlot: TO_DATE('2013-04-05') -> CAST('2013-04-05' AS DATE)
             // But TO_DATE('12345') stays as is (doesn't look like a date)
             "TO_DATE" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0]
+                    {
                         // Check if the string looks like a date (contains dashes like 2013-04-05)
                         if s.contains('-') && s.len() >= 8 && s.len() <= 12 {
                             return Ok(Expression::Cast(Box::new(Cast {
@@ -1685,10 +1785,14 @@ impl SnowflakeDialect {
             // TO_TIME with single string arg -> CAST(arg AS TIME)
             "TO_TIME" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0]
+                    {
                         return Ok(Expression::Cast(Box::new(Cast {
                             this: f.args.into_iter().next().unwrap(),
-                            to: crate::expressions::DataType::Time { precision: None, timezone: false },
+                            to: crate::expressions::DataType::Time {
+                                precision: None,
+                                timezone: false,
+                            },
                             double_colon_syntax: false,
                             trailing_comments: Vec::new(),
                             format: None,
@@ -1722,7 +1826,10 @@ impl SnowflakeDialect {
                             // Case 1: datetime string -> CAST AS TIMESTAMP
                             return Ok(Expression::Cast(Box::new(Cast {
                                 this: args.into_iter().next().unwrap(),
-                                to: DataType::Timestamp { precision: None, timezone: false },
+                                to: DataType::Timestamp {
+                                    precision: None,
+                                    timezone: false,
+                                },
                                 double_colon_syntax: false,
                                 trailing_comments: vec![],
                                 format: None,
@@ -1731,27 +1838,31 @@ impl SnowflakeDialect {
                         }
                         Expression::Literal(Literal::String(s)) if Self::looks_like_epoch(s) => {
                             // Case 2: epoch number as string -> UnixToTime
-                            return Ok(Expression::UnixToTime(Box::new(crate::expressions::UnixToTime {
-                                this: Box::new(args.into_iter().next().unwrap()),
-                                scale: None,
-                                zone: None,
-                                hours: None,
-                                minutes: None,
-                                format: None,
-                                target_type: None,
-                            })));
+                            return Ok(Expression::UnixToTime(Box::new(
+                                crate::expressions::UnixToTime {
+                                    this: Box::new(args.into_iter().next().unwrap()),
+                                    scale: None,
+                                    zone: None,
+                                    hours: None,
+                                    minutes: None,
+                                    format: None,
+                                    target_type: None,
+                                },
+                            )));
                         }
                         Expression::Literal(Literal::Number(_)) | Expression::Neg(_) => {
                             // Case 3: number -> UnixToTime
-                            return Ok(Expression::UnixToTime(Box::new(crate::expressions::UnixToTime {
-                                this: Box::new(args.into_iter().next().unwrap()),
-                                scale: None,
-                                zone: None,
-                                hours: None,
-                                minutes: None,
-                                format: None,
-                                target_type: None,
-                            })));
+                            return Ok(Expression::UnixToTime(Box::new(
+                                crate::expressions::UnixToTime {
+                                    this: Box::new(args.into_iter().next().unwrap()),
+                                    scale: None,
+                                    zone: None,
+                                    hours: None,
+                                    minutes: None,
+                                    format: None,
+                                    target_type: None,
+                                },
+                            )));
                         }
                         _ => {
                             // Unknown single arg, keep as function
@@ -1779,15 +1890,17 @@ impl SnowflakeDialect {
                         } else {
                             None
                         };
-                        return Ok(Expression::UnixToTime(Box::new(crate::expressions::UnixToTime {
-                            this: Box::new(value),
-                            scale,
-                            zone: None,
-                            hours: None,
-                            minutes: None,
-                            format: None,
-                            target_type: None,
-                        })));
+                        return Ok(Expression::UnixToTime(Box::new(
+                            crate::expressions::UnixToTime {
+                                this: Box::new(value),
+                                scale,
+                                zone: None,
+                                hours: None,
+                                minutes: None,
+                                format: None,
+                                target_type: None,
+                            },
+                        )));
                     } else {
                         // Case 5: TO_TIMESTAMP(string, format) -> StrToTime
                         let mut args_iter = args.into_iter();
@@ -1805,13 +1918,15 @@ impl SnowflakeDialect {
                         };
                         // Normalize Snowflake format to target-neutral
                         let normalized_format = Self::normalize_snowflake_format(&format_str);
-                        return Ok(Expression::StrToTime(Box::new(crate::expressions::StrToTime {
-                            this: Box::new(value),
-                            format: normalized_format,
-                            zone: None,
-                            safe: None,
-                            target_type: None,
-                        })));
+                        return Ok(Expression::StrToTime(Box::new(
+                            crate::expressions::StrToTime {
+                                this: Box::new(value),
+                                format: normalized_format,
+                                zone: None,
+                                safe: None,
+                                target_type: None,
+                            },
+                        )));
                     }
                 }
                 // More than 2 args or other cases, keep as function
@@ -1826,7 +1941,11 @@ impl SnowflakeDialect {
 
             // ROUND with named args: ROUND(EXPR => x, SCALE => y, ROUNDING_MODE => z)
             // -> ROUND(x, y) or ROUND(x, y, z)
-            "ROUND" if f.args.iter().any(|a| matches!(a, Expression::NamedArgument(_))) => {
+            "ROUND"
+                if f.args
+                    .iter()
+                    .any(|a| matches!(a, Expression::NamedArgument(_))) =>
+            {
                 let mut expr_val = None;
                 let mut scale_val = None;
                 let mut rounding_mode_val = None;
@@ -1848,7 +1967,10 @@ impl SnowflakeDialect {
                     if let Some(mode) = rounding_mode_val {
                         args.push(mode);
                     }
-                    Ok(Expression::Function(Box::new(Function::new("ROUND".to_string(), args))))
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "ROUND".to_string(),
+                        args,
+                    ))))
                 } else {
                     Ok(Expression::Function(Box::new(f)))
                 }
@@ -1863,7 +1985,10 @@ impl SnowflakeDialect {
                     if matches!(&args[0], Expression::Literal(Literal::String(_))) {
                         args[0] = Expression::Cast(Box::new(crate::expressions::Cast {
                             this: args[0].clone(),
-                            to: DataType::Timestamp { precision: None, timezone: false },
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -1898,7 +2023,9 @@ impl SnowflakeDialect {
                     match arg {
                         Expression::Alias(a) => {
                             // Named field: value AS name -> 'name', value
-                            oc_args.push(Expression::Literal(crate::expressions::Literal::String(a.alias.name.clone())));
+                            oc_args.push(Expression::Literal(crate::expressions::Literal::String(
+                                a.alias.name.clone(),
+                            )));
                             oc_args.push(a.this);
                         }
                         other => {
@@ -1955,7 +2082,11 @@ impl SnowflakeDialect {
             // RAND -> Rand (to use RANDOM in Snowflake)
             "RAND" => {
                 let seed = f.args.first().cloned().map(Box::new);
-                Ok(Expression::Rand(Box::new(crate::expressions::Rand { seed, lower: None, upper: None })))
+                Ok(Expression::Rand(Box::new(crate::expressions::Rand {
+                    seed,
+                    lower: None,
+                    upper: None,
+                })))
             }
 
             // SHA -> SHA1
@@ -1971,15 +2102,29 @@ impl SnowflakeDialect {
             )))),
 
             // GEN_RANDOM_UUID/UUID -> Uuid AST node
-            "GEN_RANDOM_UUID" | "UUID" => Ok(Expression::Uuid(Box::new(crate::expressions::Uuid { this: None, name: None, is_string: None }))),
+            "GEN_RANDOM_UUID" | "UUID" => {
+                Ok(Expression::Uuid(Box::new(crate::expressions::Uuid {
+                    this: None,
+                    name: None,
+                    is_string: None,
+                })))
+            }
 
             // NEWID -> Uuid AST node
-            "NEWID" => Ok(Expression::Uuid(Box::new(crate::expressions::Uuid { this: None, name: None, is_string: None }))),
+            "NEWID" => Ok(Expression::Uuid(Box::new(crate::expressions::Uuid {
+                this: None,
+                name: None,
+                is_string: None,
+            }))),
 
             // UUID_STRING -> Uuid AST node (without args only; with args keep as Function for identity)
             "UUID_STRING" => {
                 if f.args.is_empty() {
-                    Ok(Expression::Uuid(Box::new(crate::expressions::Uuid { this: None, name: None, is_string: None })))
+                    Ok(Expression::Uuid(Box::new(crate::expressions::Uuid {
+                        this: None,
+                        name: None,
+                        is_string: None,
+                    })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
                         "UUID_STRING".to_string(),
@@ -1993,11 +2138,17 @@ impl SnowflakeDialect {
                 let mut args = f.args;
                 let condition = args.remove(0);
                 let true_val = args.remove(0);
-                let false_val = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                let false_val = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                };
                 Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
                     condition,
                     true_value: true_val,
-                    false_value: Some(false_val.unwrap_or(Expression::Null(crate::expressions::Null))),
+                    false_value: Some(
+                        false_val.unwrap_or(Expression::Null(crate::expressions::Null)),
+                    ),
                     original_name: Some("IFF".to_string()),
                 })))
             }
@@ -2005,10 +2156,13 @@ impl SnowflakeDialect {
             // SQUARE(x) -> POWER(x, 2)
             "SQUARE" if f.args.len() == 1 => {
                 let x = f.args.into_iter().next().unwrap();
-                Ok(Expression::Power(Box::new(crate::expressions::BinaryFunc { original_name: None,
-                    this: x,
-                    expression: Expression::number(2),
-                })))
+                Ok(Expression::Power(Box::new(
+                    crate::expressions::BinaryFunc {
+                        original_name: None,
+                        this: x,
+                        expression: Expression::number(2),
+                    },
+                )))
             }
 
             // POW(x, y) -> POWER(x, y)
@@ -2016,10 +2170,13 @@ impl SnowflakeDialect {
                 let mut args = f.args.into_iter();
                 let x = args.next().unwrap();
                 let y = args.next().unwrap();
-                Ok(Expression::Power(Box::new(crate::expressions::BinaryFunc { original_name: None,
-                    this: x,
-                    expression: y,
-                })))
+                Ok(Expression::Power(Box::new(
+                    crate::expressions::BinaryFunc {
+                        original_name: None,
+                        this: x,
+                        expression: y,
+                    },
+                )))
             }
 
             // MOD(x, y) -> x % y (modulo operator)
@@ -2043,11 +2200,13 @@ impl SnowflakeDialect {
             )))),
 
             // ARRAY_CONSTRUCT -> Array with bracket notation in Snowflake
-            "ARRAY_CONSTRUCT" => Ok(Expression::ArrayFunc(Box::new(crate::expressions::ArrayConstructor {
-                expressions: f.args,
-                bracket_notation: true,
-                use_list_keyword: false,
-            }))),
+            "ARRAY_CONSTRUCT" => Ok(Expression::ArrayFunc(Box::new(
+                crate::expressions::ArrayConstructor {
+                    expressions: f.args,
+                    bracket_notation: true,
+                    use_list_keyword: false,
+                },
+            ))),
 
             // APPROX_TOP_K - add default k=1 if not provided
             "APPROX_TOP_K" if f.args.len() == 1 => {
@@ -2066,10 +2225,9 @@ impl SnowflakeDialect {
             )))),
 
             // TRY_TO_DECIMAL, TRY_TO_NUMERIC -> TRY_TO_NUMBER
-            "TRY_TO_DECIMAL" | "TRY_TO_NUMERIC" => Ok(Expression::Function(Box::new(Function::new(
-                "TRY_TO_NUMBER".to_string(),
-                f.args,
-            )))),
+            "TRY_TO_DECIMAL" | "TRY_TO_NUMERIC" => Ok(Expression::Function(Box::new(
+                Function::new("TRY_TO_NUMBER".to_string(), f.args),
+            ))),
 
             // STDDEV_SAMP -> STDDEV
             "STDDEV_SAMP" => Ok(Expression::Function(Box::new(Function::new(
@@ -2134,11 +2292,13 @@ impl SnowflakeDialect {
                 let left = args.next().unwrap();
                 let pattern = args.next().unwrap();
                 let flags = args.next();
-                Ok(Expression::RegexpLike(Box::new(crate::expressions::RegexpFunc {
-                    this: left,
-                    pattern,
-                    flags,
-                })))
+                Ok(Expression::RegexpLike(Box::new(
+                    crate::expressions::RegexpFunc {
+                        this: left,
+                        pattern,
+                        flags,
+                    },
+                )))
             }
 
             // IFF -> convert to IfFunc AST node for proper cross-dialect handling
@@ -2146,7 +2306,11 @@ impl SnowflakeDialect {
                 let mut args = f.args;
                 let condition = args.remove(0);
                 let true_value = args.remove(0);
-                let false_value = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                let false_value = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                };
                 Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
                     condition,
                     true_value,
@@ -2164,20 +2328,16 @@ impl SnowflakeDialect {
             }
 
             // TIMESTAMPLTZFROMPARTS -> TIMESTAMP_LTZ_FROM_PARTS
-            "TIMESTAMPLTZFROMPARTS" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TIMESTAMP_LTZ_FROM_PARTS".to_string(),
-                    f.args,
-                ))))
-            }
+            "TIMESTAMPLTZFROMPARTS" => Ok(Expression::Function(Box::new(Function::new(
+                "TIMESTAMP_LTZ_FROM_PARTS".to_string(),
+                f.args,
+            )))),
 
             // TIMESTAMPTZFROMPARTS -> TIMESTAMP_TZ_FROM_PARTS
-            "TIMESTAMPTZFROMPARTS" => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TIMESTAMP_TZ_FROM_PARTS".to_string(),
-                    f.args,
-                ))))
-            }
+            "TIMESTAMPTZFROMPARTS" => Ok(Expression::Function(Box::new(Function::new(
+                "TIMESTAMP_TZ_FROM_PARTS".to_string(),
+                f.args,
+            )))),
 
             // DATEADD with 3 args - transform the unit (first arg) using date part mapping
             "DATEADD" if f.args.len() >= 1 => {
@@ -2259,10 +2419,14 @@ impl SnowflakeDialect {
             // Target dialects can then convert to their native form
             "MONTHNAME" if f.args.len() == 1 => {
                 let arg = f.args.into_iter().next().unwrap();
-                Ok(Expression::Monthname(Box::new(crate::expressions::Monthname {
-                    this: Box::new(arg),
-                    abbreviated: Some(Box::new(Expression::Literal(Literal::String("true".to_string())))),
-                })))
+                Ok(Expression::Monthname(Box::new(
+                    crate::expressions::Monthname {
+                        this: Box::new(arg),
+                        abbreviated: Some(Box::new(Expression::Literal(Literal::String(
+                            "true".to_string(),
+                        )))),
+                    },
+                )))
             }
 
             // DAYNAME -> Dayname AST node (abbreviated=true for Snowflake)
@@ -2271,7 +2435,9 @@ impl SnowflakeDialect {
                 let arg = f.args.into_iter().next().unwrap();
                 Ok(Expression::Dayname(Box::new(crate::expressions::Dayname {
                     this: Box::new(arg),
-                    abbreviated: Some(Box::new(Expression::Literal(Literal::String("true".to_string())))),
+                    abbreviated: Some(Box::new(Expression::Literal(Literal::String(
+                        "true".to_string(),
+                    )))),
                 })))
             }
 
@@ -2333,12 +2499,10 @@ impl SnowflakeDialect {
             )))),
 
             // DATE(str) -> TO_DATE(str) (single-arg form)
-            "DATE" if f.args.len() == 1 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TO_DATE".to_string(),
-                    f.args,
-                ))))
-            }
+            "DATE" if f.args.len() == 1 => Ok(Expression::Function(Box::new(Function::new(
+                "TO_DATE".to_string(),
+                f.args,
+            )))),
             // DATE(str, format) -> TO_DATE(str, normalized_format)
             // Python SQLGlot normalizes DATE(...) to TO_DATE(...) for formatted variants.
             // But _POLYGLOT_DATE(str, format) stays as DATE() (from BigQuery PARSE_DATE conversion)
@@ -2413,16 +2577,14 @@ impl SnowflakeDialect {
             )))),
 
             // BIT_SHIFTLEFT -> BITSHIFTLEFT
-            "BIT_SHIFTLEFT" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "BITSHIFTLEFT".to_string(),
-                f.args,
-            )))),
+            "BIT_SHIFTLEFT" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("BITSHIFTLEFT".to_string(), f.args),
+            ))),
 
             // BIT_SHIFTRIGHT -> BITSHIFTRIGHT
-            "BIT_SHIFTRIGHT" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
-                "BITSHIFTRIGHT".to_string(),
-                f.args,
-            )))),
+            "BIT_SHIFTRIGHT" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(
+                Function::new("BITSHIFTRIGHT".to_string(), f.args),
+            ))),
 
             // SYSTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
             "SYSTIMESTAMP" => Ok(Expression::Function(Box::new(Function {
@@ -2431,19 +2593,28 @@ impl SnowflakeDialect {
                 distinct: false,
                 trailing_comments: Vec::new(),
                 use_bracket_syntax: false,
-                no_parens: f.no_parens, quoted: false,
+                no_parens: f.no_parens,
+                quoted: false,
             }))),
 
             // LOCALTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
-            "LOCALTIMESTAMP" => {
-                Ok(Expression::Function(Box::new(Function {
-                    name: "CURRENT_TIMESTAMP".to_string(),
-                    args: f.args,
-                    distinct: false,
-                    trailing_comments: Vec::new(),
-                    use_bracket_syntax: false,
-                    no_parens: f.no_parens, quoted: false,
-                })))
+            "LOCALTIMESTAMP" => Ok(Expression::Function(Box::new(Function {
+                name: "CURRENT_TIMESTAMP".to_string(),
+                args: f.args,
+                distinct: false,
+                trailing_comments: Vec::new(),
+                use_bracket_syntax: false,
+                no_parens: f.no_parens,
+                quoted: false,
+            }))),
+
+            // SPACE(n) -> REPEAT(' ', n) in Snowflake
+            "SPACE" if f.args.len() == 1 => {
+                let arg = f.args.into_iter().next().unwrap();
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REPEAT".to_string(),
+                    vec![Expression::Literal(Literal::String(" ".to_string())), arg],
+                ))))
             }
 
             // CEILING -> CEIL
@@ -2496,7 +2667,9 @@ impl SnowflakeDialect {
                 };
                 if let Some(name) = unit_name {
                     let canonical = Self::map_date_part(name).unwrap_or(name);
-                    args[0] = Expression::Literal(crate::expressions::Literal::String(canonical.to_uppercase()));
+                    args[0] = Expression::Literal(crate::expressions::Literal::String(
+                        canonical.to_uppercase(),
+                    ));
                 }
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_TRUNC".to_string(),
@@ -2511,12 +2684,14 @@ impl SnowflakeDialect {
             // For native Snowflake DATE_PART('month', CAST(...)), preserve the string as-is.
             "DATE_PART" if f.args.len() >= 1 => {
                 let mut args = f.args;
-                let from_typed_literal = args.len() >= 2 && matches!(&args[1],
-                    Expression::Literal(crate::expressions::Literal::Timestamp(_))
-                    | Expression::Literal(crate::expressions::Literal::Date(_))
-                    | Expression::Literal(crate::expressions::Literal::Time(_))
-                    | Expression::Literal(crate::expressions::Literal::Datetime(_))
-                );
+                let from_typed_literal = args.len() >= 2
+                    && matches!(
+                        &args[1],
+                        Expression::Literal(crate::expressions::Literal::Timestamp(_))
+                            | Expression::Literal(crate::expressions::Literal::Date(_))
+                            | Expression::Literal(crate::expressions::Literal::Time(_))
+                            | Expression::Literal(crate::expressions::Literal::Datetime(_))
+                    );
                 if from_typed_literal {
                     args[0] = self.transform_date_part_arg(args[0].clone());
                 } else {
@@ -2553,13 +2728,17 @@ impl SnowflakeDialect {
             // 1. Remove the type annotation from the parameter
             // 2. Wrap all references to the parameter in the body with CAST(param AS type)
             "TRANSFORM" => {
-                let transformed_args: Vec<Expression> = f.args.into_iter().map(|arg| {
-                    if let Expression::Lambda(lambda) = arg {
-                        self.transform_typed_lambda(*lambda)
-                    } else {
-                        arg
-                    }
-                }).collect();
+                let transformed_args: Vec<Expression> = f
+                    .args
+                    .into_iter()
+                    .map(|arg| {
+                        if let Expression::Lambda(lambda) = arg {
+                            self.transform_typed_lambda(*lambda)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
                 Ok(Expression::Function(Box::new(Function::new(
                     "TRANSFORM".to_string(),
                     transformed_args,
@@ -2607,17 +2786,43 @@ impl SnowflakeDialect {
                 if let Expression::Column(col) = &type_arg {
                     let type_name = col.name.name.to_uppercase();
                     let data_type = match type_name.as_str() {
-                        "SQL_DOUBLE" => Some(DataType::Double { precision: None, scale: None }),
-                        "SQL_VARCHAR" => Some(DataType::VarChar { length: None, parenthesized_length: false }),
-                        "SQL_INTEGER" | "SQL_INT" => Some(DataType::Int { length: None, integer_spelling: false }),
+                        "SQL_DOUBLE" => Some(DataType::Double {
+                            precision: None,
+                            scale: None,
+                        }),
+                        "SQL_VARCHAR" => Some(DataType::VarChar {
+                            length: None,
+                            parenthesized_length: false,
+                        }),
+                        "SQL_INTEGER" | "SQL_INT" => Some(DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        }),
                         "SQL_BIGINT" => Some(DataType::BigInt { length: None }),
                         "SQL_SMALLINT" => Some(DataType::SmallInt { length: None }),
-                        "SQL_FLOAT" => Some(DataType::Float { precision: None, scale: None, real_spelling: false }),
-                        "SQL_REAL" => Some(DataType::Float { precision: None, scale: None, real_spelling: true }),
-                        "SQL_DECIMAL" => Some(DataType::Decimal { precision: None, scale: None }),
+                        "SQL_FLOAT" => Some(DataType::Float {
+                            precision: None,
+                            scale: None,
+                            real_spelling: false,
+                        }),
+                        "SQL_REAL" => Some(DataType::Float {
+                            precision: None,
+                            scale: None,
+                            real_spelling: true,
+                        }),
+                        "SQL_DECIMAL" => Some(DataType::Decimal {
+                            precision: None,
+                            scale: None,
+                        }),
                         "SQL_DATE" => Some(DataType::Date),
-                        "SQL_TIME" => Some(DataType::Time { precision: None, timezone: false }),
-                        "SQL_TIMESTAMP" => Some(DataType::Timestamp { precision: None, timezone: false }),
+                        "SQL_TIME" => Some(DataType::Time {
+                            precision: None,
+                            timezone: false,
+                        }),
+                        "SQL_TIMESTAMP" => Some(DataType::Timestamp {
+                            precision: None,
+                            timezone: false,
+                        }),
                         _ => None,
                     };
 
@@ -2640,10 +2845,13 @@ impl SnowflakeDialect {
             // Per Python sqlglot: _build_datetime converts TO_TIMESTAMP_TZ('string') to CAST('string' AS TIMESTAMPTZ)
             "TO_TIMESTAMP_TZ" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0]
+                    {
                         return Ok(Expression::Cast(Box::new(Cast {
                             this: f.args.into_iter().next().unwrap(),
-                            to: DataType::Custom { name: "TIMESTAMPTZ".to_string() },
+                            to: DataType::Custom {
+                                name: "TIMESTAMPTZ".to_string(),
+                            },
                             double_colon_syntax: false,
                             trailing_comments: vec![],
                             format: None,
@@ -2657,10 +2865,13 @@ impl SnowflakeDialect {
             // TO_TIMESTAMP_NTZ: single string arg -> CAST(... AS TIMESTAMPNTZ), otherwise keep as function
             "TO_TIMESTAMP_NTZ" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0]
+                    {
                         return Ok(Expression::Cast(Box::new(Cast {
                             this: f.args.into_iter().next().unwrap(),
-                            to: DataType::Custom { name: "TIMESTAMPNTZ".to_string() },
+                            to: DataType::Custom {
+                                name: "TIMESTAMPNTZ".to_string(),
+                            },
                             double_colon_syntax: false,
                             trailing_comments: vec![],
                             format: None,
@@ -2674,10 +2885,13 @@ impl SnowflakeDialect {
             // TO_TIMESTAMP_LTZ: single string arg -> CAST(... AS TIMESTAMPLTZ), otherwise keep as function
             "TO_TIMESTAMP_LTZ" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0]
+                    {
                         return Ok(Expression::Cast(Box::new(Cast {
                             this: f.args.into_iter().next().unwrap(),
-                            to: DataType::Custom { name: "TIMESTAMPLTZ".to_string() },
+                            to: DataType::Custom {
+                                name: "TIMESTAMPLTZ".to_string(),
+                            },
                             double_colon_syntax: false,
                             trailing_comments: vec![],
                             format: None,
@@ -2694,7 +2908,9 @@ impl SnowflakeDialect {
             // REPLACE with 2 args -> add empty string 3rd arg
             "REPLACE" if f.args.len() == 2 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(crate::expressions::Literal::String(String::new())));
+                args.push(Expression::Literal(crate::expressions::Literal::String(
+                    String::new(),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "REPLACE".to_string(),
                     args,
@@ -2737,7 +2953,9 @@ impl SnowflakeDialect {
                 let arg = f.args.into_iter().next().unwrap();
                 Ok(Expression::Cast(Box::new(Cast {
                     this: arg,
-                    to: DataType::Custom { name: "TIMESTAMPTZ".to_string() },
+                    to: DataType::Custom {
+                        name: "TIMESTAMPTZ".to_string(),
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -2756,7 +2974,10 @@ impl SnowflakeDialect {
                         tz,
                         Expression::Cast(Box::new(Cast {
                             this: value,
-                            to: DataType::Timestamp { precision: None, timezone: false },
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -2767,12 +2988,10 @@ impl SnowflakeDialect {
             }
 
             // TIME(h, m, s) -> TIME_FROM_PARTS(h, m, s) in Snowflake
-            "TIME" if f.args.len() == 3 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "TIME_FROM_PARTS".to_string(),
-                    f.args,
-                ))))
-            }
+            "TIME" if f.args.len() == 3 => Ok(Expression::Function(Box::new(Function::new(
+                "TIME_FROM_PARTS".to_string(),
+                f.args,
+            )))),
 
             // DIV0(x, y) -> IFF(y = 0 AND NOT x IS NULL, 0, x / y)
             "DIV0" if f.args.len() == 2 => {
@@ -2859,10 +3078,14 @@ impl SnowflakeDialect {
             // TRY_TO_TIME('string') -> TRY_CAST('string' AS TIME) when single string arg
             "TRY_TO_TIME" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(_)) = &f.args[0]
+                    {
                         return Ok(Expression::TryCast(Box::new(Cast {
                             this: f.args.into_iter().next().unwrap(),
-                            to: crate::expressions::DataType::Time { precision: None, timezone: false },
+                            to: crate::expressions::DataType::Time {
+                                precision: None,
+                                timezone: false,
+                            },
                             double_colon_syntax: false,
                             trailing_comments: Vec::new(),
                             format: None,
@@ -2885,11 +3108,15 @@ impl SnowflakeDialect {
             // Convert if the string is NOT a pure numeric/epoch value
             "TRY_TO_TIMESTAMP" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0]
+                    {
                         if !Self::looks_like_epoch(s) {
                             return Ok(Expression::TryCast(Box::new(Cast {
                                 this: f.args.into_iter().next().unwrap(),
-                                to: DataType::Timestamp { precision: None, timezone: false },
+                                to: DataType::Timestamp {
+                                    precision: None,
+                                    timezone: false,
+                                },
                                 double_colon_syntax: false,
                                 trailing_comments: Vec::new(),
                                 format: None,
@@ -2912,7 +3139,8 @@ impl SnowflakeDialect {
             // TRY_TO_DATE('string') -> TRY_CAST('string' AS DATE) when single string arg
             "TRY_TO_DATE" => {
                 if f.args.len() == 1 {
-                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0] {
+                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &f.args[0]
+                    {
                         // Only convert if the string looks like a date
                         if s.contains('-') && s.len() >= 8 && s.len() <= 12 {
                             return Ok(Expression::TryCast(Box::new(Cast {
@@ -2943,7 +3171,9 @@ impl SnowflakeDialect {
             // REGEXP_REPLACE with 2 args -> add empty string replacement
             "REGEXP_REPLACE" if f.args.len() == 2 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(crate::expressions::Literal::String(String::new())));
+                args.push(Expression::Literal(crate::expressions::Literal::String(
+                    String::new(),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "REGEXP_REPLACE".to_string(),
                     args,
@@ -2961,30 +3191,36 @@ impl SnowflakeDialect {
                     _ => String::new(),
                 };
                 if unit_str == "MONTH" {
-                    Ok(Expression::Function(Box::new(Function::new("LAST_DAY".to_string(), vec![date]))))
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "LAST_DAY".to_string(),
+                        vec![date],
+                    ))))
                 } else {
-                    Ok(Expression::Function(Box::new(Function::new("LAST_DAY".to_string(), vec![date, unit]))))
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "LAST_DAY".to_string(),
+                        vec![date, unit],
+                    ))))
                 }
             }
 
             // EXTRACT('field', expr) function-call syntax -> DATE_PART('field', expr)
-            "EXTRACT" if f.args.len() == 2 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "DATE_PART".to_string(),
-                    f.args,
-                ))))
-            }
+            "EXTRACT" if f.args.len() == 2 => Ok(Expression::Function(Box::new(Function::new(
+                "DATE_PART".to_string(),
+                f.args,
+            )))),
 
             // ENDS_WITH/ENDSWITH -> EndsWith AST node
             "ENDS_WITH" | "ENDSWITH" if f.args.len() == 2 => {
                 let mut args = f.args;
                 let this = args.remove(0);
                 let expr = args.remove(0);
-                Ok(Expression::EndsWith(Box::new(crate::expressions::BinaryFunc {
-                    original_name: None,
-                    this,
-                    expression: expr,
-                })))
+                Ok(Expression::EndsWith(Box::new(
+                    crate::expressions::BinaryFunc {
+                        original_name: None,
+                        this,
+                        expression: expr,
+                    },
+                )))
             }
 
             // Pass through everything else
@@ -3131,7 +3367,7 @@ impl SnowflakeDialect {
     /// Transform a lambda with typed parameters for Snowflake
     /// For `a int -> a + a + 1`, transforms to `a -> CAST(a AS INT) + CAST(a AS INT) + 1`
     fn transform_typed_lambda(&self, lambda: crate::expressions::LambdaExpr) -> Expression {
-        use crate::expressions::{LambdaExpr, DataType};
+        use crate::expressions::{DataType, LambdaExpr};
         use std::collections::HashMap;
 
         // Build mapping of parameter names to their types
@@ -3165,7 +3401,7 @@ impl SnowflakeDialect {
         expr: Expression,
         param_types: &std::collections::HashMap<String, crate::expressions::DataType>,
     ) -> Expression {
-        use crate::expressions::{Cast, BinaryOp, Paren};
+        use crate::expressions::{BinaryOp, Cast, Paren};
 
         match expr {
             // Column reference - check if it matches a typed parameter
@@ -3234,7 +3470,9 @@ impl SnowflakeDialect {
 
             // Function calls - transform arguments
             Expression::Function(mut f) => {
-                f.args = f.args.into_iter()
+                f.args = f
+                    .args
+                    .into_iter()
                     .map(|arg| self.replace_lambda_params_with_cast(arg, param_types))
                     .collect();
                 Expression::Function(f)
@@ -3293,10 +3531,9 @@ impl SnowflakeDialect {
             ))),
 
             // STRING_AGG -> LISTAGG
-            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
-                "LISTAGG".to_string(),
-                f.args,
-            )))),
+            "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
+                Function::new("LISTAGG".to_string(), f.args),
+            ))),
 
             // APPROX_DISTINCT -> APPROX_COUNT_DISTINCT
             "APPROX_DISTINCT" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
@@ -3397,20 +3634,63 @@ fn strftime_to_snowflake_format(fmt: &str) -> String {
     while i < chars.len() {
         if chars[i] == '%' && i + 1 < chars.len() {
             match chars[i + 1] {
-                'Y' => { result.push_str("yyyy"); i += 2; }
-                'y' => { result.push_str("yy"); i += 2; }
-                'm' => { result.push_str("mm"); i += 2; }
-                'd' => { result.push_str("DD"); i += 2; }
-                'H' => { result.push_str("hh24"); i += 2; }
-                'M' => { result.push_str("mmmm"); i += 2; } // %M = full month name
-                'i' => { result.push_str("mi"); i += 2; }
-                'S' | 's' => { result.push_str("ss"); i += 2; }
-                'f' => { result.push_str("ff"); i += 2; }
-                'w' => { result.push_str("dy"); i += 2; } // day of week number
-                'a' => { result.push_str("DY"); i += 2; } // abbreviated day name
-                'b' => { result.push_str("mon"); i += 2; } // abbreviated month name
-                'T' => { result.push_str("hh24:mi:ss"); i += 2; } // time shorthand
-                _ => { result.push(chars[i]); result.push(chars[i + 1]); i += 2; }
+                'Y' => {
+                    result.push_str("yyyy");
+                    i += 2;
+                }
+                'y' => {
+                    result.push_str("yy");
+                    i += 2;
+                }
+                'm' => {
+                    result.push_str("mm");
+                    i += 2;
+                }
+                'd' => {
+                    result.push_str("DD");
+                    i += 2;
+                }
+                'H' => {
+                    result.push_str("hh24");
+                    i += 2;
+                }
+                'M' => {
+                    result.push_str("mmmm");
+                    i += 2;
+                } // %M = full month name
+                'i' => {
+                    result.push_str("mi");
+                    i += 2;
+                }
+                'S' | 's' => {
+                    result.push_str("ss");
+                    i += 2;
+                }
+                'f' => {
+                    result.push_str("ff");
+                    i += 2;
+                }
+                'w' => {
+                    result.push_str("dy");
+                    i += 2;
+                } // day of week number
+                'a' => {
+                    result.push_str("DY");
+                    i += 2;
+                } // abbreviated day name
+                'b' => {
+                    result.push_str("mon");
+                    i += 2;
+                } // abbreviated month name
+                'T' => {
+                    result.push_str("hh24:mi:ss");
+                    i += 2;
+                } // time shorthand
+                _ => {
+                    result.push(chars[i]);
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
             }
         } else {
             result.push(chars[i]);

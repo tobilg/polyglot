@@ -35,84 +35,252 @@ mod basic_select {
     fn test_generic_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::DuckDB));
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::DuckDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_postgres_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::DuckDB));
-        assert!(transpile_succeeds(sql, DialectType::PostgreSQL, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::DuckDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::PostgreSQL,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_mysql_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::DuckDB));
-        assert!(transpile_succeeds(sql, DialectType::MySQL, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::DuckDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::MySQL,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_bigquery_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::DuckDB));
-        assert!(transpile_succeeds(sql, DialectType::BigQuery, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::DuckDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::BigQuery,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_snowflake_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::DuckDB));
-        assert!(transpile_succeeds(sql, DialectType::Snowflake, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::DuckDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Snowflake,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_duckdb_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::DuckDB, DialectType::TSQL));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::DuckDB,
+            DialectType::TSQL
+        ));
     }
 
     #[test]
     fn test_tsql_to_all() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
 
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::Generic));
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::PostgreSQL));
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::MySQL));
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::BigQuery));
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::Snowflake));
-        assert!(transpile_succeeds(sql, DialectType::TSQL, DialectType::DuckDB));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::Generic
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::PostgreSQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::MySQL
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::BigQuery
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::Snowflake
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::TSQL,
+            DialectType::DuckDB
+        ));
     }
 }
 
@@ -126,7 +294,11 @@ mod null_handling {
     // COALESCE should be preserved or converted appropriately
     #[test]
     fn test_coalesce_generic_to_postgres() {
-        let result = transpile("SELECT COALESCE(a, b)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT COALESCE(a, b)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.contains("COALESCE"),
             "PostgreSQL should use COALESCE: got {}",
@@ -136,7 +308,11 @@ mod null_handling {
 
     #[test]
     fn test_coalesce_generic_to_mysql() {
-        let result = transpile("SELECT COALESCE(a, b)", DialectType::Generic, DialectType::MySQL);
+        let result = transpile(
+            "SELECT COALESCE(a, b)",
+            DialectType::Generic,
+            DialectType::MySQL,
+        );
         // MySQL supports both COALESCE and IFNULL
         assert!(
             result.contains("COALESCE") || result.contains("IFNULL"),
@@ -147,7 +323,11 @@ mod null_handling {
 
     #[test]
     fn test_coalesce_generic_to_tsql() {
-        let result = transpile("SELECT COALESCE(a, b)", DialectType::Generic, DialectType::TSQL);
+        let result = transpile(
+            "SELECT COALESCE(a, b)",
+            DialectType::Generic,
+            DialectType::TSQL,
+        );
         // SQL Server should convert 2-arg COALESCE to ISNULL
         assert!(
             result.contains("ISNULL") || result.contains("COALESCE"),
@@ -159,7 +339,11 @@ mod null_handling {
     // NVL transformations
     #[test]
     fn test_nvl_to_postgres() {
-        let result = transpile("SELECT NVL(a, b)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT NVL(a, b)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.contains("COALESCE"),
             "PostgreSQL should convert NVL to COALESCE: got {}",
@@ -190,7 +374,11 @@ mod null_handling {
     // IFNULL transformations
     #[test]
     fn test_ifnull_to_postgres() {
-        let result = transpile("SELECT IFNULL(a, b)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT IFNULL(a, b)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.contains("COALESCE"),
             "PostgreSQL should convert IFNULL to COALESCE: got {}",
@@ -200,7 +388,11 @@ mod null_handling {
 
     #[test]
     fn test_ifnull_to_snowflake() {
-        let result = transpile("SELECT IFNULL(a, b)", DialectType::Generic, DialectType::Snowflake);
+        let result = transpile(
+            "SELECT IFNULL(a, b)",
+            DialectType::Generic,
+            DialectType::Snowflake,
+        );
         // Snowflake supports both
         assert!(
             result.contains("IFNULL") || result.contains("COALESCE"),
@@ -220,7 +412,11 @@ mod string_functions {
     // LENGTH vs LEN
     #[test]
     fn test_length_generic_to_postgres() {
-        let result = transpile("SELECT LENGTH(name)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT LENGTH(name)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("LENGTH"),
             "PostgreSQL uses LENGTH: got {}",
@@ -230,7 +426,11 @@ mod string_functions {
 
     #[test]
     fn test_length_generic_to_tsql() {
-        let result = transpile("SELECT LENGTH(name)", DialectType::Generic, DialectType::TSQL);
+        let result = transpile(
+            "SELECT LENGTH(name)",
+            DialectType::Generic,
+            DialectType::TSQL,
+        );
         assert!(
             result.to_uppercase().contains("LEN"),
             "TSQL should convert LENGTH to LEN: got {}",
@@ -241,7 +441,11 @@ mod string_functions {
     // SUBSTR vs SUBSTRING
     #[test]
     fn test_substr_to_postgres() {
-        let result = transpile("SELECT SUBSTR(name, 1, 5)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT SUBSTR(name, 1, 5)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("SUBSTRING") || result.to_uppercase().contains("SUBSTR"),
             "PostgreSQL uses SUBSTRING: got {}",
@@ -253,7 +457,11 @@ mod string_functions {
     #[test]
     fn test_concat_generic_to_postgres() {
         // Generic should support CONCAT function
-        let result = transpile("SELECT CONCAT(a, b)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT CONCAT(a, b)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("CONCAT") || result.contains("||"),
             "PostgreSQL should use CONCAT or ||: got {}",
@@ -303,9 +511,14 @@ mod date_functions {
     // NOW() transformations
     #[test]
     fn test_now_to_postgres() {
-        let result = transpile("SELECT NOW()", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT NOW()",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
-            result.to_uppercase().contains("NOW") || result.to_uppercase().contains("CURRENT_TIMESTAMP"),
+            result.to_uppercase().contains("NOW")
+                || result.to_uppercase().contains("CURRENT_TIMESTAMP"),
             "PostgreSQL should use NOW or CURRENT_TIMESTAMP: got {}",
             result
         );
@@ -315,7 +528,8 @@ mod date_functions {
     fn test_now_to_tsql() {
         let result = transpile("SELECT NOW()", DialectType::Generic, DialectType::TSQL);
         assert!(
-            result.to_uppercase().contains("GETDATE") || result.to_uppercase().contains("CURRENT_TIMESTAMP"),
+            result.to_uppercase().contains("GETDATE")
+                || result.to_uppercase().contains("CURRENT_TIMESTAMP"),
             "TSQL should convert NOW to GETDATE: got {}",
             result
         );
@@ -334,7 +548,8 @@ mod date_functions {
         for dialect in dialects {
             let result = transpile("SELECT CURRENT_DATE", DialectType::Generic, dialect);
             assert!(
-                result.to_uppercase().contains("CURRENT_DATE") || result.to_uppercase().contains("GETDATE"),
+                result.to_uppercase().contains("CURRENT_DATE")
+                    || result.to_uppercase().contains("GETDATE"),
                 "{:?} should handle CURRENT_DATE: got {}",
                 dialect,
                 result
@@ -401,7 +616,11 @@ mod aggregate_functions {
     // GROUP_CONCAT / STRING_AGG / LISTAGG
     #[test]
     fn test_group_concat_to_postgres() {
-        let result = transpile("SELECT GROUP_CONCAT(name)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT GROUP_CONCAT(name)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("STRING_AGG"),
             "PostgreSQL should convert GROUP_CONCAT to STRING_AGG: got {}",
@@ -411,7 +630,11 @@ mod aggregate_functions {
 
     #[test]
     fn test_group_concat_to_snowflake() {
-        let result = transpile("SELECT GROUP_CONCAT(name)", DialectType::Generic, DialectType::Snowflake);
+        let result = transpile(
+            "SELECT GROUP_CONCAT(name)",
+            DialectType::Generic,
+            DialectType::Snowflake,
+        );
         assert!(
             result.to_uppercase().contains("LISTAGG"),
             "Snowflake should convert GROUP_CONCAT to LISTAGG: got {}",
@@ -421,7 +644,11 @@ mod aggregate_functions {
 
     #[test]
     fn test_group_concat_to_tsql() {
-        let result = transpile("SELECT GROUP_CONCAT(name)", DialectType::Generic, DialectType::TSQL);
+        let result = transpile(
+            "SELECT GROUP_CONCAT(name)",
+            DialectType::Generic,
+            DialectType::TSQL,
+        );
         assert!(
             result.to_uppercase().contains("STRING_AGG"),
             "TSQL should convert GROUP_CONCAT to STRING_AGG: got {}",
@@ -439,7 +666,11 @@ mod statistical_functions {
 
     #[test]
     fn test_stddev_to_postgres() {
-        let result = transpile("SELECT STDDEV(x)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT STDDEV(x)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("STDDEV"),
             "PostgreSQL should preserve STDDEV: got {}",
@@ -459,7 +690,11 @@ mod statistical_functions {
 
     #[test]
     fn test_variance_preserved() {
-        let result = transpile("SELECT VARIANCE(x)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT VARIANCE(x)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("VARIANCE") || result.to_uppercase().contains("VAR"),
             "PostgreSQL should preserve VARIANCE: got {}",
@@ -477,7 +712,11 @@ mod math_functions {
 
     #[test]
     fn test_random_to_postgres() {
-        let result = transpile("SELECT RANDOM()", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT RANDOM()",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("RANDOM"),
             "PostgreSQL should use RANDOM: got {}",
@@ -487,7 +726,11 @@ mod math_functions {
 
     #[test]
     fn test_rand_to_postgres() {
-        let result = transpile("SELECT RAND()", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT RAND()",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("RANDOM") || result.to_uppercase().contains("RAND"),
             "PostgreSQL should convert RAND to RANDOM: got {}",
@@ -507,7 +750,11 @@ mod math_functions {
 
     #[test]
     fn test_ln_to_postgres() {
-        let result = transpile("SELECT LN(x)", DialectType::Generic, DialectType::PostgreSQL);
+        let result = transpile(
+            "SELECT LN(x)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         assert!(
             result.to_uppercase().contains("LN"),
             "PostgreSQL should preserve LN: got {}",
@@ -528,7 +775,11 @@ mod math_functions {
     // CEIL/CEILING
     #[test]
     fn test_ceil_ceiling() {
-        let result_pg = transpile("SELECT CEIL(x)", DialectType::Generic, DialectType::PostgreSQL);
+        let result_pg = transpile(
+            "SELECT CEIL(x)",
+            DialectType::Generic,
+            DialectType::PostgreSQL,
+        );
         let result_tsql = transpile("SELECT CEIL(x)", DialectType::Generic, DialectType::TSQL);
 
         assert!(
@@ -537,7 +788,8 @@ mod math_functions {
             result_pg
         );
         assert!(
-            result_tsql.to_uppercase().contains("CEILING") || result_tsql.to_uppercase().contains("CEIL"),
+            result_tsql.to_uppercase().contains("CEILING")
+                || result_tsql.to_uppercase().contains("CEIL"),
             "TSQL should use CEILING: got {}",
             result_tsql
         );
@@ -649,7 +901,8 @@ mod complex_queries {
 
     #[test]
     fn test_group_by_having() {
-        let sql = "SELECT category, COUNT(*) as cnt FROM products GROUP BY category HAVING COUNT(*) > 5";
+        let sql =
+            "SELECT category, COUNT(*) as cnt FROM products GROUP BY category HAVING COUNT(*) > 5";
 
         let dialects = [
             DialectType::PostgreSQL,
@@ -718,7 +971,8 @@ mod complex_queries {
 
     #[test]
     fn test_case_expression() {
-        let sql = "SELECT CASE WHEN x > 0 THEN 'positive' WHEN x < 0 THEN 'negative' ELSE 'zero' END";
+        let sql =
+            "SELECT CASE WHEN x > 0 THEN 'positive' WHEN x < 0 THEN 'negative' ELSE 'zero' END";
 
         let dialects = [
             DialectType::PostgreSQL,
@@ -742,7 +996,8 @@ mod complex_queries {
 
     #[test]
     fn test_window_function() {
-        let sql = "SELECT ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) FROM employees";
+        let sql =
+            "SELECT ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) FROM employees";
 
         let dialects = [
             DialectType::PostgreSQL,
@@ -756,7 +1011,8 @@ mod complex_queries {
         for dialect in dialects {
             let result = transpile(sql, DialectType::Generic, dialect);
             assert!(
-                result.to_uppercase().contains("ROW_NUMBER") && result.to_uppercase().contains("OVER"),
+                result.to_uppercase().contains("ROW_NUMBER")
+                    && result.to_uppercase().contains("OVER"),
                 "{:?} should preserve window function: got {}",
                 dialect,
                 result
@@ -826,10 +1082,7 @@ mod edge_cases {
     fn test_empty_query_list() {
         // Comment-only input should be handled gracefully
         let sql = "-- just a comment";
-        let dialects = [
-            DialectType::PostgreSQL,
-            DialectType::MySQL,
-        ];
+        let dialects = [DialectType::PostgreSQL, DialectType::MySQL];
 
         for dialect in dialects {
             let source = Dialect::get(DialectType::Generic);
@@ -870,7 +1123,10 @@ mod edge_cases {
     }
 
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode")]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
+    )]
     fn test_nested_functions() {
         let sql = "SELECT UPPER(LOWER(TRIM(name)))";
 
@@ -907,70 +1163,150 @@ mod secondary_dialects {
     #[test]
     fn test_oracle_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Oracle));
-        assert!(transpile_succeeds(sql, DialectType::Oracle, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Oracle
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Oracle,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_sqlite_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::SQLite));
-        assert!(transpile_succeeds(sql, DialectType::SQLite, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::SQLite
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::SQLite,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_hive_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Hive));
-        assert!(transpile_succeeds(sql, DialectType::Hive, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Hive
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Hive,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_spark_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Spark));
-        assert!(transpile_succeeds(sql, DialectType::Spark, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Spark
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Spark,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_trino_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Trino));
-        assert!(transpile_succeeds(sql, DialectType::Trino, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Trino
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Trino,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_redshift_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Redshift));
-        assert!(transpile_succeeds(sql, DialectType::Redshift, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Redshift
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Redshift,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_clickhouse_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::ClickHouse));
-        assert!(transpile_succeeds(sql, DialectType::ClickHouse, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::ClickHouse
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::ClickHouse,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_databricks_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Databricks));
-        assert!(transpile_succeeds(sql, DialectType::Databricks, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Databricks
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Databricks,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_presto_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::Presto));
-        assert!(transpile_succeeds(sql, DialectType::Presto, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::Presto
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Presto,
+            DialectType::Generic
+        ));
     }
 
     #[test]
     fn test_cockroachdb_transpile() {
         let sql = "SELECT a, b FROM users WHERE id = 1";
-        assert!(transpile_succeeds(sql, DialectType::Generic, DialectType::CockroachDB));
-        assert!(transpile_succeeds(sql, DialectType::CockroachDB, DialectType::Generic));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::Generic,
+            DialectType::CockroachDB
+        ));
+        assert!(transpile_succeeds(
+            sql,
+            DialectType::CockroachDB,
+            DialectType::Generic
+        ));
     }
 }

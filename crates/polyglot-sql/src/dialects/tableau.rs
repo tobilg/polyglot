@@ -103,12 +103,9 @@ impl TableauDialect {
             )))),
 
             // FIND is native to Tableau (similar to STRPOS/POSITION)
-            "STRPOS" | "POSITION" | "INSTR" if f.args.len() >= 2 => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "FIND".to_string(),
-                    f.args,
-                ))))
-            }
+            "STRPOS" | "POSITION" | "INSTR" if f.args.len() >= 2 => Ok(Expression::Function(
+                Box::new(Function::new("FIND".to_string(), f.args)),
+            )),
 
             // CHARINDEX → FIND
             "CHARINDEX" if f.args.len() >= 2 => Ok(Expression::Function(Box::new(Function::new(
@@ -128,12 +125,10 @@ impl TableauDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // COUNT with DISTINCT → COUNTD in Tableau
-            "COUNT" if f.distinct => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "COUNTD".to_string(),
-                    f.args,
-                ))))
-            }
+            "COUNT" if f.distinct => Ok(Expression::Function(Box::new(Function::new(
+                "COUNTD".to_string(),
+                f.args,
+            )))),
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

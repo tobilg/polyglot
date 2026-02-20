@@ -46,7 +46,13 @@ impl TestResults {
     }
 
     /// Record a test result with SQL
-    pub fn record_with_sql(&mut self, test_id: &str, sql: &str, line: usize, result: Result<(), String>) {
+    pub fn record_with_sql(
+        &mut self,
+        test_id: &str,
+        sql: &str,
+        line: usize,
+        result: Result<(), String>,
+    ) {
         let is_known_failure = self.known_failures_set.contains(test_id);
 
         match result {
@@ -77,7 +83,9 @@ impl TestResults {
     /// Record a test result (legacy method for backwards compatibility)
     pub fn record(&mut self, test_id: &str, result: Result<(), String>) {
         // Extract line from test_id (format: "identity:123")
-        let line = test_id.split(':').nth(1)
+        let line = test_id
+            .split(':')
+            .nth(1)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         self.record_with_sql(test_id, "", line, result);
@@ -103,7 +111,12 @@ impl TestResults {
         } else if error.contains("Unexpected token:") {
             if let Some(pos) = error.find("Unexpected token:") {
                 let after = &error[pos + 17..];
-                let token: String = after.trim().split_whitespace().next().unwrap_or("Unknown").to_string();
+                let token: String = after
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("Unknown")
+                    .to_string();
                 format!("Unexpected token: {}", token)
             } else {
                 "Unexpected token".to_string()
@@ -144,7 +157,10 @@ impl TestResults {
         // Group failures by category
         let mut categories: HashMap<String, Vec<&FailureInfo>> = HashMap::new();
         for failure in &self.new_failures {
-            categories.entry(failure.category.clone()).or_default().push(failure);
+            categories
+                .entry(failure.category.clone())
+                .or_default()
+                .push(failure);
         }
 
         // Sort by count descending

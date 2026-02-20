@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::dialects::DialectType;
-use crate::expressions::{Alias, AggregateFunction, Expression, Identifier, Literal};
+use crate::expressions::{AggregateFunction, Alias, Expression, Identifier, Literal};
 use crate::scope::{build_scope, traverse_scope, Scope};
 
 /// Sentinel value indicating all columns are selected
@@ -49,7 +49,8 @@ pub fn pushdown_projections(
 
     for scope in scopes.iter().rev() {
         let scope_id = scope as *const Scope as u64;
-        let parent_selections = referenced_columns.get(&scope_id)
+        let parent_selections = referenced_columns
+            .get(&scope_id)
             .cloned()
             .unwrap_or_else(|| {
                 let mut set = HashSet::new();
@@ -57,7 +58,10 @@ pub fn pushdown_projections(
                 set
             });
 
-        let alias_count = source_column_alias_count.get(&scope_id).copied().unwrap_or(0);
+        let alias_count = source_column_alias_count
+            .get(&scope_id)
+            .copied()
+            .unwrap_or(0);
 
         // Check for DISTINCT - can't optimize if present
         let has_distinct = if let Expression::Select(ref select) = scope.expression {
@@ -82,15 +86,15 @@ pub fn pushdown_projections(
             if remove_unused_selections {
                 // Note: actual removal would require mutable access to expression
                 // For now, we just track what would be removed
-                let _selections_to_keep = get_selections_to_keep(
-                    select,
-                    &parent_selections,
-                    alias_count,
-                );
+                let _selections_to_keep =
+                    get_selections_to_keep(select, &parent_selections, alias_count);
             }
 
             // Check if SELECT *
-            let is_star = select.expressions.iter().any(|e| matches!(e, Expression::Star(_)));
+            let is_star = select
+                .expressions
+                .iter()
+                .any(|e| matches!(e, Expression::Star(_)));
             if is_star {
                 continue;
             }
@@ -153,7 +157,8 @@ fn get_selections_to_keep(
     let select_all = parent_selections.contains(SELECT_ALL);
 
     // Get ORDER BY column references (unqualified columns)
-    let order_refs: HashSet<String> = select.order_by
+    let order_refs: HashSet<String> = select
+        .order_by
         .as_ref()
         .map(|o| get_order_by_column_refs(&o.expressions))
         .unwrap_or_default();
@@ -257,10 +262,16 @@ fn collect_column_refs(expr: &Expression, selects: &mut HashMap<String, HashSet<
             collect_column_refs(&bin.left, selects);
             collect_column_refs(&bin.right, selects);
         }
-        Expression::Eq(bin) | Expression::Neq(bin) | Expression::Lt(bin) |
-        Expression::Lte(bin) | Expression::Gt(bin) | Expression::Gte(bin) |
-        Expression::Add(bin) | Expression::Sub(bin) | Expression::Mul(bin) |
-        Expression::Div(bin) => {
+        Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin)
+        | Expression::Add(bin)
+        | Expression::Sub(bin)
+        | Expression::Mul(bin)
+        | Expression::Div(bin) => {
             collect_column_refs(&bin.left, selects);
             collect_column_refs(&bin.right, selects);
         }

@@ -344,6 +344,16 @@ describe('SelectBuilder', () => {
     expect(sql).toBe("SELECT * FROM users WHERE status = 'active'");
   });
 
+  it('WHERE clause with notIn uses canonical NOT IN', () => {
+    const sql = select('id')
+      .from('users')
+      .where(col('status').notIn(lit('deleted'), lit('banned')))
+      .toSql();
+    expect(sql).toBe(
+      "SELECT id FROM users WHERE status NOT IN ('deleted', 'banned')",
+    );
+  });
+
   it('WHERE clause with SQL string', () => {
     const sql = select('*')
       .from('users')
@@ -421,6 +431,12 @@ describe('SelectBuilder', () => {
     expect(sql).toContain('WHERE active = TRUE');
     expect(sql).toContain('ORDER BY name ASC');
     expect(sql).toContain('LIMIT 100');
+  });
+
+  it('throws if toSql() is called after builder is consumed', () => {
+    const b = select('*').from('users');
+    expect(b.toSql()).toBe('SELECT * FROM users');
+    expect(() => b.toSql()).toThrow(/already consumed/i);
   });
 });
 

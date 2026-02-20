@@ -536,10 +536,19 @@ mod tests {
     fn test_add_table() {
         let mut schema = MappingSchema::new();
         let columns = vec![
-            ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
+            (
+                "id".to_string(),
+                DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                },
+            ),
             (
                 "name".to_string(),
-                DataType::VarChar { length: Some(255), parenthesized_length: false },
+                DataType::VarChar {
+                    length: Some(255),
+                    parenthesized_length: false,
+                },
             ),
         ];
 
@@ -555,7 +564,13 @@ mod tests {
     #[test]
     fn test_qualified_table_names() {
         let mut schema = MappingSchema::new();
-        let columns = vec![("id".to_string(), DataType::Int { length: None, integer_spelling: false })];
+        let columns = vec![(
+            "id".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        )];
 
         schema.add_table("mydb.users", &columns, None).unwrap();
 
@@ -566,7 +581,13 @@ mod tests {
     #[test]
     fn test_catalog_db_table() {
         let mut schema = MappingSchema::new();
-        let columns = vec![("id".to_string(), DataType::Int { length: None, integer_spelling: false })];
+        let columns = vec![(
+            "id".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        )];
 
         schema
             .add_table("catalog.mydb.users", &columns, None)
@@ -580,10 +601,19 @@ mod tests {
     fn test_get_column_type() {
         let mut schema = MappingSchema::new();
         let columns = vec![
-            ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
+            (
+                "id".to_string(),
+                DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                },
+            ),
             (
                 "name".to_string(),
-                DataType::VarChar { length: Some(255), parenthesized_length: false },
+                DataType::VarChar {
+                    length: Some(255),
+                    parenthesized_length: false,
+                },
             ),
         ];
 
@@ -593,15 +623,33 @@ mod tests {
         assert!(matches!(id_type, DataType::Int { .. }));
 
         let name_type = schema.get_column_type("users", "name").unwrap();
-        assert!(matches!(name_type, DataType::VarChar { length: Some(255), parenthesized_length: false }));
+        assert!(matches!(
+            name_type,
+            DataType::VarChar {
+                length: Some(255),
+                parenthesized_length: false
+            }
+        ));
     }
 
     #[test]
     fn test_column_names() {
         let mut schema = MappingSchema::new();
         let columns = vec![
-            ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
-            ("name".to_string(), DataType::VarChar { length: None, parenthesized_length: false }),
+            (
+                "id".to_string(),
+                DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                },
+            ),
+            (
+                "name".to_string(),
+                DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false,
+                },
+            ),
         ];
 
         schema.add_table("users", &columns, None).unwrap();
@@ -622,7 +670,13 @@ mod tests {
     #[test]
     fn test_column_not_found() {
         let mut schema = MappingSchema::new();
-        let columns = vec![("id".to_string(), DataType::Int { length: None, integer_spelling: false })];
+        let columns = vec![(
+            "id".to_string(),
+            DataType::Int {
+                length: None,
+                integer_spelling: false,
+            },
+        )];
         schema.add_table("users", &columns, None).unwrap();
 
         let result = schema.get_column_type("users", "nonexistent");
@@ -653,15 +707,39 @@ mod tests {
             (
                 "users",
                 &[
-                    ("id", DataType::Int { length: None, integer_spelling: false }),
-                    ("name", DataType::VarChar { length: None, parenthesized_length: false }),
+                    (
+                        "id",
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    (
+                        "name",
+                        DataType::VarChar {
+                            length: None,
+                            parenthesized_length: false,
+                        },
+                    ),
                 ],
             ),
             (
                 "orders",
                 &[
-                    ("id", DataType::Int { length: None, integer_spelling: false }),
-                    ("user_id", DataType::Int { length: None, integer_spelling: false }),
+                    (
+                        "id",
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    (
+                        "user_id",
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
                 ],
             ),
         ]);
@@ -676,13 +754,43 @@ mod tests {
     fn test_flatten_schema_paths() {
         let mut schema = MappingSchema::new();
         schema
-            .add_table("db1.table1", &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })], None)
+            .add_table(
+                "db1.table1",
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
+                None,
+            )
             .unwrap();
         schema
-            .add_table("db1.table2", &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })], None)
+            .add_table(
+                "db1.table2",
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
+                None,
+            )
             .unwrap();
         schema
-            .add_table("db2.table1", &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })], None)
+            .add_table(
+                "db2.table1",
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
+                None,
+            )
             .unwrap();
 
         let paths = flatten_schema_paths(&schema);
@@ -693,9 +801,27 @@ mod tests {
     fn test_visible_columns() {
         let mut schema = MappingSchema::new();
         let columns = vec![
-            ("id".to_string(), DataType::Int { length: None, integer_spelling: false }),
-            ("name".to_string(), DataType::VarChar { length: None, parenthesized_length: false }),
-            ("password".to_string(), DataType::VarChar { length: None, parenthesized_length: false }),
+            (
+                "id".to_string(),
+                DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                },
+            ),
+            (
+                "name".to_string(),
+                DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false,
+                },
+            ),
+            (
+                "password".to_string(),
+                DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false,
+                },
+            ),
         ];
         schema.add_table("users", &columns, None).unwrap();
         schema.set_visible_columns("users", &["id", "name"]);

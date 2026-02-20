@@ -559,7 +559,10 @@ impl Simplifier {
 
         // If no WHEN clauses remain, return the ELSE expression (or NULL)
         if new_whens.is_empty() {
-            return case.else_.map(|e| self.simplify_once(e)).unwrap_or_else(null);
+            return case
+                .else_
+                .map(|e| self.simplify_once(e))
+                .unwrap_or_else(null);
         }
 
         Expression::Case(Box::new(Case {
@@ -636,10 +639,8 @@ impl Simplifier {
 
         // Try to fold if all are string literals
         if let Some(sep) = get_string(&separator) {
-            let all_strings: Option<Vec<String>> = expressions
-                .iter()
-                .map(|e| get_string(e))
-                .collect();
+            let all_strings: Option<Vec<String>> =
+                expressions.iter().map(|e| get_string(e)).collect();
 
             if let Some(strings) = all_strings {
                 return Expression::Literal(Literal::String(strings.join(&sep)));
@@ -707,40 +708,64 @@ impl Simplifier {
             Expression::Add(ref op) => {
                 // x + c = r -> x = r - c
                 if let Some(c) = get_number(&op.right) {
-                    let new_right = Expression::Literal(Literal::Number((right_val - c).to_string()));
-                    return Some(Expression::Eq(Box::new(BinaryOp::new(op.left.clone(), new_right))));
+                    let new_right =
+                        Expression::Literal(Literal::Number((right_val - c).to_string()));
+                    return Some(Expression::Eq(Box::new(BinaryOp::new(
+                        op.left.clone(),
+                        new_right,
+                    ))));
                 }
                 // c + x = r -> x = r - c
                 if let Some(c) = get_number(&op.left) {
-                    let new_right = Expression::Literal(Literal::Number((right_val - c).to_string()));
-                    return Some(Expression::Eq(Box::new(BinaryOp::new(op.right.clone(), new_right))));
+                    let new_right =
+                        Expression::Literal(Literal::Number((right_val - c).to_string()));
+                    return Some(Expression::Eq(Box::new(BinaryOp::new(
+                        op.right.clone(),
+                        new_right,
+                    ))));
                 }
             }
             Expression::Sub(ref op) => {
                 // x - c = r -> x = r + c
                 if let Some(c) = get_number(&op.right) {
-                    let new_right = Expression::Literal(Literal::Number((right_val + c).to_string()));
-                    return Some(Expression::Eq(Box::new(BinaryOp::new(op.left.clone(), new_right))));
+                    let new_right =
+                        Expression::Literal(Literal::Number((right_val + c).to_string()));
+                    return Some(Expression::Eq(Box::new(BinaryOp::new(
+                        op.left.clone(),
+                        new_right,
+                    ))));
                 }
                 // c - x = r -> x = c - r
                 if let Some(c) = get_number(&op.left) {
-                    let new_right = Expression::Literal(Literal::Number((c - right_val).to_string()));
-                    return Some(Expression::Eq(Box::new(BinaryOp::new(op.right.clone(), new_right))));
+                    let new_right =
+                        Expression::Literal(Literal::Number((c - right_val).to_string()));
+                    return Some(Expression::Eq(Box::new(BinaryOp::new(
+                        op.right.clone(),
+                        new_right,
+                    ))));
                 }
             }
             Expression::Mul(ref op) => {
                 // x * c = r -> x = r / c (only for non-zero c and when divisible)
                 if let Some(c) = get_number(&op.right) {
                     if c != 0.0 && right_val % c == 0.0 {
-                        let new_right = Expression::Literal(Literal::Number((right_val / c).to_string()));
-                        return Some(Expression::Eq(Box::new(BinaryOp::new(op.left.clone(), new_right))));
+                        let new_right =
+                            Expression::Literal(Literal::Number((right_val / c).to_string()));
+                        return Some(Expression::Eq(Box::new(BinaryOp::new(
+                            op.left.clone(),
+                            new_right,
+                        ))));
                     }
                 }
                 // c * x = r -> x = r / c
                 if let Some(c) = get_number(&op.left) {
                     if c != 0.0 && right_val % c == 0.0 {
-                        let new_right = Expression::Literal(Literal::Number((right_val / c).to_string()));
-                        return Some(Expression::Eq(Box::new(BinaryOp::new(op.right.clone(), new_right))));
+                        let new_right =
+                            Expression::Literal(Literal::Number((right_val / c).to_string()));
+                        return Some(Expression::Eq(Box::new(BinaryOp::new(
+                            op.right.clone(),
+                            new_right,
+                        ))));
                     }
                 }
             }
@@ -775,7 +800,11 @@ impl Simplifier {
                 Expression::In(in_expr)
             }
             Expression::Function(mut func) => {
-                func.args = func.args.into_iter().map(|e| self.simplify_once(e)).collect();
+                func.args = func
+                    .args
+                    .into_iter()
+                    .map(|e| self.simplify_once(e))
+                    .collect();
                 Expression::Function(func)
             }
             // For other expressions, return as-is for now
@@ -917,9 +946,10 @@ pub fn absorb_and_eliminate_and(left: Expression, right: Expression) -> Expressi
             let absorbed_by_existing = or_operands.iter().any(|or_op| {
                 let or_op_str = gen(or_op);
                 // Check if this OR operand exists in other AND operands (not this OR itself)
-                all_ops.iter().enumerate().any(|(j, other)| {
-                    i != j && gen(other) == or_op_str
-                })
+                all_ops
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| i != j && gen(other) == or_op_str)
             });
 
             if absorbed_by_existing {
@@ -943,9 +973,11 @@ pub fn absorb_and_eliminate_and(left: Expression, right: Expression) -> Expressi
                 };
 
                 // Check if complement exists in our AND operands
-                let has_complement = all_ops.iter().enumerate().any(|(j, other)| {
-                    i != j && gen(other) == complement_str
-                }) || op_strings.contains(&complement_str);
+                let has_complement = all_ops
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| i != j && gen(other) == complement_str)
+                    || op_strings.contains(&complement_str);
 
                 if has_complement {
                     // This OR operand's complement exists, so this term becomes TRUE in AND context
@@ -1029,9 +1061,10 @@ pub fn absorb_and_eliminate_or(left: Expression, right: Expression) -> Expressio
             let absorbed_by_existing = and_operands.iter().any(|and_op| {
                 let and_op_str = gen(and_op);
                 // Check if this AND operand exists in other OR operands (not this AND itself)
-                all_ops.iter().enumerate().any(|(j, other)| {
-                    i != j && gen(other) == and_op_str
-                })
+                all_ops
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| i != j && gen(other) == and_op_str)
             });
 
             if absorbed_by_existing {
@@ -1055,9 +1088,11 @@ pub fn absorb_and_eliminate_or(left: Expression, right: Expression) -> Expressio
                 };
 
                 // Check if complement exists in our OR operands
-                let has_complement = all_ops.iter().enumerate().any(|(j, other)| {
-                    i != j && gen(other) == complement_str
-                }) || op_strings.contains(&complement_str);
+                let has_complement = all_ops
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| i != j && gen(other) == complement_str)
+                    || op_strings.contains(&complement_str);
 
                 if has_complement {
                     // This AND operand's complement exists, so this term becomes FALSE in OR context

@@ -5,7 +5,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, BinaryFunc, BinaryOp, Case, Cast, CeilFunc, Expression, Function, LikeOp, UnaryFunc, VarArgFunc,
+    AggFunc, BinaryFunc, BinaryOp, Case, Cast, CeilFunc, Expression, Function, LikeOp, UnaryFunc,
+    VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -90,13 +91,15 @@ impl DialectImpl for SQLiteDialect {
                     "IIF".to_string(),
                     vec![f.this.clone(), Expression::number(1), Expression::number(0)],
                 )));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: iif_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -142,7 +145,11 @@ impl DialectImpl for SQLiteDialect {
                 if !Self::is_float_cast(&op.left) && !right_is_float && !right_is_float_cast {
                     op.left = Expression::Cast(Box::new(crate::expressions::Cast {
                         this: op.left,
-                        to: crate::expressions::DataType::Float { precision: None, scale: None, real_spelling: true },
+                        to: crate::expressions::DataType::Float {
+                            precision: None,
+                            scale: None,
+                            real_spelling: true,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -212,14 +219,16 @@ impl SQLiteDialect {
                 let mut args = f.args;
                 let expr1 = args.remove(0);
                 let expr2 = args.remove(0);
-                Ok(Expression::IfNull(Box::new(BinaryFunc { original_name: None,
+                Ok(Expression::IfNull(Box::new(BinaryFunc {
+                    original_name: None,
                     this: expr1,
                     expression: expr2,
                 })))
             }
 
             // COALESCE stays as COALESCE (native to SQLite)
-            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -278,12 +287,18 @@ impl SQLiteDialect {
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CEILING -> CEIL (not supported in SQLite, but we try)
@@ -310,14 +325,15 @@ impl SQLiteDialect {
             ))),
 
             // LISTAGG -> GROUP_CONCAT in SQLite
-            "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("GROUP_CONCAT".to_string(), f.args),
-            ))),
+            "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "GROUP_CONCAT".to_string(),
+                f.args,
+            )))),
 
             // DATEDIFF(a, b, unit_string) -> JULIANDAY arithmetic for SQLite
             "DATEDIFF" | "DATE_DIFF" if f.args.len() == 3 => {
                 let mut args = f.args;
-                let first = args.remove(0);  // date1
+                let first = args.remove(0); // date1
                 let second = args.remove(0); // date2
                 let unit_expr = args.remove(0); // unit string like 'day'
 
@@ -347,23 +363,33 @@ impl SQLiteDialect {
                 let adjusted = match unit_str.as_str() {
                     "hour" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number("24.0".to_string())),
+                        Expression::Literal(crate::expressions::Literal::Number(
+                            "24.0".to_string(),
+                        )),
                     ))),
                     "minute" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number("1440.0".to_string())),
+                        Expression::Literal(crate::expressions::Literal::Number(
+                            "1440.0".to_string(),
+                        )),
                     ))),
                     "second" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number("86400.0".to_string())),
+                        Expression::Literal(crate::expressions::Literal::Number(
+                            "86400.0".to_string(),
+                        )),
                     ))),
                     "month" => Expression::Div(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number("30.0".to_string())),
+                        Expression::Literal(crate::expressions::Literal::Number(
+                            "30.0".to_string(),
+                        )),
                     ))),
                     "year" => Expression::Div(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number("365.0".to_string())),
+                        Expression::Literal(crate::expressions::Literal::Number(
+                            "365.0".to_string(),
+                        )),
                     ))),
                     _ => paren_diff, // day is the default
                 };
@@ -371,7 +397,10 @@ impl SQLiteDialect {
                 // CAST(... AS INTEGER)
                 Ok(Expression::Cast(Box::new(Cast {
                     this: adjusted,
-                    to: crate::expressions::DataType::Int { length: None, integer_spelling: true },
+                    to: crate::expressions::DataType::Int {
+                        length: None,
+                        integer_spelling: true,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -383,7 +412,10 @@ impl SQLiteDialect {
             "STRFTIME" if f.args.len() == 1 => {
                 let mut args = f.args;
                 args.push(Expression::CurrentTimestamp(
-                    crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                    crate::expressions::CurrentTimestamp {
+                        precision: None,
+                        sysdate: false,
+                    },
                 ));
                 Ok(Expression::Function(Box::new(Function::new(
                     "STRFTIME".to_string(),
@@ -425,26 +457,30 @@ impl SQLiteDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
             // ANY_VALUE -> MAX in SQLite
             "ANY_VALUE" if !f.args.is_empty() => {
                 let arg = f.args.into_iter().next().unwrap();
-                Ok(Expression::Max(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Max(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: arg,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -454,14 +490,16 @@ impl SQLiteDialect {
             ))),
 
             // LISTAGG -> GROUP_CONCAT
-            "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("GROUP_CONCAT".to_string(), f.args),
-            ))),
+            "LISTAGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "GROUP_CONCAT".to_string(),
+                f.args,
+            )))),
 
             // ARRAY_AGG -> GROUP_CONCAT (SQLite doesn't have arrays)
-            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("GROUP_CONCAT".to_string(), f.args),
-            ))),
+            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "GROUP_CONCAT".to_string(),
+                f.args,
+            )))),
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

@@ -34,6 +34,9 @@ jobs:
       - name: Lib unit tests
         run: cargo test --lib -p polyglot-sql
 
+      - name: WASM Rust unit tests
+        run: cargo test -p polyglot-sql-wasm --lib -- --nocapture
+
       - name: Generic identity tests
         run: cargo test --test sqlglot_identity test_sqlglot_identity_all -p polyglot-sql -- --nocapture
 
@@ -42,6 +45,15 @@ jobs:
 
       - name: Transpilation tests
         run: cargo test --test sqlglot_transpilation test_sqlglot_transpilation_all -p polyglot-sql -- --nocapture
+
+      - name: Transpile generic tests
+        run: cargo test --test sqlglot_transpile test_sqlglot_transpile_all -p polyglot-sql -- --nocapture
+
+      - name: Parser tests
+        run: cargo test --test sqlglot_parser test_sqlglot_parser_all -p polyglot-sql -- --nocapture
+
+      - name: Pretty-print tests
+        run: RUST_MIN_STACK=16777216 cargo test --test sqlglot_pretty test_sqlglot_pretty_all -p polyglot-sql --release -- --nocapture
 
       - name: Custom dialect tests
         run: cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
@@ -179,10 +191,19 @@ jobs:
       - name: Build documentation
         run: cd packages/documentation && pnpm run build
 
+      - name: Validate Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/documentation
           command: pages deploy dist --project-name=polyglot-sql-api
 
@@ -220,9 +241,18 @@ jobs:
       - name: Build Playground
         run: cd packages/playground && pnpm run build
 
+      - name: Validate Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/playground
           command: pages deploy dist --project-name=polyglot-sql-playground

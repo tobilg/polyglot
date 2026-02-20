@@ -66,7 +66,11 @@ fn analyze_identity_failures_impl() {
         println!("## {} ({} failures)", category, failures.len());
         println!();
         // Show ALL examples for syntax errors, first 5 for others
-        let show_count = if category == "Syntax error (expected token)" { failures.len() } else { 5 };
+        let show_count = if category == "Syntax error (expected token)" {
+            failures.len()
+        } else {
+            5
+        };
         for (line, sql, msg) in failures.iter().take(show_count) {
             println!("- Line {}: `{}`", line, truncate(sql, 80));
             if category == "Syntax error (expected token)" {

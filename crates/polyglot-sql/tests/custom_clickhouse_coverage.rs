@@ -13,8 +13,10 @@ use common::test_runner::{dialect_identity_test, parse_dialect};
 use once_cell::sync::Lazy;
 use std::fs;
 
-const CLICKHOUSE_FIXTURES_PATH: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/custom_fixtures/clickhouse");
+const CLICKHOUSE_FIXTURES_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/custom_fixtures/clickhouse"
+);
 
 /// Load all JSON fixture files from the ClickHouse fixtures directory.
 static CLICKHOUSE_FIXTURES: Lazy<Vec<CustomDialectFixtureFile>> = Lazy::new(|| {
@@ -27,11 +29,9 @@ static CLICKHOUSE_FIXTURES: Lazy<Vec<CustomDialectFixtureFile>> = Lazy::new(|| {
                     Ok(content) => {
                         match serde_json::from_str::<CustomDialectFixtureFile>(&content) {
                             Ok(fixture) => files.push(fixture),
-                            Err(e) => eprintln!(
-                                "  WARNING: Failed to parse {}: {}",
-                                path.display(),
-                                e
-                            ),
+                            Err(e) => {
+                                eprintln!("  WARNING: Failed to parse {}: {}", path.display(), e)
+                            }
                         }
                     }
                     Err(e) => {

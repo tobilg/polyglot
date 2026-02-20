@@ -404,8 +404,7 @@ fn try_merge_from_subquery(mut outer: Select, leave_tables_isolated: bool) -> Se
 
     // 6. Replace refs in HAVING
     if let Some(ref mut having) = outer.having {
-        having.this =
-            replace_column_refs(&having.this, &subquery_alias, &projection_map, false);
+        having.this = replace_column_refs(&having.this, &subquery_alias, &projection_map, false);
     }
 
     // 7. Replace refs in JOIN ON conditions
@@ -415,8 +414,12 @@ fn try_merge_from_subquery(mut outer: Select, leave_tables_isolated: bool) -> Se
         .map(|join| {
             let mut new_join = join.clone();
             if let Some(ref on) = join.on {
-                new_join.on =
-                    Some(replace_column_refs(on, &subquery_alias, &projection_map, false));
+                new_join.on = Some(replace_column_refs(
+                    on,
+                    &subquery_alias,
+                    &projection_map,
+                    false,
+                ));
             }
             new_join
         })
@@ -488,9 +491,11 @@ fn try_merge_join_subqueries(mut outer: Select, leave_tables_isolated: bool) -> 
 
         if should_merge {
             let subquery_alias = match &outer.joins[i].this {
-                Expression::Subquery(sub) => {
-                    sub.alias.as_ref().map(|a| a.name.clone()).unwrap_or_default()
-                }
+                Expression::Subquery(sub) => sub
+                    .alias
+                    .as_ref()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_default(),
                 _ => String::new(),
             };
 
@@ -525,15 +530,18 @@ fn try_merge_join_subqueries(mut outer: Select, leave_tables_isolated: bool) -> 
                 .collect();
 
             if let Some(ref mut w) = outer.where_clause {
-                w.this =
-                    replace_column_refs(&w.this, &subquery_alias, &projection_map, false);
+                w.this = replace_column_refs(&w.this, &subquery_alias, &projection_map, false);
             }
 
             // Replace in all JOIN ON conditions
             for j in 0..outer.joins.len() {
                 if let Some(ref on) = outer.joins[j].on.clone() {
-                    outer.joins[j].on =
-                        Some(replace_column_refs(on, &subquery_alias, &projection_map, false));
+                    outer.joins[j].on = Some(replace_column_refs(
+                        on,
+                        &subquery_alias,
+                        &projection_map,
+                        false,
+                    ));
                 }
             }
 
@@ -543,12 +551,8 @@ fn try_merge_join_subqueries(mut outer: Select, leave_tables_isolated: bool) -> 
                     .iter()
                     .map(|ord| {
                         let mut new_ord = ord.clone();
-                        new_ord.this = replace_column_refs(
-                            &ord.this,
-                            &subquery_alias,
-                            &projection_map,
-                            false,
-                        );
+                        new_ord.this =
+                            replace_column_refs(&ord.this, &subquery_alias, &projection_map, false);
                         new_ord
                     })
                     .collect();
@@ -655,9 +659,7 @@ fn build_projection_map(inner: &Select) -> HashMap<String, Expression> {
     let mut map = HashMap::new();
     for expr in &inner.expressions {
         let (name, inner_expr) = match expr {
-            Expression::Alias(alias) => {
-                (alias.alias.name.to_uppercase(), alias.this.clone())
-            }
+            Expression::Alias(alias) => (alias.alias.name.to_uppercase(), alias.this.clone()),
             Expression::Column(col) => (col.name.name.to_uppercase(), expr.clone()),
             Expression::Star(_) => continue,
             _ => continue,
@@ -691,9 +693,7 @@ fn replace_column_refs(
                 if let Some(replacement) = projection_map.get(&col_name) {
                     if in_select_list {
                         let replacement_name = get_expression_name(replacement);
-                        if replacement_name.map(|n| n.to_uppercase())
-                            != Some(col_name.clone())
-                        {
+                        if replacement_name.map(|n| n.to_uppercase()) != Some(col_name.clone()) {
                             return Expression::Alias(Box::new(Alias {
                                 this: replacement.clone(),
                                 alias: Identifier::new(&col.name.name),
@@ -709,8 +709,7 @@ fn replace_column_refs(
             expr.clone()
         }
         Expression::Alias(alias) => {
-            let new_inner =
-                replace_column_refs(&alias.this, subquery_alias, projection_map, false);
+            let new_inner = replace_column_refs(&alias.this, subquery_alias, projection_map, false);
             Expression::Alias(Box::new(Alias {
                 this: new_inner,
                 alias: alias.alias.clone(),
@@ -721,104 +720,140 @@ fn replace_column_refs(
         }
         // Binary operations
         Expression::And(bin) => Expression::And(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Or(bin) => Expression::Or(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Add(bin) => Expression::Add(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Sub(bin) => Expression::Sub(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Mul(bin) => Expression::Mul(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Div(bin) => Expression::Div(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Mod(bin) => Expression::Mod(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Eq(bin) => Expression::Eq(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Neq(bin) => Expression::Neq(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Lt(bin) => Expression::Lt(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Lte(bin) => Expression::Lte(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Gt(bin) => Expression::Gt(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Gte(bin) => Expression::Gte(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::Concat(bin) => Expression::Concat(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::BitwiseAnd(bin) => Expression::BitwiseAnd(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::BitwiseOr(bin) => Expression::BitwiseOr(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         Expression::BitwiseXor(bin) => Expression::BitwiseXor(Box::new(replace_binary_op(
-            bin, subquery_alias, projection_map,
+            bin,
+            subquery_alias,
+            projection_map,
         ))),
         // Like/ILike
         Expression::Like(like) => {
             let mut new_like = like.as_ref().clone();
-            new_like.left =
-                replace_column_refs(&like.left, subquery_alias, projection_map, false);
+            new_like.left = replace_column_refs(&like.left, subquery_alias, projection_map, false);
             new_like.right =
                 replace_column_refs(&like.right, subquery_alias, projection_map, false);
             if let Some(ref esc) = like.escape {
-                new_like.escape =
-                    Some(replace_column_refs(esc, subquery_alias, projection_map, false));
+                new_like.escape = Some(replace_column_refs(
+                    esc,
+                    subquery_alias,
+                    projection_map,
+                    false,
+                ));
             }
             Expression::Like(Box::new(new_like))
         }
         Expression::ILike(like) => {
             let mut new_like = like.as_ref().clone();
-            new_like.left =
-                replace_column_refs(&like.left, subquery_alias, projection_map, false);
+            new_like.left = replace_column_refs(&like.left, subquery_alias, projection_map, false);
             new_like.right =
                 replace_column_refs(&like.right, subquery_alias, projection_map, false);
             if let Some(ref esc) = like.escape {
-                new_like.escape =
-                    Some(replace_column_refs(esc, subquery_alias, projection_map, false));
+                new_like.escape = Some(replace_column_refs(
+                    esc,
+                    subquery_alias,
+                    projection_map,
+                    false,
+                ));
             }
             Expression::ILike(Box::new(new_like))
         }
         // Unary
         Expression::Not(un) => {
             let mut new_un = un.as_ref().clone();
-            new_un.this =
-                replace_column_refs(&un.this, subquery_alias, projection_map, false);
+            new_un.this = replace_column_refs(&un.this, subquery_alias, projection_map, false);
             Expression::Not(Box::new(new_un))
         }
         Expression::Neg(un) => {
             let mut new_un = un.as_ref().clone();
-            new_un.this =
-                replace_column_refs(&un.this, subquery_alias, projection_map, false);
+            new_un.this = replace_column_refs(&un.this, subquery_alias, projection_map, false);
             Expression::Neg(Box::new(new_un))
         }
         Expression::Paren(p) => {
             let mut new_p = p.as_ref().clone();
-            new_p.this =
-                replace_column_refs(&p.this, subquery_alias, projection_map, false);
+            new_p.this = replace_column_refs(&p.this, subquery_alias, projection_map, false);
             Expression::Paren(Box::new(new_p))
         }
         Expression::Cast(cast) => {
             let mut new_cast = cast.as_ref().clone();
-            new_cast.this =
-                replace_column_refs(&cast.this, subquery_alias, projection_map, false);
+            new_cast.this = replace_column_refs(&cast.this, subquery_alias, projection_map, false);
             Expression::Cast(Box::new(new_cast))
         }
         Expression::Function(func) => {
@@ -863,24 +898,19 @@ fn replace_column_refs(
         }
         Expression::IsNull(is_null) => {
             let mut new_is = is_null.as_ref().clone();
-            new_is.this =
-                replace_column_refs(&is_null.this, subquery_alias, projection_map, false);
+            new_is.this = replace_column_refs(&is_null.this, subquery_alias, projection_map, false);
             Expression::IsNull(Box::new(new_is))
         }
         Expression::Between(between) => {
             let mut new_b = between.as_ref().clone();
-            new_b.this =
-                replace_column_refs(&between.this, subquery_alias, projection_map, false);
-            new_b.low =
-                replace_column_refs(&between.low, subquery_alias, projection_map, false);
-            new_b.high =
-                replace_column_refs(&between.high, subquery_alias, projection_map, false);
+            new_b.this = replace_column_refs(&between.this, subquery_alias, projection_map, false);
+            new_b.low = replace_column_refs(&between.low, subquery_alias, projection_map, false);
+            new_b.high = replace_column_refs(&between.high, subquery_alias, projection_map, false);
             Expression::Between(Box::new(new_b))
         }
         Expression::In(in_expr) => {
             let mut new_in = in_expr.as_ref().clone();
-            new_in.this =
-                replace_column_refs(&in_expr.this, subquery_alias, projection_map, false);
+            new_in.this = replace_column_refs(&in_expr.this, subquery_alias, projection_map, false);
             new_in.expressions = in_expr
                 .expressions
                 .iter()
@@ -890,8 +920,7 @@ fn replace_column_refs(
         }
         Expression::Ordered(ord) => {
             let mut new_ord = ord.as_ref().clone();
-            new_ord.this =
-                replace_column_refs(&ord.this, subquery_alias, projection_map, false);
+            new_ord.this = replace_column_refs(&ord.this, subquery_alias, projection_map, false);
             Expression::Ordered(Box::new(new_ord))
         }
         // For all other expression types, return as-is
@@ -944,11 +973,7 @@ fn merge_where_conditions(outer_where: Option<&Where>, inner_cond: &Expression) 
 }
 
 /// Check if an inner select can be merged into an outer query
-pub fn is_mergeable(
-    outer_scope: &Scope,
-    inner_scope: &Scope,
-    leave_tables_isolated: bool,
-) -> bool {
+pub fn is_mergeable(outer_scope: &Scope, inner_scope: &Scope, leave_tables_isolated: bool) -> bool {
     let inner_select = &inner_scope.expression;
 
     if let Expression::Select(inner) = inner_select {
@@ -1038,12 +1063,7 @@ pub fn eliminate_subqueries(expression: Expression) -> Expression {
                     .expressions
                     .drain(..)
                     .map(|source| {
-                        extract_subquery_to_cte(
-                            source,
-                            &mut taken,
-                            &mut seen_sql,
-                            &mut new_ctes,
-                        )
+                        extract_subquery_to_cte(source, &mut taken, &mut seen_sql, &mut new_ctes)
                     })
                     .collect();
             }
@@ -1303,8 +1323,16 @@ mod tests {
         let expr = parse("SELECT a FROM (SELECT * FROM x) AS y");
         let result = eliminate_subqueries(expr);
         let sql = gen(&result);
-        assert!(sql.contains("WITH"), "Should have WITH clause, got: {}", sql);
-        assert!(sql.contains("SELECT a FROM"), "Should reference CTE, got: {}", sql);
+        assert!(
+            sql.contains("WITH"),
+            "Should have WITH clause, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("SELECT a FROM"),
+            "Should reference CTE, got: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1320,7 +1348,11 @@ mod tests {
         let expr = parse("SELECT a FROM x JOIN (SELECT b FROM y) AS sub ON x.id = sub.id");
         let result = eliminate_subqueries(expr);
         let sql = gen(&result);
-        assert!(sql.contains("WITH"), "Should have WITH clause, got: {}", sql);
+        assert!(
+            sql.contains("WITH"),
+            "Should have WITH clause, got: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1328,7 +1360,11 @@ mod tests {
         let expr = parse("INSERT INTO t VALUES (1, 2)");
         let result = eliminate_subqueries(expr);
         let sql = gen(&result);
-        assert!(sql.contains("INSERT"), "Non-select should pass through, got: {}", sql);
+        assert!(
+            sql.contains("INSERT"),
+            "Non-select should pass through, got: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1413,9 +1449,7 @@ mod tests {
     #[test]
     fn test_merge_derived_tables_with_where() {
         // Inner WHERE should be merged into outer WHERE
-        let expr = parse(
-            "SELECT a FROM (SELECT x.a FROM x WHERE x.b > 1) AS y WHERE a > 0",
-        );
+        let expr = parse("SELECT a FROM (SELECT x.a FROM x WHERE x.b > 1) AS y WHERE a > 0");
         let result = merge_derived_tables(expr, false);
         let sql = gen(&result);
         assert!(
@@ -1515,9 +1549,7 @@ mod tests {
 
     #[test]
     fn test_merge_derived_tables_inner_joins() {
-        let expr = parse(
-            "SELECT a FROM (SELECT x.a FROM x JOIN z ON x.id = z.id) AS y",
-        );
+        let expr = parse("SELECT a FROM (SELECT x.a FROM x JOIN z ON x.id = z.id) AS y");
         let result = merge_derived_tables(expr, false);
         let sql = gen(&result);
         assert!(

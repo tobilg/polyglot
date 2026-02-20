@@ -333,14 +333,26 @@ mod tests {
         schema
             .add_table(
                 "a",
-                &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })],
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
                 None,
             )
             .unwrap();
         schema
             .add_table(
                 "b",
-                &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })],
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
                 None,
             )
             .unwrap();
@@ -366,7 +378,13 @@ mod tests {
         schema
             .add_table(
                 "a",
-                &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })],
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
                 None,
             )
             .unwrap();
@@ -392,7 +410,8 @@ mod tests {
 
     #[test]
     fn test_cte_inner_query_processed() {
-        let sql = "WITH cte AS (SELECT * FROM x AS x JOIN y AS y ON x.id = y.id) SELECT * FROM cte AS c";
+        let sql =
+            "WITH cte AS (SELECT * FROM x AS x JOIN y AS y ON x.id = y.id) SELECT * FROM cte AS c";
         let expr = parse(sql);
         let result = isolate_table_selects(expr, None, None);
         let output = gen(&result);
@@ -505,14 +524,26 @@ mod tests {
         schema
             .add_table(
                 "mydb.a",
-                &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })],
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
                 None,
             )
             .unwrap();
         schema
             .add_table(
                 "mydb.b",
-                &[("id".to_string(), DataType::Int { length: None, integer_spelling: false })],
+                &[(
+                    "id".to_string(),
+                    DataType::Int {
+                        length: None,
+                        integer_spelling: false,
+                    },
+                )],
                 None,
             )
             .unwrap();

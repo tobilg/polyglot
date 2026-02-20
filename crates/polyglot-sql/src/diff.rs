@@ -172,10 +172,7 @@ impl IndexedTree {
                     }
                 }
                 for join in &select.joins {
-                    self.add_expr(
-                        &Expression::Join(Box::new(join.clone())),
-                        Some(parent_idx),
-                    );
+                    self.add_expr(&Expression::Join(Box::new(join.clone())), Some(parent_idx));
                 }
                 if let Some(w) = &select.where_clause {
                     self.add_expr(&w.this, Some(parent_idx));
@@ -190,10 +187,7 @@ impl IndexedTree {
                 }
                 if let Some(ob) = &select.order_by {
                     for o in &ob.expressions {
-                        self.add_expr(
-                            &Expression::Ordered(Box::new(o.clone())),
-                            Some(parent_idx),
-                        );
+                        self.add_expr(&Expression::Ordered(Box::new(o.clone())), Some(parent_idx));
                     }
                 }
                 if let Some(limit) = &select.limit {
@@ -362,9 +356,7 @@ impl IndexedTree {
     }
 
     fn leaf_indices(&self) -> Vec<usize> {
-        (0..self.nodes.len())
-            .filter(|&i| self.is_leaf(i))
-            .collect()
+        (0..self.nodes.len()).filter(|&i| self.is_leaf(i)).collect()
     }
 
     /// Get all leaf descendants of a node (including itself if it is a leaf).
@@ -599,12 +591,7 @@ impl ChangeDistiller {
         }
     }
 
-    fn diff(
-        &mut self,
-        source: &Expression,
-        target: &Expression,
-        delta_only: bool,
-    ) -> Vec<Edit> {
+    fn diff(&mut self, source: &Expression, target: &Expression, delta_only: bool) -> Vec<Edit> {
         self.src_tree = IndexedTree::build(source);
         self.tgt_tree = IndexedTree::build(target);
 
@@ -774,11 +761,8 @@ impl ChangeDistiller {
         let matched_tgt: HashSet<usize> = self.matchings.values().cloned().collect();
 
         // Build reverse mapping: tgt_idx -> src_idx
-        let reverse_matchings: HashMap<usize, usize> = self
-            .matchings
-            .iter()
-            .map(|(&s, &t)| (t, s))
-            .collect();
+        let reverse_matchings: HashMap<usize, usize> =
+            self.matchings.iter().map(|(&s, &t)| (t, s)).collect();
 
         // Detect moved nodes via LCS on each matched parent's children
         let mut moved_src: HashSet<usize> = HashSet::new();
@@ -934,7 +918,10 @@ mod tests {
         assert!(!edits.is_empty());
         assert!(has_changes(&edits));
         let (ins, rem, _, _, _) = count_edits(&edits);
-        assert!(ins > 0 && rem > 0, "Expected Insert+Remove, got ins={ins} rem={rem}");
+        assert!(
+            ins > 0 && rem > 0,
+            "Expected Insert+Remove, got ins={ins} rem={rem}"
+        );
     }
 
     #[test]
@@ -1033,7 +1020,10 @@ mod tests {
 
         // Some columns should be detected as moved
         let (_, _, moves, _, _) = count_edits(&edits);
-        assert!(moves > 0, "Expected at least one Move for reordered columns");
+        assert!(
+            moves > 0,
+            "Expected at least one Move for reordered columns"
+        );
     }
 
     #[test]
@@ -1133,6 +1123,7 @@ mod tests {
             pivots: vec![],
             comments: vec![],
             nesting_group: 0,
+            directed: false,
         }));
         let join_right = Expression::Join(Box::new(crate::expressions::Join {
             this: Expression::Table(crate::expressions::TableRef::new("t")),
@@ -1147,6 +1138,7 @@ mod tests {
             pivots: vec![],
             comments: vec![],
             nesting_group: 0,
+            directed: false,
         }));
         assert!(!is_same_type(&join_left, &join_right));
     }

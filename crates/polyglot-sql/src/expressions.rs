@@ -142,19 +142,19 @@ pub enum Expression {
     BitwiseOr(Box<BinaryOp>),
     BitwiseXor(Box<BinaryOp>),
     Concat(Box<BinaryOp>),
-    Adjacent(Box<BinaryOp>),  // PostgreSQL range adjacency operator (-|-)
-    TsMatch(Box<BinaryOp>),   // PostgreSQL text search match operator (@@)
+    Adjacent(Box<BinaryOp>),   // PostgreSQL range adjacency operator (-|-)
+    TsMatch(Box<BinaryOp>),    // PostgreSQL text search match operator (@@)
     PropertyEQ(Box<BinaryOp>), // := assignment operator (MySQL @var := val, DuckDB named args)
 
     // PostgreSQL array/JSONB operators
-    ArrayContainsAll(Box<BinaryOp>),       // @> operator (array contains all)
-    ArrayContainedBy(Box<BinaryOp>),       // <@ operator (array contained by)
-    ArrayOverlaps(Box<BinaryOp>),          // && operator (array overlaps)
+    ArrayContainsAll(Box<BinaryOp>), // @> operator (array contains all)
+    ArrayContainedBy(Box<BinaryOp>), // <@ operator (array contained by)
+    ArrayOverlaps(Box<BinaryOp>),    // && operator (array overlaps)
     JSONBContainsAllTopKeys(Box<BinaryOp>), // ?& operator (JSONB contains all keys)
     JSONBContainsAnyTopKeys(Box<BinaryOp>), // ?| operator (JSONB contains any key)
-    JSONBDeleteAtPath(Box<BinaryOp>),      // #- operator (JSONB delete at path)
-    ExtendsLeft(Box<BinaryOp>),            // &< operator (PostgreSQL range extends left)
-    ExtendsRight(Box<BinaryOp>),           // &> operator (PostgreSQL range extends right)
+    JSONBDeleteAtPath(Box<BinaryOp>), // #- operator (JSONB delete at path)
+    ExtendsLeft(Box<BinaryOp>),      // &< operator (PostgreSQL range extends left)
+    ExtendsRight(Box<BinaryOp>),     // &> operator (PostgreSQL range extends right)
 
     // Unary operations
     Not(Box<UnaryOp>),
@@ -168,7 +168,7 @@ pub enum Expression {
     IsTrue(Box<IsTrueFalse>),
     IsFalse(Box<IsTrueFalse>),
     IsJson(Box<IsJson>),
-    Is(Box<BinaryOp>),  // General IS expression (e.g., a IS ?)
+    Is(Box<BinaryOp>), // General IS expression (e.g., a IS ?)
     Exists(Box<Exists>),
     /// MySQL MEMBER OF operator: expr MEMBER OF(json_array)
     MemberOf(Box<BinaryOp>),
@@ -787,6 +787,7 @@ pub enum Expression {
     Get(Box<Get>),
     SetOperation(Box<SetOperation>),
     Var(Box<Var>),
+    Variadic(Box<Variadic>),
     Version(Box<Version>),
     Schema(Box<Schema>),
     Lock(Box<Lock>),
@@ -1317,7 +1318,6 @@ impl Expression {
     pub fn sql_for(&self, dialect: crate::dialects::DialectType) -> String {
         crate::generate(self, dialect).unwrap_or_default()
     }
-
 }
 
 impl fmt::Display for Expression {
@@ -1832,19 +1832,30 @@ impl Select {
 
     /// Set ORDER BY
     pub fn order_by(mut self, expressions: Vec<Ordered>) -> Self {
-        self.order_by = Some(OrderBy { expressions, siblings: false, comments: Vec::new() });
+        self.order_by = Some(OrderBy {
+            expressions,
+            siblings: false,
+            comments: Vec::new(),
+        });
         self
     }
 
     /// Set LIMIT
     pub fn limit(mut self, n: Expression) -> Self {
-        self.limit = Some(Limit { this: n, percent: false , comments: Vec::new() });
+        self.limit = Some(Limit {
+            this: n,
+            percent: false,
+            comments: Vec::new(),
+        });
         self
     }
 
     /// Set OFFSET
     pub fn offset(mut self, n: Expression) -> Self {
-        self.offset = Some(Offset { this: n, rows: None });
+        self.offset = Some(Offset {
+            this: n,
+            rows: None,
+        });
         self
     }
 }
@@ -2977,6 +2988,9 @@ pub struct Join {
     /// deferred condition resolution phases.
     #[serde(default)]
     pub nesting_group: usize,
+    /// Snowflake: DIRECTED keyword in JOIN (e.g., CROSS DIRECTED JOIN)
+    #[serde(default)]
+    pub directed: bool,
 }
 
 /// Enumerate all supported SQL join types.
@@ -2992,7 +3006,7 @@ pub enum JoinKind {
     Left,
     Right,
     Full,
-    Outer,  // Standalone OUTER JOIN (without LEFT/RIGHT/FULL)
+    Outer, // Standalone OUTER JOIN (without LEFT/RIGHT/FULL)
     Cross,
     Natural,
     NaturalLeft,
@@ -3258,15 +3272,21 @@ pub struct Pseudocolumn {
 
 impl Pseudocolumn {
     pub fn rownum() -> Self {
-        Self { kind: PseudocolumnType::Rownum }
+        Self {
+            kind: PseudocolumnType::Rownum,
+        }
     }
 
     pub fn rowid() -> Self {
-        Self { kind: PseudocolumnType::Rowid }
+        Self {
+            kind: PseudocolumnType::Rowid,
+        }
     }
 
     pub fn level() -> Self {
-        Self { kind: PseudocolumnType::Level }
+        Self {
+            kind: PseudocolumnType::Level,
+        }
     }
 }
 
@@ -3636,17 +3656,37 @@ pub struct StructField {
 impl StructField {
     /// Create a new struct field without options
     pub fn new(name: String, data_type: DataType) -> Self {
-        Self { name, data_type, options: Vec::new(), comment: None }
+        Self {
+            name,
+            data_type,
+            options: Vec::new(),
+            comment: None,
+        }
     }
 
     /// Create a new struct field with options
     pub fn with_options(name: String, data_type: DataType, options: Vec<Expression>) -> Self {
-        Self { name, data_type, options, comment: None }
+        Self {
+            name,
+            data_type,
+            options,
+            comment: None,
+        }
     }
 
     /// Create a new struct field with options and comment
-    pub fn with_options_and_comment(name: String, data_type: DataType, options: Vec<Expression>, comment: Option<String>) -> Self {
-        Self { name, data_type, options, comment }
+    pub fn with_options_and_comment(
+        name: String,
+        data_type: DataType,
+        options: Vec<Expression>,
+        comment: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            data_type,
+            options,
+            comment,
+        }
     }
 }
 
@@ -3667,45 +3707,91 @@ impl StructField {
 pub enum DataType {
     // Numeric
     Boolean,
-    TinyInt { length: Option<u32> },
-    SmallInt { length: Option<u32> },
+    TinyInt {
+        length: Option<u32>,
+    },
+    SmallInt {
+        length: Option<u32>,
+    },
     /// Int type with optional length. `integer_spelling` indicates whether the original
     /// type was spelled as `INTEGER` (true) vs `INT` (false), used for certain dialects
     /// like Databricks that preserve the original spelling in specific contexts (e.g., ?:: syntax).
-    Int { length: Option<u32>, #[serde(default, skip_serializing_if = "std::ops::Not::not")] integer_spelling: bool },
-    BigInt { length: Option<u32> },
+    Int {
+        length: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        integer_spelling: bool,
+    },
+    BigInt {
+        length: Option<u32>,
+    },
     /// Float type with optional precision and scale. `real_spelling` indicates whether the original
     /// type was spelled as `REAL` (true) vs `FLOAT` (false), used for dialects like Redshift that
     /// preserve the original spelling.
-    Float { precision: Option<u32>, scale: Option<u32>, #[serde(default, skip_serializing_if = "std::ops::Not::not")] real_spelling: bool },
-    Double { precision: Option<u32>, scale: Option<u32> },
-    Decimal { precision: Option<u32>, scale: Option<u32> },
+    Float {
+        precision: Option<u32>,
+        scale: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        real_spelling: bool,
+    },
+    Double {
+        precision: Option<u32>,
+        scale: Option<u32>,
+    },
+    Decimal {
+        precision: Option<u32>,
+        scale: Option<u32>,
+    },
 
     // String
-    Char { length: Option<u32> },
+    Char {
+        length: Option<u32>,
+    },
     /// VarChar type with optional length. `parenthesized_length` indicates whether the length
     /// was wrapped in extra parentheses (Hive: `VARCHAR((50))` inside STRUCT definitions).
-    VarChar { length: Option<u32>, #[serde(default, skip_serializing_if = "std::ops::Not::not")] parenthesized_length: bool },
+    VarChar {
+        length: Option<u32>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        parenthesized_length: bool,
+    },
     /// String type with optional max length (BigQuery STRING(n))
-    String { length: Option<u32> },
+    String {
+        length: Option<u32>,
+    },
     Text,
     /// TEXT with optional length: TEXT(n) - used by MySQL, SQLite, DuckDB, etc.
     #[serde(alias = "TextWithLength")]
-    TextWithLength { length: u32 },
+    TextWithLength {
+        length: u32,
+    },
 
     // Binary
-    Binary { length: Option<u32> },
-    VarBinary { length: Option<u32> },
+    Binary {
+        length: Option<u32>,
+    },
+    VarBinary {
+        length: Option<u32>,
+    },
     Blob,
 
     // Bit
-    Bit { length: Option<u32> },
-    VarBit { length: Option<u32> },
+    Bit {
+        length: Option<u32>,
+    },
+    VarBit {
+        length: Option<u32>,
+    },
 
     // Date/Time
     Date,
-    Time { precision: Option<u32>, #[serde(default)] timezone: bool },
-    Timestamp { precision: Option<u32>, timezone: bool },
+    Time {
+        precision: Option<u32>,
+        #[serde(default)]
+        timezone: bool,
+    },
+    Timestamp {
+        precision: Option<u32>,
+        timezone: bool,
+    },
     Interval {
         unit: Option<String>,
         /// For range intervals like INTERVAL DAY TO HOUR
@@ -3737,30 +3823,55 @@ pub enum DataType {
     // Struct/Map
     // nested: true means parenthesized syntax STRUCT(name TYPE, ...) (DuckDB/Presto/ROW)
     // nested: false means angle-bracket syntax STRUCT<name TYPE, ...> (BigQuery)
-    Struct { fields: Vec<StructField>, nested: bool },
-    Map { key_type: Box<DataType>, value_type: Box<DataType> },
+    Struct {
+        fields: Vec<StructField>,
+        nested: bool,
+    },
+    Map {
+        key_type: Box<DataType>,
+        value_type: Box<DataType>,
+    },
 
     // Enum type (DuckDB): ENUM('RED', 'GREEN', 'BLUE')
-    Enum { values: Vec<String>, #[serde(default, skip_serializing_if = "Vec::is_empty")] assignments: Vec<Option<String>> },
+    Enum {
+        values: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        assignments: Vec<Option<String>>,
+    },
 
     // Set type (MySQL): SET('a', 'b', 'c')
-    Set { values: Vec<String> },
+    Set {
+        values: Vec<String>,
+    },
 
     // Union type (DuckDB): UNION(num INT, str TEXT)
-    Union { fields: Vec<(String, DataType)> },
+    Union {
+        fields: Vec<(String, DataType)>,
+    },
 
     // Vector (Snowflake / SingleStore)
-    Vector { #[serde(default)] element_type: Option<Box<DataType>>, dimension: Option<u32> },
+    Vector {
+        #[serde(default)]
+        element_type: Option<Box<DataType>>,
+        dimension: Option<u32>,
+    },
 
     // Object (Snowflake structured type)
     // fields: Vec of (field_name, field_type, not_null)
-    Object { fields: Vec<(String, DataType, bool)>, modifier: Option<String> },
+    Object {
+        fields: Vec<(String, DataType, bool)>,
+        modifier: Option<String>,
+    },
 
     // Nullable wrapper (ClickHouse): Nullable(String), Nullable(Int32)
-    Nullable { inner: Box<DataType> },
+    Nullable {
+        inner: Box<DataType>,
+    },
 
     // Custom/User-defined
-    Custom { name: String },
+    Custom {
+        name: String,
+    },
 
     // Spatial types
     Geometry {
@@ -3774,7 +3885,9 @@ pub enum DataType {
 
     // Character Set (for CONVERT USING in MySQL)
     // Renders as CHAR CHARACTER SET {name} in cast target
-    CharacterSet { name: String },
+    CharacterSet {
+        name: String,
+    },
 
     // Unknown
     Unknown,
@@ -3934,12 +4047,18 @@ pub struct UnaryFunc {
 impl UnaryFunc {
     /// Create a new UnaryFunc with no original_name
     pub fn new(this: Expression) -> Self {
-        Self { this, original_name: None }
+        Self {
+            this,
+            original_name: None,
+        }
     }
 
     /// Create a new UnaryFunc with an original name for round-trip preservation
     pub fn with_name(this: Expression, name: String) -> Self {
-        Self { this, original_name: Some(name) }
+        Self {
+            this,
+            original_name: Some(name),
+        }
     }
 }
 
@@ -4472,6 +4591,10 @@ pub struct NthValueFunc {
     /// None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore_nulls: Option<bool>,
+    /// Snowflake FROM FIRST / FROM LAST clause
+    /// None = not specified, Some(true) = FROM FIRST, Some(false) = FROM LAST
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_first: Option<bool>,
 }
 
 /// PERCENT_RANK function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
@@ -4892,15 +5015,15 @@ pub struct Parameter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ParameterStyle {
-    Question,        // ?
-    Dollar,          // $1, $2
-    DollarBrace,     // ${name} (Databricks, Hive template variables)
-    Brace,           // {name} (Spark/Databricks widget/template variables)
-    Colon,           // :name
-    At,              // @name
-    DoubleAt,        // @@name (system variables in MySQL/SQL Server)
-    DoubleDollar,    // $$name
-    Percent,         // %s, %(name)s (PostgreSQL psycopg2 style)
+    Question,     // ?
+    Dollar,       // $1, $2
+    DollarBrace,  // ${name} (Databricks, Hive template variables)
+    Brace,        // {name} (Spark/Databricks widget/template variables)
+    Colon,        // :name
+    At,           // @name
+    DoubleAt,     // @@name (system variables in MySQL/SQL Server)
+    DoubleDollar, // $$name
+    Percent,      // %s, %(name)s (PostgreSQL psycopg2 style)
 }
 
 /// Placeholder expression
@@ -5196,7 +5319,8 @@ impl CreateTable {
             on_commit: None,
             clone_source: None,
             clone_at_clause: None,
-            shallow_clone: false, is_copy: false,
+            shallow_clone: false,
+            is_copy: false,
             leading_comments: Vec::new(),
             with_properties: Vec::new(),
             teradata_post_name_options: Vec::new(),
@@ -6830,15 +6954,19 @@ pub struct FunctionParameter {
     pub data_type: DataType,
     pub mode: Option<ParameterMode>,
     pub default: Option<Expression>,
+    /// Original text of the mode keyword for case-preserving output (e.g., "inout", "VARIADIC")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_text: Option<String>,
 }
 
-/// Parameter mode (IN, OUT, INOUT)
+/// Parameter mode (IN, OUT, INOUT, VARIADIC)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ParameterMode {
     In,
     Out,
     InOut,
+    Variadic,
 }
 
 /// Function body
@@ -7391,6 +7519,9 @@ pub struct Describe {
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
+    /// AS JSON suffix (Databricks)
+    #[serde(default)]
+    pub as_json: bool,
 }
 
 impl Describe {
@@ -7404,6 +7535,7 @@ impl Describe {
             style: None,
             partition: None,
             leading_comments: Vec::new(),
+            as_json: false,
         }
     }
 }
@@ -7494,7 +7626,6 @@ pub struct Annotated {
     pub this: Expression,
     pub trailing_comments: Vec<String>,
 }
-
 
 // === BATCH GENERATED STRUCT DEFINITIONS ===
 // Generated from Python sqlglot expressions.py
@@ -8926,6 +9057,9 @@ pub struct PartitionByRangePropertyDynamic {
     pub this: Option<Box<Expression>>,
     #[serde(default)]
     pub start: Option<Box<Expression>>,
+    /// Use START/END/EVERY keywords (StarRocks) instead of FROM/TO/INTERVAL (Doris)
+    #[serde(default)]
+    pub use_start_end: bool,
     #[serde(default)]
     pub end: Option<Box<Expression>>,
     #[serde(default)]
@@ -9434,6 +9568,13 @@ pub struct SetOperation {
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Var {
     pub this: String,
+}
+
+/// Variadic - represents VARIADIC prefix on function arguments (PostgreSQL)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct Variadic {
+    pub this: Box<Expression>,
 }
 
 /// Version
@@ -12497,7 +12638,6 @@ pub struct NextValueFor {
     pub order: Option<Box<Expression>>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12507,7 +12647,8 @@ mod tests {
     fn export_typescript_types() {
         // This test exports TypeScript types to the generated directory
         // Run with: cargo test -p polyglot-sql --features bindings export_typescript_types
-        Expression::export_all(&ts_rs::Config::default()).expect("Failed to export Expression types");
+        Expression::export_all(&ts_rs::Config::default())
+            .expect("Failed to export Expression types");
     }
 
     #[test]

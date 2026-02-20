@@ -27,10 +27,7 @@ pub enum Error {
 
     /// Unsupported feature for the target dialect
     #[error("Unsupported: {feature} is not supported in {dialect}")]
-    Unsupported {
-        feature: String,
-        dialect: String,
-    },
+    Unsupported { feature: String, dialect: String },
 
     /// Invalid SQL syntax
     #[error("Syntax error at line {line}, column {column}: {message}")]
@@ -176,7 +173,9 @@ impl ValidationResult {
 
     /// Create a validation result with errors
     pub fn with_errors(errors: Vec<ValidationError>) -> Self {
-        let has_errors = errors.iter().any(|e| e.severity == ValidationSeverity::Error);
+        let has_errors = errors
+            .iter()
+            .any(|e| e.severity == ValidationSeverity::Error);
         Self {
             valid: !has_errors,
             errors,

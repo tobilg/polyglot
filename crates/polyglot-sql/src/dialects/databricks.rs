@@ -9,7 +9,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{AggregateFunction, Cast, DataType, Expression, Function, JSONExtract, Literal, UnaryFunc, VarArgFunc};
+use crate::expressions::{
+    AggregateFunction, Cast, DataType, Expression, Function, JSONExtract, Literal, UnaryFunc,
+    VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -31,14 +34,28 @@ impl DialectImpl for DatabricksDialect {
         // Databricks uses backslash escapes in strings (inherited from Hive/Spark)
         config.string_escapes.push('\\');
         // Databricks supports DIV keyword for integer division
-        config.keywords.insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("DIV".to_string(), crate::tokens::TokenType::Div);
         // Databricks numeric literal suffixes (same as Hive/Spark)
-        config.numeric_literals.insert("L".to_string(), "BIGINT".to_string());
-        config.numeric_literals.insert("S".to_string(), "SMALLINT".to_string());
-        config.numeric_literals.insert("Y".to_string(), "TINYINT".to_string());
-        config.numeric_literals.insert("D".to_string(), "DOUBLE".to_string());
-        config.numeric_literals.insert("F".to_string(), "FLOAT".to_string());
-        config.numeric_literals.insert("BD".to_string(), "DECIMAL".to_string());
+        config
+            .numeric_literals
+            .insert("L".to_string(), "BIGINT".to_string());
+        config
+            .numeric_literals
+            .insert("S".to_string(), "SMALLINT".to_string());
+        config
+            .numeric_literals
+            .insert("Y".to_string(), "TINYINT".to_string());
+        config
+            .numeric_literals
+            .insert("D".to_string(), "DOUBLE".to_string());
+        config
+            .numeric_literals
+            .insert("F".to_string(), "FLOAT".to_string());
+        config
+            .numeric_literals
+            .insert("BD".to_string(), "DECIMAL".to_string());
         // Databricks allows identifiers to start with digits (like Hive/Spark)
         config.identifiers_can_start_with_digit = true;
         // Databricks (like Spark): STRING_ESCAPES_ALLOWED_IN_RAW_STRINGS = False
@@ -66,12 +83,14 @@ impl DialectImpl for DatabricksDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Databricks
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in Databricks
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -95,7 +114,9 @@ impl DialectImpl for DatabricksDialect {
 
             // RANDOM -> RAND in Databricks
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // Rand is native
@@ -126,7 +147,9 @@ impl DialectImpl for DatabricksDialect {
             Expression::DateSub(f) => {
                 // Convert string literals to numbers (interval values are often stored as strings)
                 let val = match f.interval {
-                    Expression::Literal(crate::expressions::Literal::String(s)) if s.parse::<i64>().is_ok() => {
+                    Expression::Literal(crate::expressions::Literal::String(s))
+                        if s.parse::<i64>().is_ok() =>
+                    {
                         Expression::Literal(crate::expressions::Literal::Number(s))
                     }
                     other => other,
@@ -149,17 +172,20 @@ impl DatabricksDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
@@ -171,12 +197,18 @@ impl DatabricksDialect {
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // CURDATE -> CURRENT_DATE
@@ -189,7 +221,9 @@ impl DatabricksDialect {
 
             // RANDOM -> RAND
             "RANDOM" => Ok(Expression::Rand(Box::new(crate::expressions::Rand {
-                seed: None, lower: None, upper: None,
+                seed: None,
+                lower: None,
+                upper: None,
             }))),
 
             // GROUP_CONCAT -> COLLECT_LIST + ARRAY_JOIN
@@ -259,9 +293,10 @@ impl DatabricksDialect {
             }
 
             // ARRAY_AGG -> COLLECT_LIST in Databricks
-            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("COLLECT_LIST".to_string(), f.args),
-            ))),
+            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "COLLECT_LIST".to_string(),
+                f.args,
+            )))),
 
             // SUBSTR -> SUBSTRING
             "SUBSTR" => Ok(Expression::Function(Box::new(Function::new(
@@ -333,7 +368,8 @@ impl DatabricksDialect {
             // But keep CONTAINS for string contains (from CONTAINS_SUBSTR transpilation)
             "CONTAINS" if f.args.len() == 2 => {
                 // Check if this is a string CONTAINS (LOWER() args pattern from CONTAINS_SUBSTR)
-                let is_string_contains = matches!(&f.args[0], Expression::Lower(_)) && matches!(&f.args[1], Expression::Lower(_));
+                let is_string_contains = matches!(&f.args[0], Expression::Lower(_))
+                    && matches!(&f.args[1], Expression::Lower(_));
                 if is_string_contains {
                     Ok(Expression::Function(Box::new(f)))
                 } else {
@@ -385,9 +421,10 @@ impl DatabricksDialect {
             // 3-arg: DATE_ADD(unit, amount, date) -> keep as DATE_ADD(UNIT, amount, date)
             "DATE_ADD" => {
                 if f.args.len() == 2 {
-                    let is_simple_number = matches!(&f.args[1],
+                    let is_simple_number = matches!(
+                        &f.args[1],
                         Expression::Literal(crate::expressions::Literal::Number(_))
-                        | Expression::Neg(_)
+                            | Expression::Neg(_)
                     );
                     if is_simple_number {
                         // Keep as DATE_ADD(date, num_days)
@@ -477,7 +514,9 @@ impl DatabricksDialect {
                         } else {
                             s.as_str()
                         };
-                        Expression::Literal(crate::expressions::Literal::String(stripped.to_string()))
+                        Expression::Literal(crate::expressions::Literal::String(
+                            stripped.to_string(),
+                        ))
                     }
                     _ => path_arg,
                 };
@@ -558,7 +597,10 @@ impl DatabricksDialect {
                     // Wrap in CAST(... AS TIMESTAMP)
                     Expression::Cast(Box::new(Cast {
                         this: first_arg,
-                        to: DataType::Timestamp { precision: None, timezone: false },
+                        to: DataType::Timestamp {
+                            precision: None,
+                            timezone: false,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -611,12 +653,10 @@ impl DatabricksDialect {
                             ))))
                         }
                     }
-                    _ => {
-                        Ok(Expression::Function(Box::new(Function::new(
-                            "UNIFORM".to_string(),
-                            vec![low, high, gen],
-                        ))))
-                    }
+                    _ => Ok(Expression::Function(Box::new(Function::new(
+                        "UNIFORM".to_string(),
+                        vec![low, high, gen],
+                    )))),
                 }
             }
 
@@ -714,9 +754,10 @@ impl DatabricksDialect {
             }
 
             // ARRAY_AGG -> COLLECT_LIST
-            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
-                Function::new("COLLECT_LIST".to_string(), f.args),
-            ))),
+            "ARRAY_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
+                "COLLECT_LIST".to_string(),
+                f.args,
+            )))),
 
             // STDDEV is native in Databricks
             "STDDEV" => Ok(Expression::AggregateFunction(f)),
@@ -728,8 +769,8 @@ impl DatabricksDialect {
             "APPROX_COUNT_DISTINCT" => Ok(Expression::AggregateFunction(f)),
 
             // APPROX_DISTINCT -> APPROX_COUNT_DISTINCT
-            "APPROX_DISTINCT" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "APPROX_DISTINCT" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "APPROX_COUNT_DISTINCT".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -737,8 +778,8 @@ impl DatabricksDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),
@@ -771,7 +812,10 @@ impl DatabricksDialect {
                 // Create outer cast: CAST(inner_cast AS TIMESTAMP)
                 Ok(Expression::Cast(Box::new(Cast {
                     this: inner_cast,
-                    to: DataType::Timestamp { precision: None, timezone: false },
+                    to: DataType::Timestamp {
+                        precision: None,
+                        timezone: false,
+                    },
                     trailing_comments: c.trailing_comments,
                     double_colon_syntax: false,
                     format: None,
@@ -809,7 +853,10 @@ impl DatabricksDialect {
                 }));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: inner_cast,
-                    to: DataType::Time { precision: None, timezone: false },
+                    to: DataType::Time {
+                        precision: None,
+                        timezone: false,
+                    },
                     trailing_comments: c.trailing_comments,
                     double_colon_syntax: false,
                     format: None,
@@ -874,7 +921,10 @@ mod tests {
         let transformed = d.transform(ast[0].clone()).expect("Transform failed");
         let output = d.generate(&transformed).expect("Generate failed");
 
-        assert_eq!(output, expected, "Timestamp literal cast transformation failed");
+        assert_eq!(
+            output, expected,
+            "Timestamp literal cast transformation failed"
+        );
     }
 
     #[test]
@@ -903,6 +953,9 @@ mod tests {
         let transformed = d.transform(ast[0].clone()).expect("Transform failed");
         let output = d.generate(&transformed).expect("Generate failed");
 
-        assert_eq!(output, expected, "FROM_UTC_TIMESTAMP with existing CAST failed");
+        assert_eq!(
+            output, expected,
+            "FROM_UTC_TIMESTAMP with existing CAST failed"
+        );
     }
 }

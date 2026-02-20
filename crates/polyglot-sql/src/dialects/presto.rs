@@ -6,7 +6,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, AggregateFunction, BinaryOp, Case, Cast, Column, DataType, Expression, Function, JsonExtractFunc, LikeOp, Literal, UnaryFunc, VarArgFunc,
+    AggFunc, AggregateFunction, BinaryOp, Case, Cast, Column, DataType, Expression, Function,
+    JsonExtractFunc, LikeOp, Literal, UnaryFunc, VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -46,12 +47,14 @@ impl DialectImpl for PrestoDialect {
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
             // IFNULL -> COALESCE in Presto
-            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
             // NVL -> COALESCE in Presto
-            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: vec![f.this, f.expression],
             }))),
 
@@ -152,7 +155,13 @@ impl DialectImpl for PrestoDialect {
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
                     Expression::Literal(Literal::String(s)) => {
-                        let normalized = if s.starts_with('$') { s } else if s.starts_with('[') { format!("${}", s) } else { format!("$.{}", s) };
+                        let normalized = if s.starts_with('$') {
+                            s
+                        } else if s.starts_with('[') {
+                            format!("${}", s)
+                        } else {
+                            format!("$.{}", s)
+                        };
                         Expression::Literal(Literal::String(normalized))
                     }
                     other => other,
@@ -185,7 +194,10 @@ impl DialectImpl for PrestoDialect {
                 if !Self::is_float_cast(&op.left) {
                     op.left = Expression::Cast(Box::new(crate::expressions::Cast {
                         this: op.left,
-                        to: DataType::Double { precision: None, scale: None },
+                        to: DataType::Double {
+                            precision: None,
+                            scale: None,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -199,7 +211,10 @@ impl DialectImpl for PrestoDialect {
             Expression::IntDiv(f) => {
                 let cast_x = Expression::Cast(Box::new(Cast {
                     this: f.this,
-                    to: crate::expressions::DataType::Double { precision: None, scale: None },
+                    to: crate::expressions::DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -208,7 +223,10 @@ impl DialectImpl for PrestoDialect {
                 let div_expr = Expression::Div(Box::new(BinaryOp::new(cast_x, f.expression)));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: div_expr,
-                    to: crate::expressions::DataType::Int { length: None, integer_spelling: true },
+                    to: crate::expressions::DataType::Int {
+                        length: None,
+                        integer_spelling: true,
+                    },
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
@@ -252,14 +270,12 @@ impl PrestoDialect {
                 }
             }
             // DotAccess: db.t2.c -> c (strip all qualifiers, keep only the final field name)
-            Expression::Dot(d) => {
-                Expression::Column(Column {
-                    name: d.field,
-                    table: None,
-                    join_mark: false,
-                    trailing_comments: Vec::new(),
-                })
-            }
+            Expression::Dot(d) => Expression::Column(Column {
+                name: d.field,
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+            }),
             // Recursively walk common binary expression types
             Expression::And(mut op) => {
                 op.left = Self::unqualify_columns(op.left);
@@ -309,7 +325,11 @@ impl PrestoDialect {
             // Predicates
             Expression::In(mut i) => {
                 i.this = Self::unqualify_columns(i.this);
-                i.expressions = i.expressions.into_iter().map(Self::unqualify_columns).collect();
+                i.expressions = i
+                    .expressions
+                    .into_iter()
+                    .map(Self::unqualify_columns)
+                    .collect();
                 // Also recurse into subquery if present
                 if let Some(q) = i.query {
                     i.query = Some(Self::unqualify_columns(q));
@@ -330,7 +350,11 @@ impl PrestoDialect {
             }
             // For subqueries (SELECT statements inside IN, etc), also unqualify
             Expression::Select(mut s) => {
-                s.expressions = s.expressions.into_iter().map(Self::unqualify_columns).collect();
+                s.expressions = s
+                    .expressions
+                    .into_iter()
+                    .map(Self::unqualify_columns)
+                    .collect();
                 if let Some(ref mut w) = s.where_clause {
                     w.this = Self::unqualify_columns(w.this.clone());
                 }
@@ -405,48 +429,50 @@ impl PrestoDialect {
     /// Java:   yyyy, MM, dd, HH, mm, ss, ss, yy, HH:mm:ss, yyyy-MM-dd
     pub fn presto_to_java_format(fmt: &str) -> String {
         fmt.replace("%Y", "yyyy")
-           .replace("%m", "MM")
-           .replace("%d", "dd")
-           .replace("%H", "HH")
-           .replace("%i", "mm")
-           .replace("%S", "ss")
-           .replace("%s", "ss")
-           .replace("%y", "yy")
-           .replace("%T", "HH:mm:ss")
-           .replace("%F", "yyyy-MM-dd")
-           .replace("%M", "MMMM")
+            .replace("%m", "MM")
+            .replace("%d", "dd")
+            .replace("%H", "HH")
+            .replace("%i", "mm")
+            .replace("%S", "ss")
+            .replace("%s", "ss")
+            .replace("%y", "yy")
+            .replace("%T", "HH:mm:ss")
+            .replace("%F", "yyyy-MM-dd")
+            .replace("%M", "MMMM")
     }
 
     /// Normalize Presto format strings (e.g., %H:%i:%S -> %T, %Y-%m-%d -> %F)
     pub fn normalize_presto_format(fmt: &str) -> String {
-        fmt.replace("%H:%i:%S", "%T")
-           .replace("%H:%i:%s", "%T")
+        fmt.replace("%H:%i:%S", "%T").replace("%H:%i:%s", "%T")
     }
 
     /// Convert Presto's C-style format to DuckDB C-style (only difference: %i -> %M for minutes)
     pub fn presto_to_duckdb_format(fmt: &str) -> String {
         fmt.replace("%i", "%M")
-           .replace("%s", "%S")
-           .replace("%T", "%H:%M:%S")
+            .replace("%s", "%S")
+            .replace("%T", "%H:%M:%S")
     }
 
     /// Convert Presto's C-style format to BigQuery format
     pub fn presto_to_bigquery_format(fmt: &str) -> String {
         // BigQuery uses %F for %Y-%m-%d, %T for %H:%M:%S
         // BigQuery uses %M for minutes (like DuckDB), not %i
-        let result = fmt.replace("%Y-%m-%d", "%F")
-           .replace("%H:%i:%S", "%T")
-           .replace("%H:%i:%s", "%T")
-           .replace("%i", "%M")
-           .replace("%s", "%S");
+        let result = fmt
+            .replace("%Y-%m-%d", "%F")
+            .replace("%H:%i:%S", "%T")
+            .replace("%H:%i:%s", "%T")
+            .replace("%i", "%M")
+            .replace("%s", "%S");
         result
     }
 
     /// Check if a Presto format string matches the default timestamp format
     pub fn is_default_timestamp_format(fmt: &str) -> bool {
         let normalized = Self::normalize_presto_format(fmt);
-        normalized == "%Y-%m-%d %T" || normalized == "%Y-%m-%d %H:%i:%S"
-            || fmt == "%Y-%m-%d %H:%i:%S" || fmt == "%Y-%m-%d %T"
+        normalized == "%Y-%m-%d %T"
+            || normalized == "%Y-%m-%d %H:%i:%S"
+            || fmt == "%Y-%m-%d %H:%i:%S"
+            || fmt == "%Y-%m-%d %T"
     }
 
     /// Check if a Presto format string matches the default date format
@@ -458,28 +484,37 @@ impl PrestoDialect {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
             // IFNULL -> COALESCE
-            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // NVL -> COALESCE
-            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // ISNULL -> COALESCE
-            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc { original_name: None,
+            "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
+                original_name: None,
                 expressions: f.args,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
-                crate::expressions::CurrentTimestamp { precision: None, sysdate: false },
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
             )),
 
             // RAND -> RANDOM in Presto (but it's actually RANDOM())
@@ -629,7 +664,10 @@ impl PrestoDialect {
                 if f.args.len() == 1 {
                     Ok(Expression::Cast(Box::new(Cast {
                         this: f.args.into_iter().next().unwrap(),
-                        to: DataType::Timestamp { precision: None, timezone: false },
+                        to: DataType::Timestamp {
+                            precision: None,
+                            timezone: false,
+                        },
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
                         format: None,
@@ -698,10 +736,8 @@ impl PrestoDialect {
 
             // COLLECT_SET -> ARRAY_DISTINCT(ARRAY_AGG())
             "COLLECT_SET" if !f.args.is_empty() => {
-                let array_agg = Expression::Function(Box::new(Function::new(
-                    "ARRAY_AGG".to_string(),
-                    f.args,
-                )));
+                let array_agg =
+                    Expression::Function(Box::new(Function::new("ARRAY_AGG".to_string(), f.args)));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ARRAY_DISTINCT".to_string(),
                     vec![array_agg],
@@ -794,7 +830,10 @@ impl PrestoDialect {
                         let value = args.remove(1);
                         let cast_expr = Expression::Cast(Box::new(Cast {
                             this: value,
-                            to: DataType::Timestamp { precision: None, timezone: false },
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -810,7 +849,10 @@ impl PrestoDialect {
                         let value = args.remove(1);
                         let cast_expr = Expression::Cast(Box::new(Cast {
                             this: value,
-                            to: DataType::Timestamp { precision: None, timezone: false },
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
                             format: None,
@@ -836,14 +878,20 @@ impl PrestoDialect {
             "REPLACE" if f.args.len() == 2 => {
                 let mut args = f.args;
                 args.push(Expression::string(""));
-                Ok(Expression::Function(Box::new(Function::new("REPLACE".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REPLACE".to_string(),
+                    args,
+                ))))
             }
 
             // REGEXP_REPLACE(x, y) with 2 args -> REGEXP_REPLACE(x, y, '')
             "REGEXP_REPLACE" if f.args.len() == 2 => {
                 let mut args = f.args;
                 args.push(Expression::string(""));
-                Ok(Expression::Function(Box::new(Function::new("REGEXP_REPLACE".to_string(), args))))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "REGEXP_REPLACE".to_string(),
+                    args,
+                ))))
             }
 
             // Pass through everything else
@@ -866,13 +914,15 @@ impl PrestoDialect {
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
                 }));
-                Ok(Expression::Sum(Box::new(AggFunc { ignore_nulls: None, having_max: None,
+                Ok(Expression::Sum(Box::new(AggFunc {
+                    ignore_nulls: None,
+                    having_max: None,
                     this: case_expr,
                     distinct: f.distinct,
                     filter: f.filter,
                     order_by: Vec::new(),
-                name: None,
-                limit: None,
+                    name: None,
+                    limit: None,
                 })))
             }
 
@@ -940,8 +990,8 @@ impl PrestoDialect {
             }
 
             // VAR -> VAR_POP in Presto
-            "VAR" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VAR" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "VAR_POP".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -949,12 +999,12 @@ impl PrestoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // VARIANCE -> VAR_SAMP in Presto (for sample variance)
-            "VARIANCE" if !f.args.is_empty() => Ok(Expression::AggregateFunction(Box::new(
-                AggregateFunction {
+            "VARIANCE" if !f.args.is_empty() => {
+                Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                     name: "VAR_SAMP".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -962,8 +1012,8 @@ impl PrestoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
-                },
-            ))),
+                })))
+            }
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

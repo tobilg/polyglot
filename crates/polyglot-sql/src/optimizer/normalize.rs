@@ -202,7 +202,12 @@ pub fn normalization_distance(expression: &Expression, dnf: bool, max_distance: 
 ///
 /// In DNF mode (dnf=true): AND distributes over OR
 ///   x AND (y OR z) => (x AND y) OR (x AND z)
-fn predicate_lengths(expression: &Expression, dnf: bool, max_distance: i64, depth: i64) -> Vec<i64> {
+fn predicate_lengths(
+    expression: &Expression,
+    dnf: bool,
+    max_distance: i64,
+    depth: i64,
+) -> Vec<i64> {
     if depth > max_distance {
         return vec![depth];
     }

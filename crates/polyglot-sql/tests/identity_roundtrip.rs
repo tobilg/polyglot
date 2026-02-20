@@ -3,8 +3,8 @@
 //! Ported from sqlglot's tests/fixtures/identity.sql
 //! These tests verify that SQL can be parsed and regenerated identically.
 
-use polyglot_sql::parser::Parser;
 use polyglot_sql::generator::Generator;
+use polyglot_sql::parser::Parser;
 
 /// Helper function to test roundtrip: parse SQL, generate, and verify
 fn roundtrip(sql: &str) -> String {
@@ -19,13 +19,21 @@ fn assert_roundtrip(sql: &str) {
     let ast2 = Parser::parse_sql(&result).expect(&format!("Failed to re-parse: {}", result));
     // Generate again and compare
     let result2 = Generator::sql(&ast2[0]).expect("Failed to generate SQL again");
-    assert_eq!(result, result2, "Roundtrip not stable for: {}\nFirst: {}\nSecond: {}", sql, result, result2);
+    assert_eq!(
+        result, result2,
+        "Roundtrip not stable for: {}\nFirst: {}\nSecond: {}",
+        sql, result, result2
+    );
 }
 
 /// Assert SQL roundtrips exactly
 fn assert_exact_roundtrip(sql: &str) {
     let result = roundtrip(sql);
-    assert_eq!(sql, result, "Not exact roundtrip for: {}\nGot: {}", sql, result);
+    assert_eq!(
+        sql, result,
+        "Not exact roundtrip for: {}\nGot: {}",
+        sql, result
+    );
 }
 
 // ============================================================================
@@ -558,7 +566,9 @@ mod cte_tests {
     #[test]
     fn test_basic_cte() {
         assert_roundtrip("WITH a AS (SELECT 1) SELECT * FROM a");
-        assert_roundtrip("WITH a AS (SELECT 1), b AS (SELECT 2) SELECT a.*, b.* FROM a CROSS JOIN b");
+        assert_roundtrip(
+            "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT a.*, b.* FROM a CROSS JOIN b",
+        );
     }
 
     #[test]
@@ -574,7 +584,9 @@ mod cte_tests {
 
     #[test]
     fn test_nested_cte() {
-        assert_roundtrip("WITH a AS (WITH b AS (SELECT 1 AS x) SELECT b.x FROM b) SELECT a.x FROM a");
+        assert_roundtrip(
+            "WITH a AS (WITH b AS (SELECT 1 AS x) SELECT b.x FROM b) SELECT a.x FROM a",
+        );
     }
 }
 
@@ -607,14 +619,20 @@ mod window_tests {
 
     #[test]
     fn test_window_frame() {
-        assert_roundtrip("SELECT SUM(x) OVER (PARTITION BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)");
+        assert_roundtrip(
+            "SELECT SUM(x) OVER (PARTITION BY a ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+        );
         assert_roundtrip("SELECT SUM(x) OVER (PARTITION BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)");
-        assert_roundtrip("SELECT SUM(x) OVER (PARTITION BY a ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)");
+        assert_roundtrip(
+            "SELECT SUM(x) OVER (PARTITION BY a ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)",
+        );
     }
 
     #[test]
     fn test_window_range_frame() {
-        assert_roundtrip("SELECT SUM(x) OVER (PARTITION BY a RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)");
+        assert_roundtrip(
+            "SELECT SUM(x) OVER (PARTITION BY a RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+        );
     }
 
     #[test]
@@ -858,7 +876,9 @@ mod alter_table_tests {
 
     #[test]
     fn test_alter_add_constraint() {
-        assert_roundtrip("ALTER TABLE persons ADD CONSTRAINT persons_pk PRIMARY KEY (first_name, last_name)");
+        assert_roundtrip(
+            "ALTER TABLE persons ADD CONSTRAINT persons_pk PRIMARY KEY (first_name, last_name)",
+        );
     }
 }
 

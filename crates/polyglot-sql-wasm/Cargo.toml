@@ -3,6 +3,9 @@ name = "polyglot-sql-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "WebAssembly bindings for polyglot-sql"
 
 [package.metadata.wasm-pack.profile.release]
