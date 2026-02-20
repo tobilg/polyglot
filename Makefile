@@ -330,6 +330,26 @@ validate: test-rust test-compare
 	@echo "All tests passed!"
 
 # =============================================================================
+# Documentation
+# =============================================================================
+
+# Run documentation dev server
+documentation-dev:
+	cd packages/documentation && pnpm run dev
+
+# Build documentation for production
+documentation-build:
+	cd packages/documentation && pnpm run build
+
+# Preview production build
+documentation-preview:
+	cd packages/documentation && pnpm run preview
+
+# Deploy to Cloudflare Pages
+documentation-deploy: documentation-build
+	cd packages/documentation && pnpm run deploy
+
+# =============================================================================
 # Playground
 # =============================================================================
 

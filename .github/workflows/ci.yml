@@ -88,6 +88,9 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Clean WASM crate artifacts
+        run: cargo clean -p polyglot-sql-wasm
+
       - name: Build WASM
         run: cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm
 
@@ -96,6 +99,17 @@ jobs:
 
       - name: Build SDK
         run: cd packages/sdk && pnpm run build
+
+      - name: Verify SDK/WASM version matches release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          cd packages/sdk
+          actual_version="$(node -e "import('./dist/index.js').then((m) => process.stdout.write(m.getVersion()))")"
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "Version mismatch: tag=$expected_version sdk/wasm=$actual_version"
+            exit 1
+          fi
 
       - name: Test SDK
         run: cd packages/sdk && pnpm test
@@ -205,7 +219,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/documentation
-          command: pages deploy dist --project-name=polyglot-sql-api
+          command: pages deploy dist --project-name=polyglot-sql-api --branch main
 
   deploy-playground:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -255,4 +269,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/playground
-          command: pages deploy dist --project-name=polyglot-sql-playground
+          command: pages deploy dist --project-name=polyglot-sql-playground --branch main
