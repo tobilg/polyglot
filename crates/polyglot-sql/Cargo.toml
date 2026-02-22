@@ -9,8 +9,55 @@ documentation.workspace = true
 description = "SQL parsing, validating, formatting, and dialect translation library"
 
 [features]
-default = []
+default = ["all-dialects", "transpile"]
 bindings = ["dep:ts-rs"]
+transpile = []
+all-dialects = [
+    "dialect-postgresql", "dialect-mysql", "dialect-bigquery",
+    "dialect-snowflake", "dialect-duckdb", "dialect-tsql",
+    "dialect-clickhouse", "dialect-oracle", "dialect-hive",
+    "dialect-spark", "dialect-sqlite", "dialect-presto",
+    "dialect-trino", "dialect-redshift", "dialect-databricks",
+    "dialect-athena", "dialect-teradata", "dialect-doris",
+    "dialect-starrocks", "dialect-materialize", "dialect-risingwave",
+    "dialect-singlestore", "dialect-cockroachdb", "dialect-tidb",
+    "dialect-druid", "dialect-solr", "dialect-tableau",
+    "dialect-dune", "dialect-fabric", "dialect-drill",
+    "dialect-dremio", "dialect-exasol", "dialect-datafusion",
+]
+dialect-postgresql = []
+dialect-mysql = []
+dialect-bigquery = []
+dialect-snowflake = []
+dialect-duckdb = []
+dialect-tsql = []
+dialect-clickhouse = []
+dialect-oracle = []
+dialect-hive = []
+dialect-spark = []
+dialect-sqlite = []
+dialect-presto = []
+dialect-trino = []
+dialect-redshift = []
+dialect-databricks = []
+dialect-athena = []
+dialect-teradata = []
+dialect-doris = []
+dialect-starrocks = []
+dialect-materialize = []
+dialect-risingwave = []
+dialect-singlestore = []
+dialect-cockroachdb = []
+dialect-tidb = []
+dialect-druid = []
+dialect-solr = []
+dialect-tableau = []
+dialect-dune = []
+dialect-fabric = []
+dialect-drill = []
+dialect-dremio = []
+dialect-exasol = []
+dialect-datafusion = []
 
 [dependencies]
 serde = { workspace = true }

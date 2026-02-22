@@ -365,6 +365,39 @@ const result = validateWithSchema(
 // result.errors will contain an error for unknown_col
 ```
 
+## Error Reporting
+
+Parse and transpile errors include source position information, making it easy to highlight errors in editors or show precise error messages.
+
+```typescript
+import { parse, transpile, Dialect } from '@polyglot-sql/sdk';
+
+const result = parse('SELECT 1 +', Dialect.Generic);
+if (!result.success) {
+  console.log(result.error);       // "Parse error at line 1, column 11: ..."
+  console.log(result.errorLine);   // 1
+  console.log(result.errorColumn); // 11
+}
+```
+
+Both `ParseResult` and `TranspileResult` include optional position fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `errorLine` | `number \| undefined` | 1-based line number where the error occurred |
+| `errorColumn` | `number \| undefined` | 1-based column number where the error occurred |
+
+These fields are only present when `success` is `false`. On success, they are `undefined`.
+
+```typescript
+// Use with transpile errors too
+const result = transpile('SELECT FROM WHERE', Dialect.MySQL, Dialect.PostgreSQL);
+if (!result.success) {
+  // Pinpoint the exact location in the source SQL
+  console.log(`Error at ${result.errorLine}:${result.errorColumn}: ${result.error}`);
+}
+```
+
 ## Column Lineage
 
 Trace how columns flow through SQL queries, from source tables to the result set.

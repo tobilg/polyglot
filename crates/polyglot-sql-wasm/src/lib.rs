@@ -27,18 +27,28 @@ pub fn set_panic_hook() {
 
 /// Result type for WASM operations
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TranspileResult {
     pub success: bool,
     pub sql: Option<Vec<String>>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_column: Option<usize>,
 }
 
 /// Result type for parse operations
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParseResult {
     pub success: bool,
     pub ast: Option<String>,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_column: Option<usize>,
 }
 
 /// Transpile SQL from one dialect to another.
@@ -71,6 +81,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 success: false,
                 sql: None,
                 error: Some(format!("Invalid read dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
             };
         }
     };
@@ -82,6 +94,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 success: false,
                 sql: None,
                 error: Some(format!("Invalid write dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
             };
         }
     };
@@ -92,11 +106,15 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
             success: true,
             sql: Some(results),
             error: None,
+            error_line: None,
+            error_column: None,
         },
         Err(e) => TranspileResult {
             success: false,
             sql: None,
             error: Some(e.to_string()),
+            error_line: e.line(),
+            error_column: e.column(),
         },
     }
 }
@@ -130,6 +148,8 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
                 success: false,
                 ast: None,
                 error: Some(format!("Invalid dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
             };
         }
     };
@@ -141,17 +161,23 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
                 success: true,
                 ast: Some(ast),
                 error: None,
+                error_line: None,
+                error_column: None,
             },
             Err(e) => ParseResult {
                 success: false,
                 ast: None,
                 error: Some(format!("Failed to serialize AST: {}", e)),
+                error_line: None,
+                error_column: None,
             },
         },
         Err(e) => ParseResult {
             success: false,
             ast: None,
             error: Some(e.to_string()),
+            error_line: e.line(),
+            error_column: e.column(),
         },
     }
 }
@@ -185,6 +211,8 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
                 success: false,
                 sql: None,
                 error: Some(format!("Invalid dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
             };
         }
     };
@@ -196,6 +224,8 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
                 success: false,
                 sql: None,
                 error: Some(format!("Invalid AST JSON: {}", e)),
+                error_line: None,
+                error_column: None,
             };
         }
     };
@@ -208,11 +238,15 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
             success: true,
             sql: Some(sql),
             error: None,
+            error_line: None,
+            error_column: None,
         },
         Err(e) => TranspileResult {
             success: false,
             sql: None,
             error: Some(e.to_string()),
+            error_line: e.line(),
+            error_column: e.column(),
         },
     }
 }
@@ -223,42 +257,73 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
 /// A JSON array of dialect names
 #[wasm_bindgen]
 pub fn get_dialects() -> String {
-    let dialects = vec![
-        "generic",
-        "postgresql",
-        "mysql",
-        "bigquery",
-        "snowflake",
-        "duckdb",
-        "sqlite",
-        "hive",
-        "spark",
-        "trino",
-        "presto",
-        "redshift",
-        "tsql",
-        "oracle",
-        "clickhouse",
-        "databricks",
-        "athena",
-        "teradata",
-        "doris",
-        "starrocks",
-        "materialize",
-        "risingwave",
-        "singlestore",
-        "cockroachdb",
-        "tidb",
-        "druid",
-        "solr",
-        "tableau",
-        "dune",
-        "fabric",
-        "drill",
-        "dremio",
-        "exasol",
-        "datafusion",
-    ];
+    let mut dialects = vec!["generic"];
+    #[cfg(feature = "dialect-postgresql")]
+    dialects.push("postgresql");
+    #[cfg(feature = "dialect-mysql")]
+    dialects.push("mysql");
+    #[cfg(feature = "dialect-bigquery")]
+    dialects.push("bigquery");
+    #[cfg(feature = "dialect-snowflake")]
+    dialects.push("snowflake");
+    #[cfg(feature = "dialect-duckdb")]
+    dialects.push("duckdb");
+    #[cfg(feature = "dialect-sqlite")]
+    dialects.push("sqlite");
+    #[cfg(feature = "dialect-hive")]
+    dialects.push("hive");
+    #[cfg(feature = "dialect-spark")]
+    dialects.push("spark");
+    #[cfg(feature = "dialect-trino")]
+    dialects.push("trino");
+    #[cfg(feature = "dialect-presto")]
+    dialects.push("presto");
+    #[cfg(feature = "dialect-redshift")]
+    dialects.push("redshift");
+    #[cfg(feature = "dialect-tsql")]
+    dialects.push("tsql");
+    #[cfg(feature = "dialect-oracle")]
+    dialects.push("oracle");
+    #[cfg(feature = "dialect-clickhouse")]
+    dialects.push("clickhouse");
+    #[cfg(feature = "dialect-databricks")]
+    dialects.push("databricks");
+    #[cfg(feature = "dialect-athena")]
+    dialects.push("athena");
+    #[cfg(feature = "dialect-teradata")]
+    dialects.push("teradata");
+    #[cfg(feature = "dialect-doris")]
+    dialects.push("doris");
+    #[cfg(feature = "dialect-starrocks")]
+    dialects.push("starrocks");
+    #[cfg(feature = "dialect-materialize")]
+    dialects.push("materialize");
+    #[cfg(feature = "dialect-risingwave")]
+    dialects.push("risingwave");
+    #[cfg(feature = "dialect-singlestore")]
+    dialects.push("singlestore");
+    #[cfg(feature = "dialect-cockroachdb")]
+    dialects.push("cockroachdb");
+    #[cfg(feature = "dialect-tidb")]
+    dialects.push("tidb");
+    #[cfg(feature = "dialect-druid")]
+    dialects.push("druid");
+    #[cfg(feature = "dialect-solr")]
+    dialects.push("solr");
+    #[cfg(feature = "dialect-tableau")]
+    dialects.push("tableau");
+    #[cfg(feature = "dialect-dune")]
+    dialects.push("dune");
+    #[cfg(feature = "dialect-fabric")]
+    dialects.push("fabric");
+    #[cfg(feature = "dialect-drill")]
+    dialects.push("drill");
+    #[cfg(feature = "dialect-dremio")]
+    dialects.push("dremio");
+    #[cfg(feature = "dialect-exasol")]
+    dialects.push("exasol");
+    #[cfg(feature = "dialect-datafusion")]
+    dialects.push("datafusion");
     serde_json::to_string(&dialects).unwrap()
 }
 
@@ -295,6 +360,8 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                         success: true,
                         sql: Some(sql),
                         error: None,
+                        error_line: None,
+                        error_column: None,
                     };
                     serde_json::to_string(&result).unwrap_or_else(|e| {
                         format!(
@@ -308,6 +375,8 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                         success: false,
                         sql: None,
                         error: Some(e.to_string()),
+                        error_line: e.line(),
+                        error_column: e.column(),
                     };
                     serde_json::to_string(&result).unwrap_or_else(|e| {
                         format!(
@@ -323,6 +392,8 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
                 success: false,
                 sql: None,
                 error: Some(e.to_string()),
+                error_line: e.line(),
+                error_column: e.column(),
             };
             serde_json::to_string(&result).unwrap_or_else(|e| {
                 format!(
@@ -1146,6 +1217,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "all-dialects")]
     fn test_get_dialects() {
         let result = get_dialects();
         assert!(result.contains("postgresql"));
@@ -1553,6 +1625,7 @@ mod tests {
     // ============================================================================
 
     #[test]
+    #[cfg(all(feature = "all-dialects", feature = "transpile"))]
     fn test_all_priority_dialect_pairs() {
         let dialects = [
             "generic",
@@ -1904,5 +1977,396 @@ mod tests {
         let result = ast_rename_columns(&ast, "not a map");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(!parsed["success"].as_bool().unwrap());
+    }
+
+    // ============================================================================
+    // Per-Dialect Build Tests
+    //
+    // These tests verify that single-dialect WASM builds work correctly.
+    // They exercise feature-gated code paths that the full-build tests don't cover.
+    // ============================================================================
+
+    /// When all-dialects is disabled, get_dialects() must always include "generic"
+    /// and must NOT include all 34 dialects.
+    #[test]
+    #[cfg(not(feature = "all-dialects"))]
+    fn test_per_dialect_get_dialects_subset() {
+        let result = get_dialects();
+        let dialects: Vec<String> = serde_json::from_str(&result).unwrap();
+        assert!(
+            dialects.contains(&"generic".to_string()),
+            "generic must always be present: {:?}",
+            dialects
+        );
+        assert!(
+            dialects.len() < 34,
+            "Per-dialect build should have fewer than 34 dialects, got {}",
+            dialects.len()
+        );
+    }
+
+    /// Same-dialect transpile (identity) must work even without the transpile feature.
+    #[test]
+    #[cfg(not(feature = "transpile"))]
+    fn test_per_dialect_same_dialect_transpile() {
+        // Generic always works
+        let result = transpile("SELECT 1", "generic", "generic");
+        assert!(
+            result.contains("\"success\":true"),
+            "Generic identity transpile should work: {}",
+            result
+        );
+    }
+
+    /// To/from generic must work without the transpile feature.
+    #[test]
+    #[cfg(not(feature = "transpile"))]
+    fn test_per_dialect_to_from_generic_transpile() {
+        let result = transpile("SELECT 1", "generic", "generic");
+        assert!(
+            result.contains("\"success\":true"),
+            "Generic→Generic should work: {}",
+            result
+        );
+    }
+
+    /// Cross-dialect transpile must return an error without the transpile feature.
+    #[test]
+    #[cfg(not(feature = "transpile"))]
+    fn test_per_dialect_cross_dialect_transpile_error() {
+        // Try a cross-dialect transpile that should fail
+        // We use two non-generic dialects; at least one may not be compiled in,
+        // but the transpile error should fire before the "unknown dialect" error
+        // for any pair of known non-generic dialects.
+        let result = transpile("SELECT 1", "clickhouse", "postgresql");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        // Should either fail with "Cross-dialect transpilation not available"
+        // or "Invalid read/write dialect" (if the dialect isn't compiled in).
+        assert!(
+            !parsed["success"].as_bool().unwrap_or(true),
+            "Cross-dialect transpile should fail without transpile feature: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: ClickHouse ------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-clickhouse")]
+    fn test_clickhouse_parse() {
+        let result = parse("SELECT toDate('2024-01-01')", "clickhouse");
+        assert!(
+            result.contains("\"success\":true"),
+            "ClickHouse parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-clickhouse")]
+    fn test_clickhouse_format() {
+        let result = format_sql("SELECT   a,b FROM  t  WHERE x=1", "clickhouse");
+        assert!(
+            result.contains("\"success\":true"),
+            "ClickHouse format failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-clickhouse")]
+    fn test_clickhouse_validate() {
+        let result = validate("SELECT 1", "clickhouse");
+        assert!(
+            result.contains("\"valid\":true"),
+            "ClickHouse validate failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-clickhouse")]
+    fn test_clickhouse_identity_transpile() {
+        let result = transpile("SELECT 1", "clickhouse", "clickhouse");
+        assert!(
+            result.contains("\"success\":true"),
+            "ClickHouse identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-clickhouse")]
+    fn test_clickhouse_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("clickhouse"),
+            "ClickHouse should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: PostgreSQL -------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-postgresql")]
+    fn test_postgresql_parse() {
+        let result = parse("SELECT now()::date", "postgresql");
+        assert!(
+            result.contains("\"success\":true"),
+            "PostgreSQL parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-postgresql")]
+    fn test_postgresql_format() {
+        let result = format_sql("SELECT  a,b FROM  t  WHERE x=1", "postgresql");
+        assert!(
+            result.contains("\"success\":true"),
+            "PostgreSQL format failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-postgresql")]
+    fn test_postgresql_validate() {
+        let result = validate("SELECT 1", "postgresql");
+        assert!(
+            result.contains("\"valid\":true"),
+            "PostgreSQL validate failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-postgresql")]
+    fn test_postgresql_identity_transpile() {
+        let result = transpile("SELECT 1", "postgresql", "postgresql");
+        assert!(
+            result.contains("\"success\":true"),
+            "PostgreSQL identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-postgresql")]
+    fn test_postgresql_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("postgresql"),
+            "PostgreSQL should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: MySQL -----------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-mysql")]
+    fn test_mysql_parse() {
+        let result = parse("SELECT `col` FROM `table`", "mysql");
+        assert!(
+            result.contains("\"success\":true"),
+            "MySQL parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-mysql")]
+    fn test_mysql_identity_transpile() {
+        let result = transpile("SELECT 1", "mysql", "mysql");
+        assert!(
+            result.contains("\"success\":true"),
+            "MySQL identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-mysql")]
+    fn test_mysql_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("mysql"),
+            "MySQL should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: BigQuery ---------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-bigquery")]
+    fn test_bigquery_parse() {
+        let result = parse("SELECT `project.dataset.table`.col FROM `project.dataset.table`", "bigquery");
+        assert!(
+            result.contains("\"success\":true"),
+            "BigQuery parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-bigquery")]
+    fn test_bigquery_identity_transpile() {
+        let result = transpile("SELECT 1", "bigquery", "bigquery");
+        assert!(
+            result.contains("\"success\":true"),
+            "BigQuery identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-bigquery")]
+    fn test_bigquery_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("bigquery"),
+            "BigQuery should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: Snowflake -------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-snowflake")]
+    fn test_snowflake_parse() {
+        let result = parse("SELECT $1 FROM @my_stage", "snowflake");
+        assert!(
+            result.contains("\"success\":true"),
+            "Snowflake parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-snowflake")]
+    fn test_snowflake_identity_transpile() {
+        let result = transpile("SELECT 1", "snowflake", "snowflake");
+        assert!(
+            result.contains("\"success\":true"),
+            "Snowflake identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-snowflake")]
+    fn test_snowflake_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("snowflake"),
+            "Snowflake should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: DuckDB ----------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-duckdb")]
+    fn test_duckdb_parse() {
+        let result = parse("SELECT * EXCLUDE (col) FROM t", "duckdb");
+        assert!(
+            result.contains("\"success\":true"),
+            "DuckDB parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-duckdb")]
+    fn test_duckdb_identity_transpile() {
+        let result = transpile("SELECT 1", "duckdb", "duckdb");
+        assert!(
+            result.contains("\"success\":true"),
+            "DuckDB identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-duckdb")]
+    fn test_duckdb_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("duckdb"),
+            "DuckDB should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ---- Per-dialect: TSQL ------------------------------------------------------
+
+    #[test]
+    #[cfg(feature = "dialect-tsql")]
+    fn test_tsql_parse() {
+        let result = parse("SELECT TOP 10 * FROM [dbo].[table]", "tsql");
+        assert!(
+            result.contains("\"success\":true"),
+            "TSQL parse failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-tsql")]
+    fn test_tsql_identity_transpile() {
+        let result = transpile("SELECT 1", "tsql", "tsql");
+        assert!(
+            result.contains("\"success\":true"),
+            "TSQL identity transpile failed: {}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-tsql")]
+    fn test_tsql_in_dialects_list() {
+        let result = get_dialects();
+        assert!(
+            result.contains("tsql"),
+            "TSQL should be in dialects list: {}",
+            result
+        );
+    }
+
+    // ============================================================================
+    // Error Position Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_error_has_position() {
+        let result = parse("SELECT 1 + 2)", "generic");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(!parsed["success"].as_bool().unwrap(), "Should fail: {}", result);
+        assert!(parsed["errorLine"].is_number(), "Should have errorLine: {}", result);
+        assert!(parsed["errorColumn"].is_number(), "Should have errorColumn: {}", result);
+        assert_eq!(parsed["errorLine"].as_u64().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_transpile_error_has_position() {
+        let result = transpile("SELECT 1 + 2)", "generic", "postgres");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(!parsed["success"].as_bool().unwrap(), "Should fail: {}", result);
+        assert!(parsed["errorLine"].is_number(), "Should have errorLine: {}", result);
+        assert!(parsed["errorColumn"].is_number(), "Should have errorColumn: {}", result);
+    }
+
+    #[test]
+    fn test_success_result_has_no_position() {
+        let result = parse("SELECT 1", "generic");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Should succeed: {}", result);
+        assert!(parsed["errorLine"].is_null(), "Should not have errorLine on success: {}", result);
+        assert!(parsed["errorColumn"].is_null(), "Should not have errorColumn on success: {}", result);
     }
 }

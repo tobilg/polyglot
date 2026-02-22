@@ -15,7 +15,7 @@ wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-polyglot-sql = { path = "../polyglot-sql" }
+polyglot-sql = { path = "../polyglot-sql", default-features = false }
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 serde = { workspace = true }
@@ -26,8 +26,56 @@ serde-wasm-bindgen = "0.6"
 wasm-bindgen-test = "0.3"
 
 [features]
-default = ["console_error_panic_hook"]
+default = ["console_error_panic_hook", "all-dialects", "transpile"]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
+transpile = ["polyglot-sql/transpile"]
+all-dialects = [
+    "polyglot-sql/all-dialects",
+    "dialect-postgresql", "dialect-mysql", "dialect-bigquery",
+    "dialect-snowflake", "dialect-duckdb", "dialect-tsql",
+    "dialect-clickhouse", "dialect-oracle", "dialect-hive",
+    "dialect-spark", "dialect-sqlite", "dialect-presto",
+    "dialect-trino", "dialect-redshift", "dialect-databricks",
+    "dialect-athena", "dialect-teradata", "dialect-doris",
+    "dialect-starrocks", "dialect-materialize", "dialect-risingwave",
+    "dialect-singlestore", "dialect-cockroachdb", "dialect-tidb",
+    "dialect-druid", "dialect-solr", "dialect-tableau",
+    "dialect-dune", "dialect-fabric", "dialect-drill",
+    "dialect-dremio", "dialect-exasol", "dialect-datafusion",
+]
+dialect-postgresql = ["polyglot-sql/dialect-postgresql"]
+dialect-mysql = ["polyglot-sql/dialect-mysql"]
+dialect-bigquery = ["polyglot-sql/dialect-bigquery"]
+dialect-snowflake = ["polyglot-sql/dialect-snowflake"]
+dialect-duckdb = ["polyglot-sql/dialect-duckdb"]
+dialect-tsql = ["polyglot-sql/dialect-tsql"]
+dialect-clickhouse = ["polyglot-sql/dialect-clickhouse"]
+dialect-oracle = ["polyglot-sql/dialect-oracle"]
+dialect-hive = ["polyglot-sql/dialect-hive"]
+dialect-spark = ["polyglot-sql/dialect-spark"]
+dialect-sqlite = ["polyglot-sql/dialect-sqlite"]
+dialect-presto = ["polyglot-sql/dialect-presto"]
+dialect-trino = ["polyglot-sql/dialect-trino"]
+dialect-redshift = ["polyglot-sql/dialect-redshift"]
+dialect-databricks = ["polyglot-sql/dialect-databricks"]
+dialect-athena = ["polyglot-sql/dialect-athena"]
+dialect-teradata = ["polyglot-sql/dialect-teradata"]
+dialect-doris = ["polyglot-sql/dialect-doris"]
+dialect-starrocks = ["polyglot-sql/dialect-starrocks"]
+dialect-materialize = ["polyglot-sql/dialect-materialize"]
+dialect-risingwave = ["polyglot-sql/dialect-risingwave"]
+dialect-singlestore = ["polyglot-sql/dialect-singlestore"]
+dialect-cockroachdb = ["polyglot-sql/dialect-cockroachdb"]
+dialect-tidb = ["polyglot-sql/dialect-tidb"]
+dialect-druid = ["polyglot-sql/dialect-druid"]
+dialect-solr = ["polyglot-sql/dialect-solr"]
+dialect-tableau = ["polyglot-sql/dialect-tableau"]
+dialect-dune = ["polyglot-sql/dialect-dune"]
+dialect-fabric = ["polyglot-sql/dialect-fabric"]
+dialect-drill = ["polyglot-sql/dialect-drill"]
+dialect-dremio = ["polyglot-sql/dialect-dremio"]
+dialect-exasol = ["polyglot-sql/dialect-exasol"]
+dialect-datafusion = ["polyglot-sql/dialect-datafusion"]
 
 [dependencies.console_error_panic_hook]
 version = "0.1"

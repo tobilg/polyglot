@@ -696,7 +696,7 @@ impl Parser {
         while self.match_token(TokenType::Semicolon) {}
 
         if self.is_at_end() {
-            return Err(Error::parse("Unexpected end of input"));
+            return Err(self.parse_error("Unexpected end of input"));
         }
 
         match self.peek().token_type {
@@ -771,7 +771,7 @@ impl Parser {
             TokenType::Refresh => {
                 self.advance(); // consume REFRESH
                 self.parse_refresh()?
-                    .ok_or_else(|| Error::parse("Failed to parse REFRESH statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse REFRESH statement"))
             }
             TokenType::Load => self.parse_load_data(),
             TokenType::Grant => self.parse_grant(),
@@ -780,7 +780,7 @@ impl Parser {
             TokenType::Merge => {
                 self.advance(); // consume MERGE
                 self.parse_merge()?
-                    .ok_or_else(|| Error::parse("Failed to parse MERGE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse MERGE statement"))
             }
             TokenType::Set => self.parse_set(),
             TokenType::Database
@@ -808,7 +808,7 @@ impl Parser {
             TokenType::Command => {
                 self.advance(); // consume command keyword
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse COMMAND statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse COMMAND statement"))
             }
             TokenType::Rename
                 if matches!(
@@ -819,7 +819,7 @@ impl Parser {
             {
                 self.advance(); // consume RENAME
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse RENAME statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse RENAME statement"))
             }
             TokenType::Pragma => self.parse_pragma(),
             TokenType::Rollback => self.parse_rollback(),
@@ -853,7 +853,7 @@ impl Parser {
             {
                 self.advance(); // consume KILL
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse KILL statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse KILL statement"))
             }
             TokenType::Kill => self.parse_kill(),
             TokenType::Execute => {
@@ -864,7 +864,7 @@ impl Parser {
                 ) {
                     self.advance(); // consume EXECUTE
                     self.parse_command()?
-                        .ok_or_else(|| Error::parse("Failed to parse EXECUTE statement"))
+                        .ok_or_else(|| self.parse_error("Failed to parse EXECUTE statement"))
                 } else {
                     self.parse_execute()
                 }
@@ -872,7 +872,7 @@ impl Parser {
             TokenType::Declare => {
                 self.advance(); // consume DECLARE
                 self.parse_declare()?
-                    .ok_or_else(|| Error::parse("Failed to parse DECLARE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse DECLARE statement"))
             }
             // GET is a command only when followed by @ (stage reference), otherwise it's a function
             // If followed by ( it should be parsed as GET() function, so fall through to expression parsing
@@ -897,7 +897,7 @@ impl Parser {
             {
                 self.advance(); // consume EXCHANGE
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse EXCHANGE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse EXCHANGE statement"))
             }
             // EXPLAIN is treated as DESCRIBE (MySQL maps EXPLAIN -> DESCRIBE)
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("EXPLAIN") => {
@@ -910,18 +910,18 @@ impl Parser {
             {
                 self.advance(); // consume LOCK/UNLOCK
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse LOCK/UNLOCK statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse LOCK/UNLOCK statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("ANALYZE") => {
                 self.advance(); // consume ANALYZE
                 self.parse_analyze()?
-                    .ok_or_else(|| Error::parse("Failed to parse ANALYZE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse ANALYZE statement"))
             }
             // TSQL: PRINT expression
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("PRINT") => {
                 self.advance(); // consume PRINT
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse PRINT statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse PRINT statement"))
             }
             // ClickHouse: CHECK TABLE t [PARTITION p] [SETTINGS ...]
             TokenType::Check
@@ -932,7 +932,7 @@ impl Parser {
             {
                 self.advance(); // consume CHECK
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse CHECK statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse CHECK statement"))
             }
             // ClickHouse: SETTINGS key=value, ... (standalone statement or after another statement)
             TokenType::Settings
@@ -943,7 +943,7 @@ impl Parser {
             {
                 self.advance(); // consume SETTINGS
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse SETTINGS statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse SETTINGS statement"))
             }
             // ClickHouse: SYSTEM STOP/START MERGES, etc.
             TokenType::System
@@ -954,7 +954,7 @@ impl Parser {
             {
                 self.advance(); // consume SYSTEM
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse SYSTEM statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse SYSTEM statement"))
             }
             // ClickHouse: RENAME TABLE db.t1 TO db.t2 [, db.t3 TO db.t4 ...]
             TokenType::Var
@@ -966,7 +966,7 @@ impl Parser {
             {
                 self.advance(); // consume RENAME
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse RENAME statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse RENAME statement"))
             }
             // ClickHouse: OPTIMIZE TABLE t [FINAL] [DEDUPLICATE [BY ...]]
             TokenType::Var
@@ -978,7 +978,7 @@ impl Parser {
             {
                 self.advance(); // consume OPTIMIZE
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse OPTIMIZE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse OPTIMIZE statement"))
             }
             // ClickHouse: EXISTS [TEMPORARY] TABLE/DATABASE/DICTIONARY ...
             TokenType::Exists
@@ -989,7 +989,7 @@ impl Parser {
             {
                 self.advance(); // consume EXISTS
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse EXISTS statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse EXISTS statement"))
             }
             // ClickHouse: SHOW ... (various SHOW commands beyond what's already handled)
             TokenType::Var
@@ -1001,7 +1001,7 @@ impl Parser {
             {
                 self.advance(); // consume EXISTS
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse EXISTS statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse EXISTS statement"))
             }
             // DuckDB: ATTACH [DATABASE] [IF NOT EXISTS] 'path' [AS alias] [(options)]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("ATTACH") => {
@@ -1011,7 +1011,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) {
                     self.parse_command()?
-                        .ok_or_else(|| Error::parse("Failed to parse ATTACH statement"))
+                        .ok_or_else(|| self.parse_error("Failed to parse ATTACH statement"))
                 } else {
                     self.parse_attach_detach(true)
                 }
@@ -1026,7 +1026,7 @@ impl Parser {
             {
                 self.advance(); // consume UNDROP
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse UNDROP statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse UNDROP statement"))
             }
             // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
             TokenType::Var
@@ -1038,7 +1038,7 @@ impl Parser {
             {
                 self.advance(); // consume DETACH
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse DETACH statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse DETACH statement"))
             }
             // DuckDB: DETACH [DATABASE] [IF EXISTS] name
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH") => {
@@ -1064,24 +1064,24 @@ impl Parser {
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("RESET") => {
                 self.advance(); // consume RESET
                 self.parse_as_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse RESET statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse RESET statement"))
             }
             // DuckDB statement-level PIVOT/UNPIVOT/PIVOT_WIDER syntax
             TokenType::Pivot => {
                 self.advance(); // consume PIVOT
                 self.parse_simplified_pivot(false)?
-                    .ok_or_else(|| Error::parse("Failed to parse PIVOT statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse PIVOT statement"))
             }
             TokenType::Unpivot => {
                 self.advance(); // consume UNPIVOT
                 self.parse_simplified_pivot(true)?
-                    .ok_or_else(|| Error::parse("Failed to parse UNPIVOT statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse UNPIVOT statement"))
             }
             // DuckDB: PIVOT_WIDER is an alias for PIVOT
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("PIVOT_WIDER") => {
                 self.advance(); // consume PIVOT_WIDER
                 self.parse_simplified_pivot(false)?
-                    .ok_or_else(|| Error::parse("Failed to parse PIVOT_WIDER statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse PIVOT_WIDER statement"))
             }
             // BigQuery procedural FOR...IN...DO loop
             TokenType::For => {
@@ -1092,17 +1092,17 @@ impl Parser {
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("LOOP") => {
                 self.advance(); // consume LOOP
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse LOOP statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse LOOP statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("REPEAT") => {
                 self.advance(); // consume REPEAT
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse REPEAT statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse REPEAT statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("WHILE") => {
                 self.advance(); // consume WHILE
                 self.parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse WHILE statement"))
+                    .ok_or_else(|| self.parse_error("Failed to parse WHILE statement"))
             }
             // Athena/Presto: UNLOAD (SELECT ...) TO 'location' WITH (options)
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("UNLOAD") => {
@@ -1866,7 +1866,7 @@ impl Parser {
         {
             let expressions = self.parse_expression_list()?;
             if expressions.is_empty() {
-                return Err(Error::parse("Expected expression after LIMIT BY"));
+                return Err(self.parse_error("Expected expression after LIMIT BY"));
             }
             Some(expressions)
         } else {
@@ -4033,7 +4033,7 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         xml_table
                     } else {
-                        return Err(Error::parse("Failed to parse XMLTABLE"));
+                        return Err(self.parse_error("Failed to parse XMLTABLE"));
                     }
                 } else if first_name.to_uppercase() == "OPENJSON" {
                     // Handle OPENJSON specially - it has WITH clause for column definitions
@@ -4041,7 +4041,7 @@ impl Parser {
                     if let Some(openjson_expr) = self.parse_open_json()? {
                         openjson_expr
                     } else {
-                        return Err(Error::parse("Failed to parse OPENJSON"));
+                        return Err(self.parse_error("Failed to parse OPENJSON"));
                     }
                 } else if first_name.to_uppercase() == "SEMANTIC_VIEW" {
                     // Handle SEMANTIC_VIEW specially - it has METRICS/DIMENSIONS/FACTS/WHERE syntax
@@ -4192,7 +4192,7 @@ impl Parser {
                         expression: None,
                     }))
                 } else {
-                    return Err(Error::parse("Expected identifier after {"));
+                    return Err(self.parse_error("Expected identifier after {"));
                 }
             }
         } else if self.check(TokenType::Dollar) && self.check_next(TokenType::LBrace) {
@@ -4208,7 +4208,7 @@ impl Parser {
                         let expr_token = self.advance();
                         Some(expr_token.text.clone())
                     } else {
-                        return Err(Error::parse("Expected identifier after : in ${...}"));
+                        return Err(self.parse_error("Expected identifier after : in ${...}"));
                     }
                 } else {
                     None
@@ -4223,7 +4223,7 @@ impl Parser {
                     expression,
                 }))
             } else {
-                return Err(Error::parse("Expected identifier after ${"));
+                return Err(self.parse_error("Expected identifier after ${"));
             }
         } else if self.check(TokenType::String) {
             // DuckDB allows string literals as table names: SELECT * FROM 'x.y'
@@ -4255,7 +4255,7 @@ impl Parser {
                 version: None,
             })
         } else {
-            return Err(Error::parse(format!(
+            return Err(self.parse_error(format!(
                 "Expected table name or subquery, got {:?}",
                 self.peek().token_type
             )));
@@ -5282,7 +5282,7 @@ impl Parser {
                             // Parse the alias as an expression (not just an identifier)
                             // This allows for string concatenation aliases
                             let alias_expr = self.parse_bitwise()?.ok_or_else(|| {
-                                Error::parse(
+                                self.parse_error(
                                     "Expected expression after AS in PIVOT/UNPIVOT IN clause",
                                 )
                             })?;
@@ -5421,7 +5421,7 @@ impl Parser {
                     let col = if self.match_token(TokenType::As) {
                         // Parse the alias as an expression (allows string concatenation)
                         let alias_expr = self.parse_bitwise()?.ok_or_else(|| {
-                            Error::parse("Expected expression after AS in UNPIVOT IN clause")
+                            self.parse_error("Expected expression after AS in UNPIVOT IN clause")
                         })?;
                         Expression::PivotAlias(Box::new(PivotAlias {
                             this: col,
@@ -6770,7 +6770,7 @@ impl Parser {
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
                 } else {
-                    return Err(Error::parse("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
                 }
             } else {
                 None
@@ -7044,7 +7044,7 @@ impl Parser {
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
                 } else {
-                    return Err(Error::parse("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
                 }
             } else {
                 None
@@ -7132,7 +7132,7 @@ impl Parser {
                 } else if self.match_token(TokenType::Last) {
                     Some(false)
                 } else {
-                    return Err(Error::parse("Expected FIRST or LAST after NULLS"));
+                    return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
                 }
             } else {
                 None
@@ -7432,7 +7432,7 @@ impl Parser {
         // Check for CONNECT BY
         if !self.match_keywords(&[TokenType::Connect, TokenType::By]) {
             if start_before.is_some() {
-                return Err(Error::parse("START WITH without CONNECT BY"));
+                return Err(self.parse_error("START WITH without CONNECT BY"));
             }
             return Ok(None);
         }
@@ -7535,7 +7535,7 @@ impl Parser {
             // Parse the column that follows (not parenthesized)
             let column = self
                 .parse_column()?
-                .ok_or_else(|| Error::parse("Expected column after CONNECT_BY_ROOT"))?;
+                .ok_or_else(|| self.parse_error("Expected column after CONNECT_BY_ROOT"))?;
             return Ok(Expression::ConnectByRoot(Box::new(ConnectByRoot {
                 this: column,
             })));
@@ -7649,14 +7649,14 @@ impl Parser {
         if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ONE" {
             self.advance(); // consume ONE
             if !self.match_token(TokenType::Row) {
-                return Err(Error::parse("Expected ROW after ONE"));
+                return Err(self.parse_error("Expected ROW after ONE"));
             }
             if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "PER") {
-                return Err(Error::parse("Expected PER after ONE ROW"));
+                return Err(self.parse_error("Expected PER after ONE ROW"));
             }
             self.advance(); // consume PER
             if !self.match_token(TokenType::Match) {
-                return Err(Error::parse("Expected MATCH after ONE ROW PER"));
+                return Err(self.parse_error("Expected MATCH after ONE ROW PER"));
             }
             return Ok(Some(MatchRecognizeRows::OneRowPerMatch));
         }
@@ -7664,14 +7664,14 @@ impl Parser {
         // ALL ROWS PER MATCH [variants]
         if self.match_token(TokenType::All) {
             if !self.match_token(TokenType::Rows) {
-                return Err(Error::parse("Expected ROWS after ALL"));
+                return Err(self.parse_error("Expected ROWS after ALL"));
             }
             if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "PER") {
-                return Err(Error::parse("Expected PER after ALL ROWS"));
+                return Err(self.parse_error("Expected PER after ALL ROWS"));
             }
             self.advance(); // consume PER
             if !self.match_token(TokenType::Match) {
-                return Err(Error::parse("Expected MATCH after ALL ROWS PER"));
+                return Err(self.parse_error("Expected MATCH after ALL ROWS PER"));
             }
 
             // Check for optional modifiers
@@ -7684,7 +7684,7 @@ impl Parser {
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchShowEmptyMatches));
                     }
                 }
-                return Err(Error::parse("Expected EMPTY MATCHES after SHOW"));
+                return Err(self.parse_error("Expected EMPTY MATCHES after SHOW"));
             }
 
             if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "OMIT" {
@@ -7696,7 +7696,7 @@ impl Parser {
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchOmitEmptyMatches));
                     }
                 }
-                return Err(Error::parse("Expected EMPTY MATCHES after OMIT"));
+                return Err(self.parse_error("Expected EMPTY MATCHES after OMIT"));
             }
 
             if self.match_token(TokenType::With) {
@@ -7706,7 +7706,7 @@ impl Parser {
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchWithUnmatchedRows));
                     }
                 }
-                return Err(Error::parse("Expected UNMATCHED ROWS after WITH"));
+                return Err(self.parse_error("Expected UNMATCHED ROWS after WITH"));
             }
 
             return Ok(Some(MatchRecognizeRows::AllRowsPerMatch));
@@ -7722,12 +7722,12 @@ impl Parser {
         }
 
         if !self.match_token(TokenType::Match) {
-            return Err(Error::parse("Expected MATCH after AFTER"));
+            return Err(self.parse_error("Expected MATCH after AFTER"));
         }
 
         // Check for SKIP (it might be an identifier)
         if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "SKIP") {
-            return Err(Error::parse("Expected SKIP after AFTER MATCH"));
+            return Err(self.parse_error("Expected SKIP after AFTER MATCH"));
         }
         self.advance(); // consume SKIP
 
@@ -7739,7 +7739,7 @@ impl Parser {
                     return Ok(Some(MatchRecognizeAfter::PastLastRow));
                 }
             }
-            return Err(Error::parse("Expected LAST ROW after PAST"));
+            return Err(self.parse_error("Expected LAST ROW after PAST"));
         }
 
         // TO NEXT ROW / TO FIRST x / TO LAST x
@@ -7749,7 +7749,7 @@ impl Parser {
                 if self.match_token(TokenType::Row) {
                     return Ok(Some(MatchRecognizeAfter::ToNextRow));
                 }
-                return Err(Error::parse("Expected ROW after NEXT"));
+                return Err(self.parse_error("Expected ROW after NEXT"));
             }
 
             if self.match_token(TokenType::First) {
@@ -7762,12 +7762,12 @@ impl Parser {
                 return Ok(Some(MatchRecognizeAfter::ToLast(Identifier::new(name))));
             }
 
-            return Err(Error::parse(
+            return Err(self.parse_error(
                 "Expected NEXT ROW, FIRST x, or LAST x after TO",
             ));
         }
 
-        Err(Error::parse(
+        Err(self.parse_error(
             "Expected PAST LAST ROW or TO ... after AFTER MATCH SKIP",
         ))
     }
@@ -7810,7 +7810,7 @@ impl Parser {
         }
 
         if depth > 0 {
-            return Err(Error::parse("Unclosed parenthesis in PATTERN clause"));
+            return Err(self.parse_error("Unclosed parenthesis in PATTERN clause"));
         }
 
         Ok(pattern.trim().to_string())
@@ -8555,7 +8555,7 @@ impl Parser {
             Ok(result)
         } else if side.is_some() || kind.is_some() {
             // We parsed side/kind but didn't find a set operation - this is an error
-            Err(Error::parse(
+            Err(self.parse_error(
                 "Expected UNION, INTERSECT, or EXCEPT after set operation modifier",
             ))
         } else {
@@ -8789,7 +8789,7 @@ impl Parser {
                     cluster_by: None,
                 })))
             } else {
-                Err(Error::parse("Expected SELECT or ( after ("))
+                Err(self.parse_error("Expected SELECT or ( after ("))
             }
         } else if self.check(TokenType::From) {
             // DuckDB FROM-first syntax without parentheses: ... UNION FROM t
@@ -8827,7 +8827,7 @@ impl Parser {
             } else if self.match_token(TokenType::Rollback) {
                 Some("ROLLBACK".to_string())
             } else {
-                return Err(Error::parse(
+                return Err(self.parse_error(
                     "Expected ABORT, FAIL, IGNORE, REPLACE, or ROLLBACK after INSERT OR",
                 ));
             }
@@ -9419,7 +9419,7 @@ impl Parser {
                 }))))
             } else {
                 // Unexpected token after ON
-                return Err(Error::parse("Expected CONFLICT or DUPLICATE after ON"));
+                return Err(self.parse_error("Expected CONFLICT or DUPLICATE after ON"));
             }
         } else {
             None
@@ -9496,7 +9496,7 @@ impl Parser {
 
         // Parse DO NOTHING or DO UPDATE
         if !self.match_identifier("DO") {
-            return Err(Error::parse("Expected DO after ON CONFLICT"));
+            return Err(self.parse_error("Expected DO after ON CONFLICT"));
         }
 
         let action = if self.match_identifier("NOTHING") {
@@ -9540,7 +9540,7 @@ impl Parser {
                 expressions: sets,
             }))))
         } else {
-            return Err(Error::parse("Expected NOTHING or UPDATE after DO"));
+            return Err(self.parse_error("Expected NOTHING or UPDATE after DO"));
         };
 
         // Parse optional WHERE clause for the UPDATE action
@@ -10126,7 +10126,7 @@ impl Parser {
             if !tables.is_empty() {
                 tables.remove(0)
             } else {
-                return Err(Error::parse("Expected table name in DELETE statement"));
+                return Err(self.parse_error("Expected table name in DELETE statement"));
             }
         };
 
@@ -11082,7 +11082,7 @@ impl Parser {
                 } else if self.match_keywords(&[TokenType::Delete, TokenType::Rows]) {
                     Some(OnCommit::DeleteRows)
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected PRESERVE ROWS or DELETE ROWS after ON COMMIT",
                     ));
                 }
@@ -11761,7 +11761,7 @@ impl Parser {
                 } else if self.match_keywords(&[TokenType::Delete, TokenType::Rows]) {
                     (Some(OnCommit::DeleteRows), None)
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected PRESERVE ROWS or DELETE ROWS after ON COMMIT",
                     ));
                 }
@@ -12017,7 +12017,7 @@ impl Parser {
                 } else if self.match_keywords(&[TokenType::Delete, TokenType::Rows]) {
                     on_commit = Some(OnCommit::DeleteRows);
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected PRESERVE ROWS or DELETE ROWS after ON COMMIT",
                     ));
                 }
@@ -12687,7 +12687,7 @@ impl Parser {
                 },
             )))
         } else {
-            Err(Error::parse(
+            Err(self.parse_error(
                 "Expected IN, FROM, or WITH after FOR VALUES in PARTITION OF",
             ))
         }
@@ -13070,7 +13070,7 @@ impl Parser {
                 } else if self.match_identifier("IMMEDIATE") {
                     constraints.push(TableConstraint::InitiallyDeferred { deferred: false });
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected DEFERRED or IMMEDIATE after INITIALLY",
                     ));
                 }
@@ -14499,7 +14499,7 @@ impl Parser {
                 let buckets = if self.match_token(TokenType::Into) {
                     let num = self.parse_expression()?;
                     if !self.match_identifier("BUCKETS") {
-                        return Err(Error::parse("Expected BUCKETS after INTO <n>"));
+                        return Err(self.parse_error("Expected BUCKETS after INTO <n>"));
                     }
                     Some(Box::new(num))
                 } else {
@@ -14704,7 +14704,7 @@ impl Parser {
                         } else if self.match_identifier("OFF") {
                             false
                         } else {
-                            return Err(Error::parse(
+                            return Err(self.parse_error(
                                 "Expected ON or OFF after SYSTEM_VERSIONING=",
                             ));
                         };
@@ -15210,7 +15210,7 @@ impl Parser {
                 modifiers: Default::default(),
             })
         } else {
-            Err(Error::parse(
+            Err(self.parse_error(
                 "Expected PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, or EXCLUDE",
             ))
         }
@@ -15540,7 +15540,7 @@ impl Parser {
             }
             Ok(ReferentialAction::NoAction)
         } else {
-            Err(Error::parse(
+            Err(self.parse_error(
                 "Expected CASCADE, SET NULL, SET DEFAULT, RESTRICT, or NO ACTION",
             ))
         }
@@ -16368,7 +16368,7 @@ impl Parser {
                         })));
                     }
                 }
-                Err(Error::parse(format!(
+                Err(self.parse_error(format!(
                     "Expected TABLE, VIEW, INDEX, SCHEMA, DATABASE, FUNCTION, PROCEDURE, SEQUENCE, TRIGGER, TYPE, or NAMESPACE after DROP, got {:?}",
                     self.peek().token_type
                 )))
@@ -17251,7 +17251,7 @@ impl Parser {
                     )))
                 }
             } else {
-                Err(Error::parse("Expected COLUMN or TO after RENAME"))
+                Err(self.parse_error("Expected COLUMN or TO after RENAME"))
             }
         } else if self.match_token(TokenType::Alter) {
             // Check for ALTER INDEX (MySQL: ALTER TABLE t ALTER INDEX i VISIBLE/INVISIBLE)
@@ -17262,7 +17262,7 @@ impl Parser {
                 } else if self.match_identifier("INVISIBLE") {
                     false
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected VISIBLE or INVISIBLE after ALTER INDEX name",
                     ));
                 };
@@ -17291,7 +17291,7 @@ impl Parser {
                         compound: false,
                     })
                 } else {
-                    Err(Error::parse(
+                    Err(self.parse_error(
                         "Expected AUTO, NONE, or (columns) after SORTKEY",
                     ))
                 }
@@ -17299,7 +17299,7 @@ impl Parser {
                 // Redshift: ALTER TABLE t ALTER COMPOUND SORTKEY (col1, col2)
                 self.advance(); // consume COMPOUND
                 if !self.match_identifier("SORTKEY") {
-                    return Err(Error::parse("Expected SORTKEY after COMPOUND"));
+                    return Err(self.parse_error("Expected SORTKEY after COMPOUND"));
                 }
                 if self.check(TokenType::LParen) {
                     let wrapped = self.parse_wrapped_id_vars()?;
@@ -17314,7 +17314,7 @@ impl Parser {
                         compound: true,
                     })
                 } else {
-                    Err(Error::parse("Expected (columns) after COMPOUND SORTKEY"))
+                    Err(self.parse_error("Expected (columns) after COMPOUND SORTKEY"))
                 }
             } else if self.check_identifier("DISTSTYLE") {
                 // Redshift: ALTER TABLE t ALTER DISTSTYLE ALL|EVEN|AUTO|KEY [DISTKEY col]
@@ -17328,7 +17328,7 @@ impl Parser {
                 } else if self.match_token(TokenType::Key) || self.match_identifier("KEY") {
                     // DISTSTYLE KEY DISTKEY col
                     if !self.match_identifier("DISTKEY") {
-                        return Err(Error::parse("Expected DISTKEY after DISTSTYLE KEY"));
+                        return Err(self.parse_error("Expected DISTKEY after DISTSTYLE KEY"));
                     }
                     let col = self.expect_identifier_with_quoted()?;
                     Ok(AlterTableAction::AlterDistStyle {
@@ -17336,7 +17336,7 @@ impl Parser {
                         distkey: Some(col),
                     })
                 } else {
-                    Err(Error::parse(
+                    Err(self.parse_error(
                         "Expected ALL, EVEN, AUTO, or KEY after DISTSTYLE",
                     ))
                 }
@@ -17556,7 +17556,7 @@ impl Parser {
                 self.advance();
                 // Consume "METHOD"
                 if !self.match_identifier("METHOD") {
-                    return Err(Error::parse("Expected METHOD after ACCESS"));
+                    return Err(self.parse_error("Expected METHOD after ACCESS"));
                 }
                 let method = self.expect_identifier_or_keyword()?;
                 Ok(AlterTableAction::SetAttribute {
@@ -17727,7 +17727,7 @@ impl Parser {
                     source,
                 })
             } else {
-                Err(Error::parse(
+                Err(self.parse_error(
                     "Expected PARTITION after REPLACE in ALTER TABLE",
                 ))
             }
@@ -17770,7 +17770,7 @@ impl Parser {
                 })
             }
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected ADD, DROP, RENAME, ALTER, SET, UNSET, SWAP, CLUSTER, or REPLACE in ALTER TABLE, got {:?}",
                 self.peek().token_type
             )))
@@ -17930,7 +17930,7 @@ impl Parser {
             } else if self.match_identifier("INVISIBLE") {
                 Ok(AlterColumnAction::SetInvisible)
             } else {
-                Err(Error::parse(
+                Err(self.parse_error(
                     "Expected NOT NULL, DEFAULT, VISIBLE, or INVISIBLE after SET",
                 ))
             }
@@ -17940,7 +17940,7 @@ impl Parser {
             } else if self.match_token(TokenType::Default) {
                 Ok(AlterColumnAction::DropDefault)
             } else {
-                Err(Error::parse("Expected NOT NULL or DEFAULT after DROP"))
+                Err(self.parse_error("Expected NOT NULL or DEFAULT after DROP"))
             }
         } else if self.match_token(TokenType::Comment) {
             // ALTER COLUMN col COMMENT 'comment'
@@ -17970,7 +17970,7 @@ impl Parser {
                 collate,
             })
         } else {
-            Err(Error::parse("Expected SET, DROP, or TYPE in ALTER COLUMN"))
+            Err(self.parse_error("Expected SET, DROP, or TYPE in ALTER COLUMN"))
         }
     }
 
@@ -18248,7 +18248,7 @@ impl Parser {
 
         // Expect DATA
         if !self.match_identifier("DATA") {
-            return Err(Error::parse("Expected DATA after EXPORT"));
+            return Err(self.parse_error("Expected DATA after EXPORT"));
         }
 
         // Optional: WITH CONNECTION connection
@@ -18378,7 +18378,7 @@ impl Parser {
         // Expect DATA keyword
         let data_token = self.advance();
         if data_token.text.to_uppercase() != "DATA" {
-            return Err(Error::parse("Expected DATA after LOAD"));
+            return Err(self.parse_error("Expected DATA after LOAD"));
         }
 
         // Check for LOCAL keyword
@@ -18391,7 +18391,7 @@ impl Parser {
         let inpath = if self.check(TokenType::String) {
             self.advance().text
         } else {
-            return Err(Error::parse("Expected string literal after INPATH"));
+            return Err(self.parse_error("Expected string literal after INPATH"));
         };
 
         // Check for OVERWRITE keyword
@@ -18428,7 +18428,7 @@ impl Parser {
             if self.check(TokenType::String) {
                 Some(self.advance().text)
             } else {
-                return Err(Error::parse("Expected string literal after INPUTFORMAT"));
+                return Err(self.parse_error("Expected string literal after INPUTFORMAT"));
             }
         } else {
             None
@@ -18439,7 +18439,7 @@ impl Parser {
             if self.check(TokenType::String) {
                 Some(self.advance().text)
             } else {
-                return Err(Error::parse("Expected string literal after SERDE"));
+                return Err(self.parse_error("Expected string literal after SERDE"));
             }
         } else {
             None
@@ -18687,7 +18687,7 @@ impl Parser {
             // Collect remaining tokens until end of statement
             return self
                 .parse_command()?
-                .ok_or_else(|| Error::parse("Failed to parse BEGIN block"));
+                .ok_or_else(|| self.parse_error("Failed to parse BEGIN block"));
         }
 
         // Check for transaction kind: DEFERRED, IMMEDIATE, EXCLUSIVE (SQLite)
@@ -18848,7 +18848,7 @@ impl Parser {
             let token = self.advance(); // consume EXPLAIN
             token.comments
         } else {
-            return Err(Error::parse("Expected DESCRIBE, DESC, or EXPLAIN"));
+            return Err(self.parse_error("Expected DESCRIBE, DESC, or EXPLAIN"));
         };
 
         // Check for EXTENDED or FORMATTED keywords
@@ -20177,7 +20177,7 @@ impl Parser {
             }));
         }
 
-        Err(Error::parse("Expected value for COPY parameter"))
+        Err(self.parse_error("Expected value for COPY parameter"))
     }
 
     /// Parse Snowflake stage reference when tokenized as String (e.g., '@mystage', '@external/location')
@@ -20565,7 +20565,7 @@ impl Parser {
             }));
         }
 
-        Err(Error::parse("Expected file location"))
+        Err(self.parse_error("Expected file location"))
     }
 
     /// Parse Snowflake stage reference as a string for PUT/GET/COPY statements
@@ -20688,7 +20688,7 @@ impl Parser {
             return Ok(Expression::Literal(Literal::String(stage_path)));
         }
 
-        Err(Error::parse("Expected stage reference starting with @"))
+        Err(self.parse_error("Expected stage reference starting with @"))
     }
 
     /// Parse PUT statement (Snowflake)
@@ -21073,7 +21073,7 @@ impl Parser {
                 self.current = saved_pos;
                 return self
                     .parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse GRANT statement"));
+                    .ok_or_else(|| self.parse_error("Failed to parse GRANT statement"));
             }
             self.current = saved_pos;
         }
@@ -21174,7 +21174,7 @@ impl Parser {
                 self.current = saved_pos;
                 return self
                     .parse_command()?
-                    .ok_or_else(|| Error::parse("Failed to parse REVOKE statement"));
+                    .ok_or_else(|| self.parse_error("Failed to parse REVOKE statement"));
             }
             self.current = saved_pos;
         }
@@ -21187,7 +21187,7 @@ impl Parser {
                 self.expect(TokenType::For)?;
                 true
             } else {
-                return Err(Error::parse("Expected OPTION after GRANT in REVOKE"));
+                return Err(self.parse_error("Expected OPTION after GRANT in REVOKE"));
             }
         } else {
             false
@@ -21464,7 +21464,7 @@ impl Parser {
         if self.check(TokenType::Is) {
             self.advance();
         } else {
-            return Err(Error::parse("Expected IS in COMMENT ON statement"));
+            return Err(self.parse_error("Expected IS in COMMENT ON statement"));
         }
 
         // Parse the comment expression (usually a string literal)
@@ -21760,7 +21760,7 @@ impl Parser {
                     }
                     continue;
                 }
-                return Err(Error::parse("Expected '=' or 'TO' in SET statement"));
+                return Err(self.parse_error("Expected '=' or 'TO' in SET statement"));
             }
 
             // Parse value - handle ON/OFF keywords as identifiers (MySQL: SET autocommit = ON)
@@ -22347,7 +22347,7 @@ impl Parser {
                         }
                     }
                     if !self.match_token(TokenType::Gt) {
-                        return Err(Error::parse("Expected > after TABLE column definitions"));
+                        return Err(self.parse_error("Expected > after TABLE column definitions"));
                     }
                     returns_table_body = Some(format!("TABLE <{}>", cols.join(", ")));
                 } else if self.check(TokenType::LParen) {
@@ -22493,14 +22493,14 @@ impl Parser {
                 let value = if self.match_token(TokenType::From) {
                     // SET key FROM CURRENT
                     if !self.match_token(TokenType::Current) {
-                        return Err(Error::parse("Expected CURRENT after FROM in SET option"));
+                        return Err(self.parse_error("Expected CURRENT after FROM in SET option"));
                     }
                     FunctionSetValue::FromCurrent
                 } else {
                     // SET key = value or SET key TO value
                     let use_to = self.match_token(TokenType::To);
                     if !use_to && !self.match_token(TokenType::Eq) {
-                        return Err(Error::parse("Expected = or TO after SET key"));
+                        return Err(self.parse_error("Expected = or TO after SET key"));
                     }
                     // Value can be a string literal or identifier
                     let val = if self.check(TokenType::String) {
@@ -23237,7 +23237,7 @@ impl Parser {
         let value: i64 = tok
             .text
             .parse()
-            .map_err(|_| Error::parse(format!("Invalid integer: {}", tok.text)))?;
+            .map_err(|_| self.parse_error(format!("Invalid integer: {}", tok.text)))?;
         Ok(if negative { -value } else { value })
     }
 
@@ -23341,7 +23341,7 @@ impl Parser {
             self.expect(TokenType::Of)?;
             TriggerTiming::InsteadOf
         } else {
-            return Err(Error::parse(
+            return Err(self.parse_error(
                 "Expected BEFORE, AFTER, or INSTEAD OF in trigger",
             ));
         };
@@ -23495,7 +23495,7 @@ impl Parser {
             }
             TriggerBody::Block(block_content.trim().to_string())
         } else {
-            return Err(Error::parse("Expected EXECUTE or BEGIN in trigger body"));
+            return Err(self.parse_error("Expected EXECUTE or BEGIN in trigger body"));
         };
 
         Ok(Expression::CreateTrigger(Box::new(CreateTrigger {
@@ -23612,7 +23612,7 @@ impl Parser {
                 canonical,
             }
         } else {
-            return Err(Error::parse(
+            return Err(self.parse_error(
                 "Expected ENUM, composite type definition, or RANGE after AS",
             ));
         };
@@ -23882,7 +23882,7 @@ impl Parser {
         } else if self.match_identifier("UNSET") {
             // Hive: UNSET TBLPROPERTIES ('key1', 'key2', ...)
             if !self.match_identifier("TBLPROPERTIES") {
-                return Err(Error::parse("Expected TBLPROPERTIES after UNSET"));
+                return Err(self.parse_error("Expected TBLPROPERTIES after UNSET"));
             }
             let keys = self.parse_tblproperties_key_list()?;
             actions.push(AlterViewAction::UnsetTblproperties(keys));
@@ -25400,10 +25400,10 @@ impl Parser {
                     let zone = self.parse_unary()?;
                     expr = Expression::AtTimeZone(Box::new(AtTimeZone { this: expr, zone }));
                 } else {
-                    return Err(Error::parse("Expected ZONE after AT TIME"));
+                    return Err(self.parse_error("Expected ZONE after AT TIME"));
                 }
             } else {
-                return Err(Error::parse("Expected TIME after AT"));
+                return Err(self.parse_error("Expected TIME after AT"));
             }
         }
 
@@ -25914,7 +25914,7 @@ impl Parser {
                     // a::2 -> JSON_EXTRACT_JSON(a, '2')
                     self.advance().text
                 } else {
-                    return Err(Error::parse("Expected identifier after ::"));
+                    return Err(self.parse_error("Expected identifier after ::"));
                 };
 
                 expr = Expression::Function(Box::new(Function::new(
@@ -25926,7 +25926,7 @@ impl Parser {
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
                     self.advance().text
                 } else {
-                    return Err(Error::parse("Expected identifier after ::$"));
+                    return Err(self.parse_error("Expected identifier after ::$"));
                 };
 
                 expr = Expression::Function(Box::new(Function::new(
@@ -25938,7 +25938,7 @@ impl Parser {
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
                     self.advance().text
                 } else {
-                    return Err(Error::parse("Expected identifier after ::%"));
+                    return Err(self.parse_error("Expected identifier after ::%"));
                 };
 
                 expr = Expression::Function(Box::new(Function::new(
@@ -25950,7 +25950,7 @@ impl Parser {
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
                     self.advance().text
                 } else {
-                    return Err(Error::parse("Expected identifier after ::?"));
+                    return Err(self.parse_error("Expected identifier after ::?"));
                 };
 
                 // For now, create a function that will be handled specially
@@ -26186,7 +26186,7 @@ impl Parser {
                         let part = self.advance().text;
                         path_string.push_str(&part);
                     } else {
-                        return Err(Error::parse("Expected identifier after . in JSON path"));
+                        return Err(self.parse_error("Expected identifier after . in JSON path"));
                     }
                 } else {
                     break;
@@ -26334,7 +26334,7 @@ impl Parser {
             // Parse the column that follows (not parenthesized)
             let column = self
                 .parse_column()?
-                .ok_or_else(|| Error::parse("Expected column after CONNECT_BY_ROOT"))?;
+                .ok_or_else(|| self.parse_error("Expected column after CONNECT_BY_ROOT"))?;
             return Ok(Expression::ConnectByRoot(Box::new(ConnectByRoot {
                 this: column,
             })));
@@ -26430,7 +26430,7 @@ impl Parser {
 
                 // Expect IN keyword
                 if !self.match_token(TokenType::In) {
-                    return Err(Error::parse("Expected IN in comprehension"));
+                    return Err(self.parse_error("Expected IN in comprehension"));
                 }
 
                 // Parse iterator expression
@@ -26587,7 +26587,7 @@ impl Parser {
                                 safe: None,
                             },
                         ))),
-                        _ => Err(crate::error::Error::Parse(format!(
+                        _ => Err(self.parse_error(format!(
                             "Unknown ODBC datetime type: {}",
                             type_text
                         ))),
@@ -27146,7 +27146,7 @@ impl Parser {
                 } else if let Expression::Identifier(id) = first_expr {
                     vec![id]
                 } else {
-                    return Err(Error::parse("Expected identifier as lambda parameter"));
+                    return Err(self.parse_error("Expected identifier as lambda parameter"));
                 };
                 let body = self.parse_expression()?;
                 self.expect(TokenType::RParen)?;
@@ -27174,7 +27174,7 @@ impl Parser {
                 } else if let Expression::Identifier(id) = first_expr {
                     vec![id]
                 } else {
-                    return Err(Error::parse("Expected identifier as lambda parameter"));
+                    return Err(self.parse_error("Expected identifier as lambda parameter"));
                 };
                 let body = self.parse_expression()?;
                 return Ok(Expression::Lambda(Box::new(LambdaExpr {
@@ -28635,7 +28635,7 @@ impl Parser {
                         expression: None,
                     })));
                 } else {
-                    return Err(Error::parse("Expected parameter name after %("));
+                    return Err(self.parse_error("Expected parameter name after %("));
                 }
             }
             // Check for %s - anonymous parameter
@@ -28801,7 +28801,7 @@ impl Parser {
                 // Handle @@keyword (e.g., @@sql_mode when sql_mode is a keyword)
                 self.advance().text
             } else {
-                return Err(Error::parse("Expected variable name after @@"));
+                return Err(self.parse_error("Expected variable name after @@"));
             };
             return Ok(Expression::Parameter(Box::new(Parameter {
                 name: Some(name),
@@ -28836,7 +28836,7 @@ impl Parser {
                     let token = self.advance();
                     (token.text, false, false)
                 } else {
-                    return Err(Error::parse("Expected variable name after @"));
+                    return Err(self.parse_error("Expected variable name after @"));
                 };
             return Ok(Expression::Parameter(Box::new(Parameter {
                 name: Some(name),
@@ -28886,7 +28886,7 @@ impl Parser {
                         expression: None,
                     })));
                 }
-                return Err(Error::parse(format!(
+                return Err(self.parse_error(format!(
                     "Invalid colon parameter: :{}",
                     num_token.text
                 )));
@@ -28903,7 +28903,7 @@ impl Parser {
                     expression: None,
                 })));
             } else {
-                return Err(Error::parse("Expected parameter name after :"));
+                return Err(self.parse_error("Expected parameter name after :"));
             }
         }
 
@@ -28921,7 +28921,7 @@ impl Parser {
                             let expr_token = self.advance();
                             Some(expr_token.text.clone())
                         } else {
-                            return Err(Error::parse("Expected identifier after : in ${...}"));
+                            return Err(self.parse_error("Expected identifier after : in ${...}"));
                         }
                     } else {
                         None
@@ -28936,7 +28936,7 @@ impl Parser {
                         expression,
                     })));
                 } else {
-                    return Err(Error::parse("Expected identifier after ${"));
+                    return Err(self.parse_error("Expected identifier after ${"));
                 }
             }
             // Check for number following the dollar sign → positional parameter ($1, $2, etc.)
@@ -28958,7 +28958,7 @@ impl Parser {
                     return self.maybe_parse_subscript(result);
                 }
                 // If it's not a valid integer, treat as error
-                return Err(Error::parse(format!(
+                return Err(self.parse_error(format!(
                     "Invalid dollar parameter: ${}",
                     num_token.text
                 )));
@@ -28979,7 +28979,7 @@ impl Parser {
                 })));
             }
             // Just a $ by itself - treat as error
-            return Err(Error::parse("Expected number or identifier after $"));
+            return Err(self.parse_error("Expected number or identifier after $"));
         }
 
         // %s or %(name)s percent parameter (PostgreSQL psycopg2 style)
@@ -29003,7 +29003,7 @@ impl Parser {
                         expression: None,
                     })));
                 } else {
-                    return Err(Error::parse("Expected parameter name after %("));
+                    return Err(self.parse_error("Expected parameter name after %("));
                 }
             }
             // Check for %s - anonymous parameter
@@ -29019,7 +29019,7 @@ impl Parser {
                 })));
             }
             // If not followed by 's' or '(', it's not a parameter - error
-            return Err(Error::parse("Expected 's' or '(' after % for parameter"));
+            return Err(self.parse_error("Expected 's' or '(' after % for parameter"));
         }
 
         // LEFT, RIGHT, OUTER, FULL, ALL etc. keywords as identifiers when followed by DOT
@@ -29105,7 +29105,7 @@ impl Parser {
             return self.maybe_parse_subscript(col);
         }
 
-        Err(Error::parse(format!(
+        Err(self.parse_error(format!(
             "Unexpected token: {:?}",
             self.peek().token_type
         )))
@@ -29620,7 +29620,7 @@ impl Parser {
                                     quoted: false,
                                 }))
                             } else {
-                                return Err(Error::parse(format!(
+                                return Err(self.parse_error(format!(
                                     "{} cannot have zero arguments",
                                     upper_name
                                 )));
@@ -29705,7 +29705,7 @@ impl Parser {
                             self.advance();
                             false
                         } else {
-                            return Err(Error::parse(
+                            return Err(self.parse_error(
                                 "Expected MAX or MIN after HAVING in aggregate",
                             ));
                         };
@@ -30504,7 +30504,7 @@ impl Parser {
                 let field = self.parse_datetime_field()?;
                 // Accept FROM or comma (Snowflake uses comma syntax)
                 if !self.match_token(TokenType::From) && !self.match_token(TokenType::Comma) {
-                    return Err(Error::parse("Expected FROM or comma after EXTRACT field"));
+                    return Err(self.parse_error("Expected FROM or comma after EXTRACT field"));
                 }
                 let this = self.parse_expression()?;
                 let this = self.try_clickhouse_func_arg_alias(this);
@@ -30595,7 +30595,7 @@ impl Parser {
             "POSITION" => {
                 let expr = self
                     .parse_position()?
-                    .ok_or_else(|| Error::parse("Expected expression in POSITION"))?;
+                    .ok_or_else(|| self.parse_error("Expected expression in POSITION"))?;
                 self.expect(TokenType::RParen)?;
                 Ok(expr)
             }
@@ -31764,7 +31764,7 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     Ok(xml_table)
                 } else {
-                    Err(Error::parse("Failed to parse XMLTABLE"))
+                    Err(self.parse_error("Failed to parse XMLTABLE"))
                 }
             }
 
@@ -32099,7 +32099,7 @@ impl Parser {
                 };
                 // Accept both FROM and comma as separator (Snowflake supports both syntaxes)
                 if !self.match_token(TokenType::From) && !self.match_token(TokenType::Comma) {
-                    return Err(Error::parse("Expected FROM or comma in DATE_PART"));
+                    return Err(self.parse_error("Expected FROM or comma in DATE_PART"));
                 }
                 let from_expr = self.parse_expression()?;
                 self.expect(TokenType::RParen)?;
@@ -32741,7 +32741,7 @@ impl Parser {
                         false_value: None,
                     })))
                 } else {
-                    Err(Error::parse("IF function requires 2 or 3 arguments"))
+                    Err(self.parse_error("IF function requires 2 or 3 arguments"))
                 }
             }
 
@@ -34049,7 +34049,7 @@ impl Parser {
 
         // Expect DENSE_RANK
         if !self.match_identifier("DENSE_RANK") {
-            return Err(Error::parse("Expected DENSE_RANK in KEEP clause"));
+            return Err(self.parse_error("Expected DENSE_RANK in KEEP clause"));
         }
 
         // Expect FIRST or LAST
@@ -34058,7 +34058,7 @@ impl Parser {
         } else if self.match_token(TokenType::Last) {
             false
         } else {
-            return Err(Error::parse("Expected FIRST or LAST in KEEP clause"));
+            return Err(self.parse_error("Expected FIRST or LAST in KEEP clause"));
         };
 
         // Expect ORDER BY
@@ -34236,7 +34236,7 @@ impl Parser {
             }));
         }
 
-        Err(Error::parse(format!(
+        Err(self.parse_error(format!(
             "Unexpected token in JSON path: {:?}",
             self.peek().token_type
         )))
@@ -34657,7 +34657,7 @@ impl Parser {
                         field: Identifier::new(format!("-{}", num)),
                     }));
                 } else {
-                    return Err(Error::parse("Expected field name after dot"));
+                    return Err(self.parse_error("Expected field name after dot"));
                 }
             } else if self.match_token(TokenType::Collate) {
                 // Parse COLLATE 'collation_name' or COLLATE "collation_name" or COLLATE collation_name
@@ -34699,7 +34699,7 @@ impl Parser {
                             } else if self.check(TokenType::QuotedIdentifier) {
                                 self.advance().text
                             } else {
-                                return Err(Error::parse(
+                                return Err(self.parse_error(
                                     "Expected identifier or number after :: in JSON path",
                                 ));
                             };
@@ -34715,7 +34715,7 @@ impl Parser {
                             } else if self.check(TokenType::Number) {
                                 self.advance().text
                             } else {
-                                return Err(Error::parse(
+                                return Err(self.parse_error(
                                     "Expected identifier or number after ::$ in JSON path",
                                 ));
                             };
@@ -34731,7 +34731,7 @@ impl Parser {
                             } else if self.check(TokenType::Number) {
                                 self.advance().text
                             } else {
-                                return Err(Error::parse(
+                                return Err(self.parse_error(
                                     "Expected identifier or number after ::% in JSON path",
                                 ));
                             };
@@ -34747,7 +34747,7 @@ impl Parser {
                             } else if self.check(TokenType::Number) {
                                 self.advance().text
                             } else {
-                                return Err(Error::parse(
+                                return Err(self.parse_error(
                                     "Expected identifier or number after ::? in JSON path",
                                 ));
                             };
@@ -34991,7 +34991,7 @@ impl Parser {
                     } else if self.match_token(TokenType::Last) {
                         Some(false)
                     } else {
-                        return Err(Error::parse("Expected FIRST or LAST after NULLS"));
+                        return Err(self.parse_error("Expected FIRST or LAST after NULLS"));
                     }
                 } else {
                     None
@@ -35130,7 +35130,7 @@ impl Parser {
                 self.expect(TokenType::Others)?;
                 Some(WindowFrameExclude::NoOthers)
             } else {
-                return Err(Error::parse(
+                return Err(self.parse_error(
                     "Expected CURRENT ROW, GROUP, TIES, or NO OTHERS after EXCLUDE",
                 ));
             }
@@ -35162,7 +35162,7 @@ impl Parser {
                 let text = self.tokens[self.current - 1].text.clone();
                 Ok((WindowFrameBound::UnboundedFollowing, Some(text)))
             } else {
-                Err(Error::parse(
+                Err(self.parse_error(
                     "Expected PRECEDING or FOLLOWING after UNBOUNDED",
                 ))
             }
@@ -36042,8 +36042,8 @@ impl Parser {
             let default_val = self.parse_primary()?;
             // Expect "ON CONVERSION ERROR"
             if !self.match_text_seq(&["ON", "CONVERSION", "ERROR"]) {
-                return Err(crate::error::Error::Parse(
-                    "Expected ON CONVERSION ERROR".to_string(),
+                return Err(self.parse_error(
+                    "Expected ON CONVERSION ERROR",
                 ));
             }
             Some(Box::new(default_val))
@@ -37690,6 +37690,17 @@ impl Parser {
                     DataType::Custom {
                         name: format!("{}({})", base_name, args),
                     }
+                } else if matches!(base, DataType::Custom { .. }) && self.check(TokenType::Dot) {
+                    // Handle schema-qualified user-defined types (e.g., app.status_enum)
+                    // by consuming dot-separated identifiers like Python sqlglot's
+                    // _parse_user_defined_type()
+                    // Use raw_name to preserve original case for schema-qualified types
+                    let mut type_name = raw_name.to_string();
+                    while self.match_token(TokenType::Dot) {
+                        let tok = self.advance();
+                        type_name = format!("{}.{}", type_name, tok.text);
+                    }
+                    DataType::Custom { name: type_name }
                 } else if matches!(base, DataType::Custom { .. }) && self.config.dialect.is_none() {
                     // Preserve original case for user-defined types in generic mode
                     DataType::Custom {
@@ -38376,7 +38387,7 @@ impl Parser {
                 let alias = self.expect_identifier_or_keyword()?;
                 replacements.push(Alias::new(expr, Identifier::new(alias)));
             } else {
-                return Err(Error::parse("Expected LParen after REPLACE"));
+                return Err(self.parse_error("Expected LParen after REPLACE"));
             }
             replace = Some(replacements);
         }
@@ -38445,6 +38456,12 @@ impl Parser {
                 | TokenType::Semicolon
                 | TokenType::Where
         )
+    }
+
+    /// Create a parse error with position from the current token
+    fn parse_error(&self, message: impl Into<String>) -> Error {
+        let span = self.peek().span;
+        Error::parse(message, span.line, span.column)
     }
 
     /// Peek at current token
@@ -39200,7 +39217,7 @@ impl Parser {
             let start = self.current.saturating_sub(3);
             let end = (self.current + 4).min(self.tokens.len());
             let context = self.tokens_to_sql(start, end).replace('\n', " ");
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected {:?}, got {} ('{}') near [{}]",
                 token_type, got, got_text, context
             )))
@@ -39241,7 +39258,7 @@ impl Parser {
                 trailing_comments: Vec::new(),
             })
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected Gt, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39257,7 +39274,7 @@ impl Parser {
         if self.check(TokenType::String) || self.check(TokenType::DollarString) {
             Ok(self.advance().text)
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected string, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39415,9 +39432,9 @@ impl Parser {
                     });
                 }
             }
-            Err(Error::parse("Expected identifier, got LBrace"))
+            Err(self.parse_error("Expected identifier, got LBrace"))
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39482,9 +39499,9 @@ impl Parser {
                     });
                 }
             }
-            Err(Error::parse("Expected identifier, got LBrace"))
+            Err(self.parse_error("Expected identifier, got LBrace"))
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39514,9 +39531,9 @@ impl Parser {
                     ));
                 }
             }
-            Err(Error::parse("Expected identifier, got LBrace"))
+            Err(self.parse_error("Expected identifier, got LBrace"))
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39546,9 +39563,9 @@ impl Parser {
                     ));
                 }
             }
-            Err(Error::parse("Expected identifier, got LBrace"))
+            Err(self.parse_error("Expected identifier, got LBrace"))
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39579,9 +39596,9 @@ impl Parser {
                     ));
                 }
             }
-            Err(Error::parse("Expected identifier, got LBrace"))
+            Err(self.parse_error("Expected identifier, got LBrace"))
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39606,7 +39623,7 @@ impl Parser {
                 trailing_comments: Vec::new(),
             })
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39649,7 +39666,7 @@ impl Parser {
                 trailing_comments: Vec::new(),
             })
         } else {
-            Err(Error::parse(format!(
+            Err(self.parse_error(format!(
                 "Expected identifier, got {:?}",
                 if self.is_at_end() {
                     "end of input".to_string()
@@ -39667,10 +39684,10 @@ impl Parser {
             let text = self.advance().text;
             let val = text
                 .parse::<i64>()
-                .map_err(|_| Error::parse(format!("Invalid number: {}", text)))?;
+                .map_err(|_| self.parse_error(format!("Invalid number: {}", text)))?;
             Ok(if negative { -val } else { val })
         } else {
-            Err(Error::parse("Expected number"))
+            Err(self.parse_error("Expected number"))
         }
     }
 
@@ -40739,7 +40756,7 @@ impl Parser {
                 }))));
             } else {
                 // Not TO after identifier - put it back and return error
-                return Err(Error::parse("Expected COLUMN or TO after RENAME"));
+                return Err(self.parse_error("Expected COLUMN or TO after RENAME"));
             }
         }
 
@@ -41567,7 +41584,7 @@ impl Parser {
         }
         // FORCE CHECKPOINT or other: fallback to command
         self.parse_as_command()?
-            .ok_or_else(|| Error::parse("Failed to parse FORCE statement"))
+            .ok_or_else(|| self.parse_error("Failed to parse FORCE statement"))
     }
 
     /// parse_summarize_statement - Parses SUMMARIZE statement (DuckDB)
@@ -41889,7 +41906,7 @@ impl Parser {
                     if let Some(slice) = self.parse_slice_with_this(Some(expr))? {
                         slice
                     } else {
-                        return Err(Error::parse("Failed to parse slice"));
+                        return Err(self.parse_error("Failed to parse slice"));
                     }
                 } else {
                     expr
@@ -41910,7 +41927,7 @@ impl Parser {
 
                 // Expect IN keyword
                 if !self.match_token(TokenType::In) {
-                    return Err(Error::parse("Expected IN in comprehension"));
+                    return Err(self.parse_error("Expected IN in comprehension"));
                 }
 
                 // Parse iterator expression
@@ -43500,7 +43517,7 @@ impl Parser {
         // This is handled by parse_range which produces an In expression
         let this = self
             .parse_range()?
-            .ok_or_else(|| Error::parse("Expected expression after FOR"))?;
+            .ok_or_else(|| self.parse_error("Expected expression after FOR"))?;
 
         // Match DO keyword
         self.match_text_seq(&["DO"]);
@@ -43915,7 +43932,7 @@ impl Parser {
             String::new()
         };
         if kind_str.is_empty() {
-            return Err(Error::parse("Expected dictionary property kind"));
+            return Err(self.parse_error("Expected dictionary property kind"));
         }
 
         // Parse optional settings in nested parens
@@ -44308,14 +44325,14 @@ impl Parser {
 
         // Expect FROM or comma
         if !self.match_token(TokenType::From) && !self.match_token(TokenType::Comma) {
-            return Err(Error::parse("Expected FROM or comma after EXTRACT field"));
+            return Err(self.parse_error("Expected FROM or comma after EXTRACT field"));
         }
 
         // Parse the expression to extract from
         let expression = self.parse_bitwise()?;
         let this = match expression {
             Some(expr) => self.try_clickhouse_func_arg_alias(expr),
-            None => return Err(Error::parse("Expected expression after FROM in EXTRACT")),
+            None => return Err(self.parse_error("Expected expression after FROM in EXTRACT")),
         };
 
         Ok(Some(Expression::Extract(Box::new(ExtractFunc {
@@ -45333,7 +45350,7 @@ impl Parser {
                 if self.match_text_seq(&["$"]) {
                     tags.push("$".to_string());
                 } else {
-                    return Err(Error::parse("No closing $ found"));
+                    return Err(self.parse_error("No closing $ found"));
                 }
             }
         }
@@ -45375,7 +45392,7 @@ impl Parser {
             content_parts.push(self.advance().text.clone());
         }
 
-        Err(Error::parse(&format!("No closing {} found", closing_tag)))
+        Err(self.parse_error(&format!("No closing {} found", closing_tag)))
     }
 
     /// parse_hint_body - Delegates to parse_hint_fallback_to_string
@@ -45573,7 +45590,7 @@ impl Parser {
                     quoted: false,
                 }))));
             } else {
-                return Err(Error::parse("IF function requires 2 or 3 arguments"));
+                return Err(self.parse_error("IF function requires 2 or 3 arguments"));
             }
         }
 
@@ -45634,13 +45651,13 @@ impl Parser {
         // Parse true value - use parse_disjunction to stop at ELSE/END
         let true_value = match self.parse_disjunction()? {
             Some(v) => v,
-            None => return Err(Error::parse("Expected expression after THEN")),
+            None => return Err(self.parse_error("Expected expression after THEN")),
         };
 
         let false_value = if self.match_token(TokenType::Else) {
             match self.parse_disjunction()? {
                 Some(v) => Some(v),
-                None => return Err(Error::parse("Expected expression after ELSE")),
+                None => return Err(self.parse_error("Expected expression after ELSE")),
             }
         } else {
             None
@@ -46589,12 +46606,12 @@ impl Parser {
 
             // Must have at least one parameter
             if params.is_empty() {
-                return Err(Error::parse("LAMBDA requires at least one parameter"));
+                return Err(self.parse_error("LAMBDA requires at least one parameter"));
             }
 
             // Expect colon separator
             if !self.match_token(TokenType::Colon) {
-                return Err(Error::parse("Expected ':' after LAMBDA parameters"));
+                return Err(self.parse_error("Expected ':' after LAMBDA parameters"));
             }
 
             let body = self.parse_expression()?;
@@ -46887,7 +46904,7 @@ impl Parser {
         self.expect(TokenType::Lock)?;
         let locking = self
             .parse_locking()?
-            .ok_or_else(|| Error::parse("Expected LOCKING clause"))?;
+            .ok_or_else(|| self.parse_error("Expected LOCKING clause"))?;
         let query = if self.check(TokenType::With) {
             self.parse_statement()?
         } else {
@@ -47124,7 +47141,7 @@ impl Parser {
 
         // USING clause
         if !self.match_token(TokenType::Using) {
-            return Err(Error::parse("Expected USING in MERGE statement"));
+            return Err(self.parse_error("Expected USING in MERGE statement"));
         }
 
         // Parse source table or subquery
@@ -47333,7 +47350,7 @@ impl Parser {
 
             // THEN action
             if !self.match_token(TokenType::Then) {
-                return Err(Error::parse("Expected THEN in WHEN clause"));
+                return Err(self.parse_error("Expected THEN in WHEN clause"));
             }
 
             // Parse the action: INSERT, UPDATE, DELETE, or other keywords (DO NOTHING, etc.)
@@ -47373,7 +47390,7 @@ impl Parser {
                                             col_expr
                                         }
                                     } else {
-                                        return Err(Error::parse(
+                                        return Err(self.parse_error(
                                             "Expected column name after dot in MERGE INSERT",
                                         ));
                                     }
@@ -47455,7 +47472,7 @@ impl Parser {
                                             col_expr
                                         }
                                     } else {
-                                        return Err(Error::parse("Expected column name after dot"));
+                                        return Err(self.parse_error("Expected column name after dot"));
                                     }
                                 } else {
                                     col
@@ -47506,14 +47523,14 @@ impl Parser {
                         this: "DO NOTHING".to_string(),
                     }))
                 } else {
-                    return Err(Error::parse("Expected NOTHING after DO"));
+                    return Err(self.parse_error("Expected NOTHING after DO"));
                 }
             } else {
                 // Other action
                 if let Some(var) = self.parse_var()? {
                     var
                 } else {
-                    return Err(Error::parse(
+                    return Err(self.parse_error(
                         "Expected INSERT, UPDATE, DELETE, or action keyword",
                     ));
                 }
@@ -47746,13 +47763,13 @@ impl Parser {
 
             // Extract the identifier for the alias
             let alias_ident =
-                match this.ok_or_else(|| Error::parse("Expected identifier for alias"))? {
+                match this.ok_or_else(|| self.parse_error("Expected identifier for alias"))? {
                     Expression::Identifier(id) => id,
                     _ => Identifier::new(String::new()),
                 };
 
             return Ok(Some(Expression::Alias(Box::new(Alias {
-                this: expression.ok_or_else(|| Error::parse("Expected expression after AS"))?,
+                this: expression.ok_or_else(|| self.parse_error("Expected expression after AS"))?,
                 alias: alias_ident,
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
@@ -47818,7 +47835,7 @@ impl Parser {
         // Manually parse identifier parts separated by dots
         let first = self
             .parse_id_var()?
-            .ok_or_else(|| Error::parse("Expected sequence name after NEXT VALUE FOR"))?;
+            .ok_or_else(|| self.parse_error("Expected sequence name after NEXT VALUE FOR"))?;
         let first_id = match first {
             Expression::Identifier(id) => id,
             Expression::Var(v) => Identifier {
@@ -48047,7 +48064,7 @@ impl Parser {
 
         // Return appropriate expression based on type
         let value =
-            value.ok_or_else(|| Error::parse("Expected string value in ODBC datetime literal"))?;
+            value.ok_or_else(|| self.parse_error("Expected string value in ODBC datetime literal"))?;
         match type_indicator.as_str() {
             "d" => Ok(Some(Expression::Date(Box::new(UnaryFunc::new(value))))),
             "t" => Ok(Some(Expression::Time(Box::new(UnaryFunc::new(value))))),
@@ -48236,7 +48253,7 @@ impl Parser {
                 };
                 cols.push(Expression::OpenJSONColumnDef(Box::new(OpenJSONColumnDef {
                     this: Box::new(col_name.ok_or_else(|| {
-                        Error::parse("Expected column name in OPENJSON WITH clause")
+                        self.parse_error("Expected column name in OPENJSON WITH clause")
                     })?),
                     kind: String::new(), // kept for backwards compat, use data_type instead
                     path: col_path,
@@ -48452,22 +48469,22 @@ impl Parser {
         {
             match self.parse_bitwise() {
                 Ok(Some(expr)) => expr,
-                Ok(None) => return Err(Error::parse("Expected replacement expression in OVERLAY")),
+                Ok(None) => return Err(self.parse_error("Expected replacement expression in OVERLAY")),
                 Err(e) => return Err(e),
             }
         } else {
-            return Err(Error::parse("Expected PLACING in OVERLAY function"));
+            return Err(self.parse_error("Expected PLACING in OVERLAY function"));
         };
 
         // Parse FROM position (or comma then position)
         let from = if self.match_token(TokenType::From) || self.match_token(TokenType::Comma) {
             match self.parse_bitwise() {
                 Ok(Some(expr)) => expr,
-                Ok(None) => return Err(Error::parse("Expected position expression in OVERLAY")),
+                Ok(None) => return Err(self.parse_error("Expected position expression in OVERLAY")),
                 Err(e) => return Err(e),
             }
         } else {
-            return Err(Error::parse("Expected FROM in OVERLAY function"));
+            return Err(self.parse_error("Expected FROM in OVERLAY function"));
         };
 
         // Parse optional FOR length (or comma then length)
@@ -49387,7 +49404,7 @@ impl Parser {
             if let Some(transform) = transform_result {
                 // Wrap current query with transform in a PipeOperator
                 let current_query = query.ok_or_else(|| {
-                    Error::parse("Expected base query before pipe syntax transform")
+                    self.parse_error("Expected base query before pipe syntax transform")
                 })?;
                 query = Some(Expression::PipeOperator(Box::new(PipeOperator {
                     this: current_query,
@@ -49468,7 +49485,7 @@ impl Parser {
 
         // Expect IN keyword
         if !self.match_token(TokenType::In) {
-            return Err(Error::parse("Expecting IN"));
+            return Err(self.parse_error("Expecting IN"));
         }
 
         // Check if it's a parenthesized list or a field reference
@@ -49653,7 +49670,7 @@ impl Parser {
         }
 
         if self.current <= kind_start || !self.match_token(TokenType::RBrace) {
-            return Err(Error::parse("Expected } in ClickHouse query parameter"));
+            return Err(self.parse_error("Expected } in ClickHouse query parameter"));
         }
 
         let kind = self
@@ -49661,7 +49678,7 @@ impl Parser {
             .trim()
             .to_string();
         if kind.is_empty() {
-            return Err(Error::parse(
+            return Err(self.parse_error(
                 "Expected parameter kind in ClickHouse query parameter",
             ));
         }
@@ -49706,7 +49723,7 @@ impl Parser {
                         occurrence: None,
                     }))));
                 }
-                Ok(None) => return Err(Error::parse("Expected expression after IN in POSITION")),
+                Ok(None) => return Err(self.parse_error("Expected expression after IN in POSITION")),
                 Err(e) => return Err(e),
             }
         }
@@ -49823,7 +49840,7 @@ impl Parser {
         } else if wrapped_optional {
             Vec::new()
         } else {
-            return Err(Error::parse("Expected '(' for PRIMARY KEY column list"));
+            return Err(self.parse_error("Expected '(' for PRIMARY KEY column list"));
         };
 
         // Parse INCLUDE clause for covering index
@@ -50047,7 +50064,7 @@ impl Parser {
                 trailing_comments: Vec::new(),
             })
         } else {
-            return Err(Error::parse("Expected cluster name after ON CLUSTER"));
+            return Err(self.parse_error("Expected cluster name after ON CLUSTER"));
         };
 
         Ok(Some(OnCluster {
@@ -50158,7 +50175,7 @@ impl Parser {
                         include: None,
                     })));
                 } else {
-                    return Err(Error::parse("Expected expression after PRIMARY KEY"));
+                    return Err(self.parse_error("Expected expression after PRIMARY KEY"));
                 }
                 continue;
             }
@@ -50384,7 +50401,7 @@ impl Parser {
     /// parse_clickhouse_engine_expression - Parse ENGINE expression with optional args
     fn parse_clickhouse_engine_expression(&mut self) -> Result<Expression> {
         if self.is_at_end() {
-            return Err(Error::parse("Expected engine name after ENGINE"));
+            return Err(self.parse_error("Expected engine name after ENGINE"));
         }
 
         let token = self.advance();
@@ -50847,7 +50864,7 @@ impl Parser {
             let set_col = self.expect_identifier()?;
             Expression::Identifier(Identifier::new(set_col))
         } else {
-            return Err(Error::parse("Expected SET in CYCLE/SEARCH clause"));
+            return Err(self.parse_error("Expected SET in CYCLE/SEARCH clause"));
         };
 
         // USING column (optional for SEARCH, required for CYCLE)
@@ -50879,7 +50896,7 @@ impl Parser {
         // Parse referenced table
         let this = self.parse_table()?;
         if this.is_none() {
-            return Err(Error::parse("Expected table name after REFERENCES"));
+            return Err(self.parse_error("Expected table name after REFERENCES"));
         }
 
         // Parse optional column list (table(col1, col2))
@@ -51584,7 +51601,7 @@ impl Parser {
         };
 
         Ok(Some(Expression::SetItem(Box::new(SetItem {
-            name: left.ok_or_else(|| Error::parse("Expected variable name in SET statement"))?,
+            name: left.ok_or_else(|| self.parse_error("Expected variable name in SET statement"))?,
             value: right_val,
             kind: None,
             no_equals: false,
@@ -52609,7 +52626,7 @@ impl Parser {
             }
         } else if explicit_as {
             // AS was present but no identifier follows - this is an error
-            return Err(Error::parse("Expected identifier after AS"));
+            return Err(self.parse_error("Expected identifier after AS"));
         }
 
         Ok(None)
@@ -52917,7 +52934,7 @@ impl Parser {
             && !is_keyword_alias
         {
             if has_as {
-                return Err(Error::parse("Expected identifier after AS"));
+                return Err(self.parse_error("Expected identifier after AS"));
             }
             return Ok(None);
         }
@@ -53413,7 +53430,7 @@ impl Parser {
             // SQL standard syntax: TRIM([position] chars FROM str)
             let second = match self.parse_bitwise() {
                 Ok(Some(expr)) => self.try_clickhouse_func_arg_alias(expr),
-                Ok(None) => return Err(Error::parse("Expected expression after FROM in TRIM")),
+                Ok(None) => return Err(self.parse_error("Expected expression after FROM in TRIM")),
                 Err(e) => return Err(e),
             };
             // In SQL standard syntax: first is characters, second is the string

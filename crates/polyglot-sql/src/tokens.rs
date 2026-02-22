@@ -2201,6 +2201,29 @@ impl<'a> TokenizerState<'a> {
                         'b' => value.push('\x08'), // Backspace
                         'f' => value.push('\x0C'), // Form feed
                         'v' => value.push('\x0B'), // Vertical tab
+                        'x' => {
+                            // Hex escape: \xNN (exactly 2 hex digits)
+                            let mut hex = String::with_capacity(2);
+                            for _ in 0..2 {
+                                if !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                                    hex.push(self.advance());
+                                }
+                            }
+                            if hex.len() == 2 {
+                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                    value.push(byte as char);
+                                } else {
+                                    value.push('\\');
+                                    value.push('x');
+                                    value.push_str(&hex);
+                                }
+                            } else {
+                                // Not enough hex digits, preserve literally
+                                value.push('\\');
+                                value.push('x');
+                                value.push_str(&hex);
+                            }
+                        }
                         '\\' => value.push('\\'),
                         '\'' => value.push('\''),
                         '"' => value.push('"'),
@@ -2276,6 +2299,29 @@ impl<'a> TokenizerState<'a> {
                         'b' => value.push('\x08'), // Backspace
                         'f' => value.push('\x0C'), // Form feed
                         'v' => value.push('\x0B'), // Vertical tab
+                        'x' => {
+                            // Hex escape: \xNN (exactly 2 hex digits)
+                            let mut hex = String::with_capacity(2);
+                            for _ in 0..2 {
+                                if !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                                    hex.push(self.advance());
+                                }
+                            }
+                            if hex.len() == 2 {
+                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                    value.push(byte as char);
+                                } else {
+                                    value.push('\\');
+                                    value.push('x');
+                                    value.push_str(&hex);
+                                }
+                            } else {
+                                // Not enough hex digits, preserve literally
+                                value.push('\\');
+                                value.push('x');
+                                value.push_str(&hex);
+                            }
+                        }
                         '\\' => value.push('\\'),
                         '\'' => value.push('\''),
                         '"' => value.push('"'),

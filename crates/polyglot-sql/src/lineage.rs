@@ -519,18 +519,18 @@ fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<E
                         return Ok(expr.clone());
                     }
                 }
-                Err(crate::error::Error::Parse(format!(
+                Err(crate::error::Error::parse(format!(
                     "Cannot find column '{}' in query",
                     name
-                )))
+                ), 0, 0))
             }
             ColumnRef::Index(idx) => select.expressions.get(*idx).cloned().ok_or_else(|| {
-                crate::error::Error::Parse(format!("Column index {} out of range", idx))
+                crate::error::Error::parse(format!("Column index {} out of range", idx), 0, 0)
             }),
         }
     } else {
-        Err(crate::error::Error::Parse(
-            "Expected SELECT expression for column lookup".to_string(),
+        Err(crate::error::Error::parse(
+            "Expected SELECT expression for column lookup", 0, 0,
         ))
     }
 }
@@ -549,14 +549,14 @@ fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
                         return Ok(i);
                     }
                 }
-                return Err(crate::error::Error::Parse(format!(
+                return Err(crate::error::Error::parse(format!(
                     "Cannot find column '{}' in set operation",
                     name
-                )));
+                ), 0, 0));
             }
             _ => {
-                return Err(crate::error::Error::Parse(
-                    "Expected SELECT or set operation".to_string(),
+                return Err(crate::error::Error::parse(
+                    "Expected SELECT or set operation", 0, 0,
                 ))
             }
         }
@@ -674,78 +674,860 @@ fn find_column_refs_in_expr(expr: &Expression) -> Vec<SimpleColumnRef> {
 }
 
 fn collect_column_refs(expr: &Expression, refs: &mut Vec<SimpleColumnRef>) {
-    match expr {
-        Expression::Column(col) => {
-            refs.push(SimpleColumnRef {
-                table: col.table.clone(),
-                column: col.name.name.clone(),
-            });
-        }
-        Expression::Alias(alias) => {
-            collect_column_refs(&alias.this, refs);
-        }
-        Expression::And(op)
-        | Expression::Or(op)
-        | Expression::Eq(op)
-        | Expression::Neq(op)
-        | Expression::Lt(op)
-        | Expression::Lte(op)
-        | Expression::Gt(op)
-        | Expression::Gte(op)
-        | Expression::Add(op)
-        | Expression::Sub(op)
-        | Expression::Mul(op)
-        | Expression::Div(op)
-        | Expression::Mod(op)
-        | Expression::BitwiseAnd(op)
-        | Expression::BitwiseOr(op)
-        | Expression::BitwiseXor(op)
-        | Expression::Concat(op) => {
-            collect_column_refs(&op.left, refs);
-            collect_column_refs(&op.right, refs);
-        }
-        Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => {
-            collect_column_refs(&u.this, refs);
-        }
-        Expression::Function(func) => {
-            for arg in &func.args {
-                collect_column_refs(arg, refs);
+    let mut stack: Vec<&Expression> = vec![expr];
+
+    while let Some(current) = stack.pop() {
+        match current {
+            // === Leaf: collect Column references ===
+            Expression::Column(col) => {
+                refs.push(SimpleColumnRef {
+                    table: col.table.clone(),
+                    column: col.name.name.clone(),
+                });
             }
-        }
-        Expression::AggregateFunction(func) => {
-            for arg in &func.args {
-                collect_column_refs(arg, refs);
+
+            // === Boundary: don't recurse into subqueries (handled separately) ===
+            Expression::Subquery(_) | Expression::Exists(_) => {}
+
+            // === BinaryOp variants: left, right ===
+            Expression::And(op)
+            | Expression::Or(op)
+            | Expression::Eq(op)
+            | Expression::Neq(op)
+            | Expression::Lt(op)
+            | Expression::Lte(op)
+            | Expression::Gt(op)
+            | Expression::Gte(op)
+            | Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op)
+            | Expression::BitwiseAnd(op)
+            | Expression::BitwiseOr(op)
+            | Expression::BitwiseXor(op)
+            | Expression::BitwiseLeftShift(op)
+            | Expression::BitwiseRightShift(op)
+            | Expression::Concat(op)
+            | Expression::Adjacent(op)
+            | Expression::TsMatch(op)
+            | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op)
+            | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op)
+            | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op)
+            | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op)
+            | Expression::ExtendsRight(op)
+            | Expression::Is(op)
+            | Expression::MemberOf(op)
+            | Expression::NullSafeEq(op)
+            | Expression::NullSafeNeq(op)
+            | Expression::Glob(op)
+            | Expression::Match(op) => {
+                stack.push(&op.left);
+                stack.push(&op.right);
             }
-        }
-        Expression::WindowFunction(wf) => {
-            collect_column_refs(&wf.this, refs);
-        }
-        Expression::Case(case) => {
-            if let Some(operand) = &case.operand {
-                collect_column_refs(operand, refs);
+
+            // === UnaryOp variants: this ===
+            Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => {
+                stack.push(&u.this);
             }
-            for (cond, result) in &case.whens {
-                collect_column_refs(cond, refs);
-                collect_column_refs(result, refs);
+
+            // === UnaryFunc variants: this ===
+            Expression::Upper(f)
+            | Expression::Lower(f)
+            | Expression::Length(f)
+            | Expression::LTrim(f)
+            | Expression::RTrim(f)
+            | Expression::Reverse(f)
+            | Expression::Abs(f)
+            | Expression::Sqrt(f)
+            | Expression::Cbrt(f)
+            | Expression::Ln(f)
+            | Expression::Exp(f)
+            | Expression::Sign(f)
+            | Expression::Date(f)
+            | Expression::Time(f)
+            | Expression::DateFromUnixDate(f)
+            | Expression::UnixDate(f)
+            | Expression::UnixSeconds(f)
+            | Expression::UnixMillis(f)
+            | Expression::UnixMicros(f)
+            | Expression::TimeStrToDate(f)
+            | Expression::DateToDi(f)
+            | Expression::DiToDate(f)
+            | Expression::TsOrDiToDi(f)
+            | Expression::TsOrDsToDatetime(f)
+            | Expression::TsOrDsToTimestamp(f)
+            | Expression::YearOfWeek(f)
+            | Expression::YearOfWeekIso(f)
+            | Expression::Initcap(f)
+            | Expression::Ascii(f)
+            | Expression::Chr(f)
+            | Expression::Soundex(f)
+            | Expression::ByteLength(f)
+            | Expression::Hex(f)
+            | Expression::LowerHex(f)
+            | Expression::Unicode(f)
+            | Expression::Radians(f)
+            | Expression::Degrees(f)
+            | Expression::Sin(f)
+            | Expression::Cos(f)
+            | Expression::Tan(f)
+            | Expression::Asin(f)
+            | Expression::Acos(f)
+            | Expression::Atan(f)
+            | Expression::IsNan(f)
+            | Expression::IsInf(f)
+            | Expression::ArrayLength(f)
+            | Expression::ArraySize(f)
+            | Expression::Cardinality(f)
+            | Expression::ArrayReverse(f)
+            | Expression::ArrayDistinct(f)
+            | Expression::ArrayFlatten(f)
+            | Expression::ArrayCompact(f)
+            | Expression::Explode(f)
+            | Expression::ExplodeOuter(f)
+            | Expression::ToArray(f)
+            | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f)
+            | Expression::MapValues(f)
+            | Expression::JsonArrayLength(f)
+            | Expression::JsonKeys(f)
+            | Expression::JsonType(f)
+            | Expression::ParseJson(f)
+            | Expression::ToJson(f)
+            | Expression::Typeof(f)
+            | Expression::BitwiseCount(f)
+            | Expression::Year(f)
+            | Expression::Month(f)
+            | Expression::Day(f)
+            | Expression::Hour(f)
+            | Expression::Minute(f)
+            | Expression::Second(f)
+            | Expression::DayOfWeek(f)
+            | Expression::DayOfWeekIso(f)
+            | Expression::DayOfMonth(f)
+            | Expression::DayOfYear(f)
+            | Expression::WeekOfYear(f)
+            | Expression::Quarter(f)
+            | Expression::Epoch(f)
+            | Expression::EpochMs(f)
+            | Expression::TimeStrToUnix(f)
+            | Expression::SHA(f)
+            | Expression::SHA1Digest(f)
+            | Expression::TimeToUnix(f)
+            | Expression::JSONBool(f)
+            | Expression::Int64(f)
+            | Expression::MD5NumberLower64(f)
+            | Expression::MD5NumberUpper64(f)
+            | Expression::DateStrToDate(f)
+            | Expression::DateToDateStr(f) => {
+                stack.push(&f.this);
             }
-            if let Some(ref else_expr) = case.else_ {
-                collect_column_refs(else_expr, refs);
+
+            // === BinaryFunc variants: this, expression ===
+            Expression::Power(f)
+            | Expression::NullIf(f)
+            | Expression::IfNull(f)
+            | Expression::Nvl(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::Contains(f)
+            | Expression::StartsWith(f)
+            | Expression::EndsWith(f)
+            | Expression::Levenshtein(f)
+            | Expression::ModFunc(f)
+            | Expression::Atan2(f)
+            | Expression::IntDiv(f)
+            | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f)
+            | Expression::NextDay(f)
+            | Expression::ArrayContains(f)
+            | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f)
+            | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f)
+            | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f)
+            | Expression::StarMap(f)
+            | Expression::MapFromArrays(f)
+            | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f)
+            | Expression::JsonMergePatch(f)
+            | Expression::JSONBContains(f)
+            | Expression::JSONBExtract(f) => {
+                stack.push(&f.this);
+                stack.push(&f.expression);
             }
-        }
-        Expression::Cast(cast) => {
-            collect_column_refs(&cast.this, refs);
-        }
-        Expression::Paren(p) => {
-            collect_column_refs(&p.this, refs);
-        }
-        Expression::Coalesce(c) => {
-            for e in &c.expressions {
-                collect_column_refs(e, refs);
+
+            // === VarArgFunc variants: expressions ===
+            Expression::Greatest(f)
+            | Expression::Least(f)
+            | Expression::Coalesce(f)
+            | Expression::ArrayConcat(f)
+            | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f)
+            | Expression::MapConcat(f)
+            | Expression::JsonArray(f) => {
+                for e in &f.expressions {
+                    stack.push(e);
+                }
             }
+
+            // === AggFunc variants: this, filter, having_max, limit ===
+            Expression::Sum(f)
+            | Expression::Avg(f)
+            | Expression::Min(f)
+            | Expression::Max(f)
+            | Expression::ArrayAgg(f)
+            | Expression::CountIf(f)
+            | Expression::Stddev(f)
+            | Expression::StddevPop(f)
+            | Expression::StddevSamp(f)
+            | Expression::Variance(f)
+            | Expression::VarPop(f)
+            | Expression::VarSamp(f)
+            | Expression::Median(f)
+            | Expression::Mode(f)
+            | Expression::First(f)
+            | Expression::Last(f)
+            | Expression::AnyValue(f)
+            | Expression::ApproxDistinct(f)
+            | Expression::ApproxCountDistinct(f)
+            | Expression::LogicalAnd(f)
+            | Expression::LogicalOr(f)
+            | Expression::Skewness(f)
+            | Expression::ArrayConcatAgg(f)
+            | Expression::ArrayUniqueAgg(f)
+            | Expression::BoolXorAgg(f)
+            | Expression::BitwiseAndAgg(f)
+            | Expression::BitwiseOrAgg(f)
+            | Expression::BitwiseXorAgg(f) => {
+                stack.push(&f.this);
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+                if let Some((ref expr, _)) = f.having_max {
+                    stack.push(expr);
+                }
+                if let Some(ref limit) = f.limit {
+                    stack.push(limit);
+                }
+            }
+
+            // === Generic Function / AggregateFunction: args ===
+            Expression::Function(func) => {
+                for arg in &func.args {
+                    stack.push(arg);
+                }
+            }
+            Expression::AggregateFunction(func) => {
+                for arg in &func.args {
+                    stack.push(arg);
+                }
+                if let Some(ref filter) = func.filter {
+                    stack.push(filter);
+                }
+                if let Some(ref limit) = func.limit {
+                    stack.push(limit);
+                }
+            }
+
+            // === WindowFunction: this (skip Over for lineage purposes) ===
+            Expression::WindowFunction(wf) => {
+                stack.push(&wf.this);
+            }
+
+            // === Containers and special expressions ===
+            Expression::Alias(a) => {
+                stack.push(&a.this);
+            }
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => {
+                stack.push(&c.this);
+                if let Some(ref fmt) = c.format {
+                    stack.push(fmt);
+                }
+                if let Some(ref def) = c.default {
+                    stack.push(def);
+                }
+            }
+            Expression::Paren(p) => {
+                stack.push(&p.this);
+            }
+            Expression::Annotated(a) => {
+                stack.push(&a.this);
+            }
+            Expression::Case(case) => {
+                if let Some(ref operand) = case.operand {
+                    stack.push(operand);
+                }
+                for (cond, result) in &case.whens {
+                    stack.push(cond);
+                    stack.push(result);
+                }
+                if let Some(ref else_expr) = case.else_ {
+                    stack.push(else_expr);
+                }
+            }
+            Expression::Collation(c) => {
+                stack.push(&c.this);
+            }
+            Expression::In(i) => {
+                stack.push(&i.this);
+                for e in &i.expressions {
+                    stack.push(e);
+                }
+                if let Some(ref q) = i.query {
+                    stack.push(q);
+                }
+                if let Some(ref u) = i.unnest {
+                    stack.push(u);
+                }
+            }
+            Expression::Between(b) => {
+                stack.push(&b.this);
+                stack.push(&b.low);
+                stack.push(&b.high);
+            }
+            Expression::IsNull(n) => {
+                stack.push(&n.this);
+            }
+            Expression::IsTrue(t) | Expression::IsFalse(t) => {
+                stack.push(&t.this);
+            }
+            Expression::IsJson(j) => {
+                stack.push(&j.this);
+            }
+            Expression::Like(l) | Expression::ILike(l) => {
+                stack.push(&l.left);
+                stack.push(&l.right);
+                if let Some(ref esc) = l.escape {
+                    stack.push(esc);
+                }
+            }
+            Expression::SimilarTo(s) => {
+                stack.push(&s.this);
+                stack.push(&s.pattern);
+                if let Some(ref esc) = s.escape {
+                    stack.push(esc);
+                }
+            }
+            Expression::Ordered(o) => {
+                stack.push(&o.this);
+            }
+            Expression::Array(a) => {
+                for e in &a.expressions {
+                    stack.push(e);
+                }
+            }
+            Expression::Tuple(t) => {
+                for e in &t.expressions {
+                    stack.push(e);
+                }
+            }
+            Expression::Struct(s) => {
+                for (_, e) in &s.fields {
+                    stack.push(e);
+                }
+            }
+            Expression::Subscript(s) => {
+                stack.push(&s.this);
+                stack.push(&s.index);
+            }
+            Expression::Dot(d) => {
+                stack.push(&d.this);
+            }
+            Expression::MethodCall(m) => {
+                stack.push(&m.this);
+                for arg in &m.args {
+                    stack.push(arg);
+                }
+            }
+            Expression::ArraySlice(s) => {
+                stack.push(&s.this);
+                if let Some(ref start) = s.start {
+                    stack.push(start);
+                }
+                if let Some(ref end) = s.end {
+                    stack.push(end);
+                }
+            }
+            Expression::Lambda(l) => {
+                stack.push(&l.body);
+            }
+            Expression::NamedArgument(n) => {
+                stack.push(&n.value);
+            }
+            Expression::BracedWildcard(e) | Expression::ReturnStmt(e) => {
+                stack.push(e);
+            }
+
+            // === Custom function structs ===
+            Expression::Substring(f) => {
+                stack.push(&f.this);
+                stack.push(&f.start);
+                if let Some(ref len) = f.length {
+                    stack.push(len);
+                }
+            }
+            Expression::Trim(f) => {
+                stack.push(&f.this);
+                if let Some(ref chars) = f.characters {
+                    stack.push(chars);
+                }
+            }
+            Expression::Replace(f) => {
+                stack.push(&f.this);
+                stack.push(&f.old);
+                stack.push(&f.new);
+            }
+            Expression::IfFunc(f) => {
+                stack.push(&f.condition);
+                stack.push(&f.true_value);
+                if let Some(ref fv) = f.false_value {
+                    stack.push(fv);
+                }
+            }
+            Expression::Nvl2(f) => {
+                stack.push(&f.this);
+                stack.push(&f.true_value);
+                stack.push(&f.false_value);
+            }
+            Expression::ConcatWs(f) => {
+                stack.push(&f.separator);
+                for e in &f.expressions {
+                    stack.push(e);
+                }
+            }
+            Expression::Count(f) => {
+                if let Some(ref this) = f.this {
+                    stack.push(this);
+                }
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::GroupConcat(f) => {
+                stack.push(&f.this);
+                if let Some(ref sep) = f.separator {
+                    stack.push(sep);
+                }
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::StringAgg(f) => {
+                stack.push(&f.this);
+                if let Some(ref sep) = f.separator {
+                    stack.push(sep);
+                }
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+                if let Some(ref limit) = f.limit {
+                    stack.push(limit);
+                }
+            }
+            Expression::ListAgg(f) => {
+                stack.push(&f.this);
+                if let Some(ref sep) = f.separator {
+                    stack.push(sep);
+                }
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::SumIf(f) => {
+                stack.push(&f.this);
+                stack.push(&f.condition);
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::DateAdd(f) | Expression::DateSub(f) => {
+                stack.push(&f.this);
+                stack.push(&f.interval);
+            }
+            Expression::DateDiff(f) => {
+                stack.push(&f.this);
+                stack.push(&f.expression);
+            }
+            Expression::DateTrunc(f) | Expression::TimestampTrunc(f) => {
+                stack.push(&f.this);
+            }
+            Expression::Extract(f) => {
+                stack.push(&f.this);
+            }
+            Expression::Round(f) => {
+                stack.push(&f.this);
+                if let Some(ref d) = f.decimals {
+                    stack.push(d);
+                }
+            }
+            Expression::Floor(f) => {
+                stack.push(&f.this);
+                if let Some(ref s) = f.scale {
+                    stack.push(s);
+                }
+                if let Some(ref t) = f.to {
+                    stack.push(t);
+                }
+            }
+            Expression::Ceil(f) => {
+                stack.push(&f.this);
+                if let Some(ref d) = f.decimals {
+                    stack.push(d);
+                }
+                if let Some(ref t) = f.to {
+                    stack.push(t);
+                }
+            }
+            Expression::Log(f) => {
+                stack.push(&f.this);
+                if let Some(ref b) = f.base {
+                    stack.push(b);
+                }
+            }
+            Expression::AtTimeZone(f) => {
+                stack.push(&f.this);
+                stack.push(&f.zone);
+            }
+            Expression::Lead(f) | Expression::Lag(f) => {
+                stack.push(&f.this);
+                if let Some(ref off) = f.offset {
+                    stack.push(off);
+                }
+                if let Some(ref def) = f.default {
+                    stack.push(def);
+                }
+            }
+            Expression::FirstValue(f) | Expression::LastValue(f) => {
+                stack.push(&f.this);
+            }
+            Expression::NthValue(f) => {
+                stack.push(&f.this);
+                stack.push(&f.offset);
+            }
+            Expression::Position(f) => {
+                stack.push(&f.substring);
+                stack.push(&f.string);
+                if let Some(ref start) = f.start {
+                    stack.push(start);
+                }
+            }
+            Expression::Decode(f) => {
+                stack.push(&f.this);
+                for (search, result) in &f.search_results {
+                    stack.push(search);
+                    stack.push(result);
+                }
+                if let Some(ref def) = f.default {
+                    stack.push(def);
+                }
+            }
+            Expression::CharFunc(f) => {
+                for arg in &f.args {
+                    stack.push(arg);
+                }
+            }
+            Expression::ArraySort(f) => {
+                stack.push(&f.this);
+                if let Some(ref cmp) = f.comparator {
+                    stack.push(cmp);
+                }
+            }
+            Expression::ArrayJoin(f) | Expression::ArrayToString(f) => {
+                stack.push(&f.this);
+                stack.push(&f.separator);
+                if let Some(ref nr) = f.null_replacement {
+                    stack.push(nr);
+                }
+            }
+            Expression::ArrayFilter(f) => {
+                stack.push(&f.this);
+                stack.push(&f.filter);
+            }
+            Expression::ArrayTransform(f) => {
+                stack.push(&f.this);
+                stack.push(&f.transform);
+            }
+            Expression::Sequence(f) | Expression::Generate(f) | Expression::ExplodingGenerateSeries(f) => {
+                stack.push(&f.start);
+                stack.push(&f.stop);
+                if let Some(ref step) = f.step {
+                    stack.push(step);
+                }
+            }
+            Expression::JsonExtract(f) | Expression::JsonExtractScalar(f) | Expression::JsonQuery(f) | Expression::JsonValue(f) => {
+                stack.push(&f.this);
+                stack.push(&f.path);
+            }
+            Expression::JsonExtractPath(f) | Expression::JsonRemove(f) => {
+                stack.push(&f.this);
+                for p in &f.paths {
+                    stack.push(p);
+                }
+            }
+            Expression::JsonObject(f) => {
+                for (k, v) in &f.pairs {
+                    stack.push(k);
+                    stack.push(v);
+                }
+            }
+            Expression::JsonSet(f) | Expression::JsonInsert(f) => {
+                stack.push(&f.this);
+                for (path, val) in &f.path_values {
+                    stack.push(path);
+                    stack.push(val);
+                }
+            }
+            Expression::Overlay(f) => {
+                stack.push(&f.this);
+                stack.push(&f.replacement);
+                stack.push(&f.from);
+                if let Some(ref len) = f.length {
+                    stack.push(len);
+                }
+            }
+            Expression::Convert(f) => {
+                stack.push(&f.this);
+                if let Some(ref style) = f.style {
+                    stack.push(style);
+                }
+            }
+            Expression::ApproxPercentile(f) => {
+                stack.push(&f.this);
+                stack.push(&f.percentile);
+                if let Some(ref acc) = f.accuracy {
+                    stack.push(acc);
+                }
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::Percentile(f) | Expression::PercentileCont(f) | Expression::PercentileDisc(f) => {
+                stack.push(&f.this);
+                stack.push(&f.percentile);
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::WithinGroup(f) => {
+                stack.push(&f.this);
+            }
+            Expression::Left(f) | Expression::Right(f) => {
+                stack.push(&f.this);
+                stack.push(&f.length);
+            }
+            Expression::Repeat(f) => {
+                stack.push(&f.this);
+                stack.push(&f.times);
+            }
+            Expression::Lpad(f) | Expression::Rpad(f) => {
+                stack.push(&f.this);
+                stack.push(&f.length);
+                if let Some(ref fill) = f.fill {
+                    stack.push(fill);
+                }
+            }
+            Expression::Split(f) => {
+                stack.push(&f.this);
+                stack.push(&f.delimiter);
+            }
+            Expression::RegexpLike(f) => {
+                stack.push(&f.this);
+                stack.push(&f.pattern);
+                if let Some(ref flags) = f.flags {
+                    stack.push(flags);
+                }
+            }
+            Expression::RegexpReplace(f) => {
+                stack.push(&f.this);
+                stack.push(&f.pattern);
+                stack.push(&f.replacement);
+                if let Some(ref flags) = f.flags {
+                    stack.push(flags);
+                }
+            }
+            Expression::RegexpExtract(f) => {
+                stack.push(&f.this);
+                stack.push(&f.pattern);
+                if let Some(ref group) = f.group {
+                    stack.push(group);
+                }
+            }
+            Expression::ToDate(f) => {
+                stack.push(&f.this);
+                if let Some(ref fmt) = f.format {
+                    stack.push(fmt);
+                }
+            }
+            Expression::ToTimestamp(f) => {
+                stack.push(&f.this);
+                if let Some(ref fmt) = f.format {
+                    stack.push(fmt);
+                }
+            }
+            Expression::DateFormat(f) | Expression::FormatDate(f) => {
+                stack.push(&f.this);
+                stack.push(&f.format);
+            }
+            Expression::LastDay(f) => {
+                stack.push(&f.this);
+            }
+            Expression::FromUnixtime(f) => {
+                stack.push(&f.this);
+                if let Some(ref fmt) = f.format {
+                    stack.push(fmt);
+                }
+            }
+            Expression::UnixTimestamp(f) => {
+                if let Some(ref this) = f.this {
+                    stack.push(this);
+                }
+                if let Some(ref fmt) = f.format {
+                    stack.push(fmt);
+                }
+            }
+            Expression::MakeDate(f) => {
+                stack.push(&f.year);
+                stack.push(&f.month);
+                stack.push(&f.day);
+            }
+            Expression::MakeTimestamp(f) => {
+                stack.push(&f.year);
+                stack.push(&f.month);
+                stack.push(&f.day);
+                stack.push(&f.hour);
+                stack.push(&f.minute);
+                stack.push(&f.second);
+                if let Some(ref tz) = f.timezone {
+                    stack.push(tz);
+                }
+            }
+            Expression::TruncFunc(f) => {
+                stack.push(&f.this);
+                if let Some(ref d) = f.decimals {
+                    stack.push(d);
+                }
+            }
+            Expression::ArrayFunc(f) => {
+                for e in &f.expressions {
+                    stack.push(e);
+                }
+            }
+            Expression::Unnest(f) => {
+                stack.push(&f.this);
+                for e in &f.expressions {
+                    stack.push(e);
+                }
+            }
+            Expression::StructFunc(f) => {
+                for (_, e) in &f.fields {
+                    stack.push(e);
+                }
+            }
+            Expression::StructExtract(f) => {
+                stack.push(&f.this);
+            }
+            Expression::NamedStruct(f) => {
+                for (k, v) in &f.pairs {
+                    stack.push(k);
+                    stack.push(v);
+                }
+            }
+            Expression::MapFunc(f) => {
+                for k in &f.keys {
+                    stack.push(k);
+                }
+                for v in &f.values {
+                    stack.push(v);
+                }
+            }
+            Expression::TransformKeys(f) | Expression::TransformValues(f) => {
+                stack.push(&f.this);
+                stack.push(&f.transform);
+            }
+            Expression::JsonArrayAgg(f) => {
+                stack.push(&f.this);
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::JsonObjectAgg(f) => {
+                stack.push(&f.key);
+                stack.push(&f.value);
+                if let Some(ref filter) = f.filter {
+                    stack.push(filter);
+                }
+            }
+            Expression::NTile(f) => {
+                if let Some(ref n) = f.num_buckets {
+                    stack.push(n);
+                }
+            }
+            Expression::Rand(f) => {
+                if let Some(ref s) = f.seed {
+                    stack.push(s);
+                }
+                if let Some(ref lo) = f.lower {
+                    stack.push(lo);
+                }
+                if let Some(ref hi) = f.upper {
+                    stack.push(hi);
+                }
+            }
+            Expression::Any(q) | Expression::All(q) => {
+                stack.push(&q.this);
+                stack.push(&q.subquery);
+            }
+            Expression::Overlaps(o) => {
+                if let Some(ref this) = o.this {
+                    stack.push(this);
+                }
+                if let Some(ref expr) = o.expression {
+                    stack.push(expr);
+                }
+                if let Some(ref ls) = o.left_start {
+                    stack.push(ls);
+                }
+                if let Some(ref le) = o.left_end {
+                    stack.push(le);
+                }
+                if let Some(ref rs) = o.right_start {
+                    stack.push(rs);
+                }
+                if let Some(ref re) = o.right_end {
+                    stack.push(re);
+                }
+            }
+            Expression::Interval(i) => {
+                if let Some(ref this) = i.this {
+                    stack.push(this);
+                }
+            }
+            Expression::TimeStrToTime(f) => {
+                stack.push(&f.this);
+                if let Some(ref zone) = f.zone {
+                    stack.push(zone);
+                }
+            }
+            Expression::JSONBExtractScalar(f) => {
+                stack.push(&f.this);
+                stack.push(&f.expression);
+                if let Some(ref jt) = f.json_type {
+                    stack.push(jt);
+                }
+            }
+
+            // === True leaves and non-expression-bearing nodes ===
+            // Literals, Identifier, Star, DataType, Placeholder, Boolean, Null,
+            // CurrentDate/Time/Timestamp, RowNumber, Rank, DenseRank, PercentRank,
+            // CumeDist, Random, Pi, SessionUser, DDL statements, clauses, etc.
+            _ => {}
         }
-        // Don't recurse into subqueries — those are handled separately
-        Expression::Subquery(_) | Expression::Exists(_) => {}
-        _ => {}
     }
 }
 
@@ -1064,5 +1846,140 @@ mod tests {
 
         // UNION branches should be traced by index
         assert_eq!(node.downstream.len(), 2);
+    }
+
+    // --- Tests for column lineage inside function calls (issue #18) ---
+
+    fn print_node(node: &LineageNode, indent: usize) {
+        let pad = "  ".repeat(indent);
+        println!("{pad}name={:?} source_name={:?}", node.name, node.source_name);
+        for child in &node.downstream {
+            print_node(child, indent + 1);
+        }
+    }
+
+    #[test]
+    fn test_issue18_repro() {
+        // Exact scenario from the issue
+        let query = "SELECT UPPER(name) as upper_name FROM users";
+        println!("Query: {query}\n");
+
+        let dialect = crate::dialects::Dialect::get(DialectType::BigQuery);
+        let exprs = dialect.parse(query).unwrap();
+        let expr = &exprs[0];
+
+        let node = lineage("upper_name", expr, Some(DialectType::BigQuery), false).unwrap();
+        println!("lineage(\"upper_name\"):");
+        print_node(&node, 1);
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "users.name"),
+            "Expected users.name in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_upper_function() {
+        let expr = parse("SELECT UPPER(name) AS upper_name FROM users");
+        let node = lineage("upper_name", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "users.name"),
+            "Expected users.name in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_round_function() {
+        let expr = parse("SELECT ROUND(price, 2) AS rounded FROM products");
+        let node = lineage("rounded", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "products.price"),
+            "Expected products.price in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_coalesce_function() {
+        let expr = parse("SELECT COALESCE(a, b) AS val FROM t");
+        let node = lineage("val", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t.a"),
+            "Expected t.a in downstream, got: {:?}",
+            names
+        );
+        assert!(
+            names.iter().any(|n| n == "t.b"),
+            "Expected t.b in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_count_function() {
+        let expr = parse("SELECT COUNT(id) AS cnt FROM t");
+        let node = lineage("cnt", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t.id"),
+            "Expected t.id in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_sum_function() {
+        let expr = parse("SELECT SUM(amount) AS total FROM t");
+        let node = lineage("total", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t.amount"),
+            "Expected t.amount in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_case_with_nested_functions() {
+        let expr = parse(
+            "SELECT CASE WHEN x > 0 THEN UPPER(name) ELSE LOWER(name) END AS result FROM t",
+        );
+        let node = lineage("result", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t.x"),
+            "Expected t.x in downstream, got: {:?}",
+            names
+        );
+        assert!(
+            names.iter().any(|n| n == "t.name"),
+            "Expected t.name in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_substring_function() {
+        let expr = parse("SELECT SUBSTRING(name, 1, 3) AS short FROM t");
+        let node = lineage("short", &expr, None, false).unwrap();
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t.name"),
+            "Expected t.name in downstream, got: {:?}",
+            names
+        );
     }
 }

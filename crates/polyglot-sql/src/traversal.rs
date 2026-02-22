@@ -1184,7 +1184,7 @@ mod tests {
         let result = super::transform_map(expr, &|e| {
             if let Expression::Column(ref c) = e {
                 if c.name.name == "a" {
-                    return Err(crate::error::Error::Parse("test error".to_string()));
+                    return Err(crate::error::Error::parse("test error", 0, 0));
                 }
             }
             Ok(e)

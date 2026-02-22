@@ -1387,6 +1387,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "dialect-tsql")]
     fn test_wasm_select_builder_dialect() {
         let mut b = WasmSelectBuilder::new();
         b.select_star();

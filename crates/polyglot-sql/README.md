@@ -143,6 +143,35 @@ let result = validate("SELECT * FORM users", DialectType::Generic);
 // result contains error with line/column location
 ```
 
+### Error Reporting
+
+Parse and tokenize errors include source position information (line and column numbers), making it straightforward to provide precise error feedback.
+
+```rust
+use polyglot_sql::{parse, DialectType};
+
+let result = parse("SELECT 1 +", DialectType::Generic);
+if let Err(e) = result {
+    println!("{}", e);          // "Parse error at line 1, column 11: ..."
+    println!("{:?}", e.line());   // Some(1)
+    println!("{:?}", e.column()); // Some(11)
+}
+```
+
+The `Error` enum provides `line()` and `column()` accessors that return `Option<usize>` for `Parse`, `Tokenize`, and `Syntax` error variants:
+
+```rust
+use polyglot_sql::error::Error;
+
+let err = Error::parse("Unexpected token", 3, 15);
+assert_eq!(err.line(), Some(3));
+assert_eq!(err.column(), Some(15));
+
+// Generation errors don't carry position info
+let err = Error::generate("unsupported expression");
+assert_eq!(err.line(), None);
+```
+
 ## Supported Dialects
 
 Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL

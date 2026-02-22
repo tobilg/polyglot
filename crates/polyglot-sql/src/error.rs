@@ -18,8 +18,12 @@ pub enum Error {
     },
 
     /// Error during parsing
-    #[error("Parse error: {0}")]
-    Parse(String),
+    #[error("Parse error at line {line}, column {column}: {message}")]
+    Parse {
+        message: String,
+        line: usize,
+        column: usize,
+    },
 
     /// Error during SQL generation
     #[error("Generation error: {0}")]
@@ -52,9 +56,33 @@ impl Error {
         }
     }
 
-    /// Create a parse error
-    pub fn parse(message: impl Into<String>) -> Self {
-        Error::Parse(message.into())
+    /// Create a parse error with position information
+    pub fn parse(message: impl Into<String>, line: usize, column: usize) -> Self {
+        Error::Parse {
+            message: message.into(),
+            line,
+            column,
+        }
+    }
+
+    /// Get the line number if available
+    pub fn line(&self) -> Option<usize> {
+        match self {
+            Error::Tokenize { line, .. }
+            | Error::Parse { line, .. }
+            | Error::Syntax { line, .. } => Some(*line),
+            _ => None,
+        }
+    }
+
+    /// Get the column number if available
+    pub fn column(&self) -> Option<usize> {
+        match self {
+            Error::Tokenize { column, .. }
+            | Error::Parse { column, .. }
+            | Error::Syntax { column, .. } => Some(*column),
+            _ => None,
+        }
     }
 
     /// Create a generation error
@@ -188,5 +216,47 @@ impl ValidationResult {
             self.valid = false;
         }
         self.errors.push(error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_error_has_position() {
+        let err = Error::parse("test message", 5, 10);
+        assert_eq!(err.line(), Some(5));
+        assert_eq!(err.column(), Some(10));
+        assert!(err.to_string().contains("line 5"));
+        assert!(err.to_string().contains("column 10"));
+        assert!(err.to_string().contains("test message"));
+    }
+
+    #[test]
+    fn test_tokenize_error_has_position() {
+        let err = Error::tokenize("bad token", 3, 7);
+        assert_eq!(err.line(), Some(3));
+        assert_eq!(err.column(), Some(7));
+    }
+
+    #[test]
+    fn test_generate_error_has_no_position() {
+        let err = Error::generate("gen error");
+        assert_eq!(err.line(), None);
+        assert_eq!(err.column(), None);
+    }
+
+    #[test]
+    fn test_parse_error_position_from_parser() {
+        // Parse invalid SQL and verify the error carries position info
+        use crate::dialects::{Dialect, DialectType};
+        let d = Dialect::get(DialectType::Generic);
+        let result = d.parse("SELECT 1 + 2)");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.line().is_some(), "Parse error should have line: {:?}", err);
+        assert!(err.column().is_some(), "Parse error should have column: {:?}", err);
+        assert_eq!(err.line(), Some(1));
     }
 }

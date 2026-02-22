@@ -126,7 +126,7 @@ impl DialectImpl for BigQueryDialect {
             Expression::TryCast(c) => {
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::Parse("Expected DataType".to_string())),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
                 };
                 Ok(Expression::SafeCast(Box::new(crate::expressions::Cast {
                     this: c.this,
@@ -541,7 +541,7 @@ impl DialectImpl for BigQueryDialect {
                 }
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::Parse("Expected DataType".to_string())),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
                 };
                 Ok(Expression::Cast(Box::new(crate::expressions::Cast {
                     this: c.this,
@@ -557,7 +557,7 @@ impl DialectImpl for BigQueryDialect {
             Expression::SafeCast(c) => {
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::Parse("Expected DataType".to_string())),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
                 };
                 Ok(Expression::SafeCast(Box::new(crate::expressions::Cast {
                     this: c.this,

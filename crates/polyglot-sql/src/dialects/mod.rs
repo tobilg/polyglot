@@ -19,74 +19,142 @@
 //! [`DialectImpl`] trait, which provides configuration hooks and expression-level transforms.
 //! Dialect modules live in submodules of this module and are re-exported here.
 
+mod generic; // Always compiled
+
+#[cfg(feature = "dialect-athena")]
 mod athena;
+#[cfg(feature = "dialect-bigquery")]
 mod bigquery;
+#[cfg(feature = "dialect-clickhouse")]
 mod clickhouse;
+#[cfg(feature = "dialect-cockroachdb")]
 mod cockroachdb;
+#[cfg(feature = "dialect-databricks")]
 mod databricks;
+#[cfg(feature = "dialect-datafusion")]
 mod datafusion;
+#[cfg(feature = "dialect-doris")]
 mod doris;
+#[cfg(feature = "dialect-dremio")]
 mod dremio;
+#[cfg(feature = "dialect-drill")]
 mod drill;
+#[cfg(feature = "dialect-druid")]
 mod druid;
+#[cfg(feature = "dialect-duckdb")]
 mod duckdb;
+#[cfg(feature = "dialect-dune")]
 mod dune;
+#[cfg(feature = "dialect-exasol")]
 mod exasol;
+#[cfg(feature = "dialect-fabric")]
 mod fabric;
-mod generic;
+#[cfg(feature = "dialect-hive")]
 mod hive;
+#[cfg(feature = "dialect-materialize")]
 mod materialize;
+#[cfg(feature = "dialect-mysql")]
 mod mysql;
+#[cfg(feature = "dialect-oracle")]
 mod oracle;
+#[cfg(feature = "dialect-postgresql")]
 mod postgres;
+#[cfg(feature = "dialect-presto")]
 mod presto;
+#[cfg(feature = "dialect-redshift")]
 mod redshift;
+#[cfg(feature = "dialect-risingwave")]
 mod risingwave;
+#[cfg(feature = "dialect-singlestore")]
 mod singlestore;
+#[cfg(feature = "dialect-snowflake")]
 mod snowflake;
+#[cfg(feature = "dialect-solr")]
 mod solr;
+#[cfg(feature = "dialect-spark")]
 mod spark;
+#[cfg(feature = "dialect-sqlite")]
 mod sqlite;
+#[cfg(feature = "dialect-starrocks")]
 mod starrocks;
+#[cfg(feature = "dialect-tableau")]
 mod tableau;
+#[cfg(feature = "dialect-teradata")]
 mod teradata;
+#[cfg(feature = "dialect-tidb")]
 mod tidb;
+#[cfg(feature = "dialect-trino")]
 mod trino;
+#[cfg(feature = "dialect-tsql")]
 mod tsql;
 
+pub use generic::GenericDialect; // Always available
+
+#[cfg(feature = "dialect-athena")]
 pub use athena::AthenaDialect;
+#[cfg(feature = "dialect-bigquery")]
 pub use bigquery::BigQueryDialect;
+#[cfg(feature = "dialect-clickhouse")]
 pub use clickhouse::ClickHouseDialect;
+#[cfg(feature = "dialect-cockroachdb")]
 pub use cockroachdb::CockroachDBDialect;
+#[cfg(feature = "dialect-databricks")]
 pub use databricks::DatabricksDialect;
+#[cfg(feature = "dialect-datafusion")]
 pub use datafusion::DataFusionDialect;
+#[cfg(feature = "dialect-doris")]
 pub use doris::DorisDialect;
+#[cfg(feature = "dialect-dremio")]
 pub use dremio::DremioDialect;
+#[cfg(feature = "dialect-drill")]
 pub use drill::DrillDialect;
+#[cfg(feature = "dialect-druid")]
 pub use druid::DruidDialect;
+#[cfg(feature = "dialect-duckdb")]
 pub use duckdb::DuckDBDialect;
+#[cfg(feature = "dialect-dune")]
 pub use dune::DuneDialect;
+#[cfg(feature = "dialect-exasol")]
 pub use exasol::ExasolDialect;
+#[cfg(feature = "dialect-fabric")]
 pub use fabric::FabricDialect;
-pub use generic::GenericDialect;
+#[cfg(feature = "dialect-hive")]
 pub use hive::HiveDialect;
+#[cfg(feature = "dialect-materialize")]
 pub use materialize::MaterializeDialect;
+#[cfg(feature = "dialect-mysql")]
 pub use mysql::MySQLDialect;
+#[cfg(feature = "dialect-oracle")]
 pub use oracle::OracleDialect;
+#[cfg(feature = "dialect-postgresql")]
 pub use postgres::PostgresDialect;
+#[cfg(feature = "dialect-presto")]
 pub use presto::PrestoDialect;
+#[cfg(feature = "dialect-redshift")]
 pub use redshift::RedshiftDialect;
+#[cfg(feature = "dialect-risingwave")]
 pub use risingwave::RisingWaveDialect;
+#[cfg(feature = "dialect-singlestore")]
 pub use singlestore::SingleStoreDialect;
+#[cfg(feature = "dialect-snowflake")]
 pub use snowflake::SnowflakeDialect;
+#[cfg(feature = "dialect-solr")]
 pub use solr::SolrDialect;
+#[cfg(feature = "dialect-spark")]
 pub use spark::SparkDialect;
+#[cfg(feature = "dialect-sqlite")]
 pub use sqlite::SQLiteDialect;
+#[cfg(feature = "dialect-starrocks")]
 pub use starrocks::StarRocksDialect;
+#[cfg(feature = "dialect-tableau")]
 pub use tableau::TableauDialect;
+#[cfg(feature = "dialect-teradata")]
 pub use teradata::TeradataDialect;
+#[cfg(feature = "dialect-tidb")]
 pub use tidb::TiDBDialect;
+#[cfg(feature = "dialect-trino")]
 pub use trino::TrinoDialect;
+#[cfg(feature = "dialect-tsql")]
 pub use tsql::TSQLDialect;
 
 use crate::error::Result;
@@ -268,7 +336,7 @@ impl std::str::FromStr for DialectType {
             _ => Err(crate::error::Error::parse(format!(
                 "Unknown dialect: {}",
                 s
-            ))),
+            ), 0, 0)),
         }
     }
 }
@@ -518,6 +586,7 @@ where
                         Expression::Join(j) => Ok(*j),
                         _ => Err(crate::error::Error::parse(
                             "Join transformation returned non-join expression",
+                            0, 0,
                         )),
                     }
                 })
@@ -653,6 +722,7 @@ where
                         Expression::Ordered(transformed) => Ok(*transformed),
                         _ => Err(crate::error::Error::parse(
                             "Ordered transformation returned non-Ordered expression",
+                            0, 0,
                         )),
                     }
                 })
@@ -1467,38 +1537,71 @@ fn configs_for_dialect_type(
         }};
     }
     match dt {
+        #[cfg(feature = "dialect-postgresql")]
         DialectType::PostgreSQL => dialect_configs!(PostgresDialect),
+        #[cfg(feature = "dialect-mysql")]
         DialectType::MySQL => dialect_configs!(MySQLDialect),
+        #[cfg(feature = "dialect-bigquery")]
         DialectType::BigQuery => dialect_configs!(BigQueryDialect),
+        #[cfg(feature = "dialect-snowflake")]
         DialectType::Snowflake => dialect_configs!(SnowflakeDialect),
+        #[cfg(feature = "dialect-duckdb")]
         DialectType::DuckDB => dialect_configs!(DuckDBDialect),
+        #[cfg(feature = "dialect-tsql")]
         DialectType::TSQL => dialect_configs!(TSQLDialect),
+        #[cfg(feature = "dialect-oracle")]
         DialectType::Oracle => dialect_configs!(OracleDialect),
+        #[cfg(feature = "dialect-hive")]
         DialectType::Hive => dialect_configs!(HiveDialect),
+        #[cfg(feature = "dialect-spark")]
         DialectType::Spark => dialect_configs!(SparkDialect),
+        #[cfg(feature = "dialect-sqlite")]
         DialectType::SQLite => dialect_configs!(SQLiteDialect),
+        #[cfg(feature = "dialect-presto")]
         DialectType::Presto => dialect_configs!(PrestoDialect),
+        #[cfg(feature = "dialect-trino")]
         DialectType::Trino => dialect_configs!(TrinoDialect),
+        #[cfg(feature = "dialect-redshift")]
         DialectType::Redshift => dialect_configs!(RedshiftDialect),
+        #[cfg(feature = "dialect-clickhouse")]
         DialectType::ClickHouse => dialect_configs!(ClickHouseDialect),
+        #[cfg(feature = "dialect-databricks")]
         DialectType::Databricks => dialect_configs!(DatabricksDialect),
+        #[cfg(feature = "dialect-athena")]
         DialectType::Athena => dialect_configs!(AthenaDialect),
+        #[cfg(feature = "dialect-teradata")]
         DialectType::Teradata => dialect_configs!(TeradataDialect),
+        #[cfg(feature = "dialect-doris")]
         DialectType::Doris => dialect_configs!(DorisDialect),
+        #[cfg(feature = "dialect-starrocks")]
         DialectType::StarRocks => dialect_configs!(StarRocksDialect),
+        #[cfg(feature = "dialect-materialize")]
         DialectType::Materialize => dialect_configs!(MaterializeDialect),
+        #[cfg(feature = "dialect-risingwave")]
         DialectType::RisingWave => dialect_configs!(RisingWaveDialect),
+        #[cfg(feature = "dialect-singlestore")]
         DialectType::SingleStore => dialect_configs!(SingleStoreDialect),
+        #[cfg(feature = "dialect-cockroachdb")]
         DialectType::CockroachDB => dialect_configs!(CockroachDBDialect),
+        #[cfg(feature = "dialect-tidb")]
         DialectType::TiDB => dialect_configs!(TiDBDialect),
+        #[cfg(feature = "dialect-druid")]
         DialectType::Druid => dialect_configs!(DruidDialect),
+        #[cfg(feature = "dialect-solr")]
         DialectType::Solr => dialect_configs!(SolrDialect),
+        #[cfg(feature = "dialect-tableau")]
         DialectType::Tableau => dialect_configs!(TableauDialect),
+        #[cfg(feature = "dialect-dune")]
         DialectType::Dune => dialect_configs!(DuneDialect),
+        #[cfg(feature = "dialect-fabric")]
         DialectType::Fabric => dialect_configs!(FabricDialect),
+        #[cfg(feature = "dialect-drill")]
         DialectType::Drill => dialect_configs!(DrillDialect),
+        #[cfg(feature = "dialect-dremio")]
         DialectType::Dremio => dialect_configs!(DremioDialect),
+        #[cfg(feature = "dialect-exasol")]
         DialectType::Exasol => dialect_configs!(ExasolDialect),
+        #[cfg(feature = "dialect-datafusion")]
         DialectType::DataFusion => dialect_configs!(DataFusionDialect),
         _ => dialect_configs!(GenericDialect),
     }
@@ -1628,7 +1731,7 @@ impl CustomDialectBuilder {
             return Err(crate::error::Error::parse(format!(
                 "Cannot register custom dialect '{}': name collides with built-in dialect",
                 self.name
-            )));
+            ), 0, 0));
         }
 
         // Get base configs
@@ -1661,13 +1764,13 @@ use std::str::FromStr;
 fn register_custom_dialect(config: CustomDialectConfig) -> Result<()> {
     let mut registry = CUSTOM_DIALECT_REGISTRY
         .write()
-        .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e)))?;
+        .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0))?;
 
     if registry.contains_key(&config.name) {
         return Err(crate::error::Error::parse(format!(
             "Custom dialect '{}' is already registered",
             config.name
-        )));
+        ), 0, 0));
     }
 
     registry.insert(config.name.clone(), Arc::new(config));
@@ -1741,6 +1844,7 @@ impl Dialect {
         let generator_config_for_expr: Option<
             Box<dyn Fn(&Expression) -> GeneratorConfig + Send + Sync>,
         > = match dialect_type {
+            #[cfg(feature = "dialect-athena")]
             DialectType::Athena => Some(Box::new(|expr| {
                 AthenaDialect.generator_config_for_expr(expr)
             })),
@@ -1930,11 +2034,30 @@ impl Dialect {
             return custom_preprocess(expr);
         }
 
+        #[cfg(any(
+            feature = "dialect-mysql",
+            feature = "dialect-postgresql",
+            feature = "dialect-bigquery",
+            feature = "dialect-snowflake",
+            feature = "dialect-tsql",
+            feature = "dialect-spark",
+            feature = "dialect-databricks",
+            feature = "dialect-hive",
+            feature = "dialect-sqlite",
+            feature = "dialect-trino",
+            feature = "dialect-presto",
+            feature = "dialect-duckdb",
+            feature = "dialect-redshift",
+            feature = "dialect-starrocks",
+            feature = "dialect-oracle",
+            feature = "dialect-clickhouse",
+        ))]
         use crate::transforms;
 
         match self.dialect_type {
             // MySQL doesn't support QUALIFY, DISTINCT ON, FULL OUTER JOIN
             // MySQL doesn't natively support GENERATE_DATE_ARRAY (expand to recursive CTE)
+            #[cfg(feature = "dialect-mysql")]
             DialectType::MySQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_full_outer_join(expr)?;
@@ -1945,6 +2068,7 @@ impl Dialect {
             // PostgreSQL doesn't support QUALIFY
             // PostgreSQL: UNNEST(GENERATE_SERIES) -> subquery wrapping
             // PostgreSQL: Normalize SET ... TO to SET ... = in CREATE FUNCTION
+            #[cfg(feature = "dialect-postgresql")]
             DialectType::PostgreSQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
@@ -1970,6 +2094,7 @@ impl Dialect {
                 Ok(expr)
             }
             // BigQuery doesn't support DISTINCT ON or CTE column aliases
+            #[cfg(feature = "dialect-bigquery")]
             DialectType::BigQuery => {
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
                 let expr = transforms::pushdown_cte_column_names(expr)?;
@@ -1977,6 +2102,7 @@ impl Dialect {
                 Ok(expr)
             }
             // Snowflake
+            #[cfg(feature = "dialect-snowflake")]
             DialectType::Snowflake => {
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
                 let expr = transforms::eliminate_window_clause(expr)?;
@@ -1988,6 +2114,7 @@ impl Dialect {
             // TSQL doesn't support CTEs in subqueries (hoist to top level)
             // NOTE: no_limit_order_by_union is handled in cross_dialect_normalize (not preprocess)
             // to avoid breaking TSQL identity tests where ORDER BY on UNION is valid
+            #[cfg(feature = "dialect-tsql")]
             DialectType::TSQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
@@ -1999,6 +2126,7 @@ impl Dialect {
             }
             // Spark doesn't support QUALIFY (but Databricks does)
             // Spark doesn't support CTEs in subqueries (hoist to top level)
+            #[cfg(feature = "dialect-spark")]
             DialectType::Spark => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::add_auto_table_alias(expr)?;
@@ -2008,6 +2136,7 @@ impl Dialect {
             }
             // Databricks supports QUALIFY natively
             // Databricks doesn't support CTEs in subqueries (hoist to top level)
+            #[cfg(feature = "dialect-databricks")]
             DialectType::Databricks => {
                 let expr = transforms::add_auto_table_alias(expr)?;
                 let expr = transforms::simplify_nested_paren_values(expr)?;
@@ -2015,23 +2144,27 @@ impl Dialect {
                 Ok(expr)
             }
             // Hive doesn't support QUALIFY or CTEs in subqueries
+            #[cfg(feature = "dialect-hive")]
             DialectType::Hive => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::move_ctes_to_top_level(expr)?;
                 Ok(expr)
             }
             // SQLite doesn't support QUALIFY
+            #[cfg(feature = "dialect-sqlite")]
             DialectType::SQLite => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 Ok(expr)
             }
             // Trino doesn't support QUALIFY
+            #[cfg(feature = "dialect-trino")]
             DialectType::Trino => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::explode_projection_to_unnest(expr, DialectType::Trino)?;
                 Ok(expr)
             }
             // Presto doesn't support QUALIFY or WINDOW clause
+            #[cfg(feature = "dialect-presto")]
             DialectType::Presto => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_window_clause(expr)?;
@@ -2041,12 +2174,14 @@ impl Dialect {
             // DuckDB supports QUALIFY - no elimination needed
             // Expand POSEXPLODE to GENERATE_SUBSCRIPTS + UNNEST
             // Expand LIKE ANY / ILIKE ANY to OR chains (DuckDB doesn't support quantifiers)
+            #[cfg(feature = "dialect-duckdb")]
             DialectType::DuckDB => {
                 let expr = transforms::expand_posexplode_duckdb(expr)?;
                 let expr = transforms::expand_like_any(expr)?;
                 Ok(expr)
             }
             // Redshift doesn't support QUALIFY, WINDOW clause, or GENERATE_DATE_ARRAY
+            #[cfg(feature = "dialect-redshift")]
             DialectType::Redshift => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_window_clause(expr)?;
@@ -2054,23 +2189,29 @@ impl Dialect {
                 Ok(expr)
             }
             // StarRocks doesn't support BETWEEN in DELETE statements or QUALIFY
+            #[cfg(feature = "dialect-starrocks")]
             DialectType::StarRocks => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::expand_between_in_delete(expr)?;
                 Ok(expr)
             }
             // DataFusion supports QUALIFY and semi/anti joins natively
+            #[cfg(feature = "dialect-datafusion")]
             DialectType::DataFusion => Ok(expr),
             // Oracle doesn't support QUALIFY
+            #[cfg(feature = "dialect-oracle")]
             DialectType::Oracle => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 Ok(expr)
             }
             // Drill - no special preprocessing needed
+            #[cfg(feature = "dialect-drill")]
             DialectType::Drill => Ok(expr),
             // Teradata - no special preprocessing needed
+            #[cfg(feature = "dialect-teradata")]
             DialectType::Teradata => Ok(expr),
             // ClickHouse doesn't support ORDER BY/LIMIT directly on UNION
+            #[cfg(feature = "dialect-clickhouse")]
             DialectType::ClickHouse => {
                 let expr = transforms::no_limit_order_by_union(expr)?;
                 Ok(expr)
@@ -2090,6 +2231,41 @@ impl Dialect {
         self.transpile_to_inner(sql, target, true)
     }
 
+    #[cfg(not(feature = "transpile"))]
+    fn transpile_to_inner(
+        &self,
+        sql: &str,
+        target: DialectType,
+        pretty: bool,
+    ) -> Result<Vec<String>> {
+        // Without the transpile feature, only same-dialect or to/from generic is supported
+        if self.dialect_type != target
+            && self.dialect_type != DialectType::Generic
+            && target != DialectType::Generic
+        {
+            return Err(crate::error::Error::parse(
+                "Cross-dialect transpilation not available in this build",
+                0, 0,
+            ));
+        }
+
+        let expressions = self.parse(sql)?;
+        let target_dialect = Dialect::get(target);
+
+        expressions
+            .into_iter()
+            .map(|expr| {
+                let transformed = target_dialect.transform(expr)?;
+                if pretty {
+                    target_dialect.generate_pretty_with_source(&transformed, self.dialect_type)
+                } else {
+                    target_dialect.generate_with_source(&transformed, self.dialect_type)
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "transpile")]
     fn transpile_to_inner(
         &self,
         sql: &str,
@@ -2388,6 +2564,11 @@ impl Dialect {
             .collect()
     }
 
+}
+
+// Transpile-only methods: cross-dialect normalization and helpers
+#[cfg(feature = "transpile")]
+impl Dialect {
     /// Transform BigQuery GENERATE_DATE_ARRAY in UNNEST for Snowflake target.
     /// Converts:
     ///   SELECT ..., alias, ... FROM t CROSS JOIN UNNEST(GENERATE_DATE_ARRAY(start, end, INTERVAL '1' unit)) AS alias
@@ -6064,16 +6245,25 @@ impl Dialect {
                     {
                         Action::RegexpLikeToDuckDB
                     }
-                    // MySQL division -> NULLIF wrapping and/or CAST for specific targets
+                    // Safe-division source -> non-safe target: NULLIF wrapping and/or CAST
+                    // Safe-division dialects: MySQL, DuckDB, SingleStore, TiDB, ClickHouse, Doris
                     Expression::Div(ref op)
-                        if matches!(source, DialectType::MySQL)
-                            && matches!(
+                        if matches!(
+                            source,
+                            DialectType::MySQL
+                                | DialectType::DuckDB
+                                | DialectType::SingleStore
+                                | DialectType::TiDB
+                                | DialectType::ClickHouse
+                                | DialectType::Doris
+                        ) && matches!(
                                 target,
                                 DialectType::PostgreSQL
                                     | DialectType::Redshift
                                     | DialectType::Drill
                                     | DialectType::Trino
                                     | DialectType::Presto
+                                    | DialectType::Athena
                                     | DialectType::TSQL
                                     | DialectType::Teradata
                                     | DialectType::SQLite
@@ -6081,6 +6271,8 @@ impl Dialect {
                                     | DialectType::Snowflake
                                     | DialectType::Databricks
                                     | DialectType::Oracle
+                                    | DialectType::Materialize
+                                    | DialectType::RisingWave
                             ) =>
                     {
                         // Only wrap if RHS is not already NULLIF
@@ -17608,7 +17800,9 @@ impl Dialect {
                         let new_left = match target {
                             DialectType::PostgreSQL
                             | DialectType::Redshift
-                            | DialectType::Teradata => Expression::Cast(Box::new(Cast {
+                            | DialectType::Teradata
+                            | DialectType::Materialize
+                            | DialectType::RisingWave => Expression::Cast(Box::new(Cast {
                                 this: left,
                                 to: DataType::Custom {
                                     name: "DOUBLE PRECISION".to_string(),
@@ -17618,7 +17812,10 @@ impl Dialect {
                                 format: None,
                                 default: None,
                             })),
-                            DialectType::Drill | DialectType::Trino | DialectType::Presto => {
+                            DialectType::Drill
+                            | DialectType::Trino
+                            | DialectType::Presto
+                            | DialectType::Athena => {
                                 Expression::Cast(Box::new(Cast {
                                     this: left,
                                     to: DataType::Double {
@@ -22205,8 +22402,19 @@ impl Dialect {
                 }
 
                 Action::DecodeSimplify => {
-                    // DECODE(x, search1, result1, ..., default) -> CASE WHEN x = search1 OR (x IS NULL AND search1 IS NULL) THEN result1 ... [ELSE default] END
-                    // Helper to build null-safe CASE from (this_expr, search_result_pairs, default)
+                    // DECODE(x, search1, result1, ..., default) -> CASE WHEN ... THEN result1 ... [ELSE default] END
+                    // For literal search values: CASE WHEN x = search THEN result
+                    // For NULL search: CASE WHEN x IS NULL THEN result
+                    // For non-literal (column, expr): CASE WHEN x = search OR (x IS NULL AND search IS NULL) THEN result
+                    fn is_decode_literal(e: &Expression) -> bool {
+                        matches!(
+                            e,
+                            Expression::Literal(_)
+                                | Expression::Boolean(_)
+                                | Expression::Neg(_)
+                        )
+                    }
+
                     let build_decode_case =
                         |this_expr: Expression,
                          pairs: Vec<(Expression, Expression)>,
@@ -22214,74 +22422,96 @@ impl Dialect {
                             let whens: Vec<(Expression, Expression)> = pairs
                                 .into_iter()
                                 .map(|(search, result)| {
-                                    // Wrap search in parens if it's a comparison expression
-                                    let needs_paren = matches!(
-                                        &search,
-                                        Expression::Eq(_)
-                                            | Expression::Neq(_)
-                                            | Expression::Gt(_)
-                                            | Expression::Gte(_)
-                                            | Expression::Lt(_)
-                                            | Expression::Lte(_)
-                                    );
-                                    let search_ref = if needs_paren {
-                                        Expression::Paren(Box::new(crate::expressions::Paren {
-                                            this: search.clone(),
+                                    if matches!(&search, Expression::Null(_)) {
+                                        // NULL search -> IS NULL
+                                        let condition = Expression::Is(Box::new(BinaryOp {
+                                            left: this_expr.clone(),
+                                            right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
-                                        }))
-                                    } else {
-                                        search.clone()
-                                    };
-                                    // Build: x = search OR (x IS NULL AND search IS NULL)
-                                    let eq = Expression::Eq(Box::new(BinaryOp {
-                                        left: this_expr.clone(),
-                                        right: search_ref,
-                                        left_comments: Vec::new(),
-                                        operator_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }));
-                                    let search_in_null = if needs_paren {
-                                        Expression::Paren(Box::new(crate::expressions::Paren {
-                                            this: search.clone(),
+                                        }));
+                                        (condition, result)
+                                    } else if is_decode_literal(&search) || is_decode_literal(&this_expr) {
+                                        // At least one side is a literal -> simple equality (no NULL check needed)
+                                        let eq = Expression::Eq(Box::new(BinaryOp {
+                                            left: this_expr.clone(),
+                                            right: search,
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
-                                        }))
+                                        }));
+                                        (eq, result)
                                     } else {
-                                        search.clone()
-                                    };
-                                    let x_is_null = Expression::Is(Box::new(BinaryOp {
-                                        left: this_expr.clone(),
-                                        right: Expression::Null(crate::expressions::Null),
-                                        left_comments: Vec::new(),
-                                        operator_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }));
-                                    let search_is_null = Expression::Is(Box::new(BinaryOp {
-                                        left: search_in_null,
-                                        right: Expression::Null(crate::expressions::Null),
-                                        left_comments: Vec::new(),
-                                        operator_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }));
-                                    let both_null = Expression::And(Box::new(BinaryOp {
-                                        left: x_is_null,
-                                        right: search_is_null,
-                                        left_comments: Vec::new(),
-                                        operator_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }));
-                                    let condition = Expression::Or(Box::new(BinaryOp {
-                                        left: eq,
-                                        right: Expression::Paren(Box::new(
-                                            crate::expressions::Paren {
-                                                this: both_null,
+                                        // Non-literal -> null-safe comparison
+                                        let needs_paren = matches!(
+                                            &search,
+                                            Expression::Eq(_)
+                                                | Expression::Neq(_)
+                                                | Expression::Gt(_)
+                                                | Expression::Gte(_)
+                                                | Expression::Lt(_)
+                                                | Expression::Lte(_)
+                                        );
+                                        let search_ref = if needs_paren {
+                                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                                this: search.clone(),
                                                 trailing_comments: Vec::new(),
-                                            },
-                                        )),
-                                        left_comments: Vec::new(),
-                                        operator_comments: Vec::new(),
-                                        trailing_comments: Vec::new(),
-                                    }));
-                                    (condition, result)
+                                            }))
+                                        } else {
+                                            search.clone()
+                                        };
+                                        // Build: x = search OR (x IS NULL AND search IS NULL)
+                                        let eq = Expression::Eq(Box::new(BinaryOp {
+                                            left: this_expr.clone(),
+                                            right: search_ref,
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        let search_in_null = if needs_paren {
+                                            Expression::Paren(Box::new(crate::expressions::Paren {
+                                                this: search.clone(),
+                                                trailing_comments: Vec::new(),
+                                            }))
+                                        } else {
+                                            search.clone()
+                                        };
+                                        let x_is_null = Expression::Is(Box::new(BinaryOp {
+                                            left: this_expr.clone(),
+                                            right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        let search_is_null = Expression::Is(Box::new(BinaryOp {
+                                            left: search_in_null,
+                                            right: Expression::Null(crate::expressions::Null),
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        let both_null = Expression::And(Box::new(BinaryOp {
+                                            left: x_is_null,
+                                            right: search_is_null,
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        let condition = Expression::Or(Box::new(BinaryOp {
+                                            left: eq,
+                                            right: Expression::Paren(Box::new(
+                                                crate::expressions::Paren {
+                                                    this: both_null,
+                                                    trailing_comments: Vec::new(),
+                                                },
+                                            )),
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                        }));
+                                        (condition, result)
+                                    }
                                 })
                                 .collect();
                             Expression::Case(Box::new(Case {
@@ -31243,5 +31473,57 @@ mod tests {
             DialectType::TSQL,
         ).unwrap();
         eprintln!("GDA CTE -> TSQL: {}", result[0]);
+    }
+
+    #[test]
+    fn test_decode_literal_no_null_check() {
+        // Oracle DECODE with all literals should produce simple equality, no IS NULL
+        let dialect = Dialect::get(DialectType::Oracle);
+        let result = dialect
+            .transpile_to("SELECT decode(1,2,3,4)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0], "SELECT CASE WHEN 1 = 2 THEN 3 ELSE 4 END",
+            "Literal DECODE should not have IS NULL checks"
+        );
+    }
+
+    #[test]
+    fn test_decode_column_vs_literal_no_null_check() {
+        // Oracle DECODE with column vs literal should use simple equality (like sqlglot)
+        let dialect = Dialect::get(DialectType::Oracle);
+        let result = dialect
+            .transpile_to("SELECT decode(col, 2, 3, 4) FROM t", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0], "SELECT CASE WHEN col = 2 THEN 3 ELSE 4 END FROM t",
+            "Column vs literal DECODE should not have IS NULL checks"
+        );
+    }
+
+    #[test]
+    fn test_decode_column_vs_column_keeps_null_check() {
+        // Oracle DECODE with column vs column should keep null-safe comparison
+        let dialect = Dialect::get(DialectType::Oracle);
+        let result = dialect
+            .transpile_to("SELECT decode(col, col2, 3, 4) FROM t", DialectType::DuckDB)
+            .unwrap();
+        assert!(
+            result[0].contains("IS NULL"),
+            "Column vs column DECODE should have IS NULL checks, got: {}",
+            result[0]
+        );
+    }
+
+    #[test]
+    fn test_decode_null_search() {
+        // Oracle DECODE with NULL search should use IS NULL
+        let dialect = Dialect::get(DialectType::Oracle);
+        let result = dialect
+            .transpile_to("SELECT decode(col, NULL, 3, 4) FROM t", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0], "SELECT CASE WHEN col IS NULL THEN 3 ELSE 4 END FROM t",
+        );
     }
 }

@@ -309,10 +309,29 @@ copy-bindings:
 	fi
 	@echo "Copied $$(ls packages/sdk/src/generated/*.ts | wc -l | tr -d ' ') type files."
 
-# Build WASM package
+# Build WASM package (full, all dialects)
 build-wasm:
 	cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm
 	cd packages/sdk && npm run build
+
+# Priority dialects for per-dialect WASM builds
+PRIORITY_DIALECTS := postgresql mysql bigquery snowflake duckdb tsql clickhouse
+
+# Build a single per-dialect WASM binary (usage: make build-wasm-dialect D=clickhouse)
+build-wasm-dialect:
+ifndef D
+	$(error Usage: make build-wasm-dialect D=<dialect>)
+endif
+	cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release \
+		--out-dir ../../packages/sdk/wasm/$(D) \
+		-- --no-default-features --features "console_error_panic_hook,dialect-$(D)"
+
+# Build all priority per-dialect WASM binaries
+build-wasm-dialects:
+	@for d in $(PRIORITY_DIALECTS); do \
+		echo "Building WASM for dialect: $$d"; \
+		$(MAKE) build-wasm-dialect D=$$d; \
+	done
 
 # Build everything
 build-all: build-wasm

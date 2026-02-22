@@ -16,6 +16,34 @@
     "./cdn": {
       "types": "./dist/index.d.ts",
       "import": "./dist/cdn/polyglot.esm.js"
+    },
+    "./postgresql": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/postgresql/index.js"
+    },
+    "./mysql": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/mysql/index.js"
+    },
+    "./bigquery": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/bigquery/index.js"
+    },
+    "./snowflake": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/snowflake/index.js"
+    },
+    "./duckdb": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/duckdb/index.js"
+    },
+    "./tsql": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/tsql/index.js"
+    },
+    "./clickhouse": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/dialects/clickhouse/index.js"
     }
   },
   "files": [
@@ -27,7 +55,10 @@
     "build:wasm": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm",
     "build:esm": "vite build",
     "build:umd": "vite build --config vite.config.umd.ts",
+    "build:dialect": "vite build --config vite.config.dialect.ts",
+    "build:dialects": "for d in postgresql mysql bigquery snowflake duckdb tsql clickhouse; do POLYGLOT_DIALECT=$d pnpm run build:dialect; done",
     "build": "pnpm run build:esm && pnpm run build:umd",
+    "build:all": "pnpm run build && pnpm run build:dialects",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

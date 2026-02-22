@@ -13370,17 +13370,35 @@ impl Generator {
                         trailing_comments: Vec::new(),
                     });
                 }
+                // Strip underscore digit separators (e.g., 1_000_000 -> 1000000)
+                // for dialects that don't support them (MySQL interprets as identifier).
+                // ClickHouse, DuckDB, PostgreSQL, and Hive/Spark/Databricks support them.
+                let n = if n.contains('_')
+                    && !matches!(
+                        self.config.dialect,
+                        Some(DialectType::ClickHouse)
+                            | Some(DialectType::DuckDB)
+                            | Some(DialectType::PostgreSQL)
+                            | Some(DialectType::Hive)
+                            | Some(DialectType::Spark)
+                            | Some(DialectType::Databricks)
+                    )
+                {
+                    std::borrow::Cow::Owned(n.replace('_', ""))
+                } else {
+                    std::borrow::Cow::Borrowed(n.as_str())
+                };
                 // Normalize numbers starting with decimal point to have leading zero
                 // e.g., .25 -> 0.25 (matches sqlglot behavior)
                 if n.starts_with('.') {
                     self.write("0");
-                    self.write(n);
+                    self.write(&n);
                 } else if n.starts_with("-.") {
                     // Handle negative numbers like -.25 -> -0.25
                     self.write("-0");
                     self.write(&n[1..]);
                 } else {
-                    self.write(n);
+                    self.write(&n);
                 }
             }
             Literal::HexString(h) => {
@@ -14166,6 +14184,19 @@ impl Generator {
                         '\r' => self.write("\\r"),
                         '\t' => self.write("\\t"),
                         '\0' => self.write("\\0"),
+                        '\x07' => self.write("\\a"),
+                        '\x08' => self.write("\\b"),
+                        '\x0C' => self.write("\\f"),
+                        '\x0B' => self.write("\\v"),
+                        // Non-printable characters: emit as \xNN hex escapes
+                        c if c.is_control() || (c as u32) < 0x20 => {
+                            let byte = c as u32;
+                            if byte < 256 {
+                                self.write(&format!("\\x{:02X}", byte));
+                            } else {
+                                self.output.push(c);
+                            }
+                        }
                         _ => self.output.push(c),
                     }
                 }

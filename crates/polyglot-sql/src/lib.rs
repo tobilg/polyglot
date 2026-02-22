@@ -186,7 +186,7 @@ pub fn transpile(sql: &str, read: DialectType, write: DialectType) -> Result<Vec
         .into_iter()
         .map(|expr| {
             let transformed = write_dialect.transform(expr)?;
-            write_dialect.generate(&transformed)
+            write_dialect.generate_with_source(&transformed, read)
         })
         .collect()
 }
@@ -216,10 +216,10 @@ pub fn parse_one(sql: &str, dialect: DialectType) -> Result<Expression> {
     let mut expressions = parse(sql, dialect)?;
 
     if expressions.len() != 1 {
-        return Err(Error::Parse(format!(
+        return Err(Error::parse(format!(
             "Expected 1 statement, found {}",
             expressions.len()
-        )));
+        ), 0, 0));
     }
 
     Ok(expressions.remove(0))
@@ -275,7 +275,7 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
                     line,
                     column,
                 } => ValidationError::error(message.clone(), "E002").with_location(*line, *column),
-                Error::Parse(msg) => ValidationError::error(msg.clone(), "E003"),
+                Error::Parse { message, line, column } => ValidationError::error(message.clone(), "E003").with_location(*line, *column),
                 _ => ValidationError::error(e.to_string(), "E000"),
             };
             ValidationResult::with_errors(vec![error])
@@ -297,9 +297,9 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
 /// A vector of transpiled SQL statements, or an error if a dialect name is unknown.
 pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<String>> {
     let read_dialect = Dialect::get_by_name(read)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read)))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read), 0, 0))?;
     let write_dialect = Dialect::get_by_name(write)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write)))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write), 0, 0))?;
 
     let expressions = read_dialect.parse(sql)?;
 
@@ -307,7 +307,7 @@ pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<Strin
         .into_iter()
         .map(|expr| {
             let transformed = write_dialect.transform(expr)?;
-            write_dialect.generate(&transformed)
+            write_dialect.generate_with_source(&transformed, read_dialect.dialect_type())
         })
         .collect()
 }
@@ -317,7 +317,7 @@ pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<Strin
 /// Supports both built-in and custom dialect names.
 pub fn parse_by_name(sql: &str, dialect: &str) -> Result<Vec<Expression>> {
     let d = Dialect::get_by_name(dialect)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect)))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
     d.parse(sql)
 }
 
@@ -326,6 +326,6 @@ pub fn parse_by_name(sql: &str, dialect: &str) -> Result<Vec<Expression>> {
 /// Supports both built-in and custom dialect names.
 pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String> {
     let d = Dialect::get_by_name(dialect)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect)))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
     d.generate(expression)
 }

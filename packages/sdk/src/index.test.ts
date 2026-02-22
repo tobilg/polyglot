@@ -230,4 +230,36 @@ describe('Edge cases', () => {
     const result = parse(sql, Dialect.Generic);
     expect(result.success).toBe(true);
   });
+
+  describe('error positions', () => {
+    it('should include errorLine and errorColumn on parse errors', () => {
+      const result = parse('SELECT 1 + 2)', Dialect.Generic);
+      expect(result.success).toBe(false);
+      expect(result.errorLine).toBeDefined();
+      expect(result.errorColumn).toBeDefined();
+      expect(result.errorLine).toBe(1);
+      expect(typeof result.errorColumn).toBe('number');
+    });
+
+    it('should include errorLine and errorColumn on transpile errors', () => {
+      const result = transpile('SELECT 1 + 2)', Dialect.Generic, Dialect.PostgreSQL);
+      expect(result.success).toBe(false);
+      expect(result.errorLine).toBeDefined();
+      expect(result.errorColumn).toBeDefined();
+    });
+
+    it('should not include error positions on success', () => {
+      const result = parse('SELECT 1', Dialect.Generic);
+      expect(result.success).toBe(true);
+      expect(result.errorLine).toBeUndefined();
+      expect(result.errorColumn).toBeUndefined();
+    });
+
+    it('should not include error positions on successful transpile', () => {
+      const result = transpile('SELECT 1', Dialect.Generic, Dialect.PostgreSQL);
+      expect(result.success).toBe(true);
+      expect(result.errorLine).toBeUndefined();
+      expect(result.errorColumn).toBeUndefined();
+    });
+  });
 });
