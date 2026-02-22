@@ -9,7 +9,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "MIT"
 authors = ["polyglot contributors"]
