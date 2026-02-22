@@ -64,6 +64,9 @@ jobs:
       - name: ClickHouse coverage tests (report-only)
         run: RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 
+      - name: Function validation tests
+        run: cargo test --test function_validation -p polyglot-sql -- --nocapture
+
   sdk-build:
     needs: rust-test
     runs-on: ubuntu-latest

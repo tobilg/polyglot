@@ -24,6 +24,8 @@ pub struct FunctionSignature {
     /// Whether this function name is case-insensitive.
     /// When `false`, the function name must match `canonical_name` exactly.
     pub case_insensitive: bool,
+    /// Whether this is an aggregate function (relevant for combinator matching).
+    pub is_aggregate: bool,
 }
 
 impl FunctionSignature {
@@ -33,6 +35,7 @@ impl FunctionSignature {
             min_args,
             max_args,
             case_insensitive: false,
+            is_aggregate: false,
         }
     }
 
@@ -49,6 +52,12 @@ impl FunctionSignature {
     /// Mark this function as case-insensitive.
     pub fn ci(mut self) -> Self {
         self.case_insensitive = true;
+        self
+    }
+
+    /// Mark this function as an aggregate function.
+    pub fn agg(mut self) -> Self {
+        self.is_aggregate = true;
         self
     }
 
@@ -128,8 +137,12 @@ impl FunctionCatalog {
         for combinator in self.combinators {
             let suffix = combinator.to_uppercase();
             if let Some(base) = upper.strip_suffix(&suffix) {
-                if !base.is_empty() && self.functions.contains_key(base) {
-                    return LookupResult::Combinator;
+                if !base.is_empty() {
+                    if let Some(sig) = self.functions.get(base) {
+                        if sig.is_aggregate {
+                            return LookupResult::Combinator;
+                        }
+                    }
                 }
             }
         }

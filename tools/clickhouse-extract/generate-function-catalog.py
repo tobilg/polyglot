@@ -26,6 +26,22 @@ ALIAS_TO = 3
 SYNTAX = 7
 
 
+def _count_optional_args(bracket_str: str) -> int:
+    """Count optional arguments inside a bracket group like '[, N]' or '[, precision[, time_zone]]'.
+
+    Each comma inside the brackets (at any nesting depth) represents one optional argument.
+    """
+    count = 0
+    for ch in bracket_str:
+        if ch == ",":
+            count += 1
+    # Handle edge case: "[expr]" with no comma means 1 optional arg
+    inner = bracket_str.strip("[]").strip()
+    if count == 0 and inner and inner != "...":
+        return 1
+    return count
+
+
 def parse_arity_from_syntax(syntax: str) -> tuple[int, int | None]:
     """Extract (min_args, max_args) from a syntax string like 'func(a, b[, c])'.
 
@@ -87,11 +103,13 @@ def parse_arity_from_syntax(syntax: str) -> tuple[int, int | None]:
         if part.startswith("["):
             # Count args inside optional bracket group
             # e.g. "[, s3, ...]" or "[, N]"
-            inner_opt = part.strip("[]").strip().lstrip(",").strip()
-            if inner_opt and inner_opt != "...":
-                # Could contain multiple optional args separated by commas
-                opt_parts = [p.strip() for p in inner_opt.split(",") if p.strip() and p.strip() != "..."]
-                optional += max(1, len(opt_parts))
+            optional += _count_optional_args(part)
+        elif "[" in part:
+            # Mixed: required arg with optional args attached
+            # e.g. "x[, N]" or "time_string[, precision[, time_zone]]"
+            required += 1
+            bracket_start = part.index("[")
+            optional += _count_optional_args(part[bracket_start:])
         else:
             required += 1
 
@@ -182,14 +200,19 @@ def main():
         min_a = func["min_args"]
         max_a = func["max_args"]
         ci = func["case_insensitive"]
-        ci_suffix = ".ci()" if ci else ""
+        is_agg = func["is_aggregate"]
+        chain = ""
+        if ci:
+            chain += ".ci()"
+        if is_agg:
+            chain += ".agg()"
 
         if max_a is None:
-            lines.append(f'    cat.register(FunctionSignature::variadic("{name}", {min_a}){ci_suffix});')
+            lines.append(f'    cat.register(FunctionSignature::variadic("{name}", {min_a}){chain});')
         elif min_a == max_a:
-            lines.append(f'    cat.register(FunctionSignature::fixed("{name}", {min_a}){ci_suffix});')
+            lines.append(f'    cat.register(FunctionSignature::fixed("{name}", {min_a}){chain});')
         else:
-            lines.append(f'    cat.register(FunctionSignature::new("{name}", {min_a}, Some({max_a})){ci_suffix});')
+            lines.append(f'    cat.register(FunctionSignature::new("{name}", {min_a}, Some({max_a})){chain});')
 
     # Add aliases
     if aliases:
@@ -201,13 +224,18 @@ def main():
             if target:
                 min_a = target["min_args"]
                 max_a = target["max_args"]
-                ci_suffix = ".ci()" if alias_ci else ""
+                is_agg = target["is_aggregate"]
+                chain = ""
+                if alias_ci:
+                    chain += ".ci()"
+                if is_agg:
+                    chain += ".agg()"
                 if max_a is None:
-                    lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", {min_a}){ci_suffix});')
+                    lines.append(f'    cat.register(FunctionSignature::variadic("{alias_name}", {min_a}){chain});')
                 elif min_a == max_a:
-                    lines.append(f'    cat.register(FunctionSignature::fixed("{alias_name}", {min_a}){ci_suffix});')
+                    lines.append(f'    cat.register(FunctionSignature::fixed("{alias_name}", {min_a}){chain});')
                 else:
-                    lines.append(f'    cat.register(FunctionSignature::new("{alias_name}", {min_a}, Some({max_a})){ci_suffix});')
+                    lines.append(f'    cat.register(FunctionSignature::new("{alias_name}", {min_a}, Some({max_a})){chain});')
             else:
                 # Target not found — register permissively
                 ci_suffix = ".ci()" if alias_ci else ""
