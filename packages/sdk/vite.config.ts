@@ -2,10 +2,16 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import dts from 'vite-plugin-dts';
 import wasm from 'vite-plugin-wasm';
+import { wasmExtractPlugin } from './plugins/wasmExtractPlugin';
 
 export default defineConfig({
   plugins: [
     wasm(),
+    wasmExtractPlugin({
+      wasmFilename: 'polyglot_sql_wasm_bg.wasm',
+      wasmRelativePath: './polyglot_sql_wasm_bg.wasm',
+      extractWasm: true,
+    }),
     dts({
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.test.ts'],

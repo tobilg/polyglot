@@ -9,7 +9,7 @@ documentation.workspace = true
 description = "WebAssembly bindings for polyglot-sql"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-Oz", "--converge", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-producers"]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-producers"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -1739,7 +1739,7 @@ pub struct Select {
     #[serde(default)]
     pub leading_comments: Vec<String>,
     /// Comments that appear after SELECT keyword (before expressions)
-    /// e.g., SELECT /*hint*/ col -> post_select_comments: ["/*hint*/"]
+    /// Example: `SELECT <comment> col` -> `post_select_comments: ["<comment>"]`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub post_select_comments: Vec<String>,
     /// BigQuery SELECT AS STRUCT / SELECT AS VALUE kind
@@ -2308,7 +2308,7 @@ pub struct Insert {
     /// MySQL/SQLite REPLACE INTO statement (treat like INSERT)
     #[serde(default)]
     pub is_replace: bool,
-    /// Oracle-style hint: INSERT /*+ APPEND */ INTO ...
+    /// Oracle-style hint: `INSERT <hint> INTO ...` (for example Oracle APPEND hints)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hint: Option<Hint>,
     /// REPLACE WHERE clause (Databricks): INSERT INTO a REPLACE WHERE cond VALUES ...
@@ -2980,7 +2980,7 @@ pub struct Join {
     /// PIVOT/UNPIVOT operations that follow this join (Oracle/TSQL syntax)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pivots: Vec<Expression>,
-    /// Comments collected from between join-kind keywords (e.g., INNER /* comment */ JOIN)
+    /// Comments collected between join-kind keywords (for example `INNER <comment> JOIN`)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
     /// Nesting group identifier for nested join pretty-printing.
@@ -3759,7 +3759,6 @@ pub enum DataType {
     },
     Text,
     /// TEXT with optional length: TEXT(n) - used by MySQL, SQLite, DuckDB, etc.
-    #[serde(alias = "TextWithLength")]
     TextWithLength {
         length: u32,
     },

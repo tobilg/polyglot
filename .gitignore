@@ -56,6 +56,7 @@ target/
 
 # Generated TypeScript bindings (ts-rs)
 crates/polyglot-sql/bindings/
+packages/sdk/src/generated/
 
 tools/sqlglot-compare/dist
 tools/sqlglot-compare/node_modules
@@ -77,4 +78,3 @@ packages/sdk/coverage/
 crates/polyglot-sql/tests/sqlglot_fixtures/
 crates/polyglot-sql/tests/custom_fixtures/clickhouse/
 tools/sqlglot-compare/fixtures/extracted/
-

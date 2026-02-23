@@ -1,12 +1,11 @@
 /**
  * AST Type Definitions
  *
- * This module re-exports all generated types from the Rust AST
+ * This module re-exports selected generated types from the Rust AST
  * and provides type guards and utility types for working with the AST.
  */
 
-// Re-export all generated types
-export * from '../../generated';
+// Re-export selected generated types
 export type { Alias } from '../../generated/Alias';
 export type { BinaryOp } from '../../generated/BinaryOp';
 export type { Case } from '../../generated/Case';
@@ -20,6 +19,7 @@ export type { From } from '../../generated/From';
 export type { GroupBy } from '../../generated/GroupBy';
 export type { Having } from '../../generated/Having';
 export type { Identifier } from '../../generated/Identifier';
+export type { Index } from '../../generated/Index';
 export type { Insert } from '../../generated/Insert';
 export type { Join } from '../../generated/Join';
 export type { JoinKind } from '../../generated/JoinKind';

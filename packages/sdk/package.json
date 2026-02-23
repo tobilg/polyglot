@@ -23,14 +23,13 @@
     "README.md"
   ],
   "scripts": {
-    "build:bindings": "cd ../.. && make copy-bindings",
+    "build:bindings": "cd ../.. && make generate-bindings",
     "build:wasm": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm",
     "build:esm": "vite build",
     "build:umd": "vite build --config vite.config.umd.ts",
     "build:dialect": "vite build --config vite.config.dialect.ts",
     "build:dialects": "for d in postgresql mysql bigquery snowflake duckdb tsql clickhouse; do POLYGLOT_DIALECT=$d pnpm run build:dialect; done",
-    "build:extract-wasm": "node scripts/extract-wasm.mjs",
-    "build": "pnpm run build:esm && pnpm run build:umd && pnpm run build:extract-wasm",
+    "build": "pnpm run build:esm && pnpm run build:umd",
     "build:all": "pnpm run build && pnpm run build:dialects",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -39,7 +38,7 @@
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
     "format": "biome format --write src/",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build:bindings && pnpm run build"
   },
   "keywords": [
     "sql",

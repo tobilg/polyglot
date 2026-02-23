@@ -306,9 +306,6 @@ copy-bindings:
 	@mkdir -p packages/sdk/src/generated
 	@rm -rf packages/sdk/src/generated/*.ts
 	@cp crates/polyglot-sql/bindings/*.ts packages/sdk/src/generated/
-	@if [ -f packages/sdk/src/generated/Index.ts ]; then \
-		mv packages/sdk/src/generated/Index.ts packages/sdk/src/generated/index.ts; \
-	fi
 	@echo "Copied $$(ls packages/sdk/src/generated/*.ts | wc -l | tr -d ' ') type files."
 
 # Build WASM package (full, all dialects)

@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import wasm from 'vite-plugin-wasm';
+import { wasmExtractPlugin } from './plugins/wasmExtractPlugin';
 
 /**
  * UMD Build Configuration
@@ -22,7 +23,14 @@ import wasm from 'vite-plugin-wasm';
  * ```
  */
 export default defineConfig({
-  plugins: [wasm()],
+  plugins: [
+    wasm(),
+    wasmExtractPlugin({
+      wasmFilename: 'polyglot_sql_wasm_bg.wasm',
+      wasmRelativePath: '../polyglot_sql_wasm_bg.wasm',
+      extractWasm: false,
+    }),
+  ],
   build: {
     lib: {
       entry: resolve(__dirname, 'src/umd.ts'),

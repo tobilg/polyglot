@@ -100,6 +100,9 @@ jobs:
       - name: Build WASM
         run: cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm
 
+      - name: Generate TypeScript bindings
+        run: make generate-bindings
+
       - name: Install dependencies
         run: pnpm install
 
@@ -135,48 +138,48 @@ jobs:
           name: dist
           path: packages/sdk/dist/
 
-  sdk-dialect-builds:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: rust-test
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        dialect: [postgresql, mysql, bigquery, snowflake, duckdb, tsql, clickhouse]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Build per-dialect WASM (${{ matrix.dialect }})
-        run: make build-wasm-dialect D=${{ matrix.dialect }}
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build per-dialect SDK (${{ matrix.dialect }})
-        run: cd packages/sdk && POLYGLOT_DIALECT=${{ matrix.dialect }} pnpm run build:dialect
-
-      - name: Upload per-dialect artifact (${{ matrix.dialect }})
-        uses: actions/upload-artifact@v4
-        with:
-          name: dialect-${{ matrix.dialect }}
-          path: packages/sdk/dist/dialects/${{ matrix.dialect }}/
+  # sdk-dialect-builds:
+  #   if: startsWith(github.ref, 'refs/tags/v')
+  #   needs: rust-test
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       dialect: [postgresql, mysql, bigquery, snowflake, duckdb, tsql, clickhouse]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: wasm32-unknown-unknown
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #
+  #     - name: Install wasm-pack
+  #       run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+  #
+  #     - uses: pnpm/action-setup@v4
+  #       with:
+  #         version: 10
+  #
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: pnpm
+  #
+  #     - name: Build per-dialect WASM (${{ matrix.dialect }})
+  #       run: make build-wasm-dialect D=${{ matrix.dialect }}
+  #
+  #     - name: Install dependencies
+  #       run: pnpm install
+  #
+  #     - name: Build per-dialect SDK (${{ matrix.dialect }})
+  #       run: cd packages/sdk && POLYGLOT_DIALECT=${{ matrix.dialect }} pnpm run build:dialect
+  #
+  #     - name: Upload per-dialect artifact (${{ matrix.dialect }})
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: dialect-${{ matrix.dialect }}
+  #         path: packages/sdk/dist/dialects/${{ matrix.dialect }}/
 
   publish-crate:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -225,7 +228,7 @@ jobs:
         run: pnpm install
 
       - name: Publish to npm
-        run: cd packages/sdk && pnpm publish --access public --no-git-checks
+        run: cd packages/sdk && pnpm publish --access public --no-git-checks --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
