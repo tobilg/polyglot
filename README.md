@@ -17,6 +17,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **Fluent builder API** for constructing queries programmatically
 - **Validation** with syntax, semantic, and schema-aware checks
 - **AST visitor** utilities for walking, transforming, and analyzing queries
+- **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
 
 ## Supported Dialects (32)
 
@@ -98,10 +99,15 @@ See the full [TypeScript SDK README](packages/sdk/README.md) for more examples.
 polyglot/
 ├── crates/
 │   ├── polyglot-sql/           # Core Rust library (parser, generator, builder)
-│   └── polyglot-sql-wasm/      # WASM bindings
+│   ├── polyglot-sql-wasm/      # WASM bindings
+│   └── polyglot-sql-ffi/       # C ABI bindings (.so/.dylib/.dll + .a/.lib + header)
 ├── packages/
 │   ├── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
-│   └── playgroud/              # Playground for testing the SDK (React 19, Tailwind v4, Vite)
+│   └── playground/             # Playground for testing the SDK (React 19, Tailwind v4, Vite)
+├── examples/
+│   ├── rust/                   # Rust example
+│   ├── typescript/             # TypeScript SDK example
+│   └── c/                      # C FFI example
 └── tools/
     ├── sqlglot-compare/        # Test extraction & comparison tool
     └── bench-compare/          # Performance benchmarks
@@ -130,6 +136,9 @@ pnpm install --ignore-workspace && pnpm start
 # Build Rust core
 cargo build -p polyglot-sql
 
+# Build C FFI crate (shared/static libs + generated header)
+cargo build -p polyglot-sql-ffi --profile ffi_release
+
 # Build WASM + TypeScript SDK
 make build-all
 
@@ -137,6 +146,21 @@ make build-all
 cd crates/polyglot-sql-wasm && wasm-pack build --target bundler --release
 cd packages/sdk && npm run build
 ```
+
+## C FFI
+
+Polyglot provides a stable C ABI in `crates/polyglot-sql-ffi`.
+
+- Crate README: [`crates/polyglot-sql-ffi/README.md`](crates/polyglot-sql-ffi/README.md)
+- Generated header: `crates/polyglot-sql-ffi/polyglot_sql.h`
+- Example program: `examples/c/main.c`
+- Make targets:
+  - `make build-ffi`
+  - `make generate-ffi-header`
+  - `make build-ffi-example`
+  - `make test-ffi`
+
+For tagged releases (`v*`), CI also attaches prebuilt FFI artifacts and checksums to GitHub Releases.
 
 ## Testing
 
@@ -164,6 +188,7 @@ make setup-fixtures
 make test-rust-all          # All SQLGlot fixture suites
 make test-rust-lib          # Lib unit tests
 make test-rust-verify       # Full strict verification suite
+make test-ffi               # FFI crate integration tests
 
 # Individual test suites
 make test-rust-identity     # 956 generic identity cases
@@ -209,6 +234,9 @@ cargo +nightly fuzz run fuzz_transpile
 | `make help` | Show all available commands |
 | `make build-all` | Build WASM + Rust (release) |
 | `make build-wasm` | Build WASM package + TypeScript SDK |
+| `make build-ffi` | Build C FFI crate (`ffi_release` profile) |
+| `make build-ffi-example` | Build + run C example against FFI lib |
+| `make test-ffi` | Run FFI integration tests |
 | `make test-rust` | Run all sqlglot compatibility tests |
 | `make test-rust-all` | Run all 10,220 SQLGlot fixture cases |
 | `make test-rust-lib` | Run 810 lib unit tests |

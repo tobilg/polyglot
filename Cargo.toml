@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/polyglot-sql",
     "crates/polyglot-sql-wasm",
+    "crates/polyglot-sql-ffi",
 ]
 exclude = [
     "examples/rust",
@@ -42,3 +43,7 @@ lto = true          # Link-time optimization
 codegen-units = 1   # Better optimization
 panic = "abort"     # Smaller binary
 strip = true        # Strip symbols
+
+[profile.ffi_release]
+inherits = "release"
+panic = "unwind"

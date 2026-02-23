@@ -6,8 +6,10 @@
         test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-verify \
         test-rust-transpile-generic test-rust-parser \
         test-rust-clickhouse-parser test-rust-clickhouse-coverage \
+        test-ffi \
         test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
         generate-bindings copy-bindings cargo-build-release \
+        build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
@@ -41,7 +43,7 @@ help:
 	@echo "  make test-rust           - Run all Rust tests"
 	@echo "  make test-rust-all       - Run all sqlglot fixture tests"
 	@echo "  make test-rust-lib       - Run lib unit tests (736)"
-	@echo "  make test-rust-verify    - Run lib + identity + dialect + transpilation + custom"
+	@echo "  make test-rust-verify    - Run full Rust verification suite incl. FFI"
 	@echo ""
 	@echo "  SQLGlot Fixture Tests:"
 	@echo "  make test-rust-identity         - Generic identity tests (955)"
@@ -58,6 +60,7 @@ help:
 	@echo "  make test-rust-errors    - Error handling tests"
 	@echo "  make test-rust-functions - Function normalization tests"
 	@echo "  make test-rust-custom   - Custom dialect tests (DataFusion, etc.)"
+	@echo "  make test-ffi           - Run C FFI crate tests"
 	@echo ""
 	@echo "  ClickHouse Tests:"
 	@echo "  make test-rust-clickhouse-parser   - ClickHouse parser tests"
@@ -75,6 +78,9 @@ help:
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
 	@echo "  make copy-bindings       - Copy bindings from Rust crate to TypeScript SDK"
 	@echo "  make build-wasm          - Build WASM package"
+	@echo "  make build-ffi           - Build C FFI shared/static library"
+	@echo "  make generate-ffi-header - Generate C header via cbindgen/build.rs"
+	@echo "  make build-ffi-example   - Build and run C example"
 	@echo "  make build-all           - Build everything"
 	@echo "  make fmt                 - Format all code (Rust + TypeScript SDK)"
 	@echo ""
@@ -91,6 +97,7 @@ help:
 	@echo "  make clean               - Remove all build artifacts"
 	@echo "  make clean-fixtures      - Remove extracted sqlglot fixtures"
 	@echo "  make clean-clickhouse-fixtures - Remove ClickHouse fixtures"
+	@echo "  make clean-ffi           - Remove generated FFI header/example artifacts"
 	@echo "  make clean-external      - Remove external project clones"
 
 # =============================================================================
@@ -181,7 +188,7 @@ test-rust-all:
 		--test sqlglot_transpilation --test sqlglot_pretty \
 		--test sqlglot_transpile --test sqlglot_parser -- --nocapture
 
-# Run lib + identity + dialect identity + transpilation + custom dialects (full verification)
+# Run lib + fixture suites + custom dialects + clickhouse + FFI tests (full verification)
 test-rust-verify:
 	@echo "=== Lib unit tests ==="
 	@cargo test --lib -p polyglot-sql
@@ -212,6 +219,9 @@ test-rust-verify:
 	@echo ""
 	@echo "=== ClickHouse coverage tests ==="
 	@RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
+	@echo ""
+	@echo "=== FFI tests ==="
+	@cargo test -p polyglot-sql-ffi -- --nocapture
 
 # Run normalization/transpile tests from test_transpile.py
 test-rust-transpile-generic:
@@ -252,6 +262,10 @@ test-rust-custom:
 # Quick check - just compile tests
 test-rust-check:
 	cargo check -p polyglot-sql --tests
+
+# Run FFI crate tests
+test-ffi:
+	cargo test -p polyglot-sql-ffi -- --nocapture
 
 # -----------------------------------------------------------------------------
 # ClickHouse Tests
@@ -335,12 +349,34 @@ build-wasm-dialects:
 # Build everything (release-safe order)
 build-all:
 	@$(MAKE) cargo-build-release
+	@$(MAKE) build-ffi
 	@$(MAKE) generate-bindings
 	@$(MAKE) build-wasm
 
 # Build core Rust crate in release mode
 cargo-build-release:
 	cargo build -p polyglot-sql --release
+
+# Build C FFI shared/static libraries with unwind panic strategy
+build-ffi:
+	cargo build -p polyglot-sql-ffi --profile ffi_release
+
+# Build C FFI static library (same build, staticlib is emitted with cdylib)
+build-ffi-static:
+	cargo build -p polyglot-sql-ffi --profile ffi_release
+
+# Generate C header via build.rs/cbindgen
+generate-ffi-header:
+	cargo build -p polyglot-sql-ffi --profile ffi_release
+	@echo "Header generated at: crates/polyglot-sql-ffi/polyglot_sql.h"
+
+# Build and run the C example
+build-ffi-example: build-ffi
+	cd examples/c && \
+		cc -o polyglot_example main.c \
+			-I../../crates/polyglot-sql-ffi \
+			../../target/ffi_release/libpolyglot_sql_ffi.a && \
+		./polyglot_example
 
 # =============================================================================
 # Development Workflow
@@ -441,3 +477,8 @@ clean:
 	rm -rf packages/playground/dist
 	rm -rf packages/playground/node_modules
 	@echo "Clean complete."
+
+# Remove FFI generated artifacts (header and C example binary)
+clean-ffi:
+	rm -f crates/polyglot-sql-ffi/polyglot_sql.h
+	rm -f examples/c/polyglot_example

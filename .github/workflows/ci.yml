@@ -37,6 +37,12 @@ jobs:
       - name: WASM Rust unit tests
         run: cargo test -p polyglot-sql-wasm --lib -- --nocapture
 
+      - name: FFI Rust tests
+        run: cargo test -p polyglot-sql-ffi -- --nocapture
+
+      - name: FFI release build
+        run: cargo build -p polyglot-sql-ffi --profile ffi_release
+
       - name: Generic identity tests
         run: cargo test --test sqlglot_identity test_sqlglot_identity_all -p polyglot-sql -- --nocapture
 
@@ -232,9 +238,136 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  ffi-build-artifacts:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rust-test
+    name: Build FFI (${{ matrix.archive_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_name: linux-x86_64
+            archive_ext: tar.gz
+            shared_lib: libpolyglot_sql_ffi.so
+            static_lib: libpolyglot_sql_ffi.a
+            use_cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive_name: linux-aarch64
+            archive_ext: tar.gz
+            shared_lib: libpolyglot_sql_ffi.so
+            static_lib: libpolyglot_sql_ffi.a
+            use_cross: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_name: macos-x86_64
+            archive_ext: tar.gz
+            shared_lib: libpolyglot_sql_ffi.dylib
+            static_lib: libpolyglot_sql_ffi.a
+            use_cross: false
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive_name: macos-aarch64
+            archive_ext: tar.gz
+            shared_lib: libpolyglot_sql_ffi.dylib
+            static_lib: libpolyglot_sql_ffi.a
+            use_cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_name: windows-x86_64
+            archive_ext: zip
+            shared_lib: polyglot_sql_ffi.dll
+            static_lib: polyglot_sql_ffi.lib
+            use_cross: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cross (linux aarch64)
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build FFI artifacts with cross
+        if: matrix.use_cross
+        run: cross build -p polyglot-sql-ffi --profile ffi_release --target ${{ matrix.target }}
+
+      - name: Build FFI artifacts with cargo
+        if: ${{ !matrix.use_cross }}
+        run: cargo build -p polyglot-sql-ffi --profile ffi_release --target ${{ matrix.target }}
+
+      - name: Package archive (unix)
+        if: runner.os != 'Windows'
+        run: |
+          dir="polyglot-sql-ffi-${{ matrix.archive_name }}"
+          mkdir -p "$dir"
+          cp crates/polyglot-sql-ffi/polyglot_sql.h "$dir/"
+          cp "target/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
+          cp "target/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
+          cp LICENSE "$dir/"
+          tar -czf "${dir}.tar.gz" "$dir"
+
+      - name: Package archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = "polyglot-sql-ffi-${{ matrix.archive_name }}"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item "crates/polyglot-sql-ffi/polyglot_sql.h" "$dir/"
+          Copy-Item "target/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
+          Copy-Item "target/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
+          Copy-Item "LICENSE" "$dir/"
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-${{ matrix.archive_name }}
+          path: polyglot-sql-ffi-${{ matrix.archive_name }}.${{ matrix.archive_ext }}
+
+  publish-ffi-assets:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ffi-build-artifacts, publish-crate, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all FFI archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=(*.tar.gz *.zip)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No FFI archives found"
+            exit 1
+          fi
+          sha256sum "${files[@]}" > checksums.sha256
+
+      - name: Attach assets to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.sha256
+
   deploy-docs:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-crate, publish-npm]
+    needs: [publish-crate, publish-npm, publish-ffi-assets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -286,7 +419,7 @@ jobs:
 
   deploy-playground:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-crate, publish-npm]
+    needs: [publish-crate, publish-npm, publish-ffi-assets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,20 @@
+[package]
+name = "polyglot-sql-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "C FFI bindings for the polyglot-sql SQL transpiler"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+polyglot-sql = { path = "../polyglot-sql" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+cbindgen = "0.29"
