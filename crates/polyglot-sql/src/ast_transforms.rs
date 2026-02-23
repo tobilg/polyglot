@@ -7,7 +7,7 @@
 //! Mutation functions take an owned [`Expression`] and return a new [`Expression`].
 //! Read-only getters take `&Expression`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::expressions::*;
 use crate::traversal::ExpressionWalk;
@@ -265,16 +265,104 @@ pub fn get_column_names(expr: &Expression) -> Vec<String> {
 
 /// Collect all table names (as `String`) referenced in the expression tree.
 pub fn get_table_names(expr: &Expression) -> Vec<String> {
-    expr.find_all(|e| matches!(e, Expression::Table(_)))
-        .into_iter()
-        .filter_map(|e| {
-            if let Expression::Table(tbl) = e {
-                Some(tbl.name.name.clone())
-            } else {
-                None
+    fn collect_cte_aliases(with_clause: &With, aliases: &mut HashSet<String>) {
+        for cte in &with_clause.ctes {
+            aliases.insert(cte.alias.name.clone());
+        }
+    }
+
+    fn push_table_ref_name(
+        table: &TableRef,
+        cte_aliases: &HashSet<String>,
+        names: &mut Vec<String>,
+    ) {
+        let name = table.name.name.clone();
+        if !name.is_empty() && !cte_aliases.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    let mut cte_aliases: HashSet<String> = HashSet::new();
+    for node in expr.dfs() {
+        match node {
+            Expression::Select(select) => {
+                if let Some(with) = &select.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
             }
-        })
-        .collect()
+            Expression::Insert(insert) => {
+                if let Some(with) = &insert.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Update(update) => {
+                if let Some(with) = &update.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Delete(delete) => {
+                if let Some(with) = &delete.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Union(union) => {
+                if let Some(with) = &union.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Intersect(intersect) => {
+                if let Some(with) = &intersect.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Except(except) => {
+                if let Some(with) = &except.with {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
+            Expression::Merge(merge) => {
+                if let Some(with_) = &merge.with_ {
+                    if let Expression::With(with_clause) = with_.as_ref() {
+                        collect_cte_aliases(with_clause, &mut cte_aliases);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut names = Vec::new();
+    for node in expr.dfs() {
+        match node {
+            Expression::Table(tbl) => {
+                let name = tbl.name.name.clone();
+                if !name.is_empty() && !cte_aliases.contains(&name) {
+                    names.push(name);
+                }
+            }
+            Expression::Insert(insert) => {
+                push_table_ref_name(&insert.table, &cte_aliases, &mut names);
+            }
+            Expression::Update(update) => {
+                push_table_ref_name(&update.table, &cte_aliases, &mut names);
+                for table in &update.extra_tables {
+                    push_table_ref_name(table, &cte_aliases, &mut names);
+                }
+            }
+            Expression::Delete(delete) => {
+                push_table_ref_name(&delete.table, &cte_aliases, &mut names);
+                for table in &delete.using {
+                    push_table_ref_name(table, &cte_aliases, &mut names);
+                }
+                for table in &delete.tables {
+                    push_table_ref_name(table, &cte_aliases, &mut names);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    names
 }
 
 /// Collect all identifier references in the expression tree.
@@ -423,17 +511,39 @@ mod tests {
 
     #[test]
     fn test_get_table_names() {
-        // get_table_names uses DFS which finds Expression::Table nodes
-        // In parsed SQL, table refs are within From/Join nodes
         let expr = parse_one("SELECT a FROM users");
-        let tables = crate::traversal::get_tables(&expr);
-        // Verify our function finds the same tables as the traversal module
         let names = get_table_names(&expr);
-        assert_eq!(
-            names.len(),
-            tables.len(),
-            "get_table_names and get_tables should find same count"
+        assert_eq!(names, vec!["users".to_string()]);
+    }
+
+    #[test]
+    fn test_get_table_names_excludes_cte_aliases() {
+        let expr = parse_one(
+            "WITH cte AS (SELECT * FROM users) SELECT * FROM cte JOIN orders o ON cte.id = o.id",
         );
+        let names = get_table_names(&expr);
+        assert!(names.iter().any(|n| n == "users"));
+        assert!(names.iter().any(|n| n == "orders"));
+        assert!(!names.iter().any(|n| n == "cte"));
+    }
+
+    #[test]
+    fn test_get_table_names_includes_dml_targets() {
+        let insert_expr = parse_one("INSERT INTO users (id) VALUES (1)");
+        let insert_names = get_table_names(&insert_expr);
+        assert!(insert_names.iter().any(|n| n == "users"));
+
+        let update_expr =
+            parse_one("UPDATE users SET name = 'x' FROM accounts WHERE users.id = accounts.id");
+        let update_names = get_table_names(&update_expr);
+        assert!(update_names.iter().any(|n| n == "users"));
+        assert!(update_names.iter().any(|n| n == "accounts"));
+
+        let delete_expr =
+            parse_one("DELETE FROM users USING accounts WHERE users.id = accounts.id");
+        let delete_names = get_table_names(&delete_expr);
+        assert!(delete_names.iter().any(|n| n == "users"));
+        assert!(delete_names.iter().any(|n| n == "accounts"));
     }
 
     #[test]

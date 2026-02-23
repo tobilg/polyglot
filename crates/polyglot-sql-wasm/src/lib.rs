@@ -13,7 +13,9 @@ use polyglot_sql::{
     generator::Generator,
     lineage::{self, LineageNode},
     planner::{Plan, Step},
-    ValidationResult as CoreValidationResult,
+    validate_with_schema as core_validate_with_schema,
+    SchemaValidationOptions as CoreSchemaValidationOptions,
+    ValidationResult as CoreValidationResult, ValidationSchema as CoreValidationSchema,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -438,6 +440,79 @@ fn validate_internal(sql: &str, dialect: &str) -> CoreValidationResult {
     };
 
     polyglot_sql::validate(sql, dialect_type)
+}
+
+/// Validate SQL syntax + schema-aware checks (+ optional semantic warnings).
+///
+/// # Arguments
+/// * `sql` - The SQL string to validate
+/// * `schema_json` - Schema JSON matching ValidationSchema
+/// * `dialect` - SQL dialect name
+/// * `options_json` - Options JSON matching SchemaValidationOptions
+///
+/// # Returns
+/// A JSON string containing ValidationResult
+#[wasm_bindgen]
+pub fn validate_with_schema(
+    sql: &str,
+    schema_json: &str,
+    dialect: &str,
+    options_json: &str,
+) -> String {
+    set_panic_hook();
+
+    let result = validate_with_schema_internal(sql, schema_json, dialect, options_json);
+    serde_json::to_string(&result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"valid":false,"errors":[{{"message":"Serialization error: {}","severity":"error","code":"E000"}}]}}"#,
+            e
+        )
+    })
+}
+
+fn validate_with_schema_internal(
+    sql: &str,
+    schema_json: &str,
+    dialect: &str,
+    options_json: &str,
+) -> CoreValidationResult {
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return CoreValidationResult::with_errors(vec![polyglot_sql::ValidationError::error(
+                format!("Invalid dialect: {}", e),
+                "E000",
+            )]);
+        }
+    };
+
+    let schema = match serde_json::from_str::<CoreValidationSchema>(schema_json) {
+        Ok(s) => s,
+        Err(e) => {
+            return CoreValidationResult::with_errors(vec![polyglot_sql::ValidationError::error(
+                format!("Invalid schema JSON: {}", e),
+                "E000",
+            )]);
+        }
+    };
+
+    let options = if options_json.trim().is_empty() {
+        CoreSchemaValidationOptions::default()
+    } else {
+        match serde_json::from_str::<CoreSchemaValidationOptions>(options_json) {
+            Ok(o) => o,
+            Err(e) => {
+                return CoreValidationResult::with_errors(vec![
+                    polyglot_sql::ValidationError::error(
+                        format!("Invalid schema validation options JSON: {}", e),
+                        "E000",
+                    ),
+                ]);
+            }
+        }
+    };
+
+    core_validate_with_schema(sql, dialect_type, &schema, &options)
 }
 
 /// Get the version of the library.
@@ -1237,6 +1312,95 @@ mod tests {
         let result = validate("SELECT FROM", "generic");
         assert!(result.contains("\"valid\":false"));
         assert!(result.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn test_validate_with_schema_valid_sql() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "integer"},
+                        {"name": "name", "type": "varchar"}
+                    ]
+                }
+            ],
+            "strict": true
+        }"#;
+        let options = r#"{"semantic":false}"#;
+        let result = validate_with_schema("SELECT id FROM users", schema, "generic", options);
+        assert!(result.contains("\"valid\":true"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_validate_with_schema_unknown_table() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "integer"}
+                    ]
+                }
+            ],
+            "strict": true
+        }"#;
+        let options = r#"{}"#;
+        let result = validate_with_schema("SELECT id FROM orders", schema, "generic", options);
+        assert!(result.contains("\"valid\":false"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"E200\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_validate_with_schema_semantic_warning() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "integer"}
+                    ]
+                }
+            ],
+            "strict": true
+        }"#;
+        let options = r#"{"semantic":true}"#;
+        let result =
+            validate_with_schema("SELECT * FROM users LIMIT 10", schema, "generic", options);
+        assert!(result.contains("\"valid\":true"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"W001\""), "Result: {}", result);
+        assert!(result.contains("\"code\":\"W004\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_validate_with_schema_reference_check_error() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "integer", "primaryKey": true}
+                    ],
+                    "primaryKey": ["id"]
+                },
+                {
+                    "name": "orders",
+                    "columns": [
+                        {
+                            "name": "user_id",
+                            "type": "integer",
+                            "references": {"table": "missing_users", "column": "id"}
+                        }
+                    ]
+                }
+            ],
+            "strict": true
+        }"#;
+        let options = r#"{"check_references":true}"#;
+        let result = validate_with_schema("SELECT 1", schema, "generic", options);
+        assert!(result.contains("\"valid\":false"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"E220\""), "Result: {}", result);
     }
 
     // ============================================================================

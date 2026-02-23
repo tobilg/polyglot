@@ -38,8 +38,8 @@ export default defineConfig({
       },
     },
     target: 'esnext',
-    sourcemap: true,
-    minify: false,
+    sourcemap: false,
+    minify: 'esbuild',
   },
   assetsInclude: ['**/*.wasm'],
   optimizeDeps: {

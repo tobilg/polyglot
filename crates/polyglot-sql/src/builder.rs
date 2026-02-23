@@ -59,6 +59,57 @@ use crate::expressions::*;
 use crate::generator::Generator;
 use crate::parser::Parser;
 
+fn is_safe_identifier_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn builder_identifier(name: &str) -> Identifier {
+    if name == "*" || is_safe_identifier_name(name) {
+        Identifier::new(name)
+    } else {
+        Identifier::quoted(name)
+    }
+}
+
+fn builder_table_ref(name: &str) -> TableRef {
+    let parts: Vec<&str> = name.split('.').collect();
+
+    match parts.len() {
+        3 => {
+            let mut t = TableRef::new(parts[2]);
+            t.name = builder_identifier(parts[2]);
+            t.schema = Some(builder_identifier(parts[1]));
+            t.catalog = Some(builder_identifier(parts[0]));
+            t
+        }
+        2 => {
+            let mut t = TableRef::new(parts[1]);
+            t.name = builder_identifier(parts[1]);
+            t.schema = Some(builder_identifier(parts[0]));
+            t
+        }
+        _ => {
+            let first = parts.first().copied().unwrap_or("");
+            let mut t = TableRef::new(first);
+            t.name = builder_identifier(first);
+            t
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Expression helpers
 // ---------------------------------------------------------------------------
@@ -85,14 +136,14 @@ use crate::parser::Parser;
 pub fn col(name: &str) -> Expr {
     if let Some((table, column)) = name.rsplit_once('.') {
         Expr(Expression::Column(Column {
-            name: Identifier::new(column),
-            table: Some(Identifier::new(table)),
+            name: builder_identifier(column),
+            table: Some(builder_identifier(table)),
             join_mark: false,
             trailing_comments: Vec::new(),
         }))
     } else {
         Expr(Expression::Column(Column {
-            name: Identifier::new(name),
+            name: builder_identifier(name),
             table: None,
             join_mark: false,
             trailing_comments: Vec::new(),
@@ -151,13 +202,7 @@ pub fn boolean(value: bool) -> Expr {
 /// assert_eq!(t.to_sql(), "my_schema.users");
 /// ```
 pub fn table(name: &str) -> Expr {
-    let parts: Vec<&str> = name.split('.').collect();
-    let table_ref = match parts.len() {
-        3 => TableRef::new_with_catalog(parts[2], parts[1], parts[0]),
-        2 => TableRef::new_with_schema(parts[1], parts[0]),
-        _ => TableRef::new(parts[0]),
-    };
-    Expr(Expression::Table(table_ref))
+    Expr(Expression::Table(builder_table_ref(name)))
 }
 
 /// Create a SQL function call expression.
@@ -242,7 +287,7 @@ pub fn or(left: Expr, right: Expr) -> Expr {
 pub fn alias(expr: Expr, name: &str) -> Expr {
     Expr(Expression::Alias(Box::new(Alias {
         this: expr.0,
-        alias: Identifier::new(name),
+        alias: builder_identifier(name),
         column_aliases: Vec::new(),
         pre_alias_comments: Vec::new(),
         trailing_comments: Vec::new(),
@@ -717,7 +762,7 @@ where
 pub fn from(table_name: &str) -> SelectBuilder {
     let mut builder = SelectBuilder::new();
     builder.select.from = Some(From {
-        expressions: vec![Expression::Table(TableRef::new(table_name))],
+        expressions: vec![Expression::Table(builder_table_ref(table_name))],
     });
     builder
 }
@@ -737,7 +782,7 @@ pub fn from(table_name: &str) -> SelectBuilder {
 pub fn delete(table_name: &str) -> DeleteBuilder {
     DeleteBuilder {
         delete: Delete {
-            table: TableRef::new(table_name),
+            table: builder_table_ref(table_name),
             on_cluster: None,
             alias: None,
             alias_explicit_as: false,
@@ -777,7 +822,7 @@ pub fn delete(table_name: &str) -> DeleteBuilder {
 pub fn insert_into(table_name: &str) -> InsertBuilder {
     InsertBuilder {
         insert: Insert {
-            table: TableRef::new(table_name),
+            table: builder_table_ref(table_name),
             columns: Vec::new(),
             values: Vec::new(),
             query: None,
@@ -828,7 +873,7 @@ pub fn insert_into(table_name: &str) -> InsertBuilder {
 pub fn update(table_name: &str) -> UpdateBuilder {
     UpdateBuilder {
         update: Update {
-            table: TableRef::new(table_name),
+            table: builder_table_ref(table_name),
             extra_tables: Vec::new(),
             table_joins: Vec::new(),
             set: Vec::new(),
@@ -1162,7 +1207,7 @@ impl SelectBuilder {
     /// Set the FROM clause to reference the given table by name.
     pub fn from(mut self, table_name: &str) -> Self {
         self.select.from = Some(From {
-            expressions: vec![Expression::Table(TableRef::new(table_name))],
+            expressions: vec![Expression::Table(builder_table_ref(table_name))],
         });
         self
     }
@@ -1182,7 +1227,7 @@ impl SelectBuilder {
     pub fn join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Inner,
-            this: Expression::Table(TableRef::new(table_name)),
+            this: Expression::Table(builder_table_ref(table_name)),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1202,7 +1247,7 @@ impl SelectBuilder {
     pub fn left_join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Left,
-            this: Expression::Table(TableRef::new(table_name)),
+            this: Expression::Table(builder_table_ref(table_name)),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1370,7 +1415,7 @@ impl SelectBuilder {
     pub fn right_join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Right,
-            this: Expression::Table(TableRef::new(table_name)),
+            this: Expression::Table(builder_table_ref(table_name)),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1390,7 +1435,7 @@ impl SelectBuilder {
     pub fn cross_join(mut self, table_name: &str) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Cross,
-            this: Expression::Table(TableRef::new(table_name)),
+            this: Expression::Table(builder_table_ref(table_name)),
             on: None,
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1420,10 +1465,10 @@ impl SelectBuilder {
     ) -> Self {
         self.select.lateral_views.push(LateralView {
             this: table_function.0,
-            table_alias: Some(Identifier::new(table_alias)),
+            table_alias: Some(builder_identifier(table_alias)),
             column_aliases: column_aliases
                 .into_iter()
-                .map(|c| Identifier::new(c.as_ref()))
+                .map(|c| builder_identifier(c.as_ref()))
                 .collect(),
             outer: false,
         });
@@ -1437,7 +1482,7 @@ impl SelectBuilder {
     /// Multiple calls append additional named windows.
     pub fn window(mut self, name: &str, def: WindowDefBuilder) -> Self {
         let named_window = NamedWindow {
-            name: Identifier::new(name),
+            name: builder_identifier(name),
             spec: Over {
                 window_name: None,
                 partition_by: def.partition_by,
@@ -1517,7 +1562,7 @@ impl SelectBuilder {
     /// ```
     pub fn ctas(self, table_name: &str) -> Expression {
         Expression::CreateTable(Box::new(CreateTable {
-            name: TableRef::new(table_name),
+            name: builder_table_ref(table_name),
             on_cluster: None,
             columns: vec![],
             constraints: vec![],
@@ -1646,7 +1691,7 @@ impl InsertBuilder {
     {
         self.insert.columns = columns
             .into_iter()
-            .map(|c| Identifier::new(c.as_ref()))
+            .map(|c| builder_identifier(c.as_ref()))
             .collect();
         self
     }
@@ -1701,7 +1746,7 @@ impl UpdateBuilder {
     ///
     /// Call this method multiple times to set multiple columns.
     pub fn set(mut self, column: &str, value: Expr) -> Self {
-        self.update.set.push((Identifier::new(column), value.0));
+        self.update.set.push((builder_identifier(column), value.0));
         self
     }
 
@@ -1716,7 +1761,7 @@ impl UpdateBuilder {
     /// This allows joining against other tables within the UPDATE statement.
     pub fn from(mut self, table_name: &str) -> Self {
         self.update.from_clause = Some(From {
-            expressions: vec![Expression::Table(TableRef::new(table_name))],
+            expressions: vec![Expression::Table(builder_table_ref(table_name))],
         });
         self
     }
@@ -1877,7 +1922,7 @@ pub fn subquery(query: SelectBuilder, alias_name: &str) -> Expr {
 pub fn subquery_expr(expr: Expression, alias_name: &str) -> Expr {
     Expr(Expression::Subquery(Box::new(Subquery {
         this: expr,
-        alias: Some(Identifier::new(alias_name)),
+        alias: Some(builder_identifier(alias_name)),
         column_aliases: Vec::new(),
         order_by: None,
         limit: None,
@@ -2197,6 +2242,9 @@ impl WindowDefBuilder {
 /// - `&str` and `String` -- converted to a column reference via [`col()`].
 /// - [`Expression`] -- wrapped directly in an [`Expr`].
 ///
+/// Note: `&str`/`String` inputs are treated as identifiers, not SQL string
+/// literals. Use [`lit()`] for literal values.
+///
 /// It is used as a generic bound throughout the builder API so that functions like
 /// [`select()`], [`SelectBuilder::order_by()`], and [`SelectBuilder::group_by()`] can
 /// accept plain strings, [`Expr`] values, or raw [`Expression`] nodes interchangeably.
@@ -2337,7 +2385,7 @@ fn binary_op(left: Expression, right: Expression) -> BinaryOp {
 /// ```
 pub fn merge_into(target: &str) -> MergeBuilder {
     MergeBuilder {
-        target: Expression::Table(TableRef::new(target)),
+        target: Expression::Table(builder_table_ref(target)),
         using: None,
         on: None,
         whens: Vec::new(),
@@ -2357,7 +2405,7 @@ pub struct MergeBuilder {
 impl MergeBuilder {
     /// Set the source table and ON join condition.
     pub fn using(mut self, source: &str, on: Expr) -> Self {
-        self.using = Some(Expression::Table(TableRef::new(source)));
+        self.using = Some(Expression::Table(builder_table_ref(source)));
         self.on = Some(on.0);
         self
     }
@@ -2369,7 +2417,7 @@ impl MergeBuilder {
             .map(|(col_name, val)| {
                 Expression::Eq(Box::new(BinaryOp {
                     left: Expression::Column(Column {
-                        name: Identifier::new(col_name),
+                        name: builder_identifier(col_name),
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
@@ -2414,7 +2462,7 @@ impl MergeBuilder {
             .map(|(col_name, val)| {
                 Expression::Eq(Box::new(BinaryOp {
                     left: Expression::Column(Column {
-                        name: Identifier::new(col_name),
+                        name: builder_identifier(col_name),
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
@@ -2472,7 +2520,7 @@ impl MergeBuilder {
             .iter()
             .map(|c| {
                 Expression::Column(Column {
-                    name: Identifier::new(*c),
+                    name: builder_identifier(c),
                     table: None,
                     join_mark: false,
                     trailing_comments: Vec::new(),
@@ -2591,6 +2639,24 @@ mod tests {
     fn test_simple_select() {
         let sql = select(["id", "name"]).from("users").to_sql();
         assert_eq!(sql, "SELECT id, name FROM users");
+    }
+
+    #[test]
+    fn test_builder_quotes_unsafe_identifier_tokens() {
+        let sql = select(["Name; DROP TABLE titanic"]).to_sql();
+        assert_eq!(sql, r#"SELECT "Name; DROP TABLE titanic""#);
+    }
+
+    #[test]
+    fn test_builder_string_literal_requires_lit() {
+        let sql = select([lit("Name; DROP TABLE titanic")]).to_sql();
+        assert_eq!(sql, "SELECT 'Name; DROP TABLE titanic'");
+    }
+
+    #[test]
+    fn test_builder_quotes_unsafe_table_name_tokens() {
+        let sql = select(["id"]).from("users; DROP TABLE x").to_sql();
+        assert_eq!(sql, r#"SELECT id FROM "users; DROP TABLE x""#);
     }
 
     #[test]

@@ -74,6 +74,12 @@ describe('Expression helpers', () => {
     expect(col('users.id').toSql()).toBe('users.id');
   });
 
+  it('col() quotes unsafe identifier tokens', () => {
+    expect(col('Name; DROP TABLE titanic').toSql()).toBe(
+      '"Name; DROP TABLE titanic"',
+    );
+  });
+
   it('lit() creates a string literal', () => {
     expect(lit('hello').toSql()).toBe("'hello'");
   });
@@ -322,6 +328,11 @@ describe('SelectBuilder', () => {
   it('basic SELECT', () => {
     const sql = select('id', 'name').from('users').toSql();
     expect(sql).toBe('SELECT id, name FROM users');
+  });
+
+  it('FROM quotes unsafe table name tokens', () => {
+    const sql = select('id').from('users; DROP TABLE x').toSql();
+    expect(sql).toBe('SELECT id FROM "users; DROP TABLE x"');
   });
 
   it('SELECT *', () => {

@@ -170,6 +170,301 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
     let mut children = Vec::new();
 
     match expr {
+        Expression::Select(s) => {
+            if let Some(from) = &s.from {
+                for source in &from.expressions {
+                    children.push(("from", source));
+                }
+            }
+            for join in &s.joins {
+                children.push(("join_this", &join.this));
+                if let Some(on) = &join.on {
+                    children.push(("join_on", on));
+                }
+                if let Some(match_condition) = &join.match_condition {
+                    children.push(("join_match_condition", match_condition));
+                }
+                for pivot in &join.pivots {
+                    children.push(("join_pivot", pivot));
+                }
+            }
+            for lateral_view in &s.lateral_views {
+                children.push(("lateral_view", &lateral_view.this));
+            }
+            if let Some(prewhere) = &s.prewhere {
+                children.push(("prewhere", prewhere));
+            }
+            if let Some(where_clause) = &s.where_clause {
+                children.push(("where", &where_clause.this));
+            }
+            if let Some(group_by) = &s.group_by {
+                for e in &group_by.expressions {
+                    children.push(("group_by", e));
+                }
+            }
+            if let Some(having) = &s.having {
+                children.push(("having", &having.this));
+            }
+            if let Some(qualify) = &s.qualify {
+                children.push(("qualify", &qualify.this));
+            }
+            if let Some(order_by) = &s.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            if let Some(distribute_by) = &s.distribute_by {
+                for e in &distribute_by.expressions {
+                    children.push(("distribute_by", e));
+                }
+            }
+            if let Some(cluster_by) = &s.cluster_by {
+                for ordered in &cluster_by.expressions {
+                    children.push(("cluster_by", &ordered.this));
+                }
+            }
+            if let Some(sort_by) = &s.sort_by {
+                for ordered in &sort_by.expressions {
+                    children.push(("sort_by", &ordered.this));
+                }
+            }
+            if let Some(limit) = &s.limit {
+                children.push(("limit", &limit.this));
+            }
+            if let Some(offset) = &s.offset {
+                children.push(("offset", &offset.this));
+            }
+            if let Some(limit_by) = &s.limit_by {
+                for e in limit_by {
+                    children.push(("limit_by", e));
+                }
+            }
+            if let Some(fetch) = &s.fetch {
+                if let Some(count) = &fetch.count {
+                    children.push(("fetch", count));
+                }
+            }
+            if let Some(top) = &s.top {
+                children.push(("top", &top.this));
+            }
+            if let Some(with) = &s.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(sample) = &s.sample {
+                children.push(("sample_size", &sample.size));
+                if let Some(seed) = &sample.seed {
+                    children.push(("sample_seed", seed));
+                }
+                if let Some(offset) = &sample.offset {
+                    children.push(("sample_offset", offset));
+                }
+                if let Some(bucket_numerator) = &sample.bucket_numerator {
+                    children.push(("sample_bucket_numerator", bucket_numerator));
+                }
+                if let Some(bucket_denominator) = &sample.bucket_denominator {
+                    children.push(("sample_bucket_denominator", bucket_denominator));
+                }
+                if let Some(bucket_field) = &sample.bucket_field {
+                    children.push(("sample_bucket_field", bucket_field));
+                }
+            }
+            if let Some(connect) = &s.connect {
+                if let Some(start) = &connect.start {
+                    children.push(("connect_start", start));
+                }
+                children.push(("connect", &connect.connect));
+            }
+            if let Some(into) = &s.into {
+                children.push(("into", &into.this));
+            }
+            for lock in &s.locks {
+                for e in &lock.expressions {
+                    children.push(("lock_expression", e));
+                }
+                if let Some(wait) = &lock.wait {
+                    children.push(("lock_wait", wait));
+                }
+                if let Some(key) = &lock.key {
+                    children.push(("lock_key", key));
+                }
+                if let Some(update) = &lock.update {
+                    children.push(("lock_update", update));
+                }
+            }
+            for e in &s.for_xml {
+                children.push(("for_xml", e));
+            }
+        }
+        Expression::With(with) => {
+            for cte in &with.ctes {
+                children.push(("cte", &cte.this));
+            }
+            if let Some(search) = &with.search {
+                children.push(("search", search));
+            }
+        }
+        Expression::Cte(cte) => {
+            children.push(("this", &cte.this));
+        }
+        Expression::Insert(insert) => {
+            if let Some(query) = &insert.query {
+                children.push(("query", query));
+            }
+            if let Some(with) = &insert.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(on_conflict) = &insert.on_conflict {
+                children.push(("on_conflict", on_conflict));
+            }
+            if let Some(replace_where) = &insert.replace_where {
+                children.push(("replace_where", replace_where));
+            }
+            if let Some(source) = &insert.source {
+                children.push(("source", source));
+            }
+            if let Some(function_target) = &insert.function_target {
+                children.push(("function_target", function_target));
+            }
+            if let Some(partition_by) = &insert.partition_by {
+                children.push(("partition_by", partition_by));
+            }
+            if let Some(output) = &insert.output {
+                for column in &output.columns {
+                    children.push(("output_column", column));
+                }
+                if let Some(into_table) = &output.into_table {
+                    children.push(("output_into_table", into_table));
+                }
+            }
+            for row in &insert.values {
+                for value in row {
+                    children.push(("value", value));
+                }
+            }
+            for (_, value) in &insert.partition {
+                if let Some(value) = value {
+                    children.push(("partition_value", value));
+                }
+            }
+            for returning in &insert.returning {
+                children.push(("returning", returning));
+            }
+            for setting in &insert.settings {
+                children.push(("setting", setting));
+            }
+        }
+        Expression::Update(update) => {
+            if let Some(from_clause) = &update.from_clause {
+                for source in &from_clause.expressions {
+                    children.push(("from", source));
+                }
+            }
+            for join in &update.table_joins {
+                children.push(("table_join_this", &join.this));
+                if let Some(on) = &join.on {
+                    children.push(("table_join_on", on));
+                }
+            }
+            for join in &update.from_joins {
+                children.push(("from_join_this", &join.this));
+                if let Some(on) = &join.on {
+                    children.push(("from_join_on", on));
+                }
+            }
+            for (_, value) in &update.set {
+                children.push(("set_value", value));
+            }
+            if let Some(where_clause) = &update.where_clause {
+                children.push(("where", &where_clause.this));
+            }
+            if let Some(output) = &update.output {
+                for column in &output.columns {
+                    children.push(("output_column", column));
+                }
+                if let Some(into_table) = &output.into_table {
+                    children.push(("output_into_table", into_table));
+                }
+            }
+            if let Some(with) = &update.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(limit) = &update.limit {
+                children.push(("limit", limit));
+            }
+            if let Some(order_by) = &update.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            for returning in &update.returning {
+                children.push(("returning", returning));
+            }
+        }
+        Expression::Delete(delete) => {
+            if let Some(with) = &delete.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(where_clause) = &delete.where_clause {
+                children.push(("where", &where_clause.this));
+            }
+            if let Some(output) = &delete.output {
+                for column in &output.columns {
+                    children.push(("output_column", column));
+                }
+                if let Some(into_table) = &output.into_table {
+                    children.push(("output_into_table", into_table));
+                }
+            }
+            if let Some(limit) = &delete.limit {
+                children.push(("limit", limit));
+            }
+            if let Some(order_by) = &delete.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            for returning in &delete.returning {
+                children.push(("returning", returning));
+            }
+            for join in &delete.joins {
+                children.push(("join_this", &join.this));
+                if let Some(on) = &join.on {
+                    children.push(("join_on", on));
+                }
+            }
+        }
+        Expression::Join(join) => {
+            children.push(("this", &join.this));
+            if let Some(on) = &join.on {
+                children.push(("on", on));
+            }
+            if let Some(match_condition) = &join.match_condition {
+                children.push(("match_condition", match_condition));
+            }
+            for pivot in &join.pivots {
+                children.push(("pivot", pivot));
+            }
+        }
         Expression::Alias(a) => {
             children.push(("this", &a.this));
         }
@@ -243,14 +538,144 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
         Expression::Union(u) => {
             children.push(("left", &u.left));
             children.push(("right", &u.right));
+            if let Some(with) = &u.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(order_by) = &u.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            if let Some(limit) = &u.limit {
+                children.push(("limit", limit));
+            }
+            if let Some(offset) = &u.offset {
+                children.push(("offset", offset));
+            }
+            if let Some(distribute_by) = &u.distribute_by {
+                for e in &distribute_by.expressions {
+                    children.push(("distribute_by", e));
+                }
+            }
+            if let Some(sort_by) = &u.sort_by {
+                for ordered in &sort_by.expressions {
+                    children.push(("sort_by", &ordered.this));
+                }
+            }
+            if let Some(cluster_by) = &u.cluster_by {
+                for ordered in &cluster_by.expressions {
+                    children.push(("cluster_by", &ordered.this));
+                }
+            }
+            for e in &u.on_columns {
+                children.push(("on_column", e));
+            }
         }
         Expression::Intersect(i) => {
             children.push(("left", &i.left));
             children.push(("right", &i.right));
+            if let Some(with) = &i.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(order_by) = &i.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            if let Some(limit) = &i.limit {
+                children.push(("limit", limit));
+            }
+            if let Some(offset) = &i.offset {
+                children.push(("offset", offset));
+            }
+            if let Some(distribute_by) = &i.distribute_by {
+                for e in &distribute_by.expressions {
+                    children.push(("distribute_by", e));
+                }
+            }
+            if let Some(sort_by) = &i.sort_by {
+                for ordered in &sort_by.expressions {
+                    children.push(("sort_by", &ordered.this));
+                }
+            }
+            if let Some(cluster_by) = &i.cluster_by {
+                for ordered in &cluster_by.expressions {
+                    children.push(("cluster_by", &ordered.this));
+                }
+            }
+            for e in &i.on_columns {
+                children.push(("on_column", e));
+            }
         }
         Expression::Except(e) => {
             children.push(("left", &e.left));
             children.push(("right", &e.right));
+            if let Some(with) = &e.with {
+                for cte in &with.ctes {
+                    children.push(("with_cte", &cte.this));
+                }
+                if let Some(search) = &with.search {
+                    children.push(("with_search", search));
+                }
+            }
+            if let Some(order_by) = &e.order_by {
+                for ordered in &order_by.expressions {
+                    children.push(("order_by", &ordered.this));
+                }
+            }
+            if let Some(limit) = &e.limit {
+                children.push(("limit", limit));
+            }
+            if let Some(offset) = &e.offset {
+                children.push(("offset", offset));
+            }
+            if let Some(distribute_by) = &e.distribute_by {
+                for expr in &distribute_by.expressions {
+                    children.push(("distribute_by", expr));
+                }
+            }
+            if let Some(sort_by) = &e.sort_by {
+                for ordered in &sort_by.expressions {
+                    children.push(("sort_by", &ordered.this));
+                }
+            }
+            if let Some(cluster_by) = &e.cluster_by {
+                for ordered in &cluster_by.expressions {
+                    children.push(("cluster_by", &ordered.this));
+                }
+            }
+            for expr in &e.on_columns {
+                children.push(("on_column", expr));
+            }
+        }
+        Expression::Merge(merge) => {
+            children.push(("this", &merge.this));
+            children.push(("using", &merge.using));
+            if let Some(on) = &merge.on {
+                children.push(("on", on));
+            }
+            if let Some(using_cond) = &merge.using_cond {
+                children.push(("using_cond", using_cond));
+            }
+            if let Some(whens) = &merge.whens {
+                children.push(("whens", whens));
+            }
+            if let Some(with_) = &merge.with_ {
+                children.push(("with_", with_));
+            }
+            if let Some(returning) = &merge.returning {
+                children.push(("returning", returning));
+            }
         }
         Expression::Ordered(o) => {
             children.push(("this", &o.this));
@@ -273,10 +698,7 @@ fn iter_children_lists(expr: &Expression) -> Vec<(&'static str, &[Expression])> 
     let mut lists = Vec::new();
 
     match expr {
-        Expression::Select(s) => {
-            lists.push(("expressions", s.expressions.as_slice()));
-            // Note: FROM, JOINs, etc. are stored differently
-        }
+        Expression::Select(s) => lists.push(("expressions", s.expressions.as_slice())),
         Expression::Function(f) => {
             lists.push(("args", f.args.as_slice()));
         }
@@ -1233,6 +1655,47 @@ mod tests {
         let children = expr.children();
         // Should include select list items (a, b)
         assert!(children.len() >= 2);
+    }
+
+    #[test]
+    fn test_children_select_includes_from_and_join_sources() {
+        let ast = crate::parser::Parser::parse_sql(
+            "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id",
+        )
+        .unwrap();
+        let expr = &ast[0];
+        let children = expr.children();
+
+        let table_names: Vec<&str> = children
+            .iter()
+            .filter_map(|e| match e {
+                Expression::Table(t) => Some(t.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(table_names.contains(&"users"));
+        assert!(table_names.contains(&"orders"));
+    }
+
+    #[test]
+    fn test_get_tables_includes_insert_query_sources() {
+        let ast = crate::parser::Parser::parse_sql(
+            "INSERT INTO dst (id) SELECT s.id FROM src s JOIN dim d ON s.id = d.id",
+        )
+        .unwrap();
+        let expr = &ast[0];
+        let tables = get_tables(expr);
+        let names: Vec<&str> = tables
+            .iter()
+            .filter_map(|e| match e {
+                Expression::Table(t) => Some(t.name.name.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert!(names.contains(&"src"));
+        assert!(names.contains(&"dim"));
     }
 
     // -- find_parent() tests --

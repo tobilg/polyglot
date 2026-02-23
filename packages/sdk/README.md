@@ -347,22 +347,87 @@ const result = validate('SELECT * FROM users', 'postgresql', { semantic: true })
 import { validateWithSchema } from '@polyglot-sql/sdk';
 
 const schema = {
-  tables: [{
-    name: 'users',
-    columns: [
-      { name: 'id', type: 'integer', primaryKey: true },
-      { name: 'name', type: 'varchar' },
-      { name: 'email', type: 'varchar' },
-    ],
-  }],
+  tables: [
+    {
+      name: 'users',
+      columns: [
+        { name: 'id', type: 'integer', primaryKey: true },
+        { name: 'name', type: 'varchar' },
+        { name: 'email', type: 'varchar', unique: true },
+      ],
+      primaryKey: ['id'],
+      uniqueKeys: [['email']],
+    },
+    {
+      name: 'orders',
+      columns: [
+        { name: 'id', type: 'integer', primaryKey: true },
+        {
+          name: 'user_id',
+          type: 'integer',
+          references: { table: 'users', column: 'id' },
+        },
+        { name: 'total', type: 'decimal' },
+      ],
+      foreignKeys: [
+        {
+          columns: ['user_id'],
+          references: { table: 'users', columns: ['id'] },
+        },
+      ],
+    },
+  ],
 };
 
 const result = validateWithSchema(
-  'SELECT id, name, unknown_col FROM users',
+  'SELECT id, total FROM orders',
   schema,
-  'postgresql'
+  'postgresql',
+  {
+    checkTypes: true,
+    checkReferences: true,
+    semantic: true,
+  },
 );
-// result.errors will contain an error for unknown_col
+```
+
+`validateWithSchema` supports:
+- identifier checks (`E200`, `E201`) for unknown tables/columns
+- optional type checks (`checkTypes`) for comparisons, predicates, arithmetic, assignments, and set operations
+- optional reference checks (`checkReferences`) for schema FK integrity and query-level join/reference quality
+
+Migration note: `checkTypes` and `checkReferences` are opt-in and default to `false`, so existing schema validation behavior stays backward-compatible until these options are enabled.
+
+Common diagnostic codes:
+
+| Code | Meaning |
+|------|---------|
+| `E200` | Unknown table |
+| `E201` | Unknown column |
+| `E210-E217` | Type incompatibilities (strict mode errors) |
+| `W210-W216` | Type coercion warnings (non-strict mode) |
+| `E220` | Invalid foreign key/reference metadata in schema |
+| `E221` | Ambiguous unqualified column in multi-table scope |
+| `W220` | Cartesian join warning |
+| `W221` | JOIN predicate does not use declared FK relationship |
+| `W222` | Weak reference integrity warning (non-strict mode) |
+
+```typescript
+// Ambiguous unqualified column in a join (E221 in strict mode)
+const ambiguous = validateWithSchema(
+  'SELECT id FROM users u JOIN orders o ON u.id = o.user_id',
+  schema,
+  'postgresql',
+  { checkReferences: true },
+);
+
+// Cartesian join warning (W220)
+const cartesian = validateWithSchema(
+  'SELECT * FROM users u JOIN orders o',
+  schema,
+  'postgresql',
+  { checkReferences: true },
+);
 ```
 
 ## Error Reporting

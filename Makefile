@@ -7,7 +7,7 @@
         test-rust-transpile-generic test-rust-parser \
         test-rust-clickhouse-parser test-rust-clickhouse-coverage \
         test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
-        generate-bindings copy-bindings \
+        generate-bindings copy-bindings cargo-build-release \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
@@ -335,8 +335,14 @@ build-wasm-dialects:
 		$(MAKE) build-wasm-dialect D=$$d; \
 	done
 
-# Build everything
-build-all: build-wasm
+# Build everything (release-safe order)
+build-all:
+	@$(MAKE) cargo-build-release
+	@$(MAKE) generate-bindings
+	@$(MAKE) build-wasm
+
+# Build core Rust crate in release mode
+cargo-build-release:
 	cargo build -p polyglot-sql --release
 
 # =============================================================================

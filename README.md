@@ -6,6 +6,8 @@ Polyglot parses, generates, transpiles, and formats SQL across 32 database diale
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as the [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/) and [TypeScript API Docs](https://polyglot.gh.tobilg.com/).
 
+Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Features
 
 - **Transpile** SQL between any pair of 32 dialects
@@ -148,11 +150,11 @@ Polyglot currently runs **10,220 SQLGlot fixture cases** plus additional project
 | SQLGlot transpile (generic) | 145 | 100% |
 | SQLGlot parser | 29 | 100% |
 | SQLGlot pretty-print | 23 | 100% |
-| Lib unit tests | 739 | 100% |
+| Lib unit tests | 810 | 100% |
 | Custom dialect identity | 276 | 100% |
 | Custom dialect transpilation | 347 | 100% |
 | ClickHouse parser corpus (non-skipped) | 7,047 | 100% |
-| **Total (strict pass/fail case count)** | **18,629** | **100%** |
+| **Total (strict pass/fail case count)** | **18,700** | **100%** |
 
 ```bash
 # Setup fixtures (required once)
@@ -209,7 +211,7 @@ cargo +nightly fuzz run fuzz_transpile
 | `make build-wasm` | Build WASM package + TypeScript SDK |
 | `make test-rust` | Run all sqlglot compatibility tests |
 | `make test-rust-all` | Run all 10,220 SQLGlot fixture cases |
-| `make test-rust-lib` | Run 739 lib unit tests |
+| `make test-rust-lib` | Run 810 lib unit tests |
 | `make test-rust-verify` | Full verification suite |
 | `make test-compare` | Compare against Python sqlglot |
 | `make bench-compare` | Performance comparison |

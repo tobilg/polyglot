@@ -273,4 +273,85 @@ describe('validateWithSchema', () => {
       expect(limitWarning).toBeDefined();
     });
   });
+
+  describe('reference validation', () => {
+    it('should validate foreign key metadata when checkReferences is enabled', () => {
+      const schemaWithInvalidReference: Schema = {
+        tables: [
+          {
+            name: 'users',
+            columns: [{ name: 'id', type: 'integer', primaryKey: true }],
+            primaryKey: ['id'],
+          },
+          {
+            name: 'orders',
+            columns: [
+              {
+                name: 'user_id',
+                type: 'integer',
+                references: { table: 'missing_users', column: 'id' },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = validateWithSchema(
+        'SELECT 1',
+        schemaWithInvalidReference,
+        'generic',
+        { checkReferences: true },
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'E220')).toBe(true);
+    });
+
+    it('should return warning in non-strict mode for invalid references', () => {
+      const schemaWithInvalidReference: Schema = {
+        tables: [
+          {
+            name: 'orders',
+            columns: [
+              {
+                name: 'user_id',
+                type: 'integer',
+                references: { table: 'missing_users', column: 'id' },
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = validateWithSchema(
+        'SELECT 1',
+        schemaWithInvalidReference,
+        'generic',
+        { checkReferences: true, strict: false },
+      );
+      expect(result.valid).toBe(true);
+      expect(result.errors.some((e) => e.code === 'W222')).toBe(true);
+    });
+
+    it('should detect ambiguous unqualified columns across joined tables', () => {
+      const result = validateWithSchema(
+        'SELECT id FROM users JOIN orders ON users.id = orders.user_id',
+        schema,
+        'generic',
+        { checkReferences: true },
+      );
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'E221')).toBe(true);
+    });
+
+    it('should warn on cartesian joins when reference checks are enabled', () => {
+      const result = validateWithSchema(
+        'SELECT users.id FROM users CROSS JOIN orders',
+        schema,
+        'generic',
+        { checkReferences: true },
+      );
+      expect(result.valid).toBe(true);
+      expect(result.errors.some((e) => e.code === 'W220')).toBe(true);
+    });
+  });
 });

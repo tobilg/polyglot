@@ -21,6 +21,7 @@ export type {
   ColumnSchema,
   Schema,
   SchemaValidationOptions,
+  TableForeignKey,
   TableSchema,
 } from './schema-validator';
 

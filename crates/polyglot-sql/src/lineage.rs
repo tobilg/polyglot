@@ -432,6 +432,19 @@ fn resolve_qualified_column(
         }
     }
 
+    // Base table source found in current scope: preserve alias in the display name
+    // but store the resolved table expression and name for downstream consumers.
+    if let Some(source_info) = scope.sources.get(table) {
+        if !source_info.is_scope {
+            node.downstream.push(make_table_column_node_from_source(
+                table,
+                col_name,
+                &source_info.expression,
+            ));
+            return;
+        }
+    }
+
     // Base table or unresolved — terminal node
     node.downstream
         .push(make_table_column_node(table, col_name));
@@ -653,7 +666,7 @@ fn find_child_scope_in<'a>(
 
 /// Create a terminal lineage node for a table.column reference.
 fn make_table_column_node(table: &str, column: &str) -> LineageNode {
-    LineageNode::new(
+    let mut node = LineageNode::new(
         format!("{}.{}", table, column),
         Expression::Column(crate::expressions::Column {
             name: crate::expressions::Identifier::new(column.to_string()),
@@ -662,7 +675,46 @@ fn make_table_column_node(table: &str, column: &str) -> LineageNode {
             trailing_comments: vec![],
         }),
         Expression::Table(crate::expressions::TableRef::new(table)),
-    )
+    );
+    node.source_name = table.to_string();
+    node
+}
+
+fn table_name_from_table_ref(table_ref: &crate::expressions::TableRef) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(catalog) = &table_ref.catalog {
+        parts.push(catalog.name.clone());
+    }
+    if let Some(schema) = &table_ref.schema {
+        parts.push(schema.name.clone());
+    }
+    parts.push(table_ref.name.name.clone());
+    parts.join(".")
+}
+
+fn make_table_column_node_from_source(
+    table_alias: &str,
+    column: &str,
+    source: &Expression,
+) -> LineageNode {
+    let mut node = LineageNode::new(
+        format!("{}.{}", table_alias, column),
+        Expression::Column(crate::expressions::Column {
+            name: crate::expressions::Identifier::new(column.to_string()),
+            table: Some(crate::expressions::Identifier::new(table_alias.to_string())),
+            join_mark: false,
+            trailing_comments: vec![],
+        }),
+        source.clone(),
+    );
+
+    if let Expression::Table(table_ref) = source {
+        node.source_name = table_name_from_table_ref(table_ref);
+    } else {
+        node.source_name = table_alias.to_string();
+    }
+
+    node
 }
 
 /// Simple column reference extracted from an expression
@@ -1658,6 +1710,32 @@ mod tests {
             "Expected s.b, got: {:?}",
             names_b
         );
+    }
+
+    #[test]
+    fn test_lineage_alias_leaf_has_resolved_source_name() {
+        let expr = parse("SELECT t1.col1 FROM table1 t1 JOIN table2 t2 ON t1.id = t2.id");
+        let node = lineage("col1", &expr, None, false).unwrap();
+
+        // Keep alias in the display lineage edge.
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "t1.col1"),
+            "Expected aliased column edge t1.col1, got: {:?}",
+            names
+        );
+
+        // Leaf should expose the resolved base table for consumers.
+        let leaf = node
+            .downstream
+            .iter()
+            .find(|n| n.name == "t1.col1")
+            .expect("Expected t1.col1 leaf");
+        assert_eq!(leaf.source_name, "table1");
+        match &leaf.source {
+            Expression::Table(table) => assert_eq!(table.name.name, "table1"),
+            _ => panic!("Expected leaf source to be a table expression"),
+        }
     }
 
     #[test]

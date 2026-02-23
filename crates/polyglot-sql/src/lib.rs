@@ -33,6 +33,7 @@ pub mod tokens;
 pub mod transforms;
 pub mod traversal;
 pub mod trie;
+pub mod validation;
 
 pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
@@ -156,6 +157,10 @@ pub use traversal::{
     TreeContext,
 };
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
+pub use validation::{
+    validate_with_schema, SchemaColumn, SchemaColumnReference, SchemaForeignKey, SchemaTable,
+    SchemaTableReference, SchemaValidationOptions, ValidationSchema,
+};
 
 /// Transpile SQL from one dialect to another.
 ///

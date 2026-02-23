@@ -24,6 +24,9 @@ export interface ColumnSchema {
   /** Whether this column is a primary key */
   primaryKey?: boolean;
 
+  /** Whether this column has a uniqueness constraint */
+  unique?: boolean;
+
   /**
    * Foreign key reference to another table.
    * Used for validating join conditions.
@@ -31,6 +34,25 @@ export interface ColumnSchema {
   references?: {
     table: string;
     column: string;
+    schema?: string;
+  };
+}
+
+/**
+ * Table-level foreign key constraint.
+ */
+export interface TableForeignKey {
+  /** Optional constraint name */
+  name?: string;
+
+  /** Source columns in this table */
+  columns: string[];
+
+  /** Target reference */
+  references: {
+    table: string;
+    columns: string[];
+    schema?: string;
   };
 }
 
@@ -49,6 +71,15 @@ export interface TableSchema {
 
   /** Aliases that can refer to this table */
   aliases?: string[];
+
+  /** Primary key columns */
+  primaryKey?: string[];
+
+  /** Unique key groups (composite keys allowed) */
+  uniqueKeys?: string[][];
+
+  /** Table-level foreign keys */
+  foreignKeys?: TableForeignKey[];
 }
 
 /**
@@ -76,7 +107,7 @@ export interface SchemaValidationOptions {
   checkTypes?: boolean;
 
   /**
-   * Check foreign key references in JOIN conditions.
+   * Check FK/reference integrity and JOIN/reference quality.
    * @default false
    */
   checkReferences?: boolean;

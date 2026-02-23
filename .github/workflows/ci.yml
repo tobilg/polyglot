@@ -120,6 +120,9 @@ jobs:
       - name: Test SDK
         run: cd packages/sdk && pnpm test
 
+      - name: Typecheck SDK
+        run: cd packages/sdk && pnpm typecheck
+
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
@@ -254,6 +257,14 @@ jobs:
       - name: Build documentation
         run: cd packages/documentation && pnpm run build
 
+      - name: Verify docs version matches release tag
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          if ! grep -Fq "v${expected_version}" packages/documentation/dist/modules.html; then
+            echo "Documentation version mismatch: expected v${expected_version}"
+            exit 1
+          fi
+
       - name: Validate Cloudflare credentials
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -303,6 +314,15 @@ jobs:
 
       - name: Build Playground
         run: cd packages/playground && pnpm run build
+
+      - name: Verify playground SDK/WASM version matches release tag
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          actual_version="$(node -e "const fs=require('node:fs'); const p=JSON.parse(fs.readFileSync('packages/sdk/wasm/package.json','utf8')); process.stdout.write(p.version);")"
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "Playground SDK/WASM version mismatch: expected=$expected_version actual=$actual_version"
+            exit 1
+          fi
 
       - name: Validate Cloudflare credentials
         env:

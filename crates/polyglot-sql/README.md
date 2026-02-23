@@ -143,6 +143,65 @@ let result = validate("SELECT * FORM users", DialectType::Generic);
 // result contains error with line/column location
 ```
 
+```rust
+use polyglot_sql::{
+    validate_with_schema, DialectType, SchemaColumn, SchemaTable, SchemaValidationOptions,
+    ValidationSchema,
+};
+
+let schema = ValidationSchema {
+    strict: Some(true),
+    tables: vec![
+        SchemaTable {
+            name: "users".into(),
+            schema: None,
+            columns: vec![
+                SchemaColumn {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: Some(false),
+                    primary_key: true,
+                    unique: false,
+                    references: None,
+                },
+                SchemaColumn {
+                    name: "email".into(),
+                    data_type: "varchar".into(),
+                    nullable: Some(false),
+                    primary_key: false,
+                    unique: true,
+                    references: None,
+                },
+            ],
+            aliases: vec![],
+            primary_key: vec!["id".into()],
+            unique_keys: vec![vec!["email".into()]],
+            foreign_keys: vec![],
+        },
+    ],
+};
+
+let opts = SchemaValidationOptions {
+    check_types: true,
+    check_references: true,
+    strict: None,
+    semantic: true,
+};
+
+let result = validate_with_schema(
+    "SELECT id FROM users WHERE email = 1",
+    DialectType::Generic,
+    &schema,
+    &opts,
+);
+assert!(!result.valid);
+```
+
+Schema-aware validation emits stable codes such as:
+- `E200`/`E201` for unknown tables/columns
+- `E210-E217` and `W210-W216` for type checks
+- `E220`, `E221`, `W220`, `W221`, `W222` for reference/FK checks
+
 ### Error Reporting
 
 Parse and tokenize errors include source position information (line and column numbers), making it straightforward to provide precise error feedback.

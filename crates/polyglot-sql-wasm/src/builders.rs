@@ -1137,6 +1137,12 @@ mod tests {
         assert_eq!(c.to_sql().unwrap(), "users.id");
     }
 
+    #[test]
+    fn test_wasm_col_quotes_unsafe_identifier_tokens() {
+        let c = wasm_col("Name; DROP TABLE titanic");
+        assert_eq!(c.to_sql().unwrap(), r#""Name; DROP TABLE titanic""#);
+    }
+
     // Note: wasm_lit() uses JsValue which only works on wasm32 targets.
     // Test literal creation via core builder directly.
     #[test]
@@ -1288,6 +1294,15 @@ mod tests {
         b.from("users");
         let sql = b.to_sql("generic").unwrap();
         assert_eq!(sql, "SELECT id, name FROM users");
+    }
+
+    #[test]
+    fn test_wasm_select_builder_quotes_unsafe_table_name_tokens() {
+        let mut b = WasmSelectBuilder::new();
+        b.select_col("id");
+        b.from("users; DROP TABLE x");
+        let sql = b.to_sql("generic").unwrap();
+        assert_eq!(sql, r#"SELECT id FROM "users; DROP TABLE x""#);
     }
 
     #[test]
