@@ -19,6 +19,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Changed
 - Canonical SQL generation for `NOT IN` in the WASM builder path to avoid non-canonical output.
+- SDK build pipeline now performs WASM extraction/rewrite via a Vite plugin instead of a standalone post-build script.
+- WASM release optimization profile no longer uses `--converge` to reduce build-time variance in `wasm-opt`.
 - CI release hardening:
   - SDK typecheck in the `sdk-build` job
   - deploy-time docs version assertion against release tag
@@ -27,6 +29,9 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 ### Fixed
 - Multiple schema validation edge cases around comparison, arithmetic, assignment, set-ops, and join/reference quality diagnostics.
 - Strict/non-strict severity behavior alignment for new validation rule families.
+- Generated TypeScript binding diagnostics in the SDK:
+  - removed problematic doc-comment patterns that broke generated JSDoc parsing
+  - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
 [Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.6...HEAD
 [0.1.6]: https://github.com/tobilg/polyglot/compare/v0.1.5...v0.1.6
