@@ -8,24 +8,25 @@ import type { Identifier } from "./Identifier";
  * Supports the EXCEPT/EXCLUDE, REPLACE, and RENAME modifiers found in
  * DuckDB, BigQuery, and Snowflake (e.g. `SELECT * EXCEPT (id) FROM t`).
  */
-export type Star = { 
-/**
- * Optional table qualifier (e.g. `t` in `t.*`).
- */
-table: Identifier | null, 
-/**
- * EXCLUDE / EXCEPT columns (DuckDB, BigQuery, Snowflake)
- */
-except: Array<Identifier> | null, 
-/**
- * REPLACE expressions (BigQuery, Snowflake)
- */
-replace: Array<Alias> | null, 
-/**
- * RENAME columns (Snowflake)
- */
-rename: Array<[Identifier, Identifier]> | null, 
-/**
- * Trailing comments that appeared after the star
- */
-trailing_comments?: Array<string>, };
+export type Star = {
+  /**
+   * Optional table qualifier (e.g. `t` in `t.*`).
+   */
+  table: Identifier | null;
+  /**
+   * EXCLUDE / EXCEPT columns (DuckDB, BigQuery, Snowflake)
+   */
+  except: Array<Identifier> | null;
+  /**
+   * REPLACE expressions (BigQuery, Snowflake)
+   */
+  replace: Array<Alias> | null;
+  /**
+   * RENAME columns (Snowflake)
+   */
+  rename: Array<[Identifier, Identifier]> | null;
+  /**
+   * Trailing comments that appeared after the star
+   */
+  trailing_comments?: Array<string>;
+};

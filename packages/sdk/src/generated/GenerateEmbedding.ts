@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * GenerateEmbedding
  */
-export type GenerateEmbedding = { this: Expression, expression: Expression, params_struct: Expression | null, is_text: Expression | null, };
+export type GenerateEmbedding = {
+  this: Expression;
+  expression: Expression;
+  params_struct: Expression | null;
+  is_text: Expression | null;
+};

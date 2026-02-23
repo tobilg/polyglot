@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * QueryTransform
  */
-export type QueryTransform = { expressions: Array<Expression>, command_script: Expression | null, schema: Expression | null, row_format_before: Expression | null, record_writer: Expression | null, row_format_after: Expression | null, record_reader: Expression | null, };
+export type QueryTransform = {
+  expressions: Array<Expression>;
+  command_script: Expression | null;
+  schema: Expression | null;
+  row_format_before: Expression | null;
+  record_writer: Expression | null;
+  row_format_after: Expression | null;
+  record_reader: Expression | null;
+};

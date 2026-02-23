@@ -5,4 +5,4 @@ import type { PseudocolumnType } from "./PseudocolumnType";
  * Pseudocolumn expression (Oracle ROWNUM, ROWID, LEVEL, etc.)
  * These are special identifiers that should not be quoted
  */
-export type Pseudocolumn = { kind: PseudocolumnType, };
+export type Pseudocolumn = { kind: PseudocolumnType };

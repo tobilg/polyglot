@@ -3,12 +3,13 @@
 /**
  * Element in an EXCLUDE constraint: expression WITH operator
  */
-export type ExcludeElement = { 
-/**
- * The column expression (may include operator class, ordering, nulls)
- */
-expression: string, 
-/**
- * The operator (e.g., &&, =)
- */
-operator: string, };
+export type ExcludeElement = {
+  /**
+   * The column expression (may include operator class, ordering, nulls)
+   */
+  expression: string;
+  /**
+   * The operator (e.g., &&, =)
+   */
+  operator: string;
+};

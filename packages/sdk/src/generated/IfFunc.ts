@@ -4,8 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * IF function
  */
-export type IfFunc = { condition: Expression, true_value: Expression, false_value: Expression | null, 
-/**
- * Original function name (IF, IFF, IIF) for round-trip preservation
- */
-original_name?: string | null, };
+export type IfFunc = {
+  condition: Expression;
+  true_value: Expression;
+  false_value: Expression | null;
+  /**
+   * Original function name (IF, IFF, IIF) for round-trip preservation
+   */
+  original_name?: string | null;
+};

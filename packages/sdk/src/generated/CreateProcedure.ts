@@ -8,24 +8,32 @@ import type { TableRef } from "./TableRef";
 /**
  * CREATE PROCEDURE statement
  */
-export type CreateProcedure = { name: TableRef, parameters: Array<FunctionParameter>, body: FunctionBody | null, or_replace: boolean, if_not_exists: boolean, language: string | null, security: FunctionSecurity | null, 
-/**
- * Return type (Snowflake: RETURNS OBJECT, RETURNS VARCHAR, etc.)
- */
-return_type: DataType | null, 
-/**
- * Execution context (EXECUTE AS CALLER, EXECUTE AS OWNER)
- */
-execute_as: string | null, 
-/**
- * TSQL WITH options (ENCRYPTION, RECOMPILE, SCHEMABINDING, etc.)
- */
-with_options?: Array<string>, 
-/**
- * Whether the parameter list had parentheses (false for TSQL procedures without parens)
- */
-has_parens?: boolean, 
-/**
- * Whether the short form PROC was used (instead of PROCEDURE)
- */
-use_proc_keyword?: boolean, };
+export type CreateProcedure = {
+  name: TableRef;
+  parameters: Array<FunctionParameter>;
+  body: FunctionBody | null;
+  or_replace: boolean;
+  if_not_exists: boolean;
+  language: string | null;
+  security: FunctionSecurity | null;
+  /**
+   * Return type (Snowflake: RETURNS OBJECT, RETURNS VARCHAR, etc.)
+   */
+  return_type: DataType | null;
+  /**
+   * Execution context (EXECUTE AS CALLER, EXECUTE AS OWNER)
+   */
+  execute_as: string | null;
+  /**
+   * TSQL WITH options (ENCRYPTION, RECOMPILE, SCHEMABINDING, etc.)
+   */
+  with_options?: Array<string>;
+  /**
+   * Whether the parameter list had parentheses (false for TSQL procedures without parens)
+   */
+  has_parens?: boolean;
+  /**
+   * Whether the short form PROC was used (instead of PROCEDURE)
+   */
+  use_proc_keyword?: boolean;
+};

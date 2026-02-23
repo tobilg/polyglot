@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * GenerateTimestampArray
  */
-export type GenerateTimestampArray = { start: Expression | null, end: Expression | null, step: Expression | null, };
+export type GenerateTimestampArray = {
+  start: Expression | null;
+  end: Expression | null;
+  step: Expression | null;
+};

@@ -5,12 +5,13 @@ import type { Ordered } from "./Ordered";
  * Oracle KEEP clause for aggregate functions
  * Syntax: aggregate_function KEEP (DENSE_RANK FIRST|LAST ORDER BY column [ASC|DESC])
  */
-export type Keep = { 
-/**
- * true = FIRST, false = LAST
- */
-first: boolean, 
-/**
- * ORDER BY clause inside KEEP
- */
-order_by: Array<Ordered>, };
+export type Keep = {
+  /**
+   * true = FIRST, false = LAST
+   */
+  first: boolean;
+  /**
+   * ORDER BY clause inside KEEP
+   */
+  order_by: Array<Ordered>;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * MAKE_DATE function
  */
-export type MakeDateFunc = { year: Expression, month: Expression, day: Expression, };
+export type MakeDateFunc = {
+  year: Expression;
+  month: Expression;
+  day: Expression;
+};

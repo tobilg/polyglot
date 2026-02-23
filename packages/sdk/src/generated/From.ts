@@ -7,8 +7,9 @@ import type { Expression } from "./Expression";
  * Contains one or more table sources (tables, subqueries, table-valued
  * functions, etc.). Multiple entries represent comma-separated implicit joins.
  */
-export type From = { 
-/**
- * The table source expressions.
- */
-expressions: Array<Expression>, };
+export type From = {
+  /**
+   * The table source expressions.
+   */
+  expressions: Array<Expression>;
+};

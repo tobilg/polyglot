@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PartitionedByProperty
  */
-export type PartitionedByProperty = { this: Expression, };
+export type PartitionedByProperty = { this: Expression };

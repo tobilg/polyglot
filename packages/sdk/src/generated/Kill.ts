@@ -5,12 +5,13 @@ import type { Expression } from "./Expression";
  * KILL statement (MySQL/MariaDB)
  * KILL [CONNECTION | QUERY] <id>
  */
-export type Kill = { 
-/**
- * The target (process ID or connection ID)
- */
-this: Expression, 
-/**
- * Optional kind: "CONNECTION" or "QUERY"
- */
-kind: string | null, };
+export type Kill = {
+  /**
+   * The target (process ID or connection ID)
+   */
+  this: Expression;
+  /**
+   * Optional kind: "CONNECTION" or "QUERY"
+   */
+  kind: string | null;
+};

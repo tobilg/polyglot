@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * Merge
  */
-export type Merge = { this: Expression, using: Expression, on: Expression | null, using_cond: Expression | null, whens: Expression | null, with_: Expression | null, returning: Expression | null, };
+export type Merge = {
+  this: Expression;
+  using: Expression;
+  on: Expression | null;
+  using_cond: Expression | null;
+  whens: Expression | null;
+  with_: Expression | null;
+  returning: Expression | null;
+};

@@ -12,72 +12,73 @@ import type { With } from "./With";
  * Returns only rows that appear in both operands. When `all` is true,
  * duplicates are preserved according to their multiplicity.
  */
-export type Intersect = { 
-/**
- * The left-hand query operand.
- */
-left: Expression, 
-/**
- * The right-hand query operand.
- */
-right: Expression, 
-/**
- * Whether INTERSECT ALL (true) or INTERSECT (false, which deduplicates).
- */
-all: boolean, 
-/**
- * Whether DISTINCT was explicitly specified
- */
-distinct: boolean, 
-/**
- * Optional WITH clause
- */
-with: With | null, 
-/**
- * ORDER BY applied to entire INTERSECT result
- */
-order_by: OrderBy | null, 
-/**
- * LIMIT applied to entire INTERSECT result
- */
-limit: Expression | null, 
-/**
- * OFFSET applied to entire INTERSECT result
- */
-offset: Expression | null, 
-/**
- * DISTRIBUTE BY clause (Hive/Spark)
- */
-distribute_by?: DistributeBy | null, 
-/**
- * SORT BY clause (Hive/Spark)
- */
-sort_by?: SortBy | null, 
-/**
- * CLUSTER BY clause (Hive/Spark)
- */
-cluster_by?: ClusterBy | null, 
-/**
- * DuckDB BY NAME modifier
- */
-by_name: boolean, 
-/**
- * BigQuery: Set operation side (LEFT, RIGHT, FULL)
- */
-side?: string | null, 
-/**
- * BigQuery: Set operation kind (INNER)
- */
-kind?: string | null, 
-/**
- * BigQuery: CORRESPONDING modifier
- */
-corresponding: boolean, 
-/**
- * BigQuery: STRICT modifier (before CORRESPONDING)
- */
-strict: boolean, 
-/**
- * BigQuery: BY (columns) after CORRESPONDING
- */
-on_columns?: Array<Expression>, };
+export type Intersect = {
+  /**
+   * The left-hand query operand.
+   */
+  left: Expression;
+  /**
+   * The right-hand query operand.
+   */
+  right: Expression;
+  /**
+   * Whether INTERSECT ALL (true) or INTERSECT (false, which deduplicates).
+   */
+  all: boolean;
+  /**
+   * Whether DISTINCT was explicitly specified
+   */
+  distinct: boolean;
+  /**
+   * Optional WITH clause
+   */
+  with: With | null;
+  /**
+   * ORDER BY applied to entire INTERSECT result
+   */
+  order_by: OrderBy | null;
+  /**
+   * LIMIT applied to entire INTERSECT result
+   */
+  limit: Expression | null;
+  /**
+   * OFFSET applied to entire INTERSECT result
+   */
+  offset: Expression | null;
+  /**
+   * DISTRIBUTE BY clause (Hive/Spark)
+   */
+  distribute_by?: DistributeBy | null;
+  /**
+   * SORT BY clause (Hive/Spark)
+   */
+  sort_by?: SortBy | null;
+  /**
+   * CLUSTER BY clause (Hive/Spark)
+   */
+  cluster_by?: ClusterBy | null;
+  /**
+   * DuckDB BY NAME modifier
+   */
+  by_name: boolean;
+  /**
+   * BigQuery: Set operation side (LEFT, RIGHT, FULL)
+   */
+  side?: string | null;
+  /**
+   * BigQuery: Set operation kind (INNER)
+   */
+  kind?: string | null;
+  /**
+   * BigQuery: CORRESPONDING modifier
+   */
+  corresponding: boolean;
+  /**
+   * BigQuery: STRICT modifier (before CORRESPONDING)
+   */
+  strict: boolean;
+  /**
+   * BigQuery: BY (columns) after CORRESPONDING
+   */
+  on_columns?: Array<Expression>;
+};

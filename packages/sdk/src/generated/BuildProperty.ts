@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * BuildProperty
  */
-export type BuildProperty = { this: Expression, };
+export type BuildProperty = { this: Expression };

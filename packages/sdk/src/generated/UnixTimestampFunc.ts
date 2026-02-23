@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * UNIX_TIMESTAMP function
  */
-export type UnixTimestampFunc = { this: Expression | null, format: Expression | null, };
+export type UnixTimestampFunc = {
+  this: Expression | null;
+  format: Expression | null;
+};

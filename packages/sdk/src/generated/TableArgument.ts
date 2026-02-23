@@ -5,12 +5,13 @@ import type { Expression } from "./Expression";
  * TABLE ref or MODEL ref used as a function argument (BigQuery)
  * e.g., GAP_FILL(TABLE device_data, ...) or ML.PREDICT(MODEL mydataset.mymodel, ...)
  */
-export type TableArgument = { 
-/**
- * The keyword prefix: "TABLE" or "MODEL"
- */
-prefix: string, 
-/**
- * The table/model reference expression
- */
-this: Expression, };
+export type TableArgument = {
+  /**
+   * The keyword prefix: "TABLE" or "MODEL"
+   */
+  prefix: string;
+  /**
+   * The table/model reference expression
+   */
+  this: Expression;
+};

@@ -5,4 +5,8 @@ import type { Identifier } from "./Identifier";
 /**
  * Method call (expr.method(args))
  */
-export type MethodCall = { this: Expression, method: Identifier, args: Array<Expression>, };
+export type MethodCall = {
+  this: Expression;
+  method: Identifier;
+  args: Array<Expression>;
+};

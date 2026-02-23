@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ViewAttributeProperty
  */
-export type ViewAttributeProperty = { this: Expression, };
+export type ViewAttributeProperty = { this: Expression };

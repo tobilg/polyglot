@@ -11,36 +11,107 @@ import type { TableRef } from "./TableRef";
 /**
  * Actions for ALTER TABLE
  */
-export type AlterTableAction = { "AddColumn": { column: ColumnDef, if_not_exists: boolean, position: ColumnPosition | null, } } | { "DropColumn": { name: Identifier, if_exists: boolean, cascade: boolean, } } | { "RenameColumn": { old_name: Identifier, new_name: Identifier, if_exists: boolean, } } | { "AlterColumn": { name: Identifier, action: AlterColumnAction, 
-/**
- * Whether this was parsed from MODIFY COLUMN syntax (MySQL)
- */
-use_modify_keyword: boolean, } } | { "RenameTable": TableRef } | { "AddConstraint": TableConstraint } | { "DropConstraint": { name: Identifier, if_exists: boolean, } } | { "DropForeignKey": { name: Identifier, } } | { "DropPartition": { 
-/**
- * List of partitions to drop (each partition is a list of key=value pairs)
- */
-partitions: Array<Array<[Identifier, Expression]>>, if_exists: boolean, } } | { "AddPartition": { 
-/**
- * The partition expression
- */
-partition: Expression, if_not_exists: boolean, location: Expression | null, } } | { "Delete": { where_clause: Expression, } } | { "SwapWith": TableRef } | { "SetProperty": { properties: Array<[string, Expression]>, } } | { "UnsetProperty": { properties: Array<string>, } } | { "ClusterBy": { expressions: Array<Expression>, } } | { "SetTag": { expressions: Array<[string, Expression]>, } } | { "UnsetTag": { names: Array<string>, } } | { "SetOptions": { expressions: Array<Expression>, } } | { "AlterIndex": { name: Identifier, visible: boolean, } } | { "SetAttribute": { attribute: string, } } | { "SetStageFileFormat": { options: Expression | null, } } | { "SetStageCopyOptions": { options: Expression | null, } } | { "AddColumns": { columns: Array<ColumnDef>, cascade: boolean, } } | { "DropColumns": { names: Array<Identifier>, } } | { "ChangeColumn": { old_name: Identifier, new_name: Identifier, data_type?: DataType | null, comment: string | null, cascade: boolean, } } | { "AlterSortKey": { 
-/**
- * AUTO or NONE keyword
- */
-this: string | null, 
-/**
- * Column list for (col1, col2) syntax
- */
-expressions: Array<Expression>, 
-/**
- * Whether COMPOUND keyword was present
- */
-compound: boolean, } } | { "AlterDistStyle": { 
-/**
- * Distribution style: ALL, EVEN, AUTO, or KEY
- */
-style: string, 
-/**
- * DISTKEY column (only when style is KEY)
- */
-distkey: Identifier | null, } } | { "SetTableProperties": { properties: Array<[Expression, Expression]>, } } | { "SetLocation": { location: string, } } | { "SetFileFormat": { format: string, } } | { "ReplacePartition": { partition: Expression, source: Expression | null, } };
+export type AlterTableAction =
+  | {
+      AddColumn: {
+        column: ColumnDef;
+        if_not_exists: boolean;
+        position: ColumnPosition | null;
+      };
+    }
+  | { DropColumn: { name: Identifier; if_exists: boolean; cascade: boolean } }
+  | {
+      RenameColumn: {
+        old_name: Identifier;
+        new_name: Identifier;
+        if_exists: boolean;
+      };
+    }
+  | {
+      AlterColumn: {
+        name: Identifier;
+        action: AlterColumnAction;
+        /**
+         * Whether this was parsed from MODIFY COLUMN syntax (MySQL)
+         */
+        use_modify_keyword: boolean;
+      };
+    }
+  | { RenameTable: TableRef }
+  | { AddConstraint: TableConstraint }
+  | { DropConstraint: { name: Identifier; if_exists: boolean } }
+  | { DropForeignKey: { name: Identifier } }
+  | {
+      DropPartition: {
+        /**
+         * List of partitions to drop (each partition is a list of key=value pairs)
+         */
+        partitions: Array<Array<[Identifier, Expression]>>;
+        if_exists: boolean;
+      };
+    }
+  | {
+      AddPartition: {
+        /**
+         * The partition expression
+         */
+        partition: Expression;
+        if_not_exists: boolean;
+        location: Expression | null;
+      };
+    }
+  | { Delete: { where_clause: Expression } }
+  | { SwapWith: TableRef }
+  | { SetProperty: { properties: Array<[string, Expression]> } }
+  | { UnsetProperty: { properties: Array<string> } }
+  | { ClusterBy: { expressions: Array<Expression> } }
+  | { SetTag: { expressions: Array<[string, Expression]> } }
+  | { UnsetTag: { names: Array<string> } }
+  | { SetOptions: { expressions: Array<Expression> } }
+  | { AlterIndex: { name: Identifier; visible: boolean } }
+  | { SetAttribute: { attribute: string } }
+  | { SetStageFileFormat: { options: Expression | null } }
+  | { SetStageCopyOptions: { options: Expression | null } }
+  | { AddColumns: { columns: Array<ColumnDef>; cascade: boolean } }
+  | { DropColumns: { names: Array<Identifier> } }
+  | {
+      ChangeColumn: {
+        old_name: Identifier;
+        new_name: Identifier;
+        data_type?: DataType | null;
+        comment: string | null;
+        cascade: boolean;
+      };
+    }
+  | {
+      AlterSortKey: {
+        /**
+         * AUTO or NONE keyword
+         */
+        this: string | null;
+        /**
+         * Column list for (col1, col2) syntax
+         */
+        expressions: Array<Expression>;
+        /**
+         * Whether COMPOUND keyword was present
+         */
+        compound: boolean;
+      };
+    }
+  | {
+      AlterDistStyle: {
+        /**
+         * Distribution style: ALL, EVEN, AUTO, or KEY
+         */
+        style: string;
+        /**
+         * DISTKEY column (only when style is KEY)
+         */
+        distkey: Identifier | null;
+      };
+    }
+  | { SetTableProperties: { properties: Array<[Expression, Expression]> } }
+  | { SetLocation: { location: string } }
+  | { SetFileFormat: { format: string } }
+  | { ReplacePartition: { partition: Expression; source: Expression | null } };

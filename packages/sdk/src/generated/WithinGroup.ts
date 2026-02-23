@@ -5,12 +5,13 @@ import type { Ordered } from "./Ordered";
 /**
  * WITHIN GROUP clause (for ordered-set aggregate functions)
  */
-export type WithinGroup = { 
-/**
- * The aggregate function (LISTAGG, PERCENTILE_CONT, etc.)
- */
-this: Expression, 
-/**
- * The ORDER BY clause within the group
- */
-order_by: Array<Ordered>, };
+export type WithinGroup = {
+  /**
+   * The aggregate function (LISTAGG, PERCENTILE_CONT, etc.)
+   */
+  this: Expression;
+  /**
+   * The ORDER BY clause within the group
+   */
+  order_by: Array<Ordered>;
+};

@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * InOutColumnConstraint
  */
-export type InOutColumnConstraint = { input_: Expression | null, output: Expression | null, };
+export type InOutColumnConstraint = {
+  input_: Expression | null;
+  output: Expression | null;
+};

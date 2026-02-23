@@ -4,4 +4,15 @@ import type { Expression } from "./Expression";
 /**
  * JSONExtract
  */
-export type JSONExtract = { this: Expression, expression: Expression, only_json_types: Expression | null, expressions: Array<Expression>, variant_extract: Expression | null, json_query: Expression | null, option: Expression | null, quote: Expression | null, on_condition: Expression | null, requires_json: Expression | null, };
+export type JSONExtract = {
+  this: Expression;
+  expression: Expression;
+  only_json_types: Expression | null;
+  expressions: Array<Expression>;
+  variant_extract: Expression | null;
+  json_query: Expression | null;
+  option: Expression | null;
+  quote: Expression | null;
+  on_condition: Expression | null;
+  requires_json: Expression | null;
+};

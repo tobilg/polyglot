@@ -14,49 +14,50 @@ import type { With } from "./With";
  *   PIVOT table ON columns [IN (...)] USING agg_func [AS alias], ... [GROUP BY ...]
  *   UNPIVOT table ON columns INTO NAME name_col VALUE val_col
  */
-export type Pivot = { 
-/**
- * Source table/expression
- */
-this: Expression, 
-/**
- * For standard PIVOT: the aggregation function(s) (first is primary)
- * For DuckDB simplified: unused (use `using` instead)
- */
-expressions: Array<Expression>, 
-/**
- * For standard PIVOT: the FOR...IN clause(s) as In expressions
- */
-fields: Array<Expression>, 
-/**
- * For standard: unused. For DuckDB simplified: the USING aggregation functions
- */
-using: Array<Expression>, 
-/**
- * GROUP BY clause (used in both standard inside-parens and DuckDB simplified)
- */
-group: Expression | null, 
-/**
- * Whether this is an UNPIVOT (vs PIVOT)
- */
-unpivot: boolean, 
-/**
- * For DuckDB UNPIVOT: INTO NAME col VALUE col
- */
-into: Expression | null, 
-/**
- * Optional alias
- */
-alias: Identifier | null, 
-/**
- * Include/exclude nulls (for UNPIVOT)
- */
-include_nulls: boolean | null, 
-/**
- * Default on null value (Snowflake)
- */
-default_on_null: Expression | null, 
-/**
- * WITH clause (CTEs)
- */
-with?: With | null, };
+export type Pivot = {
+  /**
+   * Source table/expression
+   */
+  this: Expression;
+  /**
+   * For standard PIVOT: the aggregation function(s) (first is primary)
+   * For DuckDB simplified: unused (use `using` instead)
+   */
+  expressions: Array<Expression>;
+  /**
+   * For standard PIVOT: the FOR...IN clause(s) as In expressions
+   */
+  fields: Array<Expression>;
+  /**
+   * For standard: unused. For DuckDB simplified: the USING aggregation functions
+   */
+  using: Array<Expression>;
+  /**
+   * GROUP BY clause (used in both standard inside-parens and DuckDB simplified)
+   */
+  group: Expression | null;
+  /**
+   * Whether this is an UNPIVOT (vs PIVOT)
+   */
+  unpivot: boolean;
+  /**
+   * For DuckDB UNPIVOT: INTO NAME col VALUE col
+   */
+  into: Expression | null;
+  /**
+   * Optional alias
+   */
+  alias: Identifier | null;
+  /**
+   * Include/exclude nulls (for UNPIVOT)
+   */
+  include_nulls: boolean | null;
+  /**
+   * Default on null value (Snowflake)
+   */
+  default_on_null: Expression | null;
+  /**
+   * WITH clause (CTEs)
+   */
+  with?: With | null;
+};

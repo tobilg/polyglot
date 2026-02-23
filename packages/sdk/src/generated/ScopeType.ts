@@ -3,4 +3,10 @@
 /**
  * Type of scope in a SQL query
  */
-export type ScopeType = "Root" | "Subquery" | "DerivedTable" | "Cte" | "SetOperation" | "Udtf";
+export type ScopeType =
+  | "Root"
+  | "Subquery"
+  | "DerivedTable"
+  | "Cte"
+  | "SetOperation"
+  | "Udtf";

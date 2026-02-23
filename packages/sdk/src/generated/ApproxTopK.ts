@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ApproxTopK
  */
-export type ApproxTopK = { this: Expression, expression: Expression | null, counters: Expression | null, };
+export type ApproxTopK = {
+  this: Expression;
+  expression: Expression | null;
+  counters: Expression | null;
+};

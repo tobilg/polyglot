@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Summarize
  */
-export type Summarize = { this: Expression, table: Expression | null, };
+export type Summarize = { this: Expression; table: Expression | null };

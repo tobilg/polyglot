@@ -5,8 +5,10 @@ import type { Expression } from "./Expression";
 /**
  * LAST_DAY function with optional date part (for BigQuery granularity like WEEK(SUNDAY))
  */
-export type LastDayFunc = { this: Expression, 
-/**
- * Optional date part for granularity (e.g., MONTH, YEAR, WEEK(SUNDAY))
- */
-unit?: DateTimeField | null, };
+export type LastDayFunc = {
+  this: Expression;
+  /**
+   * Optional date part for granularity (e.g., MONTH, YEAR, WEEK(SUNDAY))
+   */
+  unit?: DateTimeField | null;
+};

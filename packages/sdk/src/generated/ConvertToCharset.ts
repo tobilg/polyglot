@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ConvertToCharset
  */
-export type ConvertToCharset = { this: Expression, dest: Expression | null, source: Expression | null, };
+export type ConvertToCharset = {
+  this: Expression;
+  dest: Expression | null;
+  source: Expression | null;
+};

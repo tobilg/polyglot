@@ -4,12 +4,13 @@ import type { Ordered } from "./Ordered";
 /**
  * Represent an ORDER BY clause containing one or more sort specifications.
  */
-export type OrderBy = { 
-/**
- * The sort specifications, each with direction and null ordering.
- */
-expressions: Array<Ordered>, 
-/**
- * Whether this is ORDER SIBLINGS BY (Oracle hierarchical queries)
- */
-siblings?: boolean, };
+export type OrderBy = {
+  /**
+   * The sort specifications, each with direction and null ordering.
+   */
+  expressions: Array<Ordered>;
+  /**
+   * Whether this is ORDER SIBLINGS BY (Oracle hierarchical queries)
+   */
+  siblings?: boolean;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ReadParquet
  */
-export type ReadParquet = { expressions: Array<Expression>, };
+export type ReadParquet = { expressions: Array<Expression> };

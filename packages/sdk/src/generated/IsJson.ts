@@ -6,16 +6,18 @@ import type { JsonUniqueKeys } from "./JsonUniqueKeys";
  * IS JSON predicate (SQL standard)
  * Checks if a value is valid JSON
  */
-export type IsJson = { this: Expression, 
-/**
- * JSON type: VALUE, SCALAR, OBJECT, or ARRAY (None = just IS JSON)
- */
-json_type: string | null, 
-/**
- * Key uniqueness constraint
- */
-unique_keys: JsonUniqueKeys | null, 
-/**
- * Whether IS NOT JSON
- */
-negated: boolean, };
+export type IsJson = {
+  this: Expression;
+  /**
+   * JSON type: VALUE, SCALAR, OBJECT, or ARRAY (None = just IS JSON)
+   */
+  json_type: string | null;
+  /**
+   * Key uniqueness constraint
+   */
+  unique_keys: JsonUniqueKeys | null;
+  /**
+   * Whether IS NOT JSON
+   */
+  negated: boolean;
+};

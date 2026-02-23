@@ -5,4 +5,8 @@ import type { IntervalUnit } from "./IntervalUnit";
 /**
  * DATE_ADD / DATE_SUB function
  */
-export type DateAddFunc = { this: Expression, interval: Expression, unit: IntervalUnit, };
+export type DateAddFunc = {
+  this: Expression;
+  interval: Expression;
+  unit: IntervalUnit;
+};

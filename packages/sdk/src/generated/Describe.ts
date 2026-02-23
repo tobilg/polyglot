@@ -4,36 +4,37 @@ import type { Expression } from "./Expression";
 /**
  * DESCRIBE statement - shows table structure or query plan
  */
-export type Describe = { 
-/**
- * The target to describe (table name or query)
- */
-target: Expression, 
-/**
- * EXTENDED format
- */
-extended: boolean, 
-/**
- * FORMATTED format
- */
-formatted: boolean, 
-/**
- * Object kind (e.g., "SEMANTIC VIEW", "TABLE", etc.)
- */
-kind: string | null, 
-/**
- * Properties like type=stage
- */
-properties: Array<[string, string]>, 
-/**
- * Style keyword (e.g., "ANALYZE", "HISTORY")
- */
-style?: string | null, 
-/**
- * Partition specification for DESCRIBE PARTITION
- */
-partition: Expression | null, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, };
+export type Describe = {
+  /**
+   * The target to describe (table name or query)
+   */
+  target: Expression;
+  /**
+   * EXTENDED format
+   */
+  extended: boolean;
+  /**
+   * FORMATTED format
+   */
+  formatted: boolean;
+  /**
+   * Object kind (e.g., "SEMANTIC VIEW", "TABLE", etc.)
+   */
+  kind: string | null;
+  /**
+   * Properties like type=stage
+   */
+  properties: Array<[string, string]>;
+  /**
+   * Style keyword (e.g., "ANALYZE", "HISTORY")
+   */
+  style?: string | null;
+  /**
+   * Partition specification for DESCRIBE PARTITION
+   */
+  partition: Expression | null;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+};

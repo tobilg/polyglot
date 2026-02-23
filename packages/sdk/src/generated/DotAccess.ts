@@ -5,4 +5,4 @@ import type { Identifier } from "./Identifier";
 /**
  * Dot access (struct.field)
  */
-export type DotAccess = { this: Expression, field: Identifier, };
+export type DotAccess = { this: Expression; field: Identifier };

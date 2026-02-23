@@ -18,6 +18,7 @@ pub mod dialects;
 pub mod diff;
 pub mod error;
 pub mod expressions;
+mod function_registry;
 pub mod generator;
 pub mod helper;
 pub mod lineage;
@@ -216,10 +217,11 @@ pub fn parse_one(sql: &str, dialect: DialectType) -> Result<Expression> {
     let mut expressions = parse(sql, dialect)?;
 
     if expressions.len() != 1 {
-        return Err(Error::parse(format!(
-            "Expected 1 statement, found {}",
-            expressions.len()
-        ), 0, 0));
+        return Err(Error::parse(
+            format!("Expected 1 statement, found {}", expressions.len()),
+            0,
+            0,
+        ));
     }
 
     Ok(expressions.remove(0))
@@ -275,7 +277,11 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
                     line,
                     column,
                 } => ValidationError::error(message.clone(), "E002").with_location(*line, *column),
-                Error::Parse { message, line, column } => ValidationError::error(message.clone(), "E003").with_location(*line, *column),
+                Error::Parse {
+                    message,
+                    line,
+                    column,
+                } => ValidationError::error(message.clone(), "E003").with_location(*line, *column),
                 _ => ValidationError::error(e.to_string(), "E000"),
             };
             ValidationResult::with_errors(vec![error])

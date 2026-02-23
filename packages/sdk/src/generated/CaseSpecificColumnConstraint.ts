@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CaseSpecificColumnConstraint
  */
-export type CaseSpecificColumnConstraint = { not_: Expression | null, };
+export type CaseSpecificColumnConstraint = { not_: Expression | null };

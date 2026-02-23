@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * RegexpExtractAll
  */
-export type RegexpExtractAll = { this: Expression, expression: Expression, group: Expression | null, parameters: Expression | null, position: Expression | null, occurrence: Expression | null, };
+export type RegexpExtractAll = {
+  this: Expression;
+  expression: Expression;
+  group: Expression | null;
+  parameters: Expression | null;
+  position: Expression | null;
+  occurrence: Expression | null;
+};

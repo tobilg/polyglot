@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ConditionalInsert
  */
-export type ConditionalInsert = { this: Expression, expression: Expression | null, else_: Expression | null, };
+export type ConditionalInsert = {
+  this: Expression;
+  expression: Expression | null;
+  else_: Expression | null;
+};

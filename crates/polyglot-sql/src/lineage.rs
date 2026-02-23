@@ -519,10 +519,11 @@ fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<E
                         return Ok(expr.clone());
                     }
                 }
-                Err(crate::error::Error::parse(format!(
-                    "Cannot find column '{}' in query",
-                    name
-                ), 0, 0))
+                Err(crate::error::Error::parse(
+                    format!("Cannot find column '{}' in query", name),
+                    0,
+                    0,
+                ))
             }
             ColumnRef::Index(idx) => select.expressions.get(*idx).cloned().ok_or_else(|| {
                 crate::error::Error::parse(format!("Column index {} out of range", idx), 0, 0)
@@ -530,7 +531,9 @@ fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<E
         }
     } else {
         Err(crate::error::Error::parse(
-            "Expected SELECT expression for column lookup", 0, 0,
+            "Expected SELECT expression for column lookup",
+            0,
+            0,
         ))
     }
 }
@@ -549,14 +552,17 @@ fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
                         return Ok(i);
                     }
                 }
-                return Err(crate::error::Error::parse(format!(
-                    "Cannot find column '{}' in set operation",
-                    name
-                ), 0, 0));
+                return Err(crate::error::Error::parse(
+                    format!("Cannot find column '{}' in set operation", name),
+                    0,
+                    0,
+                ));
             }
             _ => {
                 return Err(crate::error::Error::parse(
-                    "Expected SELECT or set operation", 0, 0,
+                    "Expected SELECT or set operation",
+                    0,
+                    0,
                 ))
             }
         }
@@ -1253,14 +1259,19 @@ fn collect_column_refs(expr: &Expression, refs: &mut Vec<SimpleColumnRef>) {
                 stack.push(&f.this);
                 stack.push(&f.transform);
             }
-            Expression::Sequence(f) | Expression::Generate(f) | Expression::ExplodingGenerateSeries(f) => {
+            Expression::Sequence(f)
+            | Expression::Generate(f)
+            | Expression::ExplodingGenerateSeries(f) => {
                 stack.push(&f.start);
                 stack.push(&f.stop);
                 if let Some(ref step) = f.step {
                     stack.push(step);
                 }
             }
-            Expression::JsonExtract(f) | Expression::JsonExtractScalar(f) | Expression::JsonQuery(f) | Expression::JsonValue(f) => {
+            Expression::JsonExtract(f)
+            | Expression::JsonExtractScalar(f)
+            | Expression::JsonQuery(f)
+            | Expression::JsonValue(f) => {
                 stack.push(&f.this);
                 stack.push(&f.path);
             }
@@ -1307,7 +1318,9 @@ fn collect_column_refs(expr: &Expression, refs: &mut Vec<SimpleColumnRef>) {
                     stack.push(filter);
                 }
             }
-            Expression::Percentile(f) | Expression::PercentileCont(f) | Expression::PercentileDisc(f) => {
+            Expression::Percentile(f)
+            | Expression::PercentileCont(f)
+            | Expression::PercentileDisc(f) => {
                 stack.push(&f.this);
                 stack.push(&f.percentile);
                 if let Some(ref filter) = f.filter {
@@ -1852,7 +1865,10 @@ mod tests {
 
     fn print_node(node: &LineageNode, indent: usize) {
         let pad = "  ".repeat(indent);
-        println!("{pad}name={:?} source_name={:?}", node.name, node.source_name);
+        println!(
+            "{pad}name={:?} source_name={:?}",
+            node.name, node.source_name
+        );
         for child in &node.downstream {
             print_node(child, indent + 1);
         }
@@ -1952,9 +1968,8 @@ mod tests {
 
     #[test]
     fn test_lineage_case_with_nested_functions() {
-        let expr = parse(
-            "SELECT CASE WHEN x > 0 THEN UPPER(name) ELSE LOWER(name) END AS result FROM t",
-        );
+        let expr =
+            parse("SELECT CASE WHEN x > 0 THEN UPPER(name) ELSE LOWER(name) END AS result FROM t");
         let node = lineage("result", &expr, None, false).unwrap();
 
         let names = node.downstream_names();

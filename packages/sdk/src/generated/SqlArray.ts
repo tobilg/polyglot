@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Array expression
  */
-export type SqlArray = { expressions: Array<Expression>, };
+export type SqlArray = { expressions: Array<Expression> };

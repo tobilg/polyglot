@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * REGEXP_EXTRACT function
  */
-export type RegexpExtractFunc = { this: Expression, pattern: Expression, group: Expression | null, };
+export type RegexpExtractFunc = {
+  this: Expression;
+  pattern: Expression;
+  group: Expression | null;
+};

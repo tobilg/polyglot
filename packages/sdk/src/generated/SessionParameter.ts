@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SessionParameter
  */
-export type SessionParameter = { this: Expression, kind: string | null, };
+export type SessionParameter = { this: Expression; kind: string | null };

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * REPLACE function
  */
-export type ReplaceFunc = { this: Expression, old: Expression, new: Expression, };
+export type ReplaceFunc = {
+  this: Expression;
+  old: Expression;
+  new: Expression;
+};

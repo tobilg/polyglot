@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * UsingTemplateProperty
  */
-export type UsingTemplateProperty = { this: Expression, };
+export type UsingTemplateProperty = { this: Expression };

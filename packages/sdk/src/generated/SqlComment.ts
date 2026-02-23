@@ -3,4 +3,4 @@
 /**
  * SQL Comment preservation
  */
-export type SqlComment = { text: string, is_block: boolean, };
+export type SqlComment = { text: string; is_block: boolean };

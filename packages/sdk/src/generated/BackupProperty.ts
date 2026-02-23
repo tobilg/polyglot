@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * BackupProperty
  */
-export type BackupProperty = { this: Expression, };
+export type BackupProperty = { this: Expression };

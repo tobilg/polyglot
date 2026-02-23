@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * SUBSTRING_INDEX(str, delim, count)
  */
-export type SubstringIndex = { this: Expression, delimiter: Expression | null, count: Expression | null, };
+export type SubstringIndex = {
+  this: Expression;
+  delimiter: Expression | null;
+  count: Expression | null;
+};

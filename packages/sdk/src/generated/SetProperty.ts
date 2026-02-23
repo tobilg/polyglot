@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SetProperty
  */
-export type SetProperty = { multi: Expression | null, };
+export type SetProperty = { multi: Expression | null };

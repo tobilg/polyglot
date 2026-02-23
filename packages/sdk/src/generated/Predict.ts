@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Predict
  */
-export type Predict = { this: Expression, expression: Expression, params_struct: Expression | null, };
+export type Predict = {
+  this: Expression;
+  expression: Expression;
+  params_struct: Expression | null;
+};

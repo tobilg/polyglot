@@ -4,4 +4,8 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP SEQUENCE statement
  */
-export type DropSequence = { name: TableRef, if_exists: boolean, cascade: boolean, };
+export type DropSequence = {
+  name: TableRef;
+  if_exists: boolean;
+  cascade: boolean;
+};

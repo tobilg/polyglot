@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ChecksumProperty
  */
-export type ChecksumProperty = { on: Expression | null, default: Expression | null, };
+export type ChecksumProperty = {
+  on: Expression | null;
+  default: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ToBoolean
  */
-export type ToBoolean = { this: Expression, safe: Expression | null, };
+export type ToBoolean = { this: Expression; safe: Expression | null };

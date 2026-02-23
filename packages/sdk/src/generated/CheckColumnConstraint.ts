@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * CheckColumnConstraint
  */
-export type CheckColumnConstraint = { this: Expression, enforced: Expression | null, };
+export type CheckColumnConstraint = {
+  this: Expression;
+  enforced: Expression | null;
+};

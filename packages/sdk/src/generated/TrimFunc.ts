@@ -5,12 +5,16 @@ import type { TrimPosition } from "./TrimPosition";
 /**
  * TRIM function
  */
-export type TrimFunc = { this: Expression, characters: Expression | null, position: TrimPosition, 
-/**
- * Whether SQL standard syntax was used (TRIM(BOTH chars FROM str)) vs function syntax (TRIM(str))
- */
-sql_standard_syntax: boolean, 
-/**
- * Whether the position was explicitly specified (BOTH/LEADING/TRAILING) vs defaulted
- */
-position_explicit: boolean, };
+export type TrimFunc = {
+  this: Expression;
+  characters: Expression | null;
+  position: TrimPosition;
+  /**
+   * Whether SQL standard syntax was used (TRIM(BOTH chars FROM str)) vs function syntax (TRIM(str))
+   */
+  sql_standard_syntax: boolean;
+  /**
+   * Whether the position was explicitly specified (BOTH/LEADING/TRAILING) vs defaulted
+   */
+  position_explicit: boolean;
+};

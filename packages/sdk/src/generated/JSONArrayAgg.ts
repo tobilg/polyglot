@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JSONArrayAgg
  */
-export type JSONArrayAgg = { this: Expression, order: Expression | null, null_handling: Expression | null, return_type: Expression | null, strict: Expression | null, };
+export type JSONArrayAgg = {
+  this: Expression;
+  order: Expression | null;
+  null_handling: Expression | null;
+  return_type: Expression | null;
+  strict: Expression | null;
+};

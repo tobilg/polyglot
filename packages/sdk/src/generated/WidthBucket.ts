@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * WidthBucket
  */
-export type WidthBucket = { this: Expression, min_value: Expression | null, max_value: Expression | null, num_buckets: Expression | null, threshold: Expression | null, };
+export type WidthBucket = {
+  this: Expression;
+  min_value: Expression | null;
+  max_value: Expression | null;
+  num_buckets: Expression | null;
+  threshold: Expression | null;
+};

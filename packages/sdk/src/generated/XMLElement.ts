@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * XMLElement
  */
-export type XMLElement = { this: Expression, expressions: Array<Expression>, evalname: Expression | null, };
+export type XMLElement = {
+  this: Expression;
+  expressions: Array<Expression>;
+  evalname: Expression | null;
+};

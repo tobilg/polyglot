@@ -5,4 +5,9 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP PROCEDURE statement
  */
-export type DropProcedure = { name: TableRef, parameters: Array<DataType> | null, if_exists: boolean, cascade: boolean, };
+export type DropProcedure = {
+  name: TableRef;
+  parameters: Array<DataType> | null;
+  if_exists: boolean;
+  cascade: boolean;
+};

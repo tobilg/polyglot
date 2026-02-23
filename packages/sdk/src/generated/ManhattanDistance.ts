@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ManhattanDistance
  */
-export type ManhattanDistance = { this: Expression, expression: Expression, };
+export type ManhattanDistance = { this: Expression; expression: Expression };

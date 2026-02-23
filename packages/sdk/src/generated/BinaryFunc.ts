@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * Generic binary function (takes two arguments)
  */
-export type BinaryFunc = { this: Expression, expression: Expression, 
-/**
- * Original function name for round-trip preservation (e.g., NVL vs IFNULL)
- */
-original_name?: string | null, };
+export type BinaryFunc = {
+  this: Expression;
+  expression: Expression;
+  /**
+   * Original function name for round-trip preservation (e.g., NVL vs IFNULL)
+   */
+  original_name?: string | null;
+};

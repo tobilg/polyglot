@@ -8,20 +8,21 @@ import type { LateralView } from "./LateralView";
  * Parenthesized table expression with joins
  * Represents: (tbl1 CROSS JOIN tbl2) or ((SELECT 1) CROSS JOIN (SELECT 2))
  */
-export type JoinedTable = { 
-/**
- * The left-hand side table expression
- */
-left: Expression, 
-/**
- * The joins applied to the left table
- */
-joins: Array<Join>, 
-/**
- * LATERAL VIEW clauses (Hive/Spark)
- */
-lateral_views: Array<LateralView>, 
-/**
- * Optional alias for the joined table expression
- */
-alias: Identifier | null, };
+export type JoinedTable = {
+  /**
+   * The left-hand side table expression
+   */
+  left: Expression;
+  /**
+   * The joins applied to the left table
+   */
+  joins: Array<Join>;
+  /**
+   * LATERAL VIEW clauses (Hive/Spark)
+   */
+  lateral_views: Array<LateralView>;
+  /**
+   * Optional alias for the joined table expression
+   */
+  alias: Identifier | null;
+};

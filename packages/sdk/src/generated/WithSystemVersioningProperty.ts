@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * WithSystemVersioningProperty
  */
-export type WithSystemVersioningProperty = { on: Expression | null, this: Expression | null, data_consistency: Expression | null, retention_period: Expression | null, with_: Expression | null, };
+export type WithSystemVersioningProperty = {
+  on: Expression | null;
+  this: Expression | null;
+  data_consistency: Expression | null;
+  retention_period: Expression | null;
+  with_: Expression | null;
+};

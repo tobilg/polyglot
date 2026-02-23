@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Pad
  */
-export type Pad = { this: Expression, expression: Expression, fill_pattern: Expression | null, is_left: Expression | null, };
+export type Pad = {
+  this: Expression;
+  expression: Expression;
+  fill_pattern: Expression | null;
+  is_left: Expression | null;
+};

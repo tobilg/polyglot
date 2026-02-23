@@ -3,4 +3,4 @@
 /**
  * Raw/unparsed SQL
  */
-export type Raw = { sql: string, };
+export type Raw = { sql: string };

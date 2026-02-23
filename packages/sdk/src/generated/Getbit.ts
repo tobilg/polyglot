@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Getbit
  */
-export type Getbit = { this: Expression, expression: Expression, zero_is_msb: Expression | null, };
+export type Getbit = {
+  this: Expression;
+  expression: Expression;
+  zero_is_msb: Expression | null;
+};

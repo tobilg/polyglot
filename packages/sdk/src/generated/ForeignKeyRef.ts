@@ -7,28 +7,33 @@ import type { TableRef } from "./TableRef";
 /**
  * Foreign key reference
  */
-export type ForeignKeyRef = { table: TableRef, columns: Array<Identifier>, on_delete: ReferentialAction | null, on_update: ReferentialAction | null, 
-/**
- * True if ON UPDATE appears before ON DELETE in the original SQL
- */
-on_update_first: boolean, 
-/**
- * MATCH clause (FULL, PARTIAL, SIMPLE)
- */
-match_type: MatchType | null, 
-/**
- * True if MATCH appears after ON DELETE/ON UPDATE clauses
- */
-match_after_actions: boolean, 
-/**
- * CONSTRAINT name (e.g., CONSTRAINT fk_name REFERENCES ...)
- */
-constraint_name: string | null, 
-/**
- * DEFERRABLE / NOT DEFERRABLE
- */
-deferrable: boolean | null, 
-/**
- * Snowflake: FOREIGN KEY REFERENCES (includes FOREIGN KEY keywords before REFERENCES)
- */
-has_foreign_key_keywords: boolean, };
+export type ForeignKeyRef = {
+  table: TableRef;
+  columns: Array<Identifier>;
+  on_delete: ReferentialAction | null;
+  on_update: ReferentialAction | null;
+  /**
+   * True if ON UPDATE appears before ON DELETE in the original SQL
+   */
+  on_update_first: boolean;
+  /**
+   * MATCH clause (FULL, PARTIAL, SIMPLE)
+   */
+  match_type: MatchType | null;
+  /**
+   * True if MATCH appears after ON DELETE/ON UPDATE clauses
+   */
+  match_after_actions: boolean;
+  /**
+   * CONSTRAINT name (e.g., CONSTRAINT fk_name REFERENCES ...)
+   */
+  constraint_name: string | null;
+  /**
+   * DEFERRABLE / NOT DEFERRABLE
+   */
+  deferrable: boolean | null;
+  /**
+   * Snowflake: FOREIGN KEY REFERENCES (includes FOREIGN KEY keywords before REFERENCES)
+   */
+  has_foreign_key_keywords: boolean;
+};

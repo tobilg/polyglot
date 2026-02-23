@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * StrToDate
  */
-export type StrToDate = { this: Expression, format: string | null, safe: Expression | null, };
+export type StrToDate = {
+  this: Expression;
+  format: string | null;
+  safe: Expression | null;
+};

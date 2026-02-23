@@ -4,8 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * SUBSTRING function
  */
-export type SubstringFunc = { this: Expression, start: Expression, length: Expression | null, 
-/**
- * Whether SQL standard FROM/FOR syntax was used (true) vs comma-separated (false)
- */
-from_for_syntax: boolean, };
+export type SubstringFunc = {
+  this: Expression;
+  start: Expression;
+  length: Expression | null;
+  /**
+   * Whether SQL standard FROM/FOR syntax was used (true) vs comma-separated (false)
+   */
+  from_for_syntax: boolean;
+};

@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * ToNumber
  */
-export type ToNumber = { this: Expression, format: Expression | null, nlsparam: Expression | null, precision: Expression | null, scale: Expression | null, safe: Expression | null, safe_name: Expression | null, };
+export type ToNumber = {
+  this: Expression;
+  format: Expression | null;
+  nlsparam: Expression | null;
+  precision: Expression | null;
+  scale: Expression | null;
+  safe: Expression | null;
+  safe_name: Expression | null;
+};

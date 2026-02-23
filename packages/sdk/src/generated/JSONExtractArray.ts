@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JSONExtractArray
  */
-export type JSONExtractArray = { this: Expression, expression: Expression | null, };
+export type JSONExtractArray = {
+  this: Expression;
+  expression: Expression | null;
+};

@@ -4,4 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * IndexParameters
  */
-export type IndexParameters = { using: Expression | null, include: Expression | null, columns: Array<Expression>, with_storage: Expression | null, partition_by: Expression | null, tablespace: Expression | null, where_: Expression | null, on: Expression | null, };
+export type IndexParameters = {
+  using: Expression | null;
+  include: Expression | null;
+  columns: Array<Expression>;
+  with_storage: Expression | null;
+  partition_by: Expression | null;
+  tablespace: Expression | null;
+  where_: Expression | null;
+  on: Expression | null;
+};

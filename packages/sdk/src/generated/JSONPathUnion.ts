@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONPathUnion
  */
-export type JSONPathUnion = { expressions: Array<Expression>, };
+export type JSONPathUnion = { expressions: Array<Expression> };

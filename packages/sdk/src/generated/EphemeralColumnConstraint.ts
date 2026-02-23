@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * EphemeralColumnConstraint
  */
-export type EphemeralColumnConstraint = { this: Expression | null, };
+export type EphemeralColumnConstraint = { this: Expression | null };

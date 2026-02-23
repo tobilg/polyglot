@@ -11,4 +11,17 @@ import type { TriggerTiming } from "./TriggerTiming";
 /**
  * CREATE TRIGGER statement
  */
-export type CreateTrigger = { name: Identifier, table: TableRef, timing: TriggerTiming, events: Array<TriggerEvent>, for_each: TriggerForEach, when: Expression | null, body: TriggerBody, or_replace: boolean, constraint: boolean, deferrable: boolean | null, initially_deferred: boolean | null, referencing: TriggerReferencing | null, };
+export type CreateTrigger = {
+  name: Identifier;
+  table: TableRef;
+  timing: TriggerTiming;
+  events: Array<TriggerEvent>;
+  for_each: TriggerForEach;
+  when: Expression | null;
+  body: TriggerBody;
+  or_replace: boolean;
+  constraint: boolean;
+  deferrable: boolean | null;
+  initially_deferred: boolean | null;
+  referencing: TriggerReferencing | null;
+};

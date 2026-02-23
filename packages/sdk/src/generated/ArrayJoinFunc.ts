@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ARRAY_JOIN / ARRAY_TO_STRING function
  */
-export type ArrayJoinFunc = { this: Expression, separator: Expression, null_replacement: Expression | null, };
+export type ArrayJoinFunc = {
+  this: Expression;
+  separator: Expression;
+  null_replacement: Expression | null;
+};

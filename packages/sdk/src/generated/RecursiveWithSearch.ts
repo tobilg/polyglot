@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * RecursiveWithSearch
  */
-export type RecursiveWithSearch = { kind: string, this: Expression, expression: Expression, using: Expression | null, };
+export type RecursiveWithSearch = {
+  kind: string;
+  this: Expression;
+  expression: Expression;
+  using: Expression | null;
+};

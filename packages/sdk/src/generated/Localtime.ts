@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Localtime
  */
-export type Localtime = { this: Expression | null, };
+export type Localtime = { this: Expression | null };

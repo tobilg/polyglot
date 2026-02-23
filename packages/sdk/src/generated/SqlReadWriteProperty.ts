@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SqlReadWriteProperty
  */
-export type SqlReadWriteProperty = { this: Expression, };
+export type SqlReadWriteProperty = { this: Expression };

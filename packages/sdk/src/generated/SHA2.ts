@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SHA2
  */
-export type SHA2 = { this: Expression, length: bigint | null, };
+export type SHA2 = { this: Expression; length: bigint | null };

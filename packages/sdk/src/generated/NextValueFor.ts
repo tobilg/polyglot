@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * NextValueFor
  */
-export type NextValueFor = { this: Expression, order: Expression | null, };
+export type NextValueFor = { this: Expression; order: Expression | null };

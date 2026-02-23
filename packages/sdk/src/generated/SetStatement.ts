@@ -4,8 +4,9 @@ import type { SetItem } from "./SetItem";
 /**
  * SET variable statement
  */
-export type SetStatement = { 
-/**
- * The items being set
- */
-items: Array<SetItem>, };
+export type SetStatement = {
+  /**
+   * The items being set
+   */
+  items: Array<SetItem>;
+};

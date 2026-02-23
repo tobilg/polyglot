@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ToFile
  */
-export type ToFile = { this: Expression, path: Expression | null, safe: Expression | null, };
+export type ToFile = {
+  this: Expression;
+  path: Expression | null;
+  safe: Expression | null;
+};

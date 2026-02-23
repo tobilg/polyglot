@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * BlockCompressionProperty
  */
-export type BlockCompressionProperty = { autotemp: Expression | null, always: Expression | null, default: Expression | null, manual: Expression | null, never: Expression | null, };
+export type BlockCompressionProperty = {
+  autotemp: Expression | null;
+  always: Expression | null;
+  default: Expression | null;
+  manual: Expression | null;
+  never: Expression | null;
+};

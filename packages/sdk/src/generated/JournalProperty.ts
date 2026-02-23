@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JournalProperty
  */
-export type JournalProperty = { no: Expression | null, dual: Expression | null, before: Expression | null, local: Expression | null, after: Expression | null, };
+export type JournalProperty = {
+  no: Expression | null;
+  dual: Expression | null;
+  before: Expression | null;
+  local: Expression | null;
+  after: Expression | null;
+};

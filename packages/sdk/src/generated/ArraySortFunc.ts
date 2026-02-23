@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ARRAY_SORT function
  */
-export type ArraySortFunc = { this: Expression, comparator: Expression | null, desc: boolean, nulls_first: boolean | null, };
+export type ArraySortFunc = {
+  this: Expression;
+  comparator: Expression | null;
+  desc: boolean;
+  nulls_first: boolean | null;
+};

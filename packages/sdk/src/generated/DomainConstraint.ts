@@ -5,4 +5,4 @@ import type { Identifier } from "./Identifier";
 /**
  * Domain constraint
  */
-export type DomainConstraint = { name: Identifier | null, check: Expression, };
+export type DomainConstraint = { name: Identifier | null; check: Expression };

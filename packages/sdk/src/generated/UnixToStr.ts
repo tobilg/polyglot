@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * UnixToStr
  */
-export type UnixToStr = { this: Expression, format: string | null, };
+export type UnixToStr = { this: Expression; format: string | null };

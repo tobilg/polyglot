@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * UniqueColumnConstraint
  */
-export type UniqueColumnConstraint = { this: Expression | null, index_type: Expression | null, on_conflict: Expression | null, nulls: Expression | null, options: Array<Expression>, };
+export type UniqueColumnConstraint = {
+  this: Expression | null;
+  index_type: Expression | null;
+  on_conflict: Expression | null;
+  nulls: Expression | null;
+  options: Array<Expression>;
+};

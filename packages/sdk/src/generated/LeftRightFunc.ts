@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * LEFT/RIGHT function
  */
-export type LeftRightFunc = { this: Expression, length: Expression, };
+export type LeftRightFunc = { this: Expression; length: Expression };

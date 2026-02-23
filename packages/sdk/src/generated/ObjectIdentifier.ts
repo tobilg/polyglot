@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ObjectIdentifier
  */
-export type ObjectIdentifier = { this: Expression, };
+export type ObjectIdentifier = { this: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TryToDecfloat
  */
-export type TryToDecfloat = { this: Expression, format: string | null, };
+export type TryToDecfloat = { this: Expression; format: string | null };

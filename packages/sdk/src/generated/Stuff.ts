@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Stuff
  */
-export type Stuff = { this: Expression, start: Expression | null, length: bigint | null, expression: Expression, };
+export type Stuff = {
+  this: Expression;
+  start: Expression | null;
+  length: bigint | null;
+  expression: Expression;
+};

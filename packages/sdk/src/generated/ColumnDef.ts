@@ -9,120 +9,130 @@ import type { SortOrder } from "./SortOrder";
 /**
  * Column definition in CREATE TABLE
  */
-export type ColumnDef = { name: Identifier, data_type: DataType, nullable: boolean | null, default: Expression | null, primary_key: boolean, 
-/**
- * Sort order for PRIMARY KEY (ASC/DESC)
- */
-primary_key_order: SortOrder | null, unique: boolean, 
-/**
- * PostgreSQL 15+: UNIQUE NULLS NOT DISTINCT
- */
-unique_nulls_not_distinct: boolean, auto_increment: boolean, comment: string | null, constraints: Array<ColumnConstraint>, 
-/**
- * Track original order of constraints for accurate regeneration
- */
-constraint_order: Array<ConstraintType>, 
-/**
- * Teradata: FORMAT 'pattern'
- */
-format: string | null, 
-/**
- * Teradata: TITLE 'title'
- */
-title: string | null, 
-/**
- * Teradata: INLINE LENGTH n
- */
-inline_length: bigint | null, 
-/**
- * Teradata: COMPRESS or COMPRESS (values) or COMPRESS 'value'
- */
-compress: Array<Expression> | null, 
-/**
- * Teradata: CHARACTER SET name
- */
-character_set: string | null, 
-/**
- * Teradata: UPPERCASE
- */
-uppercase: boolean, 
-/**
- * Teradata: CASESPECIFIC / NOT CASESPECIFIC (None = not specified, Some(true) = CASESPECIFIC, Some(false) = NOT CASESPECIFIC)
- */
-casespecific: boolean | null, 
-/**
- * Snowflake: AUTOINCREMENT START value
- */
-auto_increment_start: Expression | null, 
-/**
- * Snowflake: AUTOINCREMENT INCREMENT value
- */
-auto_increment_increment: Expression | null, 
-/**
- * Snowflake: AUTOINCREMENT ORDER/NOORDER (true = ORDER, false = NOORDER, None = not specified)
- */
-auto_increment_order: boolean | null, 
-/**
- * MySQL: UNSIGNED modifier
- */
-unsigned: boolean, 
-/**
- * MySQL: ZEROFILL modifier
- */
-zerofill: boolean, 
-/**
- * MySQL: ON UPDATE expression (e.g., ON UPDATE CURRENT_TIMESTAMP)
- */
-on_update?: Expression | null, 
-/**
- * Named constraint for UNIQUE (e.g., CONSTRAINT must_be_different UNIQUE)
- */
-unique_constraint_name?: string | null, 
-/**
- * Named constraint for NOT NULL (e.g., CONSTRAINT present NOT NULL)
- */
-not_null_constraint_name?: string | null, 
-/**
- * Named constraint for PRIMARY KEY (e.g., CONSTRAINT pk_name PRIMARY KEY)
- */
-primary_key_constraint_name?: string | null, 
-/**
- * Named constraint for CHECK (e.g., CONSTRAINT chk_name CHECK(...))
- */
-check_constraint_name?: string | null, 
-/**
- * BigQuery: OPTIONS (key=value, ...) on column
- */
-options?: Array<Expression>, 
-/**
- * SQLite: Column definition without explicit type
- */
-no_type: boolean, 
-/**
- * Redshift: ENCODE encoding_type (e.g., ZSTD, DELTA, LZO, etc.)
- */
-encoding?: string | null, 
-/**
- * ClickHouse: CODEC(LZ4HC(9), ZSTD, DELTA)
- */
-codec?: string | null, 
-/**
- * ClickHouse: EPHEMERAL [expr] modifier
- */
-ephemeral?: Expression | null | null, 
-/**
- * ClickHouse: MATERIALIZED expr modifier
- */
-materialized_expr?: Expression | null, 
-/**
- * ClickHouse: ALIAS expr modifier
- */
-alias_expr?: Expression | null, 
-/**
- * ClickHouse: TTL expr modifier on columns
- */
-ttl_expr?: Expression | null, 
-/**
- * TSQL: NOT FOR REPLICATION
- */
-not_for_replication: boolean, };
+export type ColumnDef = {
+  name: Identifier;
+  data_type: DataType;
+  nullable: boolean | null;
+  default: Expression | null;
+  primary_key: boolean;
+  /**
+   * Sort order for PRIMARY KEY (ASC/DESC)
+   */
+  primary_key_order: SortOrder | null;
+  unique: boolean;
+  /**
+   * PostgreSQL 15+: UNIQUE NULLS NOT DISTINCT
+   */
+  unique_nulls_not_distinct: boolean;
+  auto_increment: boolean;
+  comment: string | null;
+  constraints: Array<ColumnConstraint>;
+  /**
+   * Track original order of constraints for accurate regeneration
+   */
+  constraint_order: Array<ConstraintType>;
+  /**
+   * Teradata: FORMAT 'pattern'
+   */
+  format: string | null;
+  /**
+   * Teradata: TITLE 'title'
+   */
+  title: string | null;
+  /**
+   * Teradata: INLINE LENGTH n
+   */
+  inline_length: bigint | null;
+  /**
+   * Teradata: COMPRESS or COMPRESS (values) or COMPRESS 'value'
+   */
+  compress: Array<Expression> | null;
+  /**
+   * Teradata: CHARACTER SET name
+   */
+  character_set: string | null;
+  /**
+   * Teradata: UPPERCASE
+   */
+  uppercase: boolean;
+  /**
+   * Teradata: CASESPECIFIC / NOT CASESPECIFIC (None = not specified, Some(true) = CASESPECIFIC, Some(false) = NOT CASESPECIFIC)
+   */
+  casespecific: boolean | null;
+  /**
+   * Snowflake: AUTOINCREMENT START value
+   */
+  auto_increment_start: Expression | null;
+  /**
+   * Snowflake: AUTOINCREMENT INCREMENT value
+   */
+  auto_increment_increment: Expression | null;
+  /**
+   * Snowflake: AUTOINCREMENT ORDER/NOORDER (true = ORDER, false = NOORDER, None = not specified)
+   */
+  auto_increment_order: boolean | null;
+  /**
+   * MySQL: UNSIGNED modifier
+   */
+  unsigned: boolean;
+  /**
+   * MySQL: ZEROFILL modifier
+   */
+  zerofill: boolean;
+  /**
+   * MySQL: ON UPDATE expression (e.g., ON UPDATE CURRENT_TIMESTAMP)
+   */
+  on_update?: Expression | null;
+  /**
+   * Named constraint for UNIQUE (e.g., CONSTRAINT must_be_different UNIQUE)
+   */
+  unique_constraint_name?: string | null;
+  /**
+   * Named constraint for NOT NULL (e.g., CONSTRAINT present NOT NULL)
+   */
+  not_null_constraint_name?: string | null;
+  /**
+   * Named constraint for PRIMARY KEY (e.g., CONSTRAINT pk_name PRIMARY KEY)
+   */
+  primary_key_constraint_name?: string | null;
+  /**
+   * Named constraint for CHECK (e.g., CONSTRAINT chk_name CHECK(...))
+   */
+  check_constraint_name?: string | null;
+  /**
+   * BigQuery: OPTIONS (key=value, ...) on column
+   */
+  options?: Array<Expression>;
+  /**
+   * SQLite: Column definition without explicit type
+   */
+  no_type: boolean;
+  /**
+   * Redshift: ENCODE encoding_type (e.g., ZSTD, DELTA, LZO, etc.)
+   */
+  encoding?: string | null;
+  /**
+   * ClickHouse: CODEC(LZ4HC(9), ZSTD, DELTA)
+   */
+  codec?: string | null;
+  /**
+   * ClickHouse: EPHEMERAL [expr] modifier
+   */
+  ephemeral?: Expression | null | null;
+  /**
+   * ClickHouse: MATERIALIZED expr modifier
+   */
+  materialized_expr?: Expression | null;
+  /**
+   * ClickHouse: ALIAS expr modifier
+   */
+  alias_expr?: Expression | null;
+  /**
+   * ClickHouse: TTL expr modifier on columns
+   */
+  ttl_expr?: Expression | null;
+  /**
+   * TSQL: NOT FOR REPLICATION
+   */
+  not_for_replication: boolean;
+};

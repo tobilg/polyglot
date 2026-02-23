@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SafeDivide
  */
-export type SafeDivide = { this: Expression, expression: Expression, };
+export type SafeDivide = { this: Expression; expression: Expression };

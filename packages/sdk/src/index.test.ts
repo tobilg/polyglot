@@ -107,26 +107,42 @@ describe('Polyglot SDK', () => {
     });
 
     it('should transpile same dialect without changes', () => {
-      const result = transpile('SELECT a FROM t', Dialect.Generic, Dialect.Generic);
+      const result = transpile(
+        'SELECT a FROM t',
+        Dialect.Generic,
+        Dialect.Generic,
+      );
       expect(result.success).toBe(true);
       expect(result.sql).toBeDefined();
     });
 
     it('should handle multiple statements', () => {
-      const result = transpile('SELECT 1; SELECT 2', Dialect.Generic, Dialect.Generic);
+      const result = transpile(
+        'SELECT 1; SELECT 2',
+        Dialect.Generic,
+        Dialect.Generic,
+      );
       expect(result.success).toBe(true);
       expect(result.sql).toBeDefined();
       expect(result.sql!.length).toBe(2);
     });
 
     it('should transform IFNULL to COALESCE for PostgreSQL', () => {
-      const result = transpile('SELECT IFNULL(a, b)', Dialect.MySQL, Dialect.PostgreSQL);
+      const result = transpile(
+        'SELECT IFNULL(a, b)',
+        Dialect.MySQL,
+        Dialect.PostgreSQL,
+      );
       expect(result.success).toBe(true);
       expect(result.sql![0]).toContain('COALESCE');
     });
 
     it('should transform NVL to IFNULL for MySQL', () => {
-      const result = transpile('SELECT NVL(a, b)', Dialect.Generic, Dialect.MySQL);
+      const result = transpile(
+        'SELECT NVL(a, b)',
+        Dialect.Generic,
+        Dialect.MySQL,
+      );
       expect(result.success).toBe(true);
       expect(result.sql![0]).toContain('IFNULL');
     });
@@ -165,7 +181,11 @@ describe('Polyglot SDK', () => {
 
     it('should transpile SQL', () => {
       const polyglot = Polyglot.getInstance();
-      const result = polyglot.transpile('SELECT 1', Dialect.Generic, Dialect.PostgreSQL);
+      const result = polyglot.transpile(
+        'SELECT 1',
+        Dialect.Generic,
+        Dialect.PostgreSQL,
+      );
       expect(result.success).toBe(true);
     });
 
@@ -242,7 +262,11 @@ describe('Edge cases', () => {
     });
 
     it('should include errorLine and errorColumn on transpile errors', () => {
-      const result = transpile('SELECT 1 + 2)', Dialect.Generic, Dialect.PostgreSQL);
+      const result = transpile(
+        'SELECT 1 + 2)',
+        Dialect.Generic,
+        Dialect.PostgreSQL,
+      );
       expect(result.success).toBe(false);
       expect(result.errorLine).toBeDefined();
       expect(result.errorColumn).toBeDefined();

@@ -4,8 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * OFFSET clause
  */
-export type Offset = { this: Expression, 
-/**
- * Whether ROW/ROWS keyword was used (SQL standard syntax)
- */
-rows?: boolean | null, };
+export type Offset = {
+  this: Expression;
+  /**
+   * Whether ROW/ROWS keyword was used (SQL standard syntax)
+   */
+  rows?: boolean | null;
+};

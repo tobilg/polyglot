@@ -2203,7 +2203,10 @@ mod tests {
     #[test]
     #[cfg(feature = "dialect-bigquery")]
     fn test_bigquery_parse() {
-        let result = parse("SELECT `project.dataset.table`.col FROM `project.dataset.table`", "bigquery");
+        let result = parse(
+            "SELECT `project.dataset.table`.col FROM `project.dataset.table`",
+            "bigquery",
+        );
         assert!(
             result.contains("\"success\":true"),
             "BigQuery parse failed: {}",
@@ -2346,9 +2349,21 @@ mod tests {
     fn test_parse_error_has_position() {
         let result = parse("SELECT 1 + 2)", "generic");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(!parsed["success"].as_bool().unwrap(), "Should fail: {}", result);
-        assert!(parsed["errorLine"].is_number(), "Should have errorLine: {}", result);
-        assert!(parsed["errorColumn"].is_number(), "Should have errorColumn: {}", result);
+        assert!(
+            !parsed["success"].as_bool().unwrap(),
+            "Should fail: {}",
+            result
+        );
+        assert!(
+            parsed["errorLine"].is_number(),
+            "Should have errorLine: {}",
+            result
+        );
+        assert!(
+            parsed["errorColumn"].is_number(),
+            "Should have errorColumn: {}",
+            result
+        );
         assert_eq!(parsed["errorLine"].as_u64().unwrap(), 1);
     }
 
@@ -2356,17 +2371,41 @@ mod tests {
     fn test_transpile_error_has_position() {
         let result = transpile("SELECT 1 + 2)", "generic", "postgres");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(!parsed["success"].as_bool().unwrap(), "Should fail: {}", result);
-        assert!(parsed["errorLine"].is_number(), "Should have errorLine: {}", result);
-        assert!(parsed["errorColumn"].is_number(), "Should have errorColumn: {}", result);
+        assert!(
+            !parsed["success"].as_bool().unwrap(),
+            "Should fail: {}",
+            result
+        );
+        assert!(
+            parsed["errorLine"].is_number(),
+            "Should have errorLine: {}",
+            result
+        );
+        assert!(
+            parsed["errorColumn"].is_number(),
+            "Should have errorColumn: {}",
+            result
+        );
     }
 
     #[test]
     fn test_success_result_has_no_position() {
         let result = parse("SELECT 1", "generic");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(parsed["success"].as_bool().unwrap(), "Should succeed: {}", result);
-        assert!(parsed["errorLine"].is_null(), "Should not have errorLine on success: {}", result);
-        assert!(parsed["errorColumn"].is_null(), "Should not have errorColumn on success: {}", result);
+        assert!(
+            parsed["success"].as_bool().unwrap(),
+            "Should succeed: {}",
+            result
+        );
+        assert!(
+            parsed["errorLine"].is_null(),
+            "Should not have errorLine on success: {}",
+            result
+        );
+        assert!(
+            parsed["errorColumn"].is_null(),
+            "Should not have errorColumn on success: {}",
+            result
+        );
     }
 }

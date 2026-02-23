@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DistKeyProperty
  */
-export type DistKeyProperty = { this: Expression, };
+export type DistKeyProperty = { this: Expression };

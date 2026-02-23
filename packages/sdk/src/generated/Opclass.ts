@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Opclass
  */
-export type Opclass = { this: Expression, expression: Expression, };
+export type Opclass = { this: Expression; expression: Expression };

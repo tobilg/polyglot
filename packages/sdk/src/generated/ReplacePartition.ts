@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ReplacePartition
  */
-export type ReplacePartition = { expression: Expression, source: Expression | null, };
+export type ReplacePartition = {
+  expression: Expression;
+  source: Expression | null;
+};

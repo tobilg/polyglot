@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SPLIT function
  */
-export type SplitFunc = { this: Expression, delimiter: Expression, };
+export type SplitFunc = { this: Expression; delimiter: Expression };

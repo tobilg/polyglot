@@ -7,4 +7,21 @@ import type { TypeAttribute } from "./TypeAttribute";
 /**
  * Type definition
  */
-export type TypeDefinition = { "Enum": Array<string> } | { "Composite": Array<TypeAttribute> } | { "Range": { subtype: DataType, subtype_diff: string | null, canonical: string | null, } } | { "Base": { input: string, output: string, internallength: number | null, } } | { "Domain": { base_type: DataType, default: Expression | null, constraints: Array<DomainConstraint>, } };
+export type TypeDefinition =
+  | { Enum: Array<string> }
+  | { Composite: Array<TypeAttribute> }
+  | {
+      Range: {
+        subtype: DataType;
+        subtype_diff: string | null;
+        canonical: string | null;
+      };
+    }
+  | { Base: { input: string; output: string; internallength: number | null } }
+  | {
+      Domain: {
+        base_type: DataType;
+        default: Expression | null;
+        constraints: Array<DomainConstraint>;
+      };
+    };

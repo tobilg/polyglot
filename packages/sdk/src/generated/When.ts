@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * When
  */
-export type When = { matched: Expression | null, source: Expression | null, condition: Expression | null, then: Expression, };
+export type When = {
+  matched: Expression | null;
+  source: Expression | null;
+  condition: Expression | null;
+  then: Expression;
+};

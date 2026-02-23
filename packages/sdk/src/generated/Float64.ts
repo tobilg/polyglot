@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Float64
  */
-export type Float64 = { this: Expression, expression: Expression | null, };
+export type Float64 = { this: Expression; expression: Expression | null };

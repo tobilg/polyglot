@@ -4,12 +4,16 @@ import type { ParameterStyle } from "./ParameterStyle";
 /**
  * Parameter (parameterized queries)
  */
-export type Parameter = { name: string | null, index: number | null, style: ParameterStyle, 
-/**
- * Whether the name was quoted (e.g., @"x" vs @x)
- */
-quoted: boolean, 
-/**
- * Optional secondary expression for ${kind:name} syntax (Hive hiveconf variables)
- */
-expression: string | null, };
+export type Parameter = {
+  name: string | null;
+  index: number | null;
+  style: ParameterStyle;
+  /**
+   * Whether the name was quoted (e.g., @"x" vs @x)
+   */
+  quoted: boolean;
+  /**
+   * Optional secondary expression for ${kind:name} syntax (Hive hiveconf variables)
+   */
+  expression: string | null;
+};

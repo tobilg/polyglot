@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * MLForecast
  */
-export type MLForecast = { this: Expression, expression: Expression | null, params_struct: Expression | null, };
+export type MLForecast = {
+  this: Expression;
+  expression: Expression | null;
+  params_struct: Expression | null;
+};

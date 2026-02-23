@@ -5,4 +5,4 @@ import type { Over } from "./Over";
 /**
  * Named window definition (WINDOW w AS (...))
  */
-export type NamedWindow = { name: Identifier, spec: Over, };
+export type NamedWindow = { name: Identifier; spec: Over };

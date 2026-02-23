@@ -3,4 +3,11 @@
 /**
  * ROW FORMAT clause for Hive/Spark
  */
-export type RowFormat = { delimited: boolean, fields_terminated_by: string | null, collection_items_terminated_by: string | null, map_keys_terminated_by: string | null, lines_terminated_by: string | null, null_defined_as: string | null, };
+export type RowFormat = {
+  delimited: boolean;
+  fields_terminated_by: string | null;
+  collection_items_terminated_by: string | null;
+  map_keys_terminated_by: string | null;
+  lines_terminated_by: string | null;
+  null_defined_as: string | null;
+};

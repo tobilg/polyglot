@@ -5,28 +5,32 @@ import type { Expression } from "./Expression";
 /**
  * JSON_EXTRACT / JSON_EXTRACT_SCALAR function
  */
-export type JsonExtractFunc = { this: Expression, path: Expression, returning: DataType | null, 
-/**
- * True if parsed from -> or ->> operator syntax
- */
-arrow_syntax: boolean, 
-/**
- * True if parsed from #>> operator syntax (PostgreSQL JSONB path text extraction)
- */
-hash_arrow_syntax: boolean, 
-/**
- * Wrapper option: WITH/WITHOUT [CONDITIONAL|UNCONDITIONAL] [ARRAY] WRAPPER
- */
-wrapper_option: string | null, 
-/**
- * Quotes handling: KEEP QUOTES or OMIT QUOTES
- */
-quotes_option: string | null, 
-/**
- * ON SCALAR STRING flag
- */
-on_scalar_string: boolean, 
-/**
- * Error handling: NULL ON ERROR, ERROR ON ERROR, etc.
- */
-on_error: string | null, };
+export type JsonExtractFunc = {
+  this: Expression;
+  path: Expression;
+  returning: DataType | null;
+  /**
+   * True if parsed from -> or ->> operator syntax
+   */
+  arrow_syntax: boolean;
+  /**
+   * True if parsed from #>> operator syntax (PostgreSQL JSONB path text extraction)
+   */
+  hash_arrow_syntax: boolean;
+  /**
+   * Wrapper option: WITH/WITHOUT [CONDITIONAL|UNCONDITIONAL] [ARRAY] WRAPPER
+   */
+  wrapper_option: string | null;
+  /**
+   * Quotes handling: KEEP QUOTES or OMIT QUOTES
+   */
+  quotes_option: string | null;
+  /**
+   * ON SCALAR STRING flag
+   */
+  on_scalar_string: boolean;
+  /**
+   * Error handling: NULL ON ERROR, ERROR ON ERROR, etc.
+   */
+  on_error: string | null;
+};

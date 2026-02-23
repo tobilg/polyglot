@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Uuid
  */
-export type Uuid = { this: Expression | null, name: string | null, is_string: Expression | null, };
+export type Uuid = {
+  this: Expression | null;
+  name: string | null;
+  is_string: Expression | null;
+};

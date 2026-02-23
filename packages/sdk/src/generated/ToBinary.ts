@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ToBinary
  */
-export type ToBinary = { this: Expression, format: string | null, safe: Expression | null, };
+export type ToBinary = {
+  this: Expression;
+  format: string | null;
+  safe: Expression | null;
+};

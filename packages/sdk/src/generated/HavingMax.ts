@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * HavingMax
  */
-export type HavingMax = { this: Expression, expression: Expression, max: Expression | null, };
+export type HavingMax = {
+  this: Expression;
+  expression: Expression;
+  max: Expression | null;
+};

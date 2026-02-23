@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * HashAgg
  */
-export type HashAgg = { this: Expression, expressions: Array<Expression>, };
+export type HashAgg = { this: Expression; expressions: Array<Expression> };

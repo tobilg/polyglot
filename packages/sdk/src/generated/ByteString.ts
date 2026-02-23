@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ByteString
  */
-export type ByteString = { this: Expression, is_bytes: Expression | null, };
+export type ByteString = { this: Expression; is_bytes: Expression | null };

@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Reduce
  */
-export type Reduce = { this: Expression, initial: Expression | null, merge: Expression | null, finish: Expression | null, };
+export type Reduce = {
+  this: Expression;
+  initial: Expression | null;
+  merge: Expression | null;
+  finish: Expression | null;
+};

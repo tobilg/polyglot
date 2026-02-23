@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * FLOOR function with optional scale and time unit (Druid: FLOOR(time TO unit))
  */
-export type FloorFunc = { this: Expression, scale: Expression | null, 
-/**
- * Time unit for Druid-style FLOOR(time TO unit) syntax
- */
-to?: Expression | null, };
+export type FloorFunc = {
+  this: Expression;
+  scale: Expression | null;
+  /**
+   * Time unit for Druid-style FLOOR(time TO unit) syntax
+   */
+  to?: Expression | null;
+};

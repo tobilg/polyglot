@@ -3,4 +3,9 @@
 /**
  * Row output semantics for MATCH_RECOGNIZE
  */
-export type MatchRecognizeRows = "OneRowPerMatch" | "AllRowsPerMatch" | "AllRowsPerMatchShowEmptyMatches" | "AllRowsPerMatchOmitEmptyMatches" | "AllRowsPerMatchWithUnmatchedRows";
+export type MatchRecognizeRows =
+  | "OneRowPerMatch"
+  | "AllRowsPerMatch"
+  | "AllRowsPerMatchShowEmptyMatches"
+  | "AllRowsPerMatchOmitEmptyMatches"
+  | "AllRowsPerMatchWithUnmatchedRows";

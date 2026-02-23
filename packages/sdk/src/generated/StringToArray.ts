@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * StringToArray
  */
-export type StringToArray = { this: Expression, expression: Expression | null, null: Expression | null, };
+export type StringToArray = {
+  this: Expression;
+  expression: Expression | null;
+  null: Expression | null;
+};

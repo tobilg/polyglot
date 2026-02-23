@@ -3,4 +3,8 @@
 /**
  * SQL data access characteristics for functions
  */
-export type SqlDataAccess = "NoSql" | "ContainsSql" | "ReadsSqlData" | "ModifiesSqlData";
+export type SqlDataAccess =
+  | "NoSql"
+  | "ContainsSql"
+  | "ReadsSqlData"
+  | "ModifiesSqlData";

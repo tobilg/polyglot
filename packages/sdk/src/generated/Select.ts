@@ -48,73 +48,93 @@ import type { With } from "./With";
  * (ClickHouse), `qualify` (Snowflake/BigQuery/DuckDB), `connect` (Oracle
  * CONNECT BY), `for_xml` (TSQL), and `settings` (ClickHouse).
  */
-export type Select = { 
-/**
- * The select-list: columns, expressions, aliases, and wildcards.
- */
-expressions: Array<Expression>, 
-/**
- * The FROM clause, containing one or more table sources.
- */
-from: From | null, 
-/**
- * JOIN clauses applied after the FROM source.
- */
-joins: Array<Join>, lateral_views: Array<LateralView>, 
-/**
- * ClickHouse PREWHERE clause
- */
-prewhere?: Expression | null, where_clause: Where | null, group_by: GroupBy | null, having: Having | null, qualify: Qualify | null, order_by: OrderBy | null, distribute_by: DistributeBy | null, cluster_by: ClusterBy | null, sort_by: SortBy | null, limit: Limit | null, offset: Offset | null, 
-/**
- * ClickHouse LIMIT BY clause expressions
- */
-limit_by?: Array<Expression> | null, fetch: Fetch | null, distinct: boolean, distinct_on: Array<Expression> | null, top: Top | null, with: With | null, sample: Sample | null, 
-/**
- * ClickHouse SETTINGS clause (e.g., SETTINGS max_threads = 4)
- */
-settings?: Array<Expression> | null, 
-/**
- * ClickHouse FORMAT clause (e.g., FORMAT PrettyCompact)
- */
-format?: Expression | null, windows: Array<NamedWindow> | null, hint: Hint | null, 
-/**
- * Oracle CONNECT BY clause for hierarchical queries
- */
-connect: Connect | null, 
-/**
- * SELECT ... INTO table_name for creating tables
- */
-into: SelectInto | null, 
-/**
- * FOR UPDATE/SHARE locking clauses
- */
-locks: Array<Lock>, 
-/**
- * T-SQL FOR XML clause options (PATH, RAW, AUTO, EXPLICIT, BINARY BASE64, ELEMENTS XSINIL, etc.)
- */
-for_xml?: Array<Expression>, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, 
-/**
- * Comments that appear after SELECT keyword (before expressions)
- * e.g., SELECT /\*hint\*\/ col -> post_select_comments: ["/\*hint\*\/"]
- */
-post_select_comments?: Array<string>, 
-/**
- * BigQuery SELECT AS STRUCT / SELECT AS VALUE kind
- */
-kind?: string | null, 
-/**
- * MySQL operation modifiers (HIGH_PRIORITY, STRAIGHT_JOIN, SQL_CALC_FOUND_ROWS, etc.)
- */
-operation_modifiers?: Array<string>, 
-/**
- * Whether QUALIFY appears after WINDOW (DuckDB) vs before (Snowflake/BigQuery default)
- */
-qualify_after_window?: boolean, 
-/**
- * TSQL OPTION clause (e.g., OPTION(LABEL = 'foo'))
- */
-option?: string | null, };
+export type Select = {
+  /**
+   * The select-list: columns, expressions, aliases, and wildcards.
+   */
+  expressions: Array<Expression>;
+  /**
+   * The FROM clause, containing one or more table sources.
+   */
+  from: From | null;
+  /**
+   * JOIN clauses applied after the FROM source.
+   */
+  joins: Array<Join>;
+  lateral_views: Array<LateralView>;
+  /**
+   * ClickHouse PREWHERE clause
+   */
+  prewhere?: Expression | null;
+  where_clause: Where | null;
+  group_by: GroupBy | null;
+  having: Having | null;
+  qualify: Qualify | null;
+  order_by: OrderBy | null;
+  distribute_by: DistributeBy | null;
+  cluster_by: ClusterBy | null;
+  sort_by: SortBy | null;
+  limit: Limit | null;
+  offset: Offset | null;
+  /**
+   * ClickHouse LIMIT BY clause expressions
+   */
+  limit_by?: Array<Expression> | null;
+  fetch: Fetch | null;
+  distinct: boolean;
+  distinct_on: Array<Expression> | null;
+  top: Top | null;
+  with: With | null;
+  sample: Sample | null;
+  /**
+   * ClickHouse SETTINGS clause (e.g., SETTINGS max_threads = 4)
+   */
+  settings?: Array<Expression> | null;
+  /**
+   * ClickHouse FORMAT clause (e.g., FORMAT PrettyCompact)
+   */
+  format?: Expression | null;
+  windows: Array<NamedWindow> | null;
+  hint: Hint | null;
+  /**
+   * Oracle CONNECT BY clause for hierarchical queries
+   */
+  connect: Connect | null;
+  /**
+   * SELECT ... INTO table_name for creating tables
+   */
+  into: SelectInto | null;
+  /**
+   * FOR UPDATE/SHARE locking clauses
+   */
+  locks: Array<Lock>;
+  /**
+   * T-SQL FOR XML clause options (PATH, RAW, AUTO, EXPLICIT, BINARY BASE64, ELEMENTS XSINIL, etc.)
+   */
+  for_xml?: Array<Expression>;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+  /**
+   * Comments that appear after SELECT keyword (before expressions)
+   * e.g., SELECT /\*hint\*\/ col -> post_select_comments: ["/\*hint\*\/"]
+   */
+  post_select_comments?: Array<string>;
+  /**
+   * BigQuery SELECT AS STRUCT / SELECT AS VALUE kind
+   */
+  kind?: string | null;
+  /**
+   * MySQL operation modifiers (HIGH_PRIORITY, STRAIGHT_JOIN, SQL_CALC_FOUND_ROWS, etc.)
+   */
+  operation_modifiers?: Array<string>;
+  /**
+   * Whether QUALIFY appears after WINDOW (DuckDB) vs before (Snowflake/BigQuery default)
+   */
+  qualify_after_window?: boolean;
+  /**
+   * TSQL OPTION clause (e.g., OPTION(LABEL = 'foo'))
+   */
+  option?: string | null;
+};

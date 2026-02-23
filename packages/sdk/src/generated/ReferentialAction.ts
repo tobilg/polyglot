@@ -3,4 +3,9 @@
 /**
  * Referential action for foreign keys
  */
-export type ReferentialAction = "Cascade" | "SetNull" | "SetDefault" | "Restrict" | "NoAction";
+export type ReferentialAction =
+  | "Cascade"
+  | "SetNull"
+  | "SetDefault"
+  | "Restrict"
+  | "NoAction";

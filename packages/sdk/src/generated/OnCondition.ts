@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * OnCondition
  */
-export type OnCondition = { error: Expression | null, empty: Expression | null, null: Expression | null, };
+export type OnCondition = {
+  error: Expression | null;
+  empty: Expression | null;
+  null: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * NotNullColumnConstraint
  */
-export type NotNullColumnConstraint = { allow_null: Expression | null, };
+export type NotNullColumnConstraint = { allow_null: Expression | null };

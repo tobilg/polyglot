@@ -4,12 +4,14 @@ import type { Expression } from "./Expression";
 /**
  * RAND function (optional seed, or Teradata RANDOM(lower, upper))
  */
-export type Rand = { seed: Expression | null, 
-/**
- * Teradata RANDOM lower bound
- */
-lower: Expression | null, 
-/**
- * Teradata RANDOM upper bound
- */
-upper: Expression | null, };
+export type Rand = {
+  seed: Expression | null;
+  /**
+   * Teradata RANDOM lower bound
+   */
+  lower: Expression | null;
+  /**
+   * Teradata RANDOM upper bound
+   */
+  upper: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Translate
  */
-export type Translate = { this: Expression, from_: Expression | null, to: Expression | null, };
+export type Translate = {
+  this: Expression;
+  from_: Expression | null;
+  to: Expression | null;
+};

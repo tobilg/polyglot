@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AIAgg
  */
-export type AIAgg = { this: Expression, expression: Expression, };
+export type AIAgg = { this: Expression; expression: Expression };

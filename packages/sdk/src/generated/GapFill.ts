@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * GapFill
  */
-export type GapFill = { this: Expression, ts_column: Expression | null, bucket_width: Expression | null, partitioning_columns: Expression | null, value_columns: Expression | null, origin: Expression | null, ignore_nulls: Expression | null, };
+export type GapFill = {
+  this: Expression;
+  ts_column: Expression | null;
+  bucket_width: Expression | null;
+  partitioning_columns: Expression | null;
+  value_columns: Expression | null;
+  origin: Expression | null;
+  ignore_nulls: Expression | null;
+};

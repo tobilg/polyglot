@@ -6,8 +6,11 @@ import type { NamedArgSeparator } from "./NamedArgSeparator";
 /**
  * Named argument in function call: name => value or name := value
  */
-export type NamedArgument = { name: Identifier, value: Expression, 
-/**
- * The separator used: `=>`, `:=`, or `=`
- */
-separator: NamedArgSeparator, };
+export type NamedArgument = {
+  name: Identifier;
+  value: Expression;
+  /**
+   * The separator used: `=>`, `:=`, or `=`
+   */
+  separator: NamedArgSeparator;
+};

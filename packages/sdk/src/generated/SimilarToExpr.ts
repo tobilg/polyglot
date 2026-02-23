@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * SIMILAR TO expression
  */
-export type SimilarToExpr = { this: Expression, pattern: Expression, escape: Expression | null, not: boolean, };
+export type SimilarToExpr = {
+  this: Expression;
+  pattern: Expression;
+  escape: Expression | null;
+  not: boolean;
+};

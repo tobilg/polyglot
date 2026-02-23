@@ -3,4 +3,13 @@
 /**
  * Parameter placeholder styles
  */
-export type ParameterStyle = "Question" | "Dollar" | "DollarBrace" | "Brace" | "Colon" | "At" | "DoubleAt" | "DoubleDollar" | "Percent";
+export type ParameterStyle =
+  | "Question"
+  | "Dollar"
+  | "DollarBrace"
+  | "Brace"
+  | "Colon"
+  | "At"
+  | "DoubleAt"
+  | "DoubleDollar"
+  | "Percent";

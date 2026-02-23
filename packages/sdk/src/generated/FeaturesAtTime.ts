@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * FeaturesAtTime
  */
-export type FeaturesAtTime = { this: Expression, time: Expression | null, num_rows: Expression | null, ignore_feature_nulls: Expression | null, };
+export type FeaturesAtTime = {
+  this: Expression;
+  time: Expression | null;
+  num_rows: Expression | null;
+  ignore_feature_nulls: Expression | null;
+};

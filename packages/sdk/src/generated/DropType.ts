@@ -4,4 +4,4 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP TYPE statement
  */
-export type DropType = { name: TableRef, if_exists: boolean, cascade: boolean, };
+export type DropType = { name: TableRef; if_exists: boolean; cascade: boolean };

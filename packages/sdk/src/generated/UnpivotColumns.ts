@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * UnpivotColumns
  */
-export type UnpivotColumns = { this: Expression, expressions: Array<Expression>, };
+export type UnpivotColumns = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * MergeTreeTTLAction
  */
-export type MergeTreeTTLAction = { this: Expression, delete: Expression | null, recompress: Expression | null, to_disk: Expression | null, to_volume: Expression | null, };
+export type MergeTreeTTLAction = {
+  this: Expression;
+  delete: Expression | null;
+  recompress: Expression | null;
+  to_disk: Expression | null;
+  to_volume: Expression | null;
+};

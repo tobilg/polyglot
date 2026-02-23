@@ -5,4 +5,4 @@ import type { Identifier } from "./Identifier";
 /**
  * XML Namespace declaration
  */
-export type XmlNamespace = { this: Expression, alias: Identifier | null, };
+export type XmlNamespace = { this: Expression; alias: Identifier | null };

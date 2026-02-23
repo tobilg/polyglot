@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ParseJSON
  */
-export type ParseJSON = { this: Expression, expression: Expression | null, safe: Expression | null, };
+export type ParseJSON = {
+  this: Expression;
+  expression: Expression | null;
+  safe: Expression | null;
+};

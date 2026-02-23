@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DecompressString
  */
-export type DecompressString = { this: Expression, method: string, };
+export type DecompressString = { this: Expression; method: string };

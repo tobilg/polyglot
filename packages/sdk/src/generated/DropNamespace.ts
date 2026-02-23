@@ -4,4 +4,8 @@ import type { Identifier } from "./Identifier";
 /**
  * DROP NAMESPACE statement (Spark/Databricks - alias for DROP SCHEMA)
  */
-export type DropNamespace = { name: Identifier, if_exists: boolean, cascade: boolean, };
+export type DropNamespace = {
+  name: Identifier;
+  if_exists: boolean;
+  cascade: boolean;
+};

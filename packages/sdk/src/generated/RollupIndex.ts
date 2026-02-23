@@ -4,4 +4,4 @@ import type { Identifier } from "./Identifier";
 /**
  * RollupIndex - A single rollup index: name(col1, col2)
  */
-export type RollupIndex = { name: Identifier, expressions: Array<Identifier>, };
+export type RollupIndex = { name: Identifier; expressions: Array<Identifier> };

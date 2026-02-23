@@ -14,74 +14,75 @@ import type { Version } from "./Version";
  * time-travel clauses (Snowflake, BigQuery), table hints (TSQL), and
  * several other dialect-specific extensions.
  */
-export type TableRef = { 
-/**
- * The unqualified table name.
- */
-name: Identifier, 
-/**
- * Optional schema qualifier (e.g. `public` in `public.users`).
- */
-schema: Identifier | null, 
-/**
- * Optional catalog qualifier (e.g. `mydb` in `mydb.public.users`).
- */
-catalog: Identifier | null, 
-/**
- * Optional table alias (e.g. `t` in `FROM users AS t`).
- */
-alias: Identifier | null, 
-/**
- * Whether AS keyword was explicitly used for the alias
- */
-alias_explicit_as: boolean, 
-/**
- * Column aliases for table alias: AS t(c1, c2)
- */
-column_aliases: Array<Identifier>, 
-/**
- * Trailing comments that appeared after this table reference
- */
-trailing_comments: Array<string>, 
-/**
- * Snowflake time travel: BEFORE (STATEMENT => ...) or AT (TIMESTAMP => ...)
- */
-when: HistoricalData | null, 
-/**
- * PostgreSQL ONLY modifier: prevents scanning child tables in inheritance hierarchy
- */
-only: boolean, 
-/**
- * ClickHouse FINAL modifier: forces final aggregation for MergeTree tables
- */
-final_: boolean, 
-/**
- * TABLESAMPLE clause attached to this table reference (DuckDB, BigQuery)
- */
-table_sample?: Sample | null, 
-/**
- * TSQL table hints: WITH (TABLOCK, INDEX(myindex), ...)
- */
-hints: Array<Expression>, 
-/**
- * TSQL: FOR SYSTEM_TIME temporal clause
- * Contains the full clause text, e.g., "FOR SYSTEM_TIME BETWEEN c AND d"
- */
-system_time?: string | null, 
-/**
- * MySQL: PARTITION(p0, p1, ...) hint for reading from specific partitions
- */
-partitions?: Array<Identifier>, 
-/**
- * Snowflake IDENTIFIER() function: dynamic table name from string/variable
- * When set, this is used instead of the name field
- */
-identifier_func?: Expression | null, 
-/**
- * Snowflake CHANGES clause: CHANGES (INFORMATION => ...) AT (...) END (...)
- */
-changes?: Changes | null, 
-/**
- * Time travel version clause: FOR VERSION AS OF / FOR TIMESTAMP AS OF (Presto/Trino, BigQuery, Databricks)
- */
-version?: Version | null, };
+export type TableRef = {
+  /**
+   * The unqualified table name.
+   */
+  name: Identifier;
+  /**
+   * Optional schema qualifier (e.g. `public` in `public.users`).
+   */
+  schema: Identifier | null;
+  /**
+   * Optional catalog qualifier (e.g. `mydb` in `mydb.public.users`).
+   */
+  catalog: Identifier | null;
+  /**
+   * Optional table alias (e.g. `t` in `FROM users AS t`).
+   */
+  alias: Identifier | null;
+  /**
+   * Whether AS keyword was explicitly used for the alias
+   */
+  alias_explicit_as: boolean;
+  /**
+   * Column aliases for table alias: AS t(c1, c2)
+   */
+  column_aliases: Array<Identifier>;
+  /**
+   * Trailing comments that appeared after this table reference
+   */
+  trailing_comments: Array<string>;
+  /**
+   * Snowflake time travel: BEFORE (STATEMENT => ...) or AT (TIMESTAMP => ...)
+   */
+  when: HistoricalData | null;
+  /**
+   * PostgreSQL ONLY modifier: prevents scanning child tables in inheritance hierarchy
+   */
+  only: boolean;
+  /**
+   * ClickHouse FINAL modifier: forces final aggregation for MergeTree tables
+   */
+  final_: boolean;
+  /**
+   * TABLESAMPLE clause attached to this table reference (DuckDB, BigQuery)
+   */
+  table_sample?: Sample | null;
+  /**
+   * TSQL table hints: WITH (TABLOCK, INDEX(myindex), ...)
+   */
+  hints: Array<Expression>;
+  /**
+   * TSQL: FOR SYSTEM_TIME temporal clause
+   * Contains the full clause text, e.g., "FOR SYSTEM_TIME BETWEEN c AND d"
+   */
+  system_time?: string | null;
+  /**
+   * MySQL: PARTITION(p0, p1, ...) hint for reading from specific partitions
+   */
+  partitions?: Array<Identifier>;
+  /**
+   * Snowflake IDENTIFIER() function: dynamic table name from string/variable
+   * When set, this is used instead of the name field
+   */
+  identifier_func?: Expression | null;
+  /**
+   * Snowflake CHANGES clause: CHANGES (INFORMATION => ...) AT (...) END (...)
+   */
+  changes?: Changes | null;
+  /**
+   * Time travel version clause: FOR VERSION AS OF / FOR TIMESTAMP AS OF (Presto/Trino, BigQuery, Databricks)
+   */
+  version?: Version | null;
+};

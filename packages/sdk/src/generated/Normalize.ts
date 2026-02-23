@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Normalize
  */
-export type Normalize = { this: Expression, form: Expression | null, is_casefold: Expression | null, };
+export type Normalize = {
+  this: Expression;
+  form: Expression | null;
+  is_casefold: Expression | null;
+};

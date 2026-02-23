@@ -4,8 +4,10 @@ import type { TableRef } from "./TableRef";
 /**
  * A table entry in a TRUNCATE statement, with optional ONLY modifier and * suffix
  */
-export type TruncateTableEntry = { table: TableRef, 
-/**
- * Whether the table has a * suffix (inherit children)
- */
-star: boolean, };
+export type TruncateTableEntry = {
+  table: TableRef;
+  /**
+   * Whether the table has a * suffix (inherit children)
+   */
+  star: boolean;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ArrayConstructCompact
  */
-export type ArrayConstructCompact = { expressions: Array<Expression>, };
+export type ArrayConstructCompact = { expressions: Array<Expression> };

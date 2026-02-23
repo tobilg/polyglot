@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * MAKE_TIMESTAMP function
  */
-export type MakeTimestampFunc = { year: Expression, month: Expression, day: Expression, hour: Expression, minute: Expression, second: Expression, timezone: Expression | null, };
+export type MakeTimestampFunc = {
+  year: Expression;
+  month: Expression;
+  day: Expression;
+  hour: Expression;
+  minute: Expression;
+  second: Expression;
+  timezone: Expression | null;
+};

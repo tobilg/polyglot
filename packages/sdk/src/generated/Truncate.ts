@@ -9,28 +9,31 @@ import type { TruncateTarget } from "./TruncateTarget";
 /**
  * TRUNCATE TABLE statement
  */
-export type Truncate = { 
-/**
- * Target of TRUNCATE (TABLE vs DATABASE)
- */
-target: TruncateTarget, table: TableRef, 
-/**
- * ClickHouse: ON CLUSTER clause for distributed DDL
- */
-on_cluster?: OnCluster | null, cascade: boolean, 
-/**
- * Additional tables for multi-table TRUNCATE
- */
-extra_tables: Array<TruncateTableEntry>, 
-/**
- * RESTART IDENTITY or CONTINUE IDENTITY
- */
-identity: TruncateIdentity | null, 
-/**
- * RESTRICT option (alternative to CASCADE)
- */
-restrict: boolean, 
-/**
- * Hive PARTITION clause: PARTITION(key=value, ...)
- */
-partition?: Expression | null, };
+export type Truncate = {
+  /**
+   * Target of TRUNCATE (TABLE vs DATABASE)
+   */
+  target: TruncateTarget;
+  table: TableRef;
+  /**
+   * ClickHouse: ON CLUSTER clause for distributed DDL
+   */
+  on_cluster?: OnCluster | null;
+  cascade: boolean;
+  /**
+   * Additional tables for multi-table TRUNCATE
+   */
+  extra_tables: Array<TruncateTableEntry>;
+  /**
+   * RESTART IDENTITY or CONTINUE IDENTITY
+   */
+  identity: TruncateIdentity | null;
+  /**
+   * RESTRICT option (alternative to CASCADE)
+   */
+  restrict: boolean;
+  /**
+   * Hive PARTITION clause: PARTITION(key=value, ...)
+   */
+  partition?: Expression | null;
+};

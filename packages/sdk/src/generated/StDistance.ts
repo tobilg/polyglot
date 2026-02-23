@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * StDistance
  */
-export type StDistance = { this: Expression, expression: Expression, use_spheroid: Expression | null, };
+export type StDistance = {
+  this: Expression;
+  expression: Expression;
+  use_spheroid: Expression | null;
+};

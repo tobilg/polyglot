@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * StandardHash
  */
-export type StandardHash = { this: Expression, expression: Expression | null, };
+export type StandardHash = { this: Expression; expression: Expression | null };

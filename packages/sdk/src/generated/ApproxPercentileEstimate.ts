@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ApproxPercentileEstimate
  */
-export type ApproxPercentileEstimate = { this: Expression, percentile: Expression | null, };
+export type ApproxPercentileEstimate = {
+  this: Expression;
+  percentile: Expression | null;
+};

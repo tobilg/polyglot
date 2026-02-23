@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TRANSFORM_KEYS / TRANSFORM_VALUES function
  */
-export type TransformFunc = { this: Expression, transform: Expression, };
+export type TransformFunc = { this: Expression; transform: Expression };

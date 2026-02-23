@@ -4,12 +4,16 @@ import type { Identifier } from "./Identifier";
 /**
  * Index column specification
  */
-export type IndexColumn = { column: Identifier, desc: boolean, 
-/**
- * Explicit ASC keyword was present
- */
-asc: boolean, nulls_first: boolean | null, 
-/**
- * PostgreSQL operator class (e.g., varchar_pattern_ops, public.gin_trgm_ops)
- */
-opclass?: string | null, };
+export type IndexColumn = {
+  column: Identifier;
+  desc: boolean;
+  /**
+   * Explicit ASC keyword was present
+   */
+  asc: boolean;
+  nulls_first: boolean | null;
+  /**
+   * PostgreSQL operator class (e.g., varchar_pattern_ops, public.gin_trgm_ops)
+   */
+  opclass?: string | null;
+};

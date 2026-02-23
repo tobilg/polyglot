@@ -4,24 +4,25 @@ import type { Expression } from "./Expression";
 /**
  * FETCH FIRST/NEXT clause (SQL standard)
  */
-export type Fetch = { 
-/**
- * FIRST or NEXT
- */
-direction: string, 
-/**
- * Count expression (optional)
- */
-count: Expression | null, 
-/**
- * PERCENT modifier
- */
-percent: boolean, 
-/**
- * ROWS or ROW keyword present
- */
-rows: boolean, 
-/**
- * WITH TIES modifier
- */
-with_ties: boolean, };
+export type Fetch = {
+  /**
+   * FIRST or NEXT
+   */
+  direction: string;
+  /**
+   * Count expression (optional)
+   */
+  count: Expression | null;
+  /**
+   * PERCENT modifier
+   */
+  percent: boolean;
+  /**
+   * ROWS or ROW keyword present
+   */
+  rows: boolean;
+  /**
+   * WITH TIES modifier
+   */
+  with_ties: boolean;
+};

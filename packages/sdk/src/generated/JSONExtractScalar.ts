@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * JSONExtractScalar
  */
-export type JSONExtractScalar = { this: Expression, expression: Expression, only_json_types: Expression | null, expressions: Array<Expression>, json_type: Expression | null, scalar_only: Expression | null, };
+export type JSONExtractScalar = {
+  this: Expression;
+  expression: Expression;
+  only_json_types: Expression | null;
+  expressions: Array<Expression>;
+  json_type: Expression | null;
+  scalar_only: Expression | null;
+};

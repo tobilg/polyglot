@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TransientProperty
  */
-export type TransientProperty = { this: Expression | null, };
+export type TransientProperty = { this: Expression | null };

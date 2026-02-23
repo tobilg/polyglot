@@ -7,4 +7,9 @@ import type { ParameterMode } from "./ParameterMode";
 /**
  * Function parameter
  */
-export type FunctionParameter = { name: Identifier | null, data_type: DataType, mode: ParameterMode | null, default: Expression | null, };
+export type FunctionParameter = {
+  name: Identifier | null;
+  data_type: DataType;
+  mode: ParameterMode | null;
+  default: Expression | null;
+};

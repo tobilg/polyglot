@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ArgMin
  */
-export type ArgMin = { this: Expression, expression: Expression, count: Expression | null, };
+export type ArgMin = {
+  this: Expression;
+  expression: Expression;
+  count: Expression | null;
+};

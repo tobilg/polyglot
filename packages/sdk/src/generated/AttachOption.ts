@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AttachOption
  */
-export type AttachOption = { this: Expression, expression: Expression | null, };
+export type AttachOption = { this: Expression; expression: Expression | null };

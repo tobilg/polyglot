@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * PartitionRange
  */
-export type PartitionRange = { this: Expression, expression: Expression | null, expressions: Array<Expression>, };
+export type PartitionRange = {
+  this: Expression;
+  expression: Expression | null;
+  expressions: Array<Expression>;
+};

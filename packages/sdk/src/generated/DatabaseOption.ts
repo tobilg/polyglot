@@ -4,4 +4,10 @@ import type { Identifier } from "./Identifier";
 /**
  * Database option
  */
-export type DatabaseOption = { "CharacterSet": string } | { "Collate": string } | { "Owner": Identifier } | { "Template": Identifier } | { "Encoding": string } | { "Location": string };
+export type DatabaseOption =
+  | { CharacterSet: string }
+  | { Collate: string }
+  | { Owner: Identifier }
+  | { Template: Identifier }
+  | { Encoding: string }
+  | { Location: string };

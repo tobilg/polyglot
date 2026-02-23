@@ -4,16 +4,17 @@ import type { TeradataIndexKind } from "./TeradataIndexKind";
 /**
  * Teradata index specification for CREATE TABLE
  */
-export type TeradataIndex = { 
-/**
- * Index kind: NoPrimary, Primary, PrimaryAmp, Unique, UniquePrimary
- */
-kind: TeradataIndexKind, 
-/**
- * Optional index name
- */
-name: string | null, 
-/**
- * Optional column list
- */
-columns: Array<string>, };
+export type TeradataIndex = {
+  /**
+   * Index kind: NoPrimary, Primary, PrimaryAmp, Unique, UniquePrimary
+   */
+  kind: TeradataIndexKind;
+  /**
+   * Optional index name
+   */
+  name: string | null;
+  /**
+   * Optional column list
+   */
+  columns: Array<string>;
+};

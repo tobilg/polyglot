@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Constraint
  */
-export type Constraint = { this: Expression, expressions: Array<Expression>, };
+export type Constraint = { this: Expression; expressions: Array<Expression> };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Expression annotated with trailing comments (for round-trip preservation)
  */
-export type Annotated = { this: Expression, trailing_comments: Array<string>, };
+export type Annotated = { this: Expression; trailing_comments: Array<string> };

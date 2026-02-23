@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ArrayAll
  */
-export type ArrayAll = { this: Expression, expression: Expression, };
+export type ArrayAll = { this: Expression; expression: Expression };

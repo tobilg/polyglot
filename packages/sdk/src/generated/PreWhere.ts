@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PREWHERE clause (ClickHouse) - early filtering before WHERE
  */
-export type PreWhere = { this: Expression, };
+export type PreWhere = { this: Expression };

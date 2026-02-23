@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * SequenceProperties
  */
-export type SequenceProperties = { increment: Expression | null, minvalue: Expression | null, maxvalue: Expression | null, cache: Expression | null, start: Expression | null, owned: Expression | null, options: Array<Expression>, };
+export type SequenceProperties = {
+  increment: Expression | null;
+  minvalue: Expression | null;
+  maxvalue: Expression | null;
+  cache: Expression | null;
+  start: Expression | null;
+  owned: Expression | null;
+  options: Array<Expression>;
+};

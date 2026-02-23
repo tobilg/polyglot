@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Encrypt
  */
-export type Encrypt = { this: Expression, passphrase: Expression | null, aad: Expression | null, encryption_method: Expression | null, };
+export type Encrypt = {
+  this: Expression;
+  passphrase: Expression | null;
+  aad: Expression | null;
+  encryption_method: Expression | null;
+};

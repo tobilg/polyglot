@@ -4,4 +4,6 @@ import type { Expression } from "./Expression";
 /**
  * LISTAGG ON OVERFLOW behavior
  */
-export type ListAggOverflow = "Error" | { "Truncate": { filler: Expression | null, with_count: boolean, } };
+export type ListAggOverflow =
+  | "Error"
+  | { Truncate: { filler: Expression | null; with_count: boolean } };

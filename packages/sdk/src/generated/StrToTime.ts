@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * StrToTime
  */
-export type StrToTime = { this: Expression, format: string, zone: Expression | null, safe: Expression | null, target_type: Expression | null, };
+export type StrToTime = {
+  this: Expression;
+  format: string;
+  zone: Expression | null;
+  safe: Expression | null;
+  target_type: Expression | null;
+};

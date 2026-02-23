@@ -5,20 +5,21 @@ import type { Identifier } from "./Identifier";
 /**
  * CACHE TABLE statement (Spark)
  */
-export type Cache = { 
-/**
- * The table to cache
- */
-table: Identifier, 
-/**
- * LAZY keyword - defer caching until first use
- */
-lazy: boolean, 
-/**
- * Optional OPTIONS clause (key-value pairs)
- */
-options: Array<[Expression, Expression]>, 
-/**
- * Optional AS clause with query
- */
-query: Expression | null, };
+export type Cache = {
+  /**
+   * The table to cache
+   */
+  table: Identifier;
+  /**
+   * LAZY keyword - defer caching until first use
+   */
+  lazy: boolean;
+  /**
+   * Optional OPTIONS clause (key-value pairs)
+   */
+  options: Array<[Expression, Expression]>;
+  /**
+   * Optional AS clause with query
+   */
+  query: Expression | null;
+};

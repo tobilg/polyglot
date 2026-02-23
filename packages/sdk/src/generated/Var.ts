@@ -3,4 +3,4 @@
 /**
  * Var - Simple variable reference (for SQL variables, keywords as values)
  */
-export type Var = { this: string, };
+export type Var = { this: string };

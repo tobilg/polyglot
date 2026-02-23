@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * DecryptRaw
  */
-export type DecryptRaw = { this: Expression, key: Expression | null, iv: Expression | null, aad: Expression | null, encryption_method: Expression | null, aead: Expression | null, safe: Expression | null, };
+export type DecryptRaw = {
+  this: Expression;
+  key: Expression | null;
+  iv: Expression | null;
+  aad: Expression | null;
+  encryption_method: Expression | null;
+  aead: Expression | null;
+  safe: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * STREAM definition (Snowflake) - for change data capture
  */
-export type Stream = { this: Expression, on: Expression | null, show_initial_rows: boolean | null, };
+export type Stream = {
+  this: Expression;
+  on: Expression | null;
+  show_initial_rows: boolean | null;
+};

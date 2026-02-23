@@ -6,4 +6,9 @@ import type { Ordered } from "./Ordered";
 /**
  * JSON_ARRAYAGG function
  */
-export type JsonArrayAggFunc = { this: Expression, order_by: Array<Ordered> | null, null_handling: JsonNullHandling | null, filter: Expression | null, };
+export type JsonArrayAggFunc = {
+  this: Expression;
+  order_by: Array<Ordered> | null;
+  null_handling: JsonNullHandling | null;
+  filter: Expression | null;
+};

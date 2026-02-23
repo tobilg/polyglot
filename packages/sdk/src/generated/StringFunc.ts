@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * StringFunc - String type conversion function (BigQuery STRING)
  */
-export type StringFunc = { this: Expression, zone: Expression | null, };
+export type StringFunc = { this: Expression; zone: Expression | null };

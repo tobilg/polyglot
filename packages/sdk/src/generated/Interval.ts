@@ -5,12 +5,13 @@ import type { IntervalUnitSpec } from "./IntervalUnitSpec";
 /**
  * Interval expression
  */
-export type Interval = { 
-/**
- * The value expression (e.g., '1', 5, column_ref)
- */
-this: Expression | null, 
-/**
- * The unit specification (optional - can be None, a simple unit, a span, or an expression)
- */
-unit: IntervalUnitSpec | null, };
+export type Interval = {
+  /**
+   * The value expression (e.g., '1', 5, column_ref)
+   */
+  this: Expression | null;
+  /**
+   * The unit specification (optional - can be None, a simple unit, a span, or an expression)
+   */
+  unit: IntervalUnitSpec | null;
+};

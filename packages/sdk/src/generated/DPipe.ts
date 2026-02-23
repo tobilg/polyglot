@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * DPipe
  */
-export type DPipe = { this: Expression, expression: Expression, safe: Expression | null, };
+export type DPipe = {
+  this: Expression;
+  expression: Expression;
+  safe: Expression | null;
+};

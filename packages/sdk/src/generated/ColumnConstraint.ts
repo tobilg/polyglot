@@ -10,4 +10,18 @@ import type { Tags } from "./Tags";
 /**
  * Column-level constraint
  */
-export type ColumnConstraint = "NotNull" | "Null" | "Unique" | "PrimaryKey" | { "Default": Expression } | { "Check": Expression } | { "References": ForeignKeyRef } | { "GeneratedAsIdentity": GeneratedAsIdentity } | { "Collate": Identifier } | { "Comment": string } | { "Tags": Tags } | { "ComputedColumn": ComputedColumn } | { "GeneratedAsRow": GeneratedAsRow } | { "Path": Expression };
+export type ColumnConstraint =
+  | "NotNull"
+  | "Null"
+  | "Unique"
+  | "PrimaryKey"
+  | { Default: Expression }
+  | { Check: Expression }
+  | { References: ForeignKeyRef }
+  | { GeneratedAsIdentity: GeneratedAsIdentity }
+  | { Collate: Identifier }
+  | { Comment: string }
+  | { Tags: Tags }
+  | { ComputedColumn: ComputedColumn }
+  | { GeneratedAsRow: GeneratedAsRow }
+  | { Path: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DuplicateKeyProperty
  */
-export type DuplicateKeyProperty = { expressions: Array<Expression>, };
+export type DuplicateKeyProperty = { expressions: Array<Expression> };

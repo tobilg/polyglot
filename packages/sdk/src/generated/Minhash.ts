@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Minhash
  */
-export type Minhash = { this: Expression, expressions: Array<Expression>, };
+export type Minhash = { this: Expression; expressions: Array<Expression> };

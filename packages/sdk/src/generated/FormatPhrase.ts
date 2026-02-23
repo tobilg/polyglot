@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Format override for a column in Teradata
  */
-export type FormatPhrase = { this: Expression, format: string, };
+export type FormatPhrase = { this: Expression; format: string };

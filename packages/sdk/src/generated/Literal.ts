@@ -11,4 +11,19 @@
  * strings, raw strings, etc.) each have a dedicated variant so that the
  * generator can emit them with the correct syntax.
  */
-export type Literal = { "literal_type": "string", "value": string } | { "literal_type": "number", "value": string } | { "literal_type": "hex_string", "value": string } | { "literal_type": "hex_number", "value": string } | { "literal_type": "bit_string", "value": string } | { "literal_type": "byte_string", "value": string } | { "literal_type": "national_string", "value": string } | { "literal_type": "date", "value": string } | { "literal_type": "time", "value": string } | { "literal_type": "timestamp", "value": string } | { "literal_type": "datetime", "value": string } | { "literal_type": "triple_quoted_string", "value": [string, string] } | { "literal_type": "escape_string", "value": string } | { "literal_type": "dollar_string", "value": string } | { "literal_type": "raw_string", "value": string };
+export type Literal =
+  | { literal_type: "string"; value: string }
+  | { literal_type: "number"; value: string }
+  | { literal_type: "hex_string"; value: string }
+  | { literal_type: "hex_number"; value: string }
+  | { literal_type: "bit_string"; value: string }
+  | { literal_type: "byte_string"; value: string }
+  | { literal_type: "national_string"; value: string }
+  | { literal_type: "date"; value: string }
+  | { literal_type: "time"; value: string }
+  | { literal_type: "timestamp"; value: string }
+  | { literal_type: "datetime"; value: string }
+  | { literal_type: "triple_quoted_string"; value: [string, string] }
+  | { literal_type: "escape_string"; value: string }
+  | { literal_type: "dollar_string"; value: string }
+  | { literal_type: "raw_string"; value: string };

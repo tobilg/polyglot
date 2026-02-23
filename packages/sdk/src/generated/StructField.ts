@@ -5,4 +5,9 @@ import type { Expression } from "./Expression";
 /**
  * Struct field with optional OPTIONS clause (BigQuery) and COMMENT (Spark/Databricks)
  */
-export type StructField = { name: string, data_type: DataType, options?: Array<Expression>, comment?: string | null, };
+export type StructField = {
+  name: string;
+  data_type: DataType;
+  options?: Array<Expression>;
+  comment?: string | null;
+};

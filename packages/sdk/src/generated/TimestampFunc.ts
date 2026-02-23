@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * TimestampFunc - TIMESTAMP constructor function
  */
-export type TimestampFunc = { this: Expression | null, zone: Expression | null, with_tz: boolean | null, safe: boolean | null, };
+export type TimestampFunc = {
+  this: Expression | null;
+  zone: Expression | null;
+  with_tz: boolean | null;
+  safe: boolean | null;
+};

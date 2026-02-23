@@ -8,4 +8,31 @@
  * CROSS/OUTER APPLY (TSQL), ASOF joins (DuckDB/Snowflake), ARRAY joins
  * (ClickHouse), STRAIGHT_JOIN (MySQL), and implicit comma-joins.
  */
-export type JoinKind = "Inner" | "Left" | "Right" | "Full" | "Outer" | "Cross" | "Natural" | "NaturalLeft" | "NaturalRight" | "NaturalFull" | "Semi" | "Anti" | "LeftSemi" | "LeftAnti" | "RightSemi" | "RightAnti" | "CrossApply" | "OuterApply" | "AsOf" | "AsOfLeft" | "AsOfRight" | "Lateral" | "LeftLateral" | "Straight" | "Implicit" | "Array" | "LeftArray";
+export type JoinKind =
+  | "Inner"
+  | "Left"
+  | "Right"
+  | "Full"
+  | "Outer"
+  | "Cross"
+  | "Natural"
+  | "NaturalLeft"
+  | "NaturalRight"
+  | "NaturalFull"
+  | "Semi"
+  | "Anti"
+  | "LeftSemi"
+  | "LeftAnti"
+  | "RightSemi"
+  | "RightAnti"
+  | "CrossApply"
+  | "OuterApply"
+  | "AsOf"
+  | "AsOfLeft"
+  | "AsOfRight"
+  | "Lateral"
+  | "LeftLateral"
+  | "Straight"
+  | "Implicit"
+  | "Array"
+  | "LeftArray";

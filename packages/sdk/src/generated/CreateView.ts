@@ -11,89 +11,97 @@ import type { ViewColumn } from "./ViewColumn";
 /**
  * CREATE VIEW statement
  */
-export type CreateView = { name: TableRef, columns: Array<ViewColumn>, query: Expression, or_replace: boolean, if_not_exists: boolean, materialized: boolean, temporary: boolean, 
-/**
- * Snowflake: SECURE VIEW
- */
-secure: boolean, 
-/**
- * MySQL: ALGORITHM=UNDEFINED/MERGE/TEMPTABLE
- */
-algorithm: string | null, 
-/**
- * MySQL: DEFINER=user@host
- */
-definer: string | null, 
-/**
- * MySQL: SQL SECURITY DEFINER/INVOKER; Presto: SECURITY DEFINER/INVOKER
- */
-security: FunctionSecurity | null, 
-/**
- * True for MySQL-style "SQL SECURITY", false for Presto-style "SECURITY"
- */
-security_sql_style: boolean, 
-/**
- * Whether the query was parenthesized: AS (SELECT ...)
- */
-query_parenthesized: boolean, 
-/**
- * Teradata: LOCKING mode (ROW, TABLE, DATABASE)
- */
-locking_mode: string | null, 
-/**
- * Teradata: LOCKING access type (ACCESS, READ, WRITE)
- */
-locking_access: string | null, 
-/**
- * Snowflake: COPY GRANTS
- */
-copy_grants: boolean, 
-/**
- * Snowflake: COMMENT = 'text'
- */
-comment?: string | null, 
-/**
- * Snowflake: TAG (name='value', ...)
- */
-tags: Array<[string, string]>, 
-/**
- * BigQuery: OPTIONS (key=value, ...)
- */
-options: Array<Expression>, 
-/**
- * Doris: BUILD IMMEDIATE/DEFERRED for materialized views
- */
-build?: string | null, 
-/**
- * Doris: REFRESH property for materialized views
- */
-refresh?: RefreshTriggerProperty | null, 
-/**
- * Doris: Schema with typed column definitions for materialized views
- * This is used instead of `columns` when the view has typed column definitions
- */
-schema?: Schema | null, 
-/**
- * Doris: KEY (columns) for materialized views
- */
-unique_key?: UniqueKeyProperty | null, 
-/**
- * Redshift: WITH NO SCHEMA BINDING
- */
-no_schema_binding: boolean, 
-/**
- * Redshift: AUTO REFRESH YES|NO for materialized views
- */
-auto_refresh?: boolean | null, 
-/**
- * ClickHouse: ON CLUSTER clause
- */
-on_cluster?: OnCluster | null, 
-/**
- * ClickHouse: TO destination_table
- */
-to_table?: TableRef | null, 
-/**
- * ClickHouse: Table properties (ENGINE, ORDER BY, SAMPLE, SETTINGS, TTL, etc.) for materialized views
- */
-table_properties?: Array<Expression>, };
+export type CreateView = {
+  name: TableRef;
+  columns: Array<ViewColumn>;
+  query: Expression;
+  or_replace: boolean;
+  if_not_exists: boolean;
+  materialized: boolean;
+  temporary: boolean;
+  /**
+   * Snowflake: SECURE VIEW
+   */
+  secure: boolean;
+  /**
+   * MySQL: ALGORITHM=UNDEFINED/MERGE/TEMPTABLE
+   */
+  algorithm: string | null;
+  /**
+   * MySQL: DEFINER=user@host
+   */
+  definer: string | null;
+  /**
+   * MySQL: SQL SECURITY DEFINER/INVOKER; Presto: SECURITY DEFINER/INVOKER
+   */
+  security: FunctionSecurity | null;
+  /**
+   * True for MySQL-style "SQL SECURITY", false for Presto-style "SECURITY"
+   */
+  security_sql_style: boolean;
+  /**
+   * Whether the query was parenthesized: AS (SELECT ...)
+   */
+  query_parenthesized: boolean;
+  /**
+   * Teradata: LOCKING mode (ROW, TABLE, DATABASE)
+   */
+  locking_mode: string | null;
+  /**
+   * Teradata: LOCKING access type (ACCESS, READ, WRITE)
+   */
+  locking_access: string | null;
+  /**
+   * Snowflake: COPY GRANTS
+   */
+  copy_grants: boolean;
+  /**
+   * Snowflake: COMMENT = 'text'
+   */
+  comment?: string | null;
+  /**
+   * Snowflake: TAG (name='value', ...)
+   */
+  tags: Array<[string, string]>;
+  /**
+   * BigQuery: OPTIONS (key=value, ...)
+   */
+  options: Array<Expression>;
+  /**
+   * Doris: BUILD IMMEDIATE/DEFERRED for materialized views
+   */
+  build?: string | null;
+  /**
+   * Doris: REFRESH property for materialized views
+   */
+  refresh?: RefreshTriggerProperty | null;
+  /**
+   * Doris: Schema with typed column definitions for materialized views
+   * This is used instead of `columns` when the view has typed column definitions
+   */
+  schema?: Schema | null;
+  /**
+   * Doris: KEY (columns) for materialized views
+   */
+  unique_key?: UniqueKeyProperty | null;
+  /**
+   * Redshift: WITH NO SCHEMA BINDING
+   */
+  no_schema_binding: boolean;
+  /**
+   * Redshift: AUTO REFRESH YES|NO for materialized views
+   */
+  auto_refresh?: boolean | null;
+  /**
+   * ClickHouse: ON CLUSTER clause
+   */
+  on_cluster?: OnCluster | null;
+  /**
+   * ClickHouse: TO destination_table
+   */
+  to_table?: TableRef | null;
+  /**
+   * ClickHouse: Table properties (ENGINE, ORDER BY, SAMPLE, SETTINGS, TTL, etc.) for materialized views
+   */
+  table_properties?: Array<Expression>;
+};

@@ -3,4 +3,4 @@
 /**
  * AnalyzeDelete
  */
-export type AnalyzeDelete = { kind: string | null, };
+export type AnalyzeDelete = { kind: string | null };

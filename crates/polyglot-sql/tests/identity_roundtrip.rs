@@ -26,16 +26,6 @@ fn assert_roundtrip(sql: &str) {
     );
 }
 
-/// Assert SQL roundtrips exactly
-fn assert_exact_roundtrip(sql: &str) {
-    let result = roundtrip(sql);
-    assert_eq!(
-        sql, result,
-        "Not exact roundtrip for: {}\nGot: {}",
-        sql, result
-    );
-}
-
 // ============================================================================
 // LITERALS - Lines 1-37 from identity.sql
 // ============================================================================

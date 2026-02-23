@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * Search
  */
-export type Search = { this: Expression, expression: Expression, json_scope: Expression | null, analyzer: Expression | null, analyzer_options: Expression | null, search_mode: Expression | null, };
+export type Search = {
+  this: Expression;
+  expression: Expression;
+  json_scope: Expression | null;
+  analyzer: Expression | null;
+  analyzer_options: Expression | null;
+  search_mode: Expression | null;
+};

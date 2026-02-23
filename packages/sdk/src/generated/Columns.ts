@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Columns
  */
-export type Columns = { this: Expression, unpack: Expression | null, };
+export type Columns = { this: Expression; unpack: Expression | null };

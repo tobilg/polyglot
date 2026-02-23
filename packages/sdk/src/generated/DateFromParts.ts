@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * DateFromParts
  */
-export type DateFromParts = { year: Expression | null, month: Expression | null, day: Expression | null, allow_overflow: Expression | null, };
+export type DateFromParts = {
+  year: Expression | null;
+  month: Expression | null;
+  day: Expression | null;
+  allow_overflow: Expression | null;
+};

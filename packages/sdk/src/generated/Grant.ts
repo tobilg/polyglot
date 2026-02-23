@@ -6,32 +6,33 @@ import type { Privilege } from "./Privilege";
 /**
  * GRANT statement
  */
-export type Grant = { 
-/**
- * Privileges to grant (e.g., SELECT, INSERT, UPDATE(col1, col2))
- */
-privileges: Array<Privilege>, 
-/**
- * Object kind (TABLE, SCHEMA, FUNCTION, etc.)
- */
-kind: string | null, 
-/**
- * The object to grant on
- */
-securable: Identifier, 
-/**
- * Function parameter types (for FUNCTION kind)
- */
-function_params?: Array<string>, 
-/**
- * The grantees
- */
-principals: Array<GrantPrincipal>, 
-/**
- * WITH GRANT OPTION
- */
-grant_option: boolean, 
-/**
- * TSQL: AS principal (the grantor role)
- */
-as_principal?: Identifier | null, };
+export type Grant = {
+  /**
+   * Privileges to grant (e.g., SELECT, INSERT, UPDATE(col1, col2))
+   */
+  privileges: Array<Privilege>;
+  /**
+   * Object kind (TABLE, SCHEMA, FUNCTION, etc.)
+   */
+  kind: string | null;
+  /**
+   * The object to grant on
+   */
+  securable: Identifier;
+  /**
+   * Function parameter types (for FUNCTION kind)
+   */
+  function_params?: Array<string>;
+  /**
+   * The grantees
+   */
+  principals: Array<GrantPrincipal>;
+  /**
+   * WITH GRANT OPTION
+   */
+  grant_option: boolean;
+  /**
+   * TSQL: AS principal (the grantor role)
+   */
+  as_principal?: Identifier | null;
+};

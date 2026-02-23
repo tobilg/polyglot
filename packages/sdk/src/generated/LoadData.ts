@@ -5,32 +5,33 @@ import type { Identifier } from "./Identifier";
 /**
  * LOAD DATA statement (Hive)
  */
-export type LoadData = { 
-/**
- * LOCAL keyword - load from local filesystem
- */
-local: boolean, 
-/**
- * The path to load data from (INPATH value)
- */
-inpath: string, 
-/**
- * Whether to overwrite existing data
- */
-overwrite: boolean, 
-/**
- * The target table
- */
-table: Expression, 
-/**
- * Optional PARTITION clause with key-value pairs
- */
-partition: Array<[Identifier, Expression]>, 
-/**
- * Optional INPUTFORMAT clause
- */
-input_format: string | null, 
-/**
- * Optional SERDE clause
- */
-serde: string | null, };
+export type LoadData = {
+  /**
+   * LOCAL keyword - load from local filesystem
+   */
+  local: boolean;
+  /**
+   * The path to load data from (INPATH value)
+   */
+  inpath: string;
+  /**
+   * Whether to overwrite existing data
+   */
+  overwrite: boolean;
+  /**
+   * The target table
+   */
+  table: Expression;
+  /**
+   * Optional PARTITION clause with key-value pairs
+   */
+  partition: Array<[Identifier, Expression]>;
+  /**
+   * Optional INPUTFORMAT clause
+   */
+  input_format: string | null;
+  /**
+   * Optional SERDE clause
+   */
+  serde: string | null;
+};

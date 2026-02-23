@@ -13,72 +13,73 @@ import type { With } from "./With";
  * ORDER BY, LIMIT, and OFFSET can be applied to the combined result.
  * Supports DuckDB's BY NAME modifier and BigQuery's CORRESPONDING modifier.
  */
-export type Union = { 
-/**
- * The left-hand query operand.
- */
-left: Expression, 
-/**
- * The right-hand query operand.
- */
-right: Expression, 
-/**
- * Whether UNION ALL (true) or UNION (false, which deduplicates).
- */
-all: boolean, 
-/**
- * Whether DISTINCT was explicitly specified
- */
-distinct: boolean, 
-/**
- * Optional WITH clause
- */
-with: With | null, 
-/**
- * ORDER BY applied to entire UNION result
- */
-order_by: OrderBy | null, 
-/**
- * LIMIT applied to entire UNION result
- */
-limit: Expression | null, 
-/**
- * OFFSET applied to entire UNION result
- */
-offset: Expression | null, 
-/**
- * DISTRIBUTE BY clause (Hive/Spark)
- */
-distribute_by?: DistributeBy | null, 
-/**
- * SORT BY clause (Hive/Spark)
- */
-sort_by?: SortBy | null, 
-/**
- * CLUSTER BY clause (Hive/Spark)
- */
-cluster_by?: ClusterBy | null, 
-/**
- * DuckDB BY NAME modifier
- */
-by_name: boolean, 
-/**
- * BigQuery: Set operation side (LEFT, RIGHT, FULL)
- */
-side?: string | null, 
-/**
- * BigQuery: Set operation kind (INNER)
- */
-kind?: string | null, 
-/**
- * BigQuery: CORRESPONDING modifier
- */
-corresponding: boolean, 
-/**
- * BigQuery: STRICT modifier (before CORRESPONDING)
- */
-strict: boolean, 
-/**
- * BigQuery: BY (columns) after CORRESPONDING
- */
-on_columns?: Array<Expression>, };
+export type Union = {
+  /**
+   * The left-hand query operand.
+   */
+  left: Expression;
+  /**
+   * The right-hand query operand.
+   */
+  right: Expression;
+  /**
+   * Whether UNION ALL (true) or UNION (false, which deduplicates).
+   */
+  all: boolean;
+  /**
+   * Whether DISTINCT was explicitly specified
+   */
+  distinct: boolean;
+  /**
+   * Optional WITH clause
+   */
+  with: With | null;
+  /**
+   * ORDER BY applied to entire UNION result
+   */
+  order_by: OrderBy | null;
+  /**
+   * LIMIT applied to entire UNION result
+   */
+  limit: Expression | null;
+  /**
+   * OFFSET applied to entire UNION result
+   */
+  offset: Expression | null;
+  /**
+   * DISTRIBUTE BY clause (Hive/Spark)
+   */
+  distribute_by?: DistributeBy | null;
+  /**
+   * SORT BY clause (Hive/Spark)
+   */
+  sort_by?: SortBy | null;
+  /**
+   * CLUSTER BY clause (Hive/Spark)
+   */
+  cluster_by?: ClusterBy | null;
+  /**
+   * DuckDB BY NAME modifier
+   */
+  by_name: boolean;
+  /**
+   * BigQuery: Set operation side (LEFT, RIGHT, FULL)
+   */
+  side?: string | null;
+  /**
+   * BigQuery: Set operation kind (INNER)
+   */
+  kind?: string | null;
+  /**
+   * BigQuery: CORRESPONDING modifier
+   */
+  corresponding: boolean;
+  /**
+   * BigQuery: STRICT modifier (before CORRESPONDING)
+   */
+  strict: boolean;
+  /**
+   * BigQuery: BY (columns) after CORRESPONDING
+   */
+  on_columns?: Array<Expression>;
+};

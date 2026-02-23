@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Transaction
  */
-export type Transaction = { this: Expression | null, modes: Expression | null, mark: Expression | null, };
+export type Transaction = {
+  this: Expression | null;
+  modes: Expression | null;
+  mark: Expression | null;
+};

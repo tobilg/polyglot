@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Commit
  */
-export type Commit = { chain: Expression | null, this: Expression | null, durability: Expression | null, };
+export type Commit = {
+  chain: Expression | null;
+  this: Expression | null;
+  durability: Expression | null;
+};

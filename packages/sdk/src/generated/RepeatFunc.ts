@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * REPEAT function
  */
-export type RepeatFunc = { this: Expression, times: Expression, };
+export type RepeatFunc = { this: Expression; times: Expression };

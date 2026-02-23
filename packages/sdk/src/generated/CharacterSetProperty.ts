@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * CharacterSetProperty
  */
-export type CharacterSetProperty = { this: Expression, default: Expression | null, };
+export type CharacterSetProperty = {
+  this: Expression;
+  default: Expression | null;
+};

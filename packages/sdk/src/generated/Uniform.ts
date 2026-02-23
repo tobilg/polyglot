@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Uniform
  */
-export type Uniform = { this: Expression, expression: Expression, gen: Expression | null, seed: Expression | null, };
+export type Uniform = {
+  this: Expression;
+  expression: Expression;
+  gen: Expression | null;
+  seed: Expression | null;
+};

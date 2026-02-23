@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * WatermarkColumnConstraint
  */
-export type WatermarkColumnConstraint = { this: Expression, expression: Expression, };
+export type WatermarkColumnConstraint = {
+  this: Expression;
+  expression: Expression;
+};

@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * LockingProperty
  */
-export type LockingProperty = { this: Expression | null, kind: string, for_or_in: Expression | null, lock_type: Expression | null, override_: Expression | null, };
+export type LockingProperty = {
+  this: Expression | null;
+  kind: string;
+  for_or_in: Expression | null;
+  lock_type: Expression | null;
+  override_: Expression | null;
+};

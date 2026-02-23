@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Rollback
  */
-export type Rollback = { savepoint: Expression | null, this: Expression | null, };
+export type Rollback = {
+  savepoint: Expression | null;
+  this: Expression | null;
+};

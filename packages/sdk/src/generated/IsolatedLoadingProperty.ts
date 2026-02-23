@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * IsolatedLoadingProperty
  */
-export type IsolatedLoadingProperty = { no: Expression | null, concurrent: Expression | null, target: Expression | null, };
+export type IsolatedLoadingProperty = {
+  no: Expression | null;
+  concurrent: Expression | null;
+  target: Expression | null;
+};

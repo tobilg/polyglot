@@ -6,16 +6,21 @@ import type { WindowFrameKind } from "./WindowFrameKind";
 /**
  * Window frame
  */
-export type WindowFrame = { kind: WindowFrameKind, start: WindowFrameBound, end: WindowFrameBound | null, exclude: WindowFrameExclude | null, 
-/**
- * Original text of the frame kind keyword (preserves input case, e.g. "range")
- */
-kind_text?: string | null, 
-/**
- * Original text of the start bound side keyword (e.g. "preceding")
- */
-start_side_text?: string | null, 
-/**
- * Original text of the end bound side keyword
- */
-end_side_text?: string | null, };
+export type WindowFrame = {
+  kind: WindowFrameKind;
+  start: WindowFrameBound;
+  end: WindowFrameBound | null;
+  exclude: WindowFrameExclude | null;
+  /**
+   * Original text of the frame kind keyword (preserves input case, e.g. "range")
+   */
+  kind_text?: string | null;
+  /**
+   * Original text of the start bound side keyword (e.g. "preceding")
+   */
+  start_side_text?: string | null;
+  /**
+   * Original text of the end bound side keyword
+   */
+  end_side_text?: string | null;
+};

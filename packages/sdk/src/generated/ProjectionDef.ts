@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ProjectionDef
  */
-export type ProjectionDef = { this: Expression, expression: Expression, };
+export type ProjectionDef = { this: Expression; expression: Expression };

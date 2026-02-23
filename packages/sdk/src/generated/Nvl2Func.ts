@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * NVL2 function
  */
-export type Nvl2Func = { this: Expression, true_value: Expression, false_value: Expression, };
+export type Nvl2Func = {
+  this: Expression;
+  true_value: Expression;
+  false_value: Expression;
+};

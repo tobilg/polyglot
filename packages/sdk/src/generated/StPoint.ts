@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * StPoint
  */
-export type StPoint = { this: Expression, expression: Expression, null: Expression | null, };
+export type StPoint = {
+  this: Expression;
+  expression: Expression;
+  null: Expression | null;
+};

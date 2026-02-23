@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ApproxQuantiles
  */
-export type ApproxQuantiles = { this: Expression, expression: Expression | null, };
+export type ApproxQuantiles = {
+  this: Expression;
+  expression: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * LogProperty
  */
-export type LogProperty = { no: Expression | null, };
+export type LogProperty = { no: Expression | null };

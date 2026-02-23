@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Refresh
  */
-export type Refresh = { this: Expression, kind: string, };
+export type Refresh = { this: Expression; kind: string };

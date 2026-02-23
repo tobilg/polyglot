@@ -3,4 +3,10 @@
 /**
  * Kind of USE statement
  */
-export type UseKind = "Database" | "Schema" | "Role" | "Warehouse" | "Catalog" | "SecondaryRoles";
+export type UseKind =
+  | "Database"
+  | "Schema"
+  | "Role"
+  | "Warehouse"
+  | "Catalog"
+  | "SecondaryRoles";

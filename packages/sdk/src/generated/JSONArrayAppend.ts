@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JSONArrayAppend
  */
-export type JSONArrayAppend = { this: Expression, expressions: Array<Expression>, };
+export type JSONArrayAppend = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

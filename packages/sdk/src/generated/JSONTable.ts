@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JSONTable
  */
-export type JSONTable = { this: Expression, schema: Expression | null, path: Expression | null, error_handling: Expression | null, empty_handling: Expression | null, };
+export type JSONTable = {
+  this: Expression;
+  schema: Expression | null;
+  path: Expression | null;
+  error_handling: Expression | null;
+  empty_handling: Expression | null;
+};

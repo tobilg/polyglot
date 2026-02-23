@@ -4,4 +4,4 @@ import type { HintExpression } from "./HintExpression";
 /**
  * Query hint
  */
-export type Hint = { expressions: Array<HintExpression>, };
+export type Hint = { expressions: Array<HintExpression> };

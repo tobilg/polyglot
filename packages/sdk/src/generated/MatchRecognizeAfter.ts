@@ -4,4 +4,8 @@ import type { Identifier } from "./Identifier";
 /**
  * AFTER MATCH SKIP behavior
  */
-export type MatchRecognizeAfter = "PastLastRow" | "ToNextRow" | { "ToFirst": Identifier } | { "ToLast": Identifier };
+export type MatchRecognizeAfter =
+  | "PastLastRow"
+  | "ToNextRow"
+  | { ToFirst: Identifier }
+  | { ToLast: Identifier };

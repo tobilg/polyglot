@@ -5,12 +5,13 @@ import type { Ordered } from "./Ordered";
 /**
  * CUME_DIST function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
  */
-export type CumeDist = { 
-/**
- * DuckDB: CUME_DIST(ORDER BY col) - order by inside function
- */
-order_by?: Array<Ordered> | null, 
-/**
- * Oracle hypothetical rank: CUME_DIST(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
- */
-args?: Array<Expression>, };
+export type CumeDist = {
+  /**
+   * DuckDB: CUME_DIST(ORDER BY col) - order by inside function
+   */
+  order_by?: Array<Ordered> | null;
+  /**
+   * Oracle hypothetical rank: CUME_DIST(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
+   */
+  args?: Array<Expression>;
+};

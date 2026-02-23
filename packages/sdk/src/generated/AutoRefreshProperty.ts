@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AutoRefreshProperty
  */
-export type AutoRefreshProperty = { this: Expression, };
+export type AutoRefreshProperty = { this: Expression };

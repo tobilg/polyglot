@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * OnCluster
  */
-export type OnCluster = { this: Expression, };
+export type OnCluster = { this: Expression };

@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * JSONValue
  */
-export type JSONValue = { this: Expression, path: Expression | null, returning: Expression | null, on_condition: Expression | null, };
+export type JSONValue = {
+  this: Expression;
+  path: Expression | null;
+  returning: Expression | null;
+  on_condition: Expression | null;
+};

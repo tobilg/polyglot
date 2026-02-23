@@ -4,4 +4,9 @@ import type { Identifier } from "./Identifier";
 /**
  * Trigger REFERENCING clause
  */
-export type TriggerReferencing = { old_table: Identifier | null, new_table: Identifier | null, old_row: Identifier | null, new_row: Identifier | null, };
+export type TriggerReferencing = {
+  old_table: Identifier | null;
+  new_table: Identifier | null;
+  old_row: Identifier | null;
+  new_row: Identifier | null;
+};

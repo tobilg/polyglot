@@ -4,8 +4,12 @@ import type { RowFormat } from "./RowFormat";
 /**
  * Directory insert for INSERT OVERWRITE DIRECTORY (Hive/Spark)
  */
-export type DirectoryInsert = { local: boolean, path: string, row_format: RowFormat | null, 
-/**
- * STORED AS clause (e.g., TEXTFILE, ORC, PARQUET)
- */
-stored_as: string | null, };
+export type DirectoryInsert = {
+  local: boolean;
+  path: string;
+  row_format: RowFormat | null;
+  /**
+   * STORED AS clause (e.g., TEXTFILE, ORC, PARQUET)
+   */
+  stored_as: string | null;
+};

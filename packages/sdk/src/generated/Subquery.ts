@@ -19,54 +19,55 @@ import type { SortBy } from "./SortBy";
  * Subqueries appear in many SQL contexts: FROM clauses, WHERE IN/EXISTS,
  * scalar subqueries in select-lists, and derived tables.
  */
-export type Subquery = { 
-/**
- * The inner query expression.
- */
-this: Expression, 
-/**
- * Optional alias for the derived table.
- */
-alias: Identifier | null, 
-/**
- * Optional column aliases: AS t(c1, c2)
- */
-column_aliases: Array<Identifier>, 
-/**
- * ORDER BY clause (for parenthesized queries)
- */
-order_by: OrderBy | null, 
-/**
- * LIMIT clause
- */
-limit: Limit | null, 
-/**
- * OFFSET clause
- */
-offset: Offset | null, 
-/**
- * DISTRIBUTE BY clause (Hive/Spark)
- */
-distribute_by?: DistributeBy | null, 
-/**
- * SORT BY clause (Hive/Spark)
- */
-sort_by?: SortBy | null, 
-/**
- * CLUSTER BY clause (Hive/Spark)
- */
-cluster_by?: ClusterBy | null, 
-/**
- * Whether this is a LATERAL subquery (can reference earlier tables in FROM)
- */
-lateral: boolean, 
-/**
- * Whether modifiers (ORDER BY, LIMIT, OFFSET) should be generated inside the parentheses
- * true: (SELECT 1 LIMIT 1)  - modifiers inside
- * false: (SELECT 1) LIMIT 1 - modifiers outside
- */
-modifiers_inside: boolean, 
-/**
- * Trailing comments after the closing paren
- */
-trailing_comments: Array<string>, };
+export type Subquery = {
+  /**
+   * The inner query expression.
+   */
+  this: Expression;
+  /**
+   * Optional alias for the derived table.
+   */
+  alias: Identifier | null;
+  /**
+   * Optional column aliases: AS t(c1, c2)
+   */
+  column_aliases: Array<Identifier>;
+  /**
+   * ORDER BY clause (for parenthesized queries)
+   */
+  order_by: OrderBy | null;
+  /**
+   * LIMIT clause
+   */
+  limit: Limit | null;
+  /**
+   * OFFSET clause
+   */
+  offset: Offset | null;
+  /**
+   * DISTRIBUTE BY clause (Hive/Spark)
+   */
+  distribute_by?: DistributeBy | null;
+  /**
+   * SORT BY clause (Hive/Spark)
+   */
+  sort_by?: SortBy | null;
+  /**
+   * CLUSTER BY clause (Hive/Spark)
+   */
+  cluster_by?: ClusterBy | null;
+  /**
+   * Whether this is a LATERAL subquery (can reference earlier tables in FROM)
+   */
+  lateral: boolean;
+  /**
+   * Whether modifiers (ORDER BY, LIMIT, OFFSET) should be generated inside the parentheses
+   * true: (SELECT 1 LIMIT 1)  - modifiers inside
+   * false: (SELECT 1) LIMIT 1 - modifiers outside
+   */
+  modifiers_inside: boolean;
+  /**
+   * Trailing comments after the closing paren
+   */
+  trailing_comments: Array<string>;
+};

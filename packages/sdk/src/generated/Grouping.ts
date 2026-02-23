@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Grouping
  */
-export type Grouping = { expressions: Array<Expression>, };
+export type Grouping = { expressions: Array<Expression> };

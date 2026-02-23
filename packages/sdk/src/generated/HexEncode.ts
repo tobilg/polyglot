@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * HexEncode
  */
-export type HexEncode = { this: Expression, case: Expression | null, };
+export type HexEncode = { this: Expression; case: Expression | null };

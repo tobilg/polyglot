@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DistStyleProperty
  */
-export type DistStyleProperty = { this: Expression, };
+export type DistStyleProperty = { this: Expression };

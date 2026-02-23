@@ -8,16 +8,17 @@ import type { Expression } from "./Expression";
  * When `operand` is `None`, this is a searched CASE (`CASE WHEN x > 0 THEN ...`).
  * Each entry in `whens` is a `(condition, result)` pair.
  */
-export type Case = { 
-/**
- * The operand for simple CASE, or `None` for searched CASE.
- */
-operand: Expression | null, 
-/**
- * Pairs of (WHEN condition, THEN result).
- */
-whens: Array<[Expression, Expression]>, 
-/**
- * Optional ELSE result.
- */
-else_: Expression | null, };
+export type Case = {
+  /**
+   * The operand for simple CASE, or `None` for searched CASE.
+   */
+  operand: Expression | null;
+  /**
+   * Pairs of (WHEN condition, THEN result).
+   */
+  whens: Array<[Expression, Expression]>;
+  /**
+   * Optional ELSE result.
+   */
+  else_: Expression | null;
+};

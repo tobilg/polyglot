@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * MLTranslate
  */
-export type MLTranslate = { this: Expression, expression: Expression, params_struct: Expression | null, };
+export type MLTranslate = {
+  this: Expression;
+  expression: Expression;
+  params_struct: Expression | null;
+};

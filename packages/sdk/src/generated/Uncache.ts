@@ -4,12 +4,13 @@ import type { Identifier } from "./Identifier";
 /**
  * UNCACHE TABLE statement (Spark)
  */
-export type Uncache = { 
-/**
- * The table to uncache
- */
-table: Identifier, 
-/**
- * IF EXISTS clause
- */
-if_exists: boolean, };
+export type Uncache = {
+  /**
+   * The table to uncache
+   */
+  table: Identifier;
+  /**
+   * IF EXISTS clause
+   */
+  if_exists: boolean;
+};

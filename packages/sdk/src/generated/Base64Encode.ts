@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Base64Encode
  */
-export type Base64Encode = { this: Expression, max_line_length: Expression | null, alphabet: Expression | null, };
+export type Base64Encode = {
+  this: Expression;
+  max_line_length: Expression | null;
+  alphabet: Expression | null;
+};

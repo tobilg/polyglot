@@ -7,8 +7,9 @@ import type { Expression } from "./Expression";
  * - A SELECT subquery (MAP(SELECT 'a', 1))
  * - A struct with key=>value entries (MAP['a' => 1, 'b' => 2])
  */
-export type ToMap = { 
-/**
- * Either a Select subquery or a Struct containing PropertyEQ entries
- */
-this: Expression, };
+export type ToMap = {
+  /**
+   * Either a Select subquery or a Struct containing PropertyEQ entries
+   */
+  this: Expression;
+};

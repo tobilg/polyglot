@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * EncodeProperty
  */
-export type EncodeProperty = { this: Expression, properties: Array<Expression>, key: Expression | null, };
+export type EncodeProperty = {
+  this: Expression;
+  properties: Array<Expression>;
+  key: Expression | null;
+};

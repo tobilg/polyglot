@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * WithProcedureOptions
  */
-export type WithProcedureOptions = { expressions: Array<Expression>, };
+export type WithProcedureOptions = { expressions: Array<Expression> };

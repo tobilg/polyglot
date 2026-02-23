@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * ForeignKey
  */
-export type ForeignKey = { expressions: Array<Expression>, reference: Expression | null, delete: Expression | null, update: Expression | null, options: Array<Expression>, };
+export type ForeignKey = {
+  expressions: Array<Expression>;
+  reference: Expression | null;
+  delete: Expression | null;
+  update: Expression | null;
+  options: Array<Expression>;
+};

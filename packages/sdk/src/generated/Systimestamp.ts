@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Systimestamp
  */
-export type Systimestamp = { this: Expression | null, };
+export type Systimestamp = { this: Expression | null };

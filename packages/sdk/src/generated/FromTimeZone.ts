@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * FromTimeZone
  */
-export type FromTimeZone = { this: Expression, zone: Expression | null, };
+export type FromTimeZone = { this: Expression; zone: Expression | null };

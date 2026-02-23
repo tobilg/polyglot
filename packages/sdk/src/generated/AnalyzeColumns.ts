@@ -3,8 +3,9 @@
 /**
  * AnalyzeColumns - Redshift ANALYZE ... PREDICATE COLUMNS / ALL COLUMNS
  */
-export type AnalyzeColumns = { 
-/**
- * e.g., "PREDICATE COLUMNS" or "ALL COLUMNS"
- */
-this: string, };
+export type AnalyzeColumns = {
+  /**
+   * e.g., "PREDICATE COLUMNS" or "ALL COLUMNS"
+   */
+  this: string;
+};

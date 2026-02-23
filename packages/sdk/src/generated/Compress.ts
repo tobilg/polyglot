@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Compress
  */
-export type Compress = { this: Expression, method: string | null, };
+export type Compress = { this: Expression; method: string | null };

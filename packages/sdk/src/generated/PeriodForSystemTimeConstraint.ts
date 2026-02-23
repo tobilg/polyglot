@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * PeriodForSystemTimeConstraint
  */
-export type PeriodForSystemTimeConstraint = { this: Expression, expression: Expression, };
+export type PeriodForSystemTimeConstraint = {
+  this: Expression;
+  expression: Expression;
+};

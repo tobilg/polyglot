@@ -6,4 +6,11 @@ import type { Ordered } from "./Ordered";
 /**
  * LISTAGG function (Oracle style)
  */
-export type ListAggFunc = { this: Expression, separator: Expression | null, on_overflow: ListAggOverflow | null, order_by: Array<Ordered> | null, distinct: boolean, filter: Expression | null, };
+export type ListAggFunc = {
+  this: Expression;
+  separator: Expression | null;
+  on_overflow: ListAggOverflow | null;
+  order_by: Array<Ordered> | null;
+  distinct: boolean;
+  filter: Expression | null;
+};

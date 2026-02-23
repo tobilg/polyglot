@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * DistributedByProperty
  */
-export type DistributedByProperty = { expressions: Array<Expression>, kind: string, buckets: Expression | null, order: Expression | null, };
+export type DistributedByProperty = {
+  expressions: Array<Expression>;
+  kind: string;
+  buckets: Expression | null;
+  order: Expression | null;
+};

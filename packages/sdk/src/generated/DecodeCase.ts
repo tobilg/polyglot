@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DecodeCase
  */
-export type DecodeCase = { expressions: Array<Expression>, };
+export type DecodeCase = { expressions: Array<Expression> };

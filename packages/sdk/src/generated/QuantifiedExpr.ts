@@ -5,4 +5,8 @@ import type { QuantifiedOp } from "./QuantifiedOp";
 /**
  * ANY / ALL quantified expression
  */
-export type QuantifiedExpr = { this: Expression, subquery: Expression, op: QuantifiedOp | null, };
+export type QuantifiedExpr = {
+  this: Expression;
+  subquery: Expression;
+  op: QuantifiedOp | null;
+};

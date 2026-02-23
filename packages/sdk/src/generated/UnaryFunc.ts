@@ -4,8 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * Generic unary function (takes a single argument)
  */
-export type UnaryFunc = { this: Expression, 
-/**
- * Original function name for round-trip preservation (e.g., CHAR_LENGTH vs LENGTH)
- */
-original_name?: string | null, };
+export type UnaryFunc = {
+  this: Expression;
+  /**
+   * Original function name for round-trip preservation (e.g., CHAR_LENGTH vs LENGTH)
+   */
+  original_name?: string | null;
+};

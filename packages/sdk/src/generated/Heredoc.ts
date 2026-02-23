@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Heredoc
  */
-export type Heredoc = { this: Expression, tag: Expression | null, };
+export type Heredoc = { this: Expression; tag: Expression | null };

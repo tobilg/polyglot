@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * OVERLAY function - OVERLAY(string PLACING replacement FROM position [FOR length])
  */
-export type OverlayFunc = { this: Expression, replacement: Expression, from: Expression, length: Expression | null, };
+export type OverlayFunc = {
+  this: Expression;
+  replacement: Expression;
+  from: Expression;
+  length: Expression | null;
+};

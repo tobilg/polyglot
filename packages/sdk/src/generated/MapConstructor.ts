@@ -4,12 +4,15 @@ import type { Expression } from "./Expression";
 /**
  * MAP constructor
  */
-export type MapConstructor = { keys: Array<Expression>, values: Array<Expression>, 
-/**
- * Whether curly brace syntax was used (`{'a': 1}`) vs MAP function (`MAP(...)`)
- */
-curly_brace_syntax: boolean, 
-/**
- * Whether MAP keyword was present (`MAP {'a': 1}`) vs bare curly braces (`{'a': 1}`)
- */
-with_map_keyword: boolean, };
+export type MapConstructor = {
+  keys: Array<Expression>;
+  values: Array<Expression>;
+  /**
+   * Whether curly brace syntax was used (`{'a': 1}`) vs MAP function (`MAP(...)`)
+   */
+  curly_brace_syntax: boolean;
+  /**
+   * Whether MAP keyword was present (`MAP {'a': 1}`) vs bare curly braces (`{'a': 1}`)
+   */
+  with_map_keyword: boolean;
+};

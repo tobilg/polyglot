@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * UniqueKeyProperty
  */
-export type UniqueKeyProperty = { expressions: Array<Expression>, };
+export type UniqueKeyProperty = { expressions: Array<Expression> };

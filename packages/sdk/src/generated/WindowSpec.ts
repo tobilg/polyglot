@@ -6,4 +6,8 @@ import type { WindowFrame } from "./WindowFrame";
 /**
  * Window specification
  */
-export type WindowSpec = { partition_by: Array<Expression>, order_by: Array<Ordered>, frame: WindowFrame | null, };
+export type WindowSpec = {
+  partition_by: Array<Expression>;
+  order_by: Array<Ordered>;
+  frame: WindowFrame | null;
+};

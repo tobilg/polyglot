@@ -4,12 +4,15 @@ import type { Expression } from "./Expression";
 /**
  * LIKE/ILIKE operation with optional ESCAPE clause and quantifier (ANY/ALL)
  */
-export type LikeOp = { left: Expression, right: Expression, 
-/**
- * ESCAPE character/expression
- */
-escape: Expression | null, 
-/**
- * Quantifier: ANY, ALL, or SOME
- */
-quantifier: string | null, };
+export type LikeOp = {
+  left: Expression;
+  right: Expression;
+  /**
+   * ESCAPE character/expression
+   */
+  escape: Expression | null;
+  /**
+   * Quantifier: ANY, ALL, or SOME
+   */
+  quantifier: string | null;
+};

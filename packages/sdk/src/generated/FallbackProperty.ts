@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * FallbackProperty
  */
-export type FallbackProperty = { no: Expression | null, protection: Expression | null, };
+export type FallbackProperty = {
+  no: Expression | null;
+  protection: Expression | null;
+};

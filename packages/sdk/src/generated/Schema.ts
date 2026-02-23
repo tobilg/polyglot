@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Schema
  */
-export type Schema = { this: Expression | null, expressions: Array<Expression>, };
+export type Schema = {
+  this: Expression | null;
+  expressions: Array<Expression>;
+};

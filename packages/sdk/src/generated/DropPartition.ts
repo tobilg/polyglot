@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DropPartition
  */
-export type DropPartition = { expressions: Array<Expression>, exists: boolean, };
+export type DropPartition = { expressions: Array<Expression>; exists: boolean };

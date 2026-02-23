@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Unhex
  */
-export type Unhex = { this: Expression, expression: Expression | null, };
+export type Unhex = { this: Expression; expression: Expression | null };

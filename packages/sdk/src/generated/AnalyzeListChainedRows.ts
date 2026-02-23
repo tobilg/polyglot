@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AnalyzeListChainedRows
  */
-export type AnalyzeListChainedRows = { expression: Expression | null, };
+export type AnalyzeListChainedRows = { expression: Expression | null };

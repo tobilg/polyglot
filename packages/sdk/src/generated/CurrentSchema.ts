@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CurrentSchema
  */
-export type CurrentSchema = { this: Expression | null, };
+export type CurrentSchema = { this: Expression | null };

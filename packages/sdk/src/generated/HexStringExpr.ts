@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
  * HexStringExpr - Hex string expression (not literal)
  * BigQuery: converts to FROM_HEX(this)
  */
-export type HexStringExpr = { this: Expression, is_integer: boolean | null, };
+export type HexStringExpr = { this: Expression; is_integer: boolean | null };

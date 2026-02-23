@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * LEAD / LAG function
  */
-export type LeadLagFunc = { this: Expression, offset: Expression | null, default: Expression | null, ignore_nulls: boolean, };
+export type LeadLagFunc = {
+  this: Expression;
+  offset: Expression | null;
+  default: Expression | null;
+  ignore_nulls: boolean;
+};

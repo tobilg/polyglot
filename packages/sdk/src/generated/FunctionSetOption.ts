@@ -4,4 +4,4 @@ import type { FunctionSetValue } from "./FunctionSetValue";
 /**
  * A SET option in CREATE FUNCTION (PostgreSQL)
  */
-export type FunctionSetOption = { name: string, value: FunctionSetValue, };
+export type FunctionSetOption = { name: string; value: FunctionSetValue };

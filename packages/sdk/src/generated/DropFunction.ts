@@ -5,4 +5,9 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP FUNCTION statement
  */
-export type DropFunction = { name: TableRef, parameters: Array<DataType> | null, if_exists: boolean, cascade: boolean, };
+export type DropFunction = {
+  name: TableRef;
+  parameters: Array<DataType> | null;
+  if_exists: boolean;
+  cascade: boolean;
+};

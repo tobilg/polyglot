@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
  * PIVOT alias for aliasing pivot expressions
  * The alias can be an identifier or an expression (for Oracle/BigQuery string concatenation aliases)
  */
-export type PivotAlias = { this: Expression, alias: Expression, };
+export type PivotAlias = { this: Expression; alias: Expression };

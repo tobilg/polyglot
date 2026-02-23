@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * IndexColumnConstraint
  */
-export type IndexColumnConstraint = { this: Expression | null, expressions: Array<Expression>, kind: string | null, index_type: Expression | null, options: Array<Expression>, expression: Expression | null, granularity: Expression | null, };
+export type IndexColumnConstraint = {
+  this: Expression | null;
+  expressions: Array<Expression>;
+  kind: string | null;
+  index_type: Expression | null;
+  options: Array<Expression>;
+  expression: Expression | null;
+  granularity: Expression | null;
+};

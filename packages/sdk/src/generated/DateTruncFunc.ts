@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
 /**
  * DATE_TRUNC function
  */
-export type DateTruncFunc = { this: Expression, unit: DateTimeField, };
+export type DateTruncFunc = { this: Expression; unit: DateTimeField };

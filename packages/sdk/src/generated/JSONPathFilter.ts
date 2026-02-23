@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONPathFilter
  */
-export type JSONPathFilter = { this: Expression, };
+export type JSONPathFilter = { this: Expression };

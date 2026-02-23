@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * WithTableHint
  */
-export type WithTableHint = { expressions: Array<Expression>, };
+export type WithTableHint = { expressions: Array<Expression> };

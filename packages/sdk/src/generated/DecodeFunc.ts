@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * DECODE function (Oracle style)
  */
-export type DecodeFunc = { this: Expression, search_results: Array<[Expression, Expression]>, default: Expression | null, };
+export type DecodeFunc = {
+  this: Expression;
+  search_results: Array<[Expression, Expression]>;
+  default: Expression | null;
+};

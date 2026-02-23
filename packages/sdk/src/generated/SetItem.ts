@@ -4,20 +4,21 @@ import type { Expression } from "./Expression";
 /**
  * A single SET item (variable assignment)
  */
-export type SetItem = { 
-/**
- * The variable name
- */
-name: Expression, 
-/**
- * The value to set
- */
-value: Expression, 
-/**
- * Kind: None for plain SET, Some("GLOBAL") for SET GLOBAL, etc.
- */
-kind: string | null, 
-/**
- * Whether the SET item was parsed without an = sign (TSQL: SET KEY VALUE)
- */
-no_equals?: boolean, };
+export type SetItem = {
+  /**
+   * The variable name
+   */
+  name: Expression;
+  /**
+   * The value to set
+   */
+  value: Expression;
+  /**
+   * Kind: None for plain SET, Some("GLOBAL") for SET GLOBAL, etc.
+   */
+  kind: string | null;
+  /**
+   * Whether the SET item was parsed without an = sign (TSQL: SET KEY VALUE)
+   */
+  no_equals?: boolean;
+};

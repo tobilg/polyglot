@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * IS NULL predicate
  */
-export type IsNull = { this: Expression, not: boolean, 
-/**
- * Whether this was the postfix form (ISNULL/NOTNULL) vs standard (IS NULL/IS NOT NULL)
- */
-postfix_form: boolean, };
+export type IsNull = {
+  this: Expression;
+  not: boolean;
+  /**
+   * Whether this was the postfix form (ISNULL/NOTNULL) vs standard (IS NULL/IS NOT NULL)
+   */
+  postfix_form: boolean;
+};

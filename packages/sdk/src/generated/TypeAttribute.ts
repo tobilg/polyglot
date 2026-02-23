@@ -5,4 +5,8 @@ import type { Identifier } from "./Identifier";
 /**
  * Type attribute for composite types
  */
-export type TypeAttribute = { name: Identifier, data_type: DataType, collate: Identifier | null, };
+export type TypeAttribute = {
+  name: Identifier;
+  data_type: DataType;
+  collate: Identifier | null;
+};

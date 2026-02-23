@@ -3,4 +3,10 @@
 /**
  * Pseudocolumn type
  */
-export type PseudocolumnType = "Rownum" | "Rowid" | "Level" | "Sysdate" | "ObjectId" | "ObjectValue";
+export type PseudocolumnType =
+  | "Rownum"
+  | "Rowid"
+  | "Level"
+  | "Sysdate"
+  | "ObjectId"
+  | "ObjectValue";

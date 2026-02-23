@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * LikeProperty
  */
-export type LikeProperty = { this: Expression, expressions: Array<Expression>, };
+export type LikeProperty = { this: Expression; expressions: Array<Expression> };

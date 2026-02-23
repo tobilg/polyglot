@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * Index
  */
-export type Index = { this: Expression | null, table: Expression | null, unique: boolean, primary: Expression | null, amp: Expression | null, params: Array<Expression>, };
+export type Index = {
+  this: Expression | null;
+  table: Expression | null;
+  unique: boolean;
+  primary: Expression | null;
+  amp: Expression | null;
+  params: Array<Expression>;
+};

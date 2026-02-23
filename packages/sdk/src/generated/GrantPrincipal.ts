@@ -4,16 +4,17 @@ import type { Identifier } from "./Identifier";
 /**
  * Principal in GRANT/REVOKE (user, role, etc.)
  */
-export type GrantPrincipal = { 
-/**
- * The name of the principal
- */
-name: Identifier, 
-/**
- * Whether prefixed with ROLE keyword
- */
-is_role: boolean, 
-/**
- * Whether prefixed with GROUP keyword (Redshift)
- */
-is_group: boolean, };
+export type GrantPrincipal = {
+  /**
+   * The name of the principal
+   */
+  name: Identifier;
+  /**
+   * Whether prefixed with ROLE keyword
+   */
+  is_role: boolean;
+  /**
+   * Whether prefixed with GROUP keyword (Redshift)
+   */
+  is_group: boolean;
+};

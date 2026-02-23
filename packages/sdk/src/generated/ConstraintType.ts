@@ -3,4 +3,21 @@
 /**
  * Type of column constraint for tracking order
  */
-export type ConstraintType = "NotNull" | "Null" | "PrimaryKey" | "Unique" | "Default" | "AutoIncrement" | "Collate" | "Comment" | "References" | "Check" | "GeneratedAsIdentity" | "Tags" | "ComputedColumn" | "GeneratedAsRow" | "OnUpdate" | "Path" | "Encode";
+export type ConstraintType =
+  | "NotNull"
+  | "Null"
+  | "PrimaryKey"
+  | "Unique"
+  | "Default"
+  | "AutoIncrement"
+  | "Collate"
+  | "Comment"
+  | "References"
+  | "Check"
+  | "GeneratedAsIdentity"
+  | "Tags"
+  | "ComputedColumn"
+  | "GeneratedAsRow"
+  | "OnUpdate"
+  | "Path"
+  | "Encode";

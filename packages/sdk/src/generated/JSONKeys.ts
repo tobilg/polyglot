@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * JSONKeys
  */
-export type JSONKeys = { this: Expression, expression: Expression | null, expressions: Array<Expression>, };
+export type JSONKeys = {
+  this: Expression;
+  expression: Expression | null;
+  expressions: Array<Expression>;
+};

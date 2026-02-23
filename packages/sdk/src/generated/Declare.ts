@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Declare
  */
-export type Declare = { expressions: Array<Expression>, };
+export type Declare = { expressions: Array<Expression> };

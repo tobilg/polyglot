@@ -4,12 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * Named parameter in EXEC statement: @name=value
  */
-export type ExecuteParameter = { 
-/**
- * Parameter name (including @)
- */
-name: string, 
-/**
- * Parameter value
- */
-value: Expression, };
+export type ExecuteParameter = {
+  /**
+   * Parameter name (including @)
+   */
+  name: string;
+  /**
+   * Parameter value
+   */
+  value: Expression;
+};

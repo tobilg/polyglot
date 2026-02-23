@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Export
  */
-export type Export = { this: Expression, connection: Expression | null, options: Array<Expression>, };
+export type Export = {
+  this: Expression;
+  connection: Expression | null;
+  options: Array<Expression>;
+};

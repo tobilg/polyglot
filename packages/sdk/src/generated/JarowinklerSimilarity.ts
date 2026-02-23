@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JarowinklerSimilarity
  */
-export type JarowinklerSimilarity = { this: Expression, expression: Expression, };
+export type JarowinklerSimilarity = {
+  this: Expression;
+  expression: Expression;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PartitionByTruncate
  */
-export type PartitionByTruncate = { this: Expression, expression: Expression, };
+export type PartitionByTruncate = { this: Expression; expression: Expression };

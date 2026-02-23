@@ -3,4 +3,6 @@
 /**
  * The value of a SET option
  */
-export type FunctionSetValue = { "Value": { value: string, use_to: boolean, } } | "FromCurrent";
+export type FunctionSetValue =
+  | { Value: { value: string; use_to: boolean } }
+  | "FromCurrent";

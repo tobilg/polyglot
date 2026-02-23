@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ObjectInsert
  */
-export type ObjectInsert = { this: Expression, key: Expression | null, value: Expression | null, update_flag: Expression | null, };
+export type ObjectInsert = {
+  this: Expression;
+  key: Expression | null;
+  value: Expression | null;
+  update_flag: Expression | null;
+};

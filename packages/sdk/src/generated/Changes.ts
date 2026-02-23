@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Changes
  */
-export type Changes = { information: Expression | null, at_before: Expression | null, end: Expression | null, };
+export type Changes = {
+  information: Expression | null;
+  at_before: Expression | null;
+  end: Expression | null;
+};

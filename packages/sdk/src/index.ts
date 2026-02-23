@@ -410,19 +410,10 @@ export type {
 export { ValidationSeverity, validate } from './validation';
 // Re-export lineage module
 export { getSourceTables, lineage } from './lineage';
-export type {
-  LineageNode,
-  LineageResult,
-  SourceTablesResult,
-} from './lineage';
+export type { LineageNode, LineageResult, SourceTablesResult } from './lineage';
 // Re-export diff module
 export { changesOnly, diff, hasChanges } from './diff';
-export type {
-  DiffEdit,
-  DiffOptions,
-  DiffResult,
-  EditType,
-} from './diff';
+export type { DiffEdit, DiffOptions, DiffResult, EditType } from './diff';
 // Re-export planner module
 export { plan } from './planner';
 export type {

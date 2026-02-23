@@ -10,6 +10,7 @@
         generate-bindings copy-bindings \
         bench-compare bench-rust bench-python \
         playground-dev playground-build playground-preview playground-deploy \
+        fmt \
         bump-version
 
 # =============================================================================
@@ -75,6 +76,7 @@ help:
 	@echo "  make copy-bindings       - Copy bindings from Rust crate to TypeScript SDK"
 	@echo "  make build-wasm          - Build WASM package"
 	@echo "  make build-all           - Build everything"
+	@echo "  make fmt                 - Format all code (Rust + TypeScript SDK)"
 	@echo ""
 	@echo "Playground:"
 	@echo "  make playground-dev         - Run playground dev server"
@@ -340,6 +342,11 @@ build-all: build-wasm
 # =============================================================================
 # Development Workflow
 # =============================================================================
+
+# Format all code (Rust + TypeScript SDK)
+fmt:
+	cargo fmt --all
+	cd packages/sdk && npm run format
 
 # Quick development cycle: check + test
 dev: test-rust-check test-rust

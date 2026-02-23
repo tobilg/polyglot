@@ -6,4 +6,8 @@ import type { TableRef } from "./TableRef";
 /**
  * ALTER INDEX statement
  */
-export type AlterIndex = { name: Identifier, table: TableRef | null, actions: Array<AlterIndexAction>, };
+export type AlterIndex = {
+  name: Identifier;
+  table: TableRef | null;
+  actions: Array<AlterIndexAction>;
+};

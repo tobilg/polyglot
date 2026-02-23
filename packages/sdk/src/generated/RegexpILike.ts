@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * RegexpILike
  */
-export type RegexpILike = { this: Expression, expression: Expression, flag: Expression | null, };
+export type RegexpILike = {
+  this: Expression;
+  expression: Expression;
+  flag: Expression | null;
+};

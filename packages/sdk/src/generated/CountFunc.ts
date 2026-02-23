@@ -4,12 +4,17 @@ import type { Expression } from "./Expression";
 /**
  * COUNT function with optional star
  */
-export type CountFunc = { this: Expression | null, star: boolean, distinct: boolean, filter: Expression | null, 
-/**
- * IGNORE NULLS (true) or RESPECT NULLS (false)
- */
-ignore_nulls?: boolean | null, 
-/**
- * Original function name for case preservation (e.g., "count" or "COUNT")
- */
-original_name?: string | null, };
+export type CountFunc = {
+  this: Expression | null;
+  star: boolean;
+  distinct: boolean;
+  filter: Expression | null;
+  /**
+   * IGNORE NULLS (true) or RESPECT NULLS (false)
+   */
+  ignore_nulls?: boolean | null;
+  /**
+   * Original function name for case preservation (e.g., "count" or "COUNT")
+   */
+  original_name?: string | null;
+};

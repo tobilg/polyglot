@@ -5,4 +5,4 @@ import type { Ordered } from "./Ordered";
  * SORT BY clause (Hive/Spark)
  * Sorts data within each reducer (local sort, not global)
  */
-export type SortBy = { expressions: Array<Ordered>, };
+export type SortBy = { expressions: Array<Ordered> };

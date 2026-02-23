@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JSONObjectAgg
  */
-export type JSONObjectAgg = { expressions: Array<Expression>, null_handling: Expression | null, unique_keys: Expression | null, return_type: Expression | null, encoding: Expression | null, };
+export type JSONObjectAgg = {
+  expressions: Array<Expression>;
+  null_handling: Expression | null;
+  unique_keys: Expression | null;
+  return_type: Expression | null;
+  encoding: Expression | null;
+};

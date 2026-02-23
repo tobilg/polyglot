@@ -4,8 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * TOP clause (SQL Server)
  */
-export type Top = { this: Expression, percent: boolean, with_ties: boolean, 
-/**
- * Whether the expression was parenthesized: TOP (10) vs TOP 10
- */
-parenthesized: boolean, };
+export type Top = {
+  this: Expression;
+  percent: boolean;
+  with_ties: boolean;
+  /**
+   * Whether the expression was parenthesized: TOP (10) vs TOP 10
+   */
+  parenthesized: boolean;
+};

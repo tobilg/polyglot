@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * UnicodeString
  */
-export type UnicodeString = { this: Expression, escape: Expression | null, };
+export type UnicodeString = { this: Expression; escape: Expression | null };

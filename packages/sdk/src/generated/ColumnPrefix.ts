@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ColumnPrefix
  */
-export type ColumnPrefix = { this: Expression, expression: Expression, };
+export type ColumnPrefix = { this: Expression; expression: Expression };

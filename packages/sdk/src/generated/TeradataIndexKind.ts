@@ -3,4 +3,10 @@
 /**
  * Kind of Teradata index
  */
-export type TeradataIndexKind = "NoPrimary" | "Primary" | "PrimaryAmp" | "Unique" | "UniquePrimary" | "Secondary";
+export type TeradataIndexKind =
+  | "NoPrimary"
+  | "Primary"
+  | "PrimaryAmp"
+  | "Unique"
+  | "UniquePrimary"
+  | "Secondary";

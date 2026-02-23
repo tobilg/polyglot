@@ -6,12 +6,13 @@ import type { Expression } from "./Expression";
  * EXEC/EXECUTE statement (TSQL stored procedure call)
  * Syntax: EXEC [schema.]procedure_name [@param=value, ...]
  */
-export type ExecuteStatement = { 
-/**
- * The procedure name (can be qualified: schema.proc_name)
- */
-this: Expression, 
-/**
- * Named parameters: @param=value pairs
- */
-parameters: Array<ExecuteParameter>, };
+export type ExecuteStatement = {
+  /**
+   * The procedure name (can be qualified: schema.proc_name)
+   */
+  this: Expression;
+  /**
+   * Named parameters: @param=value pairs
+   */
+  parameters: Array<ExecuteParameter>;
+};

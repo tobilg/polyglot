@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * Function body
  */
-export type FunctionBody = { "Block": string } | { "StringLiteral": string } | { "Expression": Expression } | { "External": string } | { "Return": Expression } | { "Statements": Array<Expression> } | { "DollarQuoted": { content: string, tag: string | null, } };
+export type FunctionBody =
+  | { Block: string }
+  | { StringLiteral: string }
+  | { Expression: Expression }
+  | { External: string }
+  | { Return: Expression }
+  | { Statements: Array<Expression> }
+  | { DollarQuoted: { content: string; tag: string | null } };

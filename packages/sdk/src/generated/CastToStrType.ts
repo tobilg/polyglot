@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CastToStrType
  */
-export type CastToStrType = { this: Expression, to: Expression | null, };
+export type CastToStrType = { this: Expression; to: Expression | null };

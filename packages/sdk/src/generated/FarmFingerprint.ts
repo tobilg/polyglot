@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * FarmFingerprint
  */
-export type FarmFingerprint = { expressions: Array<Expression>, };
+export type FarmFingerprint = { expressions: Array<Expression> };

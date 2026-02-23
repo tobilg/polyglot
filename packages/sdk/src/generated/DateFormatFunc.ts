@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DATE_FORMAT / FORMAT_DATE function
  */
-export type DateFormatFunc = { this: Expression, format: Expression, };
+export type DateFormatFunc = { this: Expression; format: Expression };

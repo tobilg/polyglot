@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Ntile
  */
-export type Ntile = { this: Expression | null, };
+export type Ntile = { this: Expression | null };

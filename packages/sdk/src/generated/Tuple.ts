@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Tuple expression
  */
-export type Tuple = { expressions: Array<Expression>, };
+export type Tuple = { expressions: Array<Expression> };

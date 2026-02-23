@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Oracle CONNECT_BY_ROOT function - returns root row's column value
  */
-export type ConnectByRoot = { this: Expression, };
+export type ConnectByRoot = { this: Expression };

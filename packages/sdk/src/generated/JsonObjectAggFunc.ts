@@ -5,4 +5,9 @@ import type { JsonNullHandling } from "./JsonNullHandling";
 /**
  * JSON_OBJECTAGG function
  */
-export type JsonObjectAggFunc = { key: Expression, value: Expression, null_handling: JsonNullHandling | null, filter: Expression | null, };
+export type JsonObjectAggFunc = {
+  key: Expression;
+  value: Expression;
+  null_handling: JsonNullHandling | null;
+  filter: Expression | null;
+};

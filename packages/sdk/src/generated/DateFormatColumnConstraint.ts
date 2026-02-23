@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DateFormatColumnConstraint
  */
-export type DateFormatColumnConstraint = { this: Expression, };
+export type DateFormatColumnConstraint = { this: Expression };

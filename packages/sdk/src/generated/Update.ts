@@ -12,44 +12,49 @@ import type { With } from "./With";
 /**
  * UPDATE statement
  */
-export type Update = { table: TableRef, 
-/**
- * Additional tables for multi-table UPDATE (MySQL syntax)
- */
-extra_tables: Array<TableRef>, 
-/**
- * JOINs attached to the table list (MySQL multi-table syntax)
- */
-table_joins: Array<Join>, set: Array<[Identifier, Expression]>, from_clause: From | null, 
-/**
- * JOINs after FROM clause (PostgreSQL, Snowflake, SQL Server syntax)
- */
-from_joins: Array<Join>, where_clause: Where | null, 
-/**
- * RETURNING clause (PostgreSQL, SQLite)
- */
-returning: Array<Expression>, 
-/**
- * OUTPUT clause (TSQL)
- */
-output: OutputClause | null, 
-/**
- * WITH clause (CTEs)
- */
-with: With | null, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, 
-/**
- * LIMIT clause (MySQL)
- */
-limit: Expression | null, 
-/**
- * ORDER BY clause (MySQL)
- */
-order_by: OrderBy | null, 
-/**
- * Whether FROM clause appears before SET (Snowflake syntax)
- */
-from_before_set: boolean, };
+export type Update = {
+  table: TableRef;
+  /**
+   * Additional tables for multi-table UPDATE (MySQL syntax)
+   */
+  extra_tables: Array<TableRef>;
+  /**
+   * JOINs attached to the table list (MySQL multi-table syntax)
+   */
+  table_joins: Array<Join>;
+  set: Array<[Identifier, Expression]>;
+  from_clause: From | null;
+  /**
+   * JOINs after FROM clause (PostgreSQL, Snowflake, SQL Server syntax)
+   */
+  from_joins: Array<Join>;
+  where_clause: Where | null;
+  /**
+   * RETURNING clause (PostgreSQL, SQLite)
+   */
+  returning: Array<Expression>;
+  /**
+   * OUTPUT clause (TSQL)
+   */
+  output: OutputClause | null;
+  /**
+   * WITH clause (CTEs)
+   */
+  with: With | null;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+  /**
+   * LIMIT clause (MySQL)
+   */
+  limit: Expression | null;
+  /**
+   * ORDER BY clause (MySQL)
+   */
+  order_by: OrderBy | null;
+  /**
+   * Whether FROM clause appears before SET (Snowflake syntax)
+   */
+  from_before_set: boolean;
+};

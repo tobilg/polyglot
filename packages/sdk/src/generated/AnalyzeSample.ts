@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AnalyzeSample
  */
-export type AnalyzeSample = { kind: string, sample: Expression | null, };
+export type AnalyzeSample = { kind: string; sample: Expression | null };

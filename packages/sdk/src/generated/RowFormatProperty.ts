@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * RowFormatProperty
  */
-export type RowFormatProperty = { this: Expression, };
+export type RowFormatProperty = { this: Expression };

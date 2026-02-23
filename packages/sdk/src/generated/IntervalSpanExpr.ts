@@ -5,12 +5,13 @@ import type { Expression } from "./Expression";
  * Expression-based interval span for Oracle (e.g., DAY(9) TO SECOND(3))
  * Unlike IntervalSpan, this uses expressions to represent units with optional precision
  */
-export type IntervalSpanExpr = { 
-/**
- * Start unit expression (e.g., Var("DAY") or Anonymous("DAY", [9]))
- */
-this: Expression, 
-/**
- * End unit expression (e.g., Var("SECOND") or Anonymous("SECOND", [3]))
- */
-expression: Expression, };
+export type IntervalSpanExpr = {
+  /**
+   * Start unit expression (e.g., Var("DAY") or Anonymous("DAY", [9]))
+   */
+  this: Expression;
+  /**
+   * End unit expression (e.g., Var("SECOND") or Anonymous("SECOND", [3]))
+   */
+  expression: Expression;
+};

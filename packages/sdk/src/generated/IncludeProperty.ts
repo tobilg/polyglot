@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * IncludeProperty
  */
-export type IncludeProperty = { this: Expression, alias: string | null, column_def: Expression | null, };
+export type IncludeProperty = {
+  this: Expression;
+  alias: string | null;
+  column_def: Expression | null;
+};

@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONCast
  */
-export type JSONCast = { this: Expression, to: DataType, };
+export type JSONCast = { this: Expression; to: DataType };

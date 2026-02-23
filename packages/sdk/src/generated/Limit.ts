@@ -4,12 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * Represent a LIMIT clause that restricts the number of returned rows.
  */
-export type Limit = { 
-/**
- * The limit count expression.
- */
-this: Expression, 
-/**
- * Whether PERCENT modifier is present (DuckDB: LIMIT 10 PERCENT)
- */
-percent?: boolean, };
+export type Limit = {
+  /**
+   * The limit count expression.
+   */
+  this: Expression;
+  /**
+   * Whether PERCENT modifier is present (DuckDB: LIMIT 10 PERCENT)
+   */
+  percent?: boolean;
+};

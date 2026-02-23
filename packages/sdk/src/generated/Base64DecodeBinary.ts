@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Base64DecodeBinary
  */
-export type Base64DecodeBinary = { this: Expression, alphabet: Expression | null, };
+export type Base64DecodeBinary = {
+  this: Expression;
+  alphabet: Expression | null;
+};

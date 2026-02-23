@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SortKeyProperty
  */
-export type SortKeyProperty = { this: Expression, compound: Expression | null, };
+export type SortKeyProperty = { this: Expression; compound: Expression | null };

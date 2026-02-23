@@ -4,8 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * MultitableInserts
  */
-export type MultitableInserts = { expressions: Array<Expression>, kind: string, source: Expression | null, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, };
+export type MultitableInserts = {
+  expressions: Array<Expression>;
+  kind: string;
+  source: Expression | null;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+};

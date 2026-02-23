@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * POSITION/INSTR function
  */
-export type PositionFunc = { substring: Expression, string: Expression, start: Expression | null, };
+export type PositionFunc = {
+  substring: Expression;
+  string: Expression;
+  start: Expression | null;
+};

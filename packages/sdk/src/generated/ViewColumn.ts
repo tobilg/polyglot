@@ -5,8 +5,11 @@ import type { Identifier } from "./Identifier";
 /**
  * View column definition with optional COMMENT and OPTIONS (BigQuery)
  */
-export type ViewColumn = { name: Identifier, comment: string | null, 
-/**
- * BigQuery: OPTIONS (key=value, ...) on column
- */
-options?: Array<Expression>, };
+export type ViewColumn = {
+  name: Identifier;
+  comment: string | null;
+  /**
+   * BigQuery: OPTIONS (key=value, ...) on column
+   */
+  options?: Array<Expression>;
+};

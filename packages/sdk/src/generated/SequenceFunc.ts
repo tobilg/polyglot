@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * SEQUENCE / GENERATE_SERIES function
  */
-export type SequenceFunc = { start: Expression, stop: Expression, step: Expression | null, };
+export type SequenceFunc = {
+  start: Expression;
+  stop: Expression;
+  step: Expression | null;
+};

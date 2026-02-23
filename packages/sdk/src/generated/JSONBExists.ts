@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONBExists
  */
-export type JSONBExists = { this: Expression, path: Expression | null, };
+export type JSONBExists = { this: Expression; path: Expression | null };

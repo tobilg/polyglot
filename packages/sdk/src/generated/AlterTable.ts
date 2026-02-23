@@ -8,28 +8,31 @@ import type { TableRef } from "./TableRef";
 /**
  * ALTER TABLE statement
  */
-export type AlterTable = { name: TableRef, actions: Array<AlterTableAction>, 
-/**
- * IF EXISTS clause
- */
-if_exists: boolean, 
-/**
- * MySQL: ALGORITHM=INPLACE|COPY|DEFAULT|INSTANT
- */
-algorithm?: string | null, 
-/**
- * MySQL: LOCK=NONE|SHARED|DEFAULT|EXCLUSIVE
- */
-lock?: string | null, 
-/**
- * TSQL: WITH CHECK / WITH NOCHECK modifier before ADD CONSTRAINT
- */
-with_check?: string | null, 
-/**
- * Hive: PARTITION clause before actions (e.g., ALTER TABLE x PARTITION(y=z) ADD COLUMN ...)
- */
-partition?: Array<[Identifier, Expression]> | null, 
-/**
- * ClickHouse: ON CLUSTER clause for distributed DDL
- */
-on_cluster?: OnCluster | null, };
+export type AlterTable = {
+  name: TableRef;
+  actions: Array<AlterTableAction>;
+  /**
+   * IF EXISTS clause
+   */
+  if_exists: boolean;
+  /**
+   * MySQL: ALGORITHM=INPLACE|COPY|DEFAULT|INSTANT
+   */
+  algorithm?: string | null;
+  /**
+   * MySQL: LOCK=NONE|SHARED|DEFAULT|EXCLUSIVE
+   */
+  lock?: string | null;
+  /**
+   * TSQL: WITH CHECK / WITH NOCHECK modifier before ADD CONSTRAINT
+   */
+  with_check?: string | null;
+  /**
+   * Hive: PARTITION clause before actions (e.g., ALTER TABLE x PARTITION(y=z) ADD COLUMN ...)
+   */
+  partition?: Array<[Identifier, Expression]> | null;
+  /**
+   * ClickHouse: ON CLUSTER clause for distributed DDL
+   */
+  on_cluster?: OnCluster | null;
+};

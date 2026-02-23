@@ -6,13 +6,16 @@ import type { Identifier } from "./Identifier";
 /**
  * Lambda expression
  */
-export type LambdaExpr = { parameters: Array<Identifier>, body: Expression, 
-/**
- * True if using DuckDB's LAMBDA x : expr syntax (vs x -> expr)
- */
-colon: boolean, 
-/**
- * Optional type annotations for parameters (Snowflake: a int -> a + 1)
- * Maps parameter index to data type
- */
-parameter_types: Array<DataType | null>, };
+export type LambdaExpr = {
+  parameters: Array<Identifier>;
+  body: Expression;
+  /**
+   * True if using DuckDB's LAMBDA x : expr syntax (vs x -> expr)
+   */
+  colon: boolean;
+  /**
+   * Optional type annotations for parameters (Snowflake: a int -> a + 1)
+   * Maps parameter index to data type
+   */
+  parameter_types: Array<DataType | null>;
+};

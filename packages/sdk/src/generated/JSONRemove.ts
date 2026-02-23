@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONRemove
  */
-export type JSONRemove = { this: Expression, expressions: Array<Expression>, };
+export type JSONRemove = { this: Expression; expressions: Array<Expression> };

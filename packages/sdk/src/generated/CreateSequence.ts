@@ -6,16 +6,27 @@ import type { TableRef } from "./TableRef";
 /**
  * CREATE SEQUENCE statement
  */
-export type CreateSequence = { name: TableRef, if_not_exists: boolean, temporary: boolean, increment: bigint | null, minvalue: SequenceBound | null, maxvalue: SequenceBound | null, start: bigint | null, cache: bigint | null, cycle: boolean, owned_by: TableRef | null, 
-/**
- * Snowflake: ORDER or NOORDER (true = ORDER, false = NOORDER, None = not specified)
- */
-order: boolean | null, 
-/**
- * Snowflake: COMMENT = 'value'
- */
-comment: string | null, 
-/**
- * Tracks the order in which properties appeared in the source
- */
-property_order: Array<SeqPropKind>, };
+export type CreateSequence = {
+  name: TableRef;
+  if_not_exists: boolean;
+  temporary: boolean;
+  increment: bigint | null;
+  minvalue: SequenceBound | null;
+  maxvalue: SequenceBound | null;
+  start: bigint | null;
+  cache: bigint | null;
+  cycle: boolean;
+  owned_by: TableRef | null;
+  /**
+   * Snowflake: ORDER or NOORDER (true = ORDER, false = NOORDER, None = not specified)
+   */
+  order: boolean | null;
+  /**
+   * Snowflake: COMMENT = 'value'
+   */
+  comment: string | null;
+  /**
+   * Tracks the order in which properties appeared in the source
+   */
+  property_order: Array<SeqPropKind>;
+};

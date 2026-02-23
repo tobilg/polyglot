@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ArraySum
  */
-export type ArraySum = { this: Expression, expression: Expression | null, };
+export type ArraySum = { this: Expression; expression: Expression | null };

@@ -4,4 +4,15 @@ import type { Expression } from "./Expression";
 /**
  * AlterColumn
  */
-export type AlterColumn = { this: Expression, dtype: Expression | null, collate: Expression | null, using: Expression | null, default: Expression | null, drop: Expression | null, comment: Expression | null, allow_null: Expression | null, visible: Expression | null, rename_to: Expression | null, };
+export type AlterColumn = {
+  this: Expression;
+  dtype: Expression | null;
+  collate: Expression | null;
+  using: Expression | null;
+  default: Expression | null;
+  drop: Expression | null;
+  comment: Expression | null;
+  allow_null: Expression | null;
+  visible: Expression | null;
+  rename_to: Expression | null;
+};

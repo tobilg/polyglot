@@ -4,24 +4,25 @@ import type { Expression } from "./Expression";
 /**
  * INTO clause for SELECT INTO statements
  */
-export type SelectInto = { 
-/**
- * Target table or variable (used when single target)
- */
-this: Expression, 
-/**
- * Whether TEMPORARY keyword was used
- */
-temporary: boolean, 
-/**
- * Whether UNLOGGED keyword was used (PostgreSQL)
- */
-unlogged: boolean, 
-/**
- * Whether BULK COLLECT INTO was used (Oracle PL/SQL)
- */
-bulk_collect: boolean, 
-/**
- * Multiple target variables (Oracle PL/SQL: BULK COLLECT INTO v1, v2)
- */
-expressions?: Array<Expression>, };
+export type SelectInto = {
+  /**
+   * Target table or variable (used when single target)
+   */
+  this: Expression;
+  /**
+   * Whether TEMPORARY keyword was used
+   */
+  temporary: boolean;
+  /**
+   * Whether UNLOGGED keyword was used (PostgreSQL)
+   */
+  unlogged: boolean;
+  /**
+   * Whether BULK COLLECT INTO was used (Oracle PL/SQL)
+   */
+  bulk_collect: boolean;
+  /**
+   * Multiple target variables (Oracle PL/SQL: BULK COLLECT INTO v1, v2)
+   */
+  expressions?: Array<Expression>;
+};

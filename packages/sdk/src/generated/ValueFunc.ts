@@ -4,8 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * FIRST_VALUE / LAST_VALUE function
  */
-export type ValueFunc = { this: Expression, 
-/**
- * None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
- */
-ignore_nulls?: boolean | null, };
+export type ValueFunc = {
+  this: Expression;
+  /**
+   * None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
+   */
+  ignore_nulls?: boolean | null;
+};

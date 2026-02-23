@@ -5,16 +5,17 @@ import type { Expression } from "./Expression";
  * RowsFrom - PostgreSQL ROWS FROM (func1(args) AS alias1(...), func2(args) AS alias2(...)) syntax
  * Used for set-returning functions with typed column definitions
  */
-export type RowsFrom = { 
-/**
- * List of function expressions, each potentially with an alias and typed columns
- */
-expressions: Array<Expression>, 
-/**
- * WITH ORDINALITY modifier
- */
-ordinality: boolean, 
-/**
- * Optional outer alias: ROWS FROM (...) AS alias(col1 type1, col2 type2)
- */
-alias: Expression | null, };
+export type RowsFrom = {
+  /**
+   * List of function expressions, each potentially with an alias and typed columns
+   */
+  expressions: Array<Expression>;
+  /**
+   * WITH ORDINALITY modifier
+   */
+  ordinality: boolean;
+  /**
+   * Optional outer alias: ROWS FROM (...) AS alias(col1 type1, col2 type2)
+   */
+  alias: Expression | null;
+};

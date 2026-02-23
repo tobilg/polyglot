@@ -13,100 +13,108 @@ import type { With } from "./With";
 /**
  * CREATE TABLE statement
  */
-export type CreateTable = { name: TableRef, 
-/**
- * ClickHouse: ON CLUSTER clause for distributed DDL
- */
-on_cluster?: OnCluster | null, columns: Array<ColumnDef>, constraints: Array<TableConstraint>, if_not_exists: boolean, temporary: boolean, or_replace: boolean, 
-/**
- * Table modifier: DYNAMIC, ICEBERG, EXTERNAL, HYBRID (Snowflake)
- */
-table_modifier?: string | null, as_select: Expression | null, 
-/**
- * Whether the AS SELECT was wrapped in parentheses
- */
-as_select_parenthesized: boolean, 
-/**
- * ON COMMIT behavior for temporary tables
- */
-on_commit: OnCommit | null, 
-/**
- * Clone source table (e.g., CREATE TABLE t CLONE source_table)
- */
-clone_source: TableRef | null, 
-/**
- * Time travel AT/BEFORE clause for CLONE (e.g., AT(TIMESTAMP => '...'))
- */
-clone_at_clause?: Expression | null, 
-/**
- * Whether this is a COPY operation (BigQuery) vs CLONE (Snowflake/Databricks)
- */
-is_copy: boolean, 
-/**
- * Whether this is a SHALLOW CLONE (Databricks/Delta Lake)
- */
-shallow_clone: boolean, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, 
-/**
- * WITH properties (e.g., WITH (FORMAT='parquet'))
- */
-with_properties: Array<[string, string]>, 
-/**
- * Teradata: table options after name before columns (comma-separated)
- */
-teradata_post_name_options: Array<string>, 
-/**
- * Teradata: WITH DATA (true) or WITH NO DATA (false) after AS SELECT
- */
-with_data: boolean | null, 
-/**
- * Teradata: AND STATISTICS (true) or AND NO STATISTICS (false)
- */
-with_statistics: boolean | null, 
-/**
- * Teradata: Index specifications (NO PRIMARY INDEX, UNIQUE PRIMARY INDEX, etc.)
- */
-teradata_indexes: Array<TeradataIndex>, 
-/**
- * WITH clause (CTEs) - for CREATE TABLE ... AS WITH ... SELECT ...
- */
-with_cte: With | null, 
-/**
- * Table properties like DEFAULT COLLATE (BigQuery)
- */
-properties: Array<Expression>, 
-/**
- * PostgreSQL PARTITION OF property (e.g., CREATE TABLE t PARTITION OF parent ...)
- */
-partition_of?: Expression | null, 
-/**
- * TSQL: WITH(SYSTEM_VERSIONING=ON(...)) after column definitions
- */
-post_table_properties: Array<Expression>, 
-/**
- * MySQL table options after column definitions (ENGINE=val, AUTO_INCREMENT=val, etc.)
- */
-mysql_table_options: Array<[string, string]>, 
-/**
- * PostgreSQL INHERITS clause: INHERITS (parent1, parent2, ...)
- */
-inherits?: Array<TableRef>, 
-/**
- * TSQL ON filegroup or ON filegroup (partition_column) clause
- */
-on_property?: OnProperty | null, 
-/**
- * Snowflake: COPY GRANTS clause to copy privileges from replaced table
- */
-copy_grants: boolean, 
-/**
- * Snowflake: USING TEMPLATE expression for schema inference
- */
-using_template?: Expression | null, 
-/**
- * StarRocks: ROLLUP (r1(col1, col2), r2(col1))
- */
-rollup?: RollupProperty | null, };
+export type CreateTable = {
+  name: TableRef;
+  /**
+   * ClickHouse: ON CLUSTER clause for distributed DDL
+   */
+  on_cluster?: OnCluster | null;
+  columns: Array<ColumnDef>;
+  constraints: Array<TableConstraint>;
+  if_not_exists: boolean;
+  temporary: boolean;
+  or_replace: boolean;
+  /**
+   * Table modifier: DYNAMIC, ICEBERG, EXTERNAL, HYBRID (Snowflake)
+   */
+  table_modifier?: string | null;
+  as_select: Expression | null;
+  /**
+   * Whether the AS SELECT was wrapped in parentheses
+   */
+  as_select_parenthesized: boolean;
+  /**
+   * ON COMMIT behavior for temporary tables
+   */
+  on_commit: OnCommit | null;
+  /**
+   * Clone source table (e.g., CREATE TABLE t CLONE source_table)
+   */
+  clone_source: TableRef | null;
+  /**
+   * Time travel AT/BEFORE clause for CLONE (e.g., AT(TIMESTAMP => '...'))
+   */
+  clone_at_clause?: Expression | null;
+  /**
+   * Whether this is a COPY operation (BigQuery) vs CLONE (Snowflake/Databricks)
+   */
+  is_copy: boolean;
+  /**
+   * Whether this is a SHALLOW CLONE (Databricks/Delta Lake)
+   */
+  shallow_clone: boolean;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+  /**
+   * WITH properties (e.g., WITH (FORMAT='parquet'))
+   */
+  with_properties: Array<[string, string]>;
+  /**
+   * Teradata: table options after name before columns (comma-separated)
+   */
+  teradata_post_name_options: Array<string>;
+  /**
+   * Teradata: WITH DATA (true) or WITH NO DATA (false) after AS SELECT
+   */
+  with_data: boolean | null;
+  /**
+   * Teradata: AND STATISTICS (true) or AND NO STATISTICS (false)
+   */
+  with_statistics: boolean | null;
+  /**
+   * Teradata: Index specifications (NO PRIMARY INDEX, UNIQUE PRIMARY INDEX, etc.)
+   */
+  teradata_indexes: Array<TeradataIndex>;
+  /**
+   * WITH clause (CTEs) - for CREATE TABLE ... AS WITH ... SELECT ...
+   */
+  with_cte: With | null;
+  /**
+   * Table properties like DEFAULT COLLATE (BigQuery)
+   */
+  properties: Array<Expression>;
+  /**
+   * PostgreSQL PARTITION OF property (e.g., CREATE TABLE t PARTITION OF parent ...)
+   */
+  partition_of?: Expression | null;
+  /**
+   * TSQL: WITH(SYSTEM_VERSIONING=ON(...)) after column definitions
+   */
+  post_table_properties: Array<Expression>;
+  /**
+   * MySQL table options after column definitions (ENGINE=val, AUTO_INCREMENT=val, etc.)
+   */
+  mysql_table_options: Array<[string, string]>;
+  /**
+   * PostgreSQL INHERITS clause: INHERITS (parent1, parent2, ...)
+   */
+  inherits?: Array<TableRef>;
+  /**
+   * TSQL ON filegroup or ON filegroup (partition_column) clause
+   */
+  on_property?: OnProperty | null;
+  /**
+   * Snowflake: COPY GRANTS clause to copy privileges from replaced table
+   */
+  copy_grants: boolean;
+  /**
+   * Snowflake: USING TEMPLATE expression for schema inference
+   */
+  using_template?: Expression | null;
+  /**
+   * StarRocks: ROLLUP (r1(col1, col2), r2(col1))
+   */
+  rollup?: RollupProperty | null;
+};

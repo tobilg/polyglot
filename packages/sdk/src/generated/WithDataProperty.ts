@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * WithDataProperty
  */
-export type WithDataProperty = { no: Expression | null, statistics: Expression | null, };
+export type WithDataProperty = {
+  no: Expression | null;
+  statistics: Expression | null;
+};

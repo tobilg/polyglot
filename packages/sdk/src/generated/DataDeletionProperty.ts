@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * DataDeletionProperty
  */
-export type DataDeletionProperty = { on: Expression, filter_column: Expression | null, retention_period: Expression | null, };
+export type DataDeletionProperty = {
+  on: Expression;
+  filter_column: Expression | null;
+  retention_period: Expression | null;
+};

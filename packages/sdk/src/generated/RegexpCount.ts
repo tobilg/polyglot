@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * RegexpCount
  */
-export type RegexpCount = { this: Expression, expression: Expression, position: Expression | null, parameters: Expression | null, };
+export type RegexpCount = {
+  this: Expression;
+  expression: Expression;
+  position: Expression | null;
+  parameters: Expression | null;
+};

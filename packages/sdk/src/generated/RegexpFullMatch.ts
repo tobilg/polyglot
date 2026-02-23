@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * RegexpFullMatch
  */
-export type RegexpFullMatch = { this: Expression, expression: Expression, options: Array<Expression>, };
+export type RegexpFullMatch = {
+  this: Expression;
+  expression: Expression;
+  options: Array<Expression>;
+};

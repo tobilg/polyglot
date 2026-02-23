@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * QueryOption
  */
-export type QueryOption = { this: Expression, expression: Expression | null, };
+export type QueryOption = { this: Expression; expression: Expression | null };

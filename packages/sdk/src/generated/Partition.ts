@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Partition - represents PARTITION/SUBPARTITION clause
  */
-export type Partition = { expressions: Array<Expression>, subpartition: boolean, };
+export type Partition = {
+  expressions: Array<Expression>;
+  subpartition: boolean;
+};

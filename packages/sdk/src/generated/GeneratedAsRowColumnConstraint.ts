@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * GeneratedAsRowColumnConstraint
  */
-export type GeneratedAsRowColumnConstraint = { start: Expression | null, hidden: Expression | null, };
+export type GeneratedAsRowColumnConstraint = {
+  start: Expression | null;
+  hidden: Expression | null;
+};

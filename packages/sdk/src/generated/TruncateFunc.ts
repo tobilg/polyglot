@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TRUNCATE / TRUNC function
  */
-export type TruncateFunc = { this: Expression, decimals: Expression | null, };
+export type TruncateFunc = { this: Expression; decimals: Expression | null };

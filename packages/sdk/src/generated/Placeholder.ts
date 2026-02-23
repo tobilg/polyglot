@@ -3,4 +3,4 @@
 /**
  * Placeholder expression
  */
-export type Placeholder = { index: number | null, };
+export type Placeholder = { index: number | null };

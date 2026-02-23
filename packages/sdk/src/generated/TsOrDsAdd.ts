@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * TsOrDsAdd
  */
-export type TsOrDsAdd = { this: Expression, expression: Expression, unit: string | null, return_type: Expression | null, };
+export type TsOrDsAdd = {
+  this: Expression;
+  expression: Expression;
+  unit: string | null;
+  return_type: Expression | null;
+};

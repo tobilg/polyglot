@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * LOG function
  */
-export type LogFunc = { this: Expression, base: Expression | null, };
+export type LogFunc = { this: Expression; base: Expression | null };

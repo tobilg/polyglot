@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ArgMax
  */
-export type ArgMax = { this: Expression, expression: Expression, count: Expression | null, };
+export type ArgMax = {
+  this: Expression;
+  expression: Expression;
+  count: Expression | null;
+};

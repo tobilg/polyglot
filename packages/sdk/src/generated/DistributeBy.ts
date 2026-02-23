@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
  * DISTRIBUTE BY clause (Hive/Spark)
  * Controls how rows are distributed across reducers
  */
-export type DistributeBy = { expressions: Array<Expression>, };
+export type DistributeBy = { expressions: Array<Expression> };

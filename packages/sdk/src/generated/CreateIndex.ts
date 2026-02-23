@@ -7,28 +7,35 @@ import type { TableRef } from "./TableRef";
 /**
  * CREATE INDEX statement
  */
-export type CreateIndex = { name: Identifier, table: TableRef, columns: Array<IndexColumn>, unique: boolean, if_not_exists: boolean, using: string | null, 
-/**
- * TSQL CLUSTERED/NONCLUSTERED modifier
- */
-clustered: string | null, 
-/**
- * PostgreSQL CONCURRENTLY modifier
- */
-concurrently: boolean, 
-/**
- * PostgreSQL WHERE clause for partial indexes
- */
-where_clause: Expression | null, 
-/**
- * PostgreSQL INCLUDE columns
- */
-include_columns?: Array<Identifier>, 
-/**
- * TSQL WITH options (e.g., allow_page_locks=on)
- */
-with_options?: Array<[string, string]>, 
-/**
- * TSQL ON filegroup or partition scheme (e.g., ON PRIMARY, ON X([y]))
- */
-on_filegroup: string | null, };
+export type CreateIndex = {
+  name: Identifier;
+  table: TableRef;
+  columns: Array<IndexColumn>;
+  unique: boolean;
+  if_not_exists: boolean;
+  using: string | null;
+  /**
+   * TSQL CLUSTERED/NONCLUSTERED modifier
+   */
+  clustered: string | null;
+  /**
+   * PostgreSQL CONCURRENTLY modifier
+   */
+  concurrently: boolean;
+  /**
+   * PostgreSQL WHERE clause for partial indexes
+   */
+  where_clause: Expression | null;
+  /**
+   * PostgreSQL INCLUDE columns
+   */
+  include_columns?: Array<Identifier>;
+  /**
+   * TSQL WITH options (e.g., allow_page_locks=on)
+   */
+  with_options?: Array<[string, string]>;
+  /**
+   * TSQL ON filegroup or partition scheme (e.g., ON PRIMARY, ON X([y]))
+   */
+  on_filegroup: string | null;
+};

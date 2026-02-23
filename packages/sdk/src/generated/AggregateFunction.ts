@@ -10,32 +10,33 @@ import type { Ordered } from "./Ordered";
  * SQL:2003 FILTER (WHERE ...) clauses, ordered-set aggregates, and
  * IGNORE NULLS / RESPECT NULLS modifiers.
  */
-export type AggregateFunction = { 
-/**
- * The aggregate function name (e.g. "JSON_AGG", "XMLAGG").
- */
-name: string, 
-/**
- * Positional arguments.
- */
-args: Array<Expression>, 
-/**
- * Whether DISTINCT was specified.
- */
-distinct: boolean, 
-/**
- * Optional FILTER (WHERE ...) clause applied to the aggregate.
- */
-filter: Expression | null, 
-/**
- * ORDER BY inside aggregate (e.g., JSON_AGG(x ORDER BY y))
- */
-order_by?: Array<Ordered>, 
-/**
- * LIMIT inside aggregate (e.g., ARRAY_CONCAT_AGG(x LIMIT 2))
- */
-limit?: Expression | null, 
-/**
- * IGNORE NULLS / RESPECT NULLS
- */
-ignore_nulls?: boolean | null, };
+export type AggregateFunction = {
+  /**
+   * The aggregate function name (e.g. "JSON_AGG", "XMLAGG").
+   */
+  name: string;
+  /**
+   * Positional arguments.
+   */
+  args: Array<Expression>;
+  /**
+   * Whether DISTINCT was specified.
+   */
+  distinct: boolean;
+  /**
+   * Optional FILTER (WHERE ...) clause applied to the aggregate.
+   */
+  filter: Expression | null;
+  /**
+   * ORDER BY inside aggregate (e.g., JSON_AGG(x ORDER BY y))
+   */
+  order_by?: Array<Ordered>;
+  /**
+   * LIMIT inside aggregate (e.g., ARRAY_CONCAT_AGG(x LIMIT 2))
+   */
+  limit?: Expression | null;
+  /**
+   * IGNORE NULLS / RESPECT NULLS
+   */
+  ignore_nulls?: boolean | null;
+};

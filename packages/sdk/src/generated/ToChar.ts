@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ToChar
  */
-export type ToChar = { this: Expression, format: string | null, nlsparam: Expression | null, is_numeric: Expression | null, };
+export type ToChar = {
+  this: Expression;
+  format: string | null;
+  nlsparam: Expression | null;
+  is_numeric: Expression | null;
+};

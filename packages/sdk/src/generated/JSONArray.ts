@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * JSONArray
  */
-export type JSONArray = { expressions: Array<Expression>, null_handling: Expression | null, return_type: Expression | null, strict: Expression | null, };
+export type JSONArray = {
+  expressions: Array<Expression>;
+  null_handling: Expression | null;
+  return_type: Expression | null;
+  strict: Expression | null;
+};

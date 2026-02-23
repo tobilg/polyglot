@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ToTableProperty
  */
-export type ToTableProperty = { this: Expression, };
+export type ToTableProperty = { this: Expression };

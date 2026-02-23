@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * StrPosition
  */
-export type StrPosition = { this: Expression, substr: Expression | null, position: Expression | null, occurrence: Expression | null, };
+export type StrPosition = {
+  this: Expression;
+  substr: Expression | null;
+  position: Expression | null;
+  occurrence: Expression | null;
+};

@@ -4,8 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Represent a WHERE clause containing a boolean filter predicate.
  */
-export type Where = { 
-/**
- * The filter predicate expression.
- */
-this: Expression, };
+export type Where = {
+  /**
+   * The filter predicate expression.
+   */
+  this: Expression;
+};

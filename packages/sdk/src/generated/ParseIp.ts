@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ParseIp
  */
-export type ParseIp = { this: Expression, type_: Expression | null, permissive: Expression | null, };
+export type ParseIp = {
+  this: Expression;
+  type_: Expression | null;
+  permissive: Expression | null;
+};

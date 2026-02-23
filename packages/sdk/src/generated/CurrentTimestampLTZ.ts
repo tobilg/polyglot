@@ -3,4 +3,4 @@
 /**
  * CURRENT_TIMESTAMP_LTZ - Snowflake local timezone timestamp
  */
-export type CurrentTimestampLTZ = { precision: number | null, };
+export type CurrentTimestampLTZ = { precision: number | null };

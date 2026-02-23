@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CharacterSetColumnConstraint
  */
-export type CharacterSetColumnConstraint = { this: Expression, };
+export type CharacterSetColumnConstraint = { this: Expression };

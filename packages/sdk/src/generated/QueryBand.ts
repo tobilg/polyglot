@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * QueryBand
  */
-export type QueryBand = { this: Expression, scope: Expression | null, update: Expression | null, };
+export type QueryBand = {
+  this: Expression;
+  scope: Expression | null;
+  update: Expression | null;
+};

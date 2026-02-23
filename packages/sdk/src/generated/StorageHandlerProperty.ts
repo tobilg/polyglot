@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * StorageHandlerProperty
  */
-export type StorageHandlerProperty = { this: Expression, };
+export type StorageHandlerProperty = { this: Expression };

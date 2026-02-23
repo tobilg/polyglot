@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * RenameColumn
  */
-export type RenameColumn = { this: Expression, to: Expression | null, exists: boolean, };
+export type RenameColumn = {
+  this: Expression;
+  to: Expression | null;
+  exists: boolean;
+};

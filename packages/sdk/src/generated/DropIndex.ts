@@ -5,8 +5,12 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP INDEX statement
  */
-export type DropIndex = { name: Identifier, table: TableRef | null, if_exists: boolean, 
-/**
- * PostgreSQL CONCURRENTLY modifier
- */
-concurrently: boolean, };
+export type DropIndex = {
+  name: Identifier;
+  table: TableRef | null;
+  if_exists: boolean;
+  /**
+   * PostgreSQL CONCURRENTLY modifier
+   */
+  concurrently: boolean;
+};

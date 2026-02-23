@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JSON_SET / JSON_INSERT function
  */
-export type JsonModifyFunc = { this: Expression, path_values: Array<[Expression, Expression]>, };
+export type JsonModifyFunc = {
+  this: Expression;
+  path_values: Array<[Expression, Expression]>;
+};

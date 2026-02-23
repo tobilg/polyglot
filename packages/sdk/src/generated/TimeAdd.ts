@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * TimeAdd
  */
-export type TimeAdd = { this: Expression, expression: Expression, unit: string | null, };
+export type TimeAdd = {
+  this: Expression;
+  expression: Expression;
+  unit: string | null;
+};

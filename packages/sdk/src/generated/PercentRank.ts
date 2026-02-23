@@ -5,12 +5,13 @@ import type { Ordered } from "./Ordered";
 /**
  * PERCENT_RANK function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
  */
-export type PercentRank = { 
-/**
- * DuckDB: PERCENT_RANK(ORDER BY col) - order by inside function
- */
-order_by?: Array<Ordered> | null, 
-/**
- * Oracle hypothetical rank: PERCENT_RANK(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
- */
-args?: Array<Expression>, };
+export type PercentRank = {
+  /**
+   * DuckDB: PERCENT_RANK(ORDER BY col) - order by inside function
+   */
+  order_by?: Array<Ordered> | null;
+  /**
+   * Oracle hypothetical rank: PERCENT_RANK(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
+   */
+  args?: Array<Expression>;
+};

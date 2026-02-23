@@ -6,24 +6,27 @@ import type { ViewColumn } from "./ViewColumn";
 /**
  * ALTER VIEW statement
  */
-export type AlterView = { name: TableRef, actions: Array<AlterViewAction>, 
-/**
- * MySQL: ALGORITHM = MERGE|TEMPTABLE|UNDEFINED
- */
-algorithm?: string | null, 
-/**
- * MySQL: DEFINER = 'user'@'host'
- */
-definer?: string | null, 
-/**
- * MySQL: SQL SECURITY = DEFINER|INVOKER
- */
-sql_security?: string | null, 
-/**
- * TSQL: WITH option (SCHEMABINDING, ENCRYPTION, VIEW_METADATA)
- */
-with_option?: string | null, 
-/**
- * Hive: Column aliases with optional comments: (c1 COMMENT 'text', c2)
- */
-columns?: Array<ViewColumn>, };
+export type AlterView = {
+  name: TableRef;
+  actions: Array<AlterViewAction>;
+  /**
+   * MySQL: ALGORITHM = MERGE|TEMPTABLE|UNDEFINED
+   */
+  algorithm?: string | null;
+  /**
+   * MySQL: DEFINER = 'user'@'host'
+   */
+  definer?: string | null;
+  /**
+   * MySQL: SQL SECURITY = DEFINER|INVOKER
+   */
+  sql_security?: string | null;
+  /**
+   * TSQL: WITH option (SCHEMABINDING, ENCRYPTION, VIEW_METADATA)
+   */
+  with_option?: string | null;
+  /**
+   * Hive: Column aliases with optional comments: (c1 COMMENT 'text', c2)
+   */
+  columns?: Array<ViewColumn>;
+};

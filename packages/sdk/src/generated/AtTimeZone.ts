@@ -4,12 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * AT TIME ZONE expression for timezone conversion
  */
-export type AtTimeZone = { 
-/**
- * The expression to convert
- */
-this: Expression, 
-/**
- * The target timezone
- */
-zone: Expression, };
+export type AtTimeZone = {
+  /**
+   * The expression to convert
+   */
+  this: Expression;
+  /**
+   * The target timezone
+   */
+  zone: Expression;
+};

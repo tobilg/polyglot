@@ -8,8 +8,9 @@ import type { Expression } from "./Expression";
  * typically references a window function (e.g.
  * `QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1`).
  */
-export type Qualify = { 
-/**
- * The filter predicate over window function results.
- */
-this: Expression, };
+export type Qualify = {
+  /**
+   * The filter predicate over window function results.
+   */
+  this: Expression;
+};

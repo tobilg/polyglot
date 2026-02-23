@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * GrantPrivilege
  */
-export type GrantPrivilege = { this: Expression, expressions: Array<Expression>, };
+export type GrantPrivilege = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

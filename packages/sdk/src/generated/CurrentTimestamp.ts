@@ -3,8 +3,10 @@
 /**
  * CURRENT_TIMESTAMP
  */
-export type CurrentTimestamp = { precision: number | null, 
-/**
- * If true, generate SYSDATE instead of CURRENT_TIMESTAMP (Oracle-specific)
- */
-sysdate: boolean, };
+export type CurrentTimestamp = {
+  precision: number | null;
+  /**
+   * If true, generate SYSDATE instead of CURRENT_TIMESTAMP (Oracle-specific)
+   */
+  sysdate: boolean;
+};

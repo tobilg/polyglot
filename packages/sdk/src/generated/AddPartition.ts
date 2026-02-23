@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * AddPartition
  */
-export type AddPartition = { this: Expression, exists: boolean, location: Expression | null, };
+export type AddPartition = {
+  this: Expression;
+  exists: boolean;
+  location: Expression | null;
+};

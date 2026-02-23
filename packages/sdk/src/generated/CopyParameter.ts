@@ -4,8 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * COPY parameter (e.g., FILE_FORMAT = CSV or FORMAT PARQUET)
  */
-export type CopyParameter = { name: string, value: Expression | null, values: Array<Expression>, 
-/**
- * Whether the parameter used = sign (TSQL: KEY = VALUE vs DuckDB: KEY VALUE)
- */
-eq: boolean, };
+export type CopyParameter = {
+  name: string;
+  value: Expression | null;
+  values: Array<Expression>;
+  /**
+   * Whether the parameter used = sign (TSQL: KEY = VALUE vs DuckDB: KEY VALUE)
+   */
+  eq: boolean;
+};

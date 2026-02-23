@@ -4,4 +4,4 @@ import type { RollupIndex } from "./RollupIndex";
 /**
  * RollupProperty - StarRocks ROLLUP (index_name(col1, col2), ...)
  */
-export type RollupProperty = { expressions: Array<RollupIndex>, };
+export type RollupProperty = { expressions: Array<RollupIndex> };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Subscript access (array[index] or map[key])
  */
-export type Subscript = { this: Expression, index: Expression, };
+export type Subscript = { this: Expression; index: Expression };

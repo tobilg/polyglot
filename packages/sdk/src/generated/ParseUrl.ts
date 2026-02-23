@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ParseUrl
  */
-export type ParseUrl = { this: Expression, part_to_extract: Expression | null, key: Expression | null, permissive: Expression | null, };
+export type ParseUrl = {
+  this: Expression;
+  part_to_extract: Expression | null;
+  key: Expression | null;
+  permissive: Expression | null;
+};

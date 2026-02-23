@@ -333,10 +333,11 @@ impl std::str::FromStr for DialectType {
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
-            _ => Err(crate::error::Error::parse(format!(
-                "Unknown dialect: {}",
-                s
-            ), 0, 0)),
+            _ => Err(crate::error::Error::parse(
+                format!("Unknown dialect: {}", s),
+                0,
+                0,
+            )),
         }
     }
 }
@@ -586,7 +587,8 @@ where
                         Expression::Join(j) => Ok(*j),
                         _ => Err(crate::error::Error::parse(
                             "Join transformation returned non-join expression",
-                            0, 0,
+                            0,
+                            0,
                         )),
                     }
                 })
@@ -722,7 +724,8 @@ where
                         Expression::Ordered(transformed) => Ok(*transformed),
                         _ => Err(crate::error::Error::parse(
                             "Ordered transformation returned non-Ordered expression",
-                            0, 0,
+                            0,
+                            0,
                         )),
                     }
                 })
@@ -1728,10 +1731,14 @@ impl CustomDialectBuilder {
     pub fn register(self) -> Result<()> {
         // Reject names that collide with built-in dialects
         if DialectType::from_str(&self.name).is_ok() {
-            return Err(crate::error::Error::parse(format!(
-                "Cannot register custom dialect '{}': name collides with built-in dialect",
-                self.name
-            ), 0, 0));
+            return Err(crate::error::Error::parse(
+                format!(
+                    "Cannot register custom dialect '{}': name collides with built-in dialect",
+                    self.name
+                ),
+                0,
+                0,
+            ));
         }
 
         // Get base configs
@@ -1767,10 +1774,11 @@ fn register_custom_dialect(config: CustomDialectConfig) -> Result<()> {
         .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0))?;
 
     if registry.contains_key(&config.name) {
-        return Err(crate::error::Error::parse(format!(
-            "Custom dialect '{}' is already registered",
-            config.name
-        ), 0, 0));
+        return Err(crate::error::Error::parse(
+            format!("Custom dialect '{}' is already registered", config.name),
+            0,
+            0,
+        ));
     }
 
     registry.insert(config.name.clone(), Arc::new(config));
@@ -2245,7 +2253,8 @@ impl Dialect {
         {
             return Err(crate::error::Error::parse(
                 "Cross-dialect transpilation not available in this build",
-                0, 0,
+                0,
+                0,
             ));
         }
 
@@ -2563,7 +2572,6 @@ impl Dialect {
             })
             .collect()
     }
-
 }
 
 // Transpile-only methods: cross-dialect normalization and helpers
@@ -6257,23 +6265,23 @@ impl Dialect {
                                 | DialectType::ClickHouse
                                 | DialectType::Doris
                         ) && matches!(
-                                target,
-                                DialectType::PostgreSQL
-                                    | DialectType::Redshift
-                                    | DialectType::Drill
-                                    | DialectType::Trino
-                                    | DialectType::Presto
-                                    | DialectType::Athena
-                                    | DialectType::TSQL
-                                    | DialectType::Teradata
-                                    | DialectType::SQLite
-                                    | DialectType::BigQuery
-                                    | DialectType::Snowflake
-                                    | DialectType::Databricks
-                                    | DialectType::Oracle
-                                    | DialectType::Materialize
-                                    | DialectType::RisingWave
-                            ) =>
+                            target,
+                            DialectType::PostgreSQL
+                                | DialectType::Redshift
+                                | DialectType::Drill
+                                | DialectType::Trino
+                                | DialectType::Presto
+                                | DialectType::Athena
+                                | DialectType::TSQL
+                                | DialectType::Teradata
+                                | DialectType::SQLite
+                                | DialectType::BigQuery
+                                | DialectType::Snowflake
+                                | DialectType::Databricks
+                                | DialectType::Oracle
+                                | DialectType::Materialize
+                                | DialectType::RisingWave
+                        ) =>
                     {
                         // Only wrap if RHS is not already NULLIF
                         if !matches!(&op.right, Expression::Function(f) if f.name.eq_ignore_ascii_case("NULLIF"))
@@ -17815,19 +17823,17 @@ impl Dialect {
                             DialectType::Drill
                             | DialectType::Trino
                             | DialectType::Presto
-                            | DialectType::Athena => {
-                                Expression::Cast(Box::new(Cast {
-                                    this: left,
-                                    to: DataType::Double {
-                                        precision: None,
-                                        scale: None,
-                                    },
-                                    trailing_comments: Vec::new(),
-                                    double_colon_syntax: false,
-                                    format: None,
-                                    default: None,
-                                }))
-                            }
+                            | DialectType::Athena => Expression::Cast(Box::new(Cast {
+                                this: left,
+                                to: DataType::Double {
+                                    precision: None,
+                                    scale: None,
+                                },
+                                trailing_comments: Vec::new(),
+                                double_colon_syntax: false,
+                                format: None,
+                                default: None,
+                            })),
                             DialectType::TSQL => Expression::Cast(Box::new(Cast {
                                 this: left,
                                 to: DataType::Float {
@@ -22409,9 +22415,7 @@ impl Dialect {
                     fn is_decode_literal(e: &Expression) -> bool {
                         matches!(
                             e,
-                            Expression::Literal(_)
-                                | Expression::Boolean(_)
-                                | Expression::Neg(_)
+                            Expression::Literal(_) | Expression::Boolean(_) | Expression::Neg(_)
                         )
                     }
 
@@ -22432,7 +22436,9 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                         }));
                                         (condition, result)
-                                    } else if is_decode_literal(&search) || is_decode_literal(&this_expr) {
+                                    } else if is_decode_literal(&search)
+                                        || is_decode_literal(&this_expr)
+                                    {
                                         // At least one side is a literal -> simple equality (no NULL check needed)
                                         let eq = Expression::Eq(Box::new(BinaryOp {
                                             left: this_expr.clone(),
@@ -31523,7 +31529,8 @@ mod tests {
             .transpile_to("SELECT decode(col, NULL, 3, 4) FROM t", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
-            result[0], "SELECT CASE WHEN col IS NULL THEN 3 ELSE 4 END FROM t",
+            result[0],
+            "SELECT CASE WHEN col IS NULL THEN 3 ELSE 4 END FROM t",
         );
     }
 }

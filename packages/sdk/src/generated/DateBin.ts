@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * DateBin
  */
-export type DateBin = { this: Expression, expression: Expression, unit: string | null, zone: Expression | null, origin: Expression | null, };
+export type DateBin = {
+  this: Expression;
+  expression: Expression;
+  unit: string | null;
+  zone: Expression | null;
+  origin: Expression | null;
+};

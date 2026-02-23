@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * LPAD/RPAD function
  */
-export type PadFunc = { this: Expression, length: Expression, fill: Expression | null, };
+export type PadFunc = {
+  this: Expression;
+  length: Expression;
+  fill: Expression | null;
+};

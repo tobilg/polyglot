@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * SemanticView
  */
-export type SemanticView = { this: Expression, metrics: Expression | null, dimensions: Expression | null, facts: Expression | null, where_: Expression | null, };
+export type SemanticView = {
+  this: Expression;
+  metrics: Expression | null;
+  dimensions: Expression | null;
+  facts: Expression | null;
+  where_: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * AIClassify
  */
-export type AIClassify = { this: Expression, categories: Expression | null, config: Expression | null, };
+export type AIClassify = {
+  this: Expression;
+  categories: Expression | null;
+  config: Expression | null;
+};

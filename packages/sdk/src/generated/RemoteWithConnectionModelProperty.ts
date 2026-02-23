@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * RemoteWithConnectionModelProperty
  */
-export type RemoteWithConnectionModelProperty = { this: Expression, };
+export type RemoteWithConnectionModelProperty = { this: Expression };

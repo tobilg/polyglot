@@ -8,20 +8,21 @@ import type { Identifier } from "./Identifier";
  * Use [`Expression::column()`] or [`Expression::qualified_column()`] for
  * convenient construction.
  */
-export type Column = { 
-/**
- * The column name.
- */
-name: Identifier, 
-/**
- * Optional table qualifier (e.g. `t` in `t.col`).
- */
-table: Identifier | null, 
-/**
- * Oracle-style join marker (+) for outer joins
- */
-join_mark: boolean, 
-/**
- * Trailing comments that appeared after this column reference
- */
-trailing_comments: Array<string>, };
+export type Column = {
+  /**
+   * The column name.
+   */
+  name: Identifier;
+  /**
+   * Optional table qualifier (e.g. `t` in `t.col`).
+   */
+  table: Identifier | null;
+  /**
+   * Oracle-style join marker (+) for outer joins
+   */
+  join_mark: boolean;
+  /**
+   * Trailing comments that appeared after this column reference
+   */
+  trailing_comments: Array<string>;
+};

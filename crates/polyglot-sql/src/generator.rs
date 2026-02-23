@@ -3895,13 +3895,19 @@ impl Generator {
             self.config.dialect,
             Some(DialectType::TSQL) | Some(DialectType::Teradata) | Some(DialectType::Fabric)
         );
+        let keep_top_verbatim = !is_top_dialect
+            && select.limit.is_none()
+            && select
+                .top
+                .as_ref()
+                .map_or(false, |top| top.percent || top.with_ties);
 
         if select.distinct && (is_top_dialect || select.top.is_some()) {
             self.write_space();
             self.write_keyword("DISTINCT");
         }
 
-        if is_top_dialect {
+        if is_top_dialect || keep_top_verbatim {
             if let Some(top) = &select.top {
                 self.write_space();
                 self.write_keyword("TOP");
@@ -13382,8 +13388,7 @@ impl Generator {
                             | Some(DialectType::Hive)
                             | Some(DialectType::Spark)
                             | Some(DialectType::Databricks)
-                    )
-                {
+                    ) {
                     std::borrow::Cow::Owned(n.replace('_', ""))
                 } else {
                     std::borrow::Cow::Borrowed(n.as_str())

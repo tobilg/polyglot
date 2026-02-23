@@ -5,4 +5,6 @@ import type { Identifier } from "./Identifier";
 /**
  * STRUCT constructor
  */
-export type StructConstructor = { fields: Array<[Identifier | null, Expression]>, };
+export type StructConstructor = {
+  fields: Array<[Identifier | null, Expression]>;
+};

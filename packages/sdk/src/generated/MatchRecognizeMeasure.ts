@@ -5,12 +5,13 @@ import type { MatchRecognizeSemantics } from "./MatchRecognizeSemantics";
 /**
  * MEASURES expression with optional RUNNING/FINAL semantics
  */
-export type MatchRecognizeMeasure = { 
-/**
- * The measure expression
- */
-this: Expression, 
-/**
- * RUNNING or FINAL semantics (Snowflake-specific)
- */
-window_frame: MatchRecognizeSemantics | null, };
+export type MatchRecognizeMeasure = {
+  /**
+   * The measure expression
+   */
+  this: Expression;
+  /**
+   * RUNNING or FINAL semantics (Snowflake-specific)
+   */
+  window_frame: MatchRecognizeSemantics | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * DictProperty
  */
-export type DictProperty = { this: Expression, kind: string, settings: Expression | null, };
+export type DictProperty = {
+  this: Expression;
+  kind: string;
+  settings: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * SortArray
  */
-export type SortArray = { this: Expression, asc: Expression | null, nulls_first: Expression | null, };
+export type SortArray = {
+  this: Expression;
+  asc: Expression | null;
+  nulls_first: Expression | null;
+};

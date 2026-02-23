@@ -3,4 +3,15 @@
 /**
  * Sequence property tag for ordering
  */
-export type SeqPropKind = "Start" | "Increment" | "Minvalue" | "Maxvalue" | "Cache" | "Cycle" | "NoCycle" | "OwnedBy" | "Order" | "NoOrder" | "Comment";
+export type SeqPropKind =
+  | "Start"
+  | "Increment"
+  | "Minvalue"
+  | "Maxvalue"
+  | "Cache"
+  | "Cycle"
+  | "NoCycle"
+  | "OwnedBy"
+  | "Order"
+  | "NoOrder"
+  | "Comment";

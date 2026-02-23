@@ -5,4 +5,10 @@ import type { Ordered } from "./Ordered";
 /**
  * GROUP_CONCAT function (MySQL style)
  */
-export type GroupConcatFunc = { this: Expression, separator: Expression | null, order_by: Array<Ordered> | null, distinct: boolean, filter: Expression | null, };
+export type GroupConcatFunc = {
+  this: Expression;
+  separator: Expression | null;
+  order_by: Array<Ordered> | null;
+  distinct: boolean;
+  filter: Expression | null;
+};

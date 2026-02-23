@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Operator
  */
-export type Operator = { this: Expression, operator: Expression | null, expression: Expression, };
+export type Operator = {
+  this: Expression;
+  operator: Expression | null;
+  expression: Expression;
+};

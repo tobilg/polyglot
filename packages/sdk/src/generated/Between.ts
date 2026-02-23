@@ -4,20 +4,21 @@ import type { Expression } from "./Expression";
 /**
  * Represent a BETWEEN predicate (`x BETWEEN low AND high`).
  */
-export type Between = { 
-/**
- * The expression being tested.
- */
-this: Expression, 
-/**
- * The lower bound.
- */
-low: Expression, 
-/**
- * The upper bound.
- */
-high: Expression, 
-/**
- * Whether this is NOT BETWEEN.
- */
-not: boolean, };
+export type Between = {
+  /**
+   * The expression being tested.
+   */
+  this: Expression;
+  /**
+   * The lower bound.
+   */
+  low: Expression;
+  /**
+   * The upper bound.
+   */
+  high: Expression;
+  /**
+   * Whether this is NOT BETWEEN.
+   */
+  not: boolean;
+};

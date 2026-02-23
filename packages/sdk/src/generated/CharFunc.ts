@@ -6,8 +6,11 @@ import type { Expression } from "./Expression";
  * e.g., CHAR(77, 77.3, '77.3' USING utf8mb4)
  * e.g., CHR(187 USING NCHAR_CS) -- Oracle
  */
-export type CharFunc = { args: Array<Expression>, charset?: string | null, 
-/**
- * Original function name (CHAR or CHR), defaults to CHAR
- */
-name?: string | null, };
+export type CharFunc = {
+  args: Array<Expression>;
+  charset?: string | null;
+  /**
+   * Original function name (CHAR or CHR), defaults to CHAR
+   */
+  name?: string | null;
+};

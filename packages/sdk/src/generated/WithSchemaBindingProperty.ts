@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * WithSchemaBindingProperty
  */
-export type WithSchemaBindingProperty = { this: Expression, };
+export type WithSchemaBindingProperty = { this: Expression };

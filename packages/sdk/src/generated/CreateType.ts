@@ -5,4 +5,8 @@ import type { TypeDefinition } from "./TypeDefinition";
 /**
  * CREATE TYPE statement
  */
-export type CreateType = { name: TableRef, definition: TypeDefinition, if_not_exists: boolean, };
+export type CreateType = {
+  name: TableRef;
+  definition: TypeDefinition;
+  if_not_exists: boolean;
+};

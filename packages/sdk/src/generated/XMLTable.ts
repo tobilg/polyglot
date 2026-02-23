@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * XMLTable
  */
-export type XMLTable = { this: Expression, namespaces: Expression | null, passing: Expression | null, columns: Array<Expression>, by_ref: Expression | null, };
+export type XMLTable = {
+  this: Expression;
+  namespaces: Expression | null;
+  passing: Expression | null;
+  columns: Array<Expression>;
+  by_ref: Expression | null;
+};

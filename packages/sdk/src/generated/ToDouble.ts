@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ToDouble
  */
-export type ToDouble = { this: Expression, format: string | null, safe: Expression | null, };
+export type ToDouble = {
+  this: Expression;
+  format: string | null;
+  safe: Expression | null;
+};

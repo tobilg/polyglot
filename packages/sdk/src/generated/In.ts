@@ -7,24 +7,26 @@ import type { Expression } from "./Expression";
  * Either `expressions` (a value list) or `query` (a subquery) is populated,
  * but not both. When `not` is true, the predicate is `NOT IN`.
  */
-export type In = { 
-/**
- * The expression being tested.
- */
-this: Expression, 
-/**
- * The value list (mutually exclusive with `query`).
- */
-expressions: Array<Expression>, 
-/**
- * A subquery (mutually exclusive with `expressions`).
- */
-query: Expression | null, 
-/**
- * Whether this is NOT IN.
- */
-not: boolean, global?: boolean, 
-/**
- * BigQuery: IN UNNEST(expr)
- */
-unnest?: Expression | null, };
+export type In = {
+  /**
+   * The expression being tested.
+   */
+  this: Expression;
+  /**
+   * The value list (mutually exclusive with `query`).
+   */
+  expressions: Array<Expression>;
+  /**
+   * A subquery (mutually exclusive with `expressions`).
+   */
+  query: Expression | null;
+  /**
+   * Whether this is NOT IN.
+   */
+  not: boolean;
+  global?: boolean;
+  /**
+   * BigQuery: IN UNNEST(expr)
+   */
+  unnest?: Expression | null;
+};

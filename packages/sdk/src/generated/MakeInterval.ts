@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * MakeInterval
  */
-export type MakeInterval = { year: Expression | null, month: Expression | null, week: Expression | null, day: Expression | null, hour: Expression | null, minute: Expression | null, second: Expression | null, };
+export type MakeInterval = {
+  year: Expression | null;
+  month: Expression | null;
+  week: Expression | null;
+  day: Expression | null;
+  hour: Expression | null;
+  minute: Expression | null;
+  second: Expression | null;
+};

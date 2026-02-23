@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * RegexpInstr
  */
-export type RegexpInstr = { this: Expression, expression: Expression, position: Expression | null, occurrence: Expression | null, option: Expression | null, parameters: Expression | null, group: Expression | null, };
+export type RegexpInstr = {
+  this: Expression;
+  expression: Expression;
+  position: Expression | null;
+  occurrence: Expression | null;
+  option: Expression | null;
+  parameters: Expression | null;
+  group: Expression | null;
+};

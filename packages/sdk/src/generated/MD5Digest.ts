@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * MD5Digest
  */
-export type MD5Digest = { this: Expression, expressions: Array<Expression>, };
+export type MD5Digest = { this: Expression; expressions: Array<Expression> };

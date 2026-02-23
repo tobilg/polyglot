@@ -482,10 +482,7 @@ export function findAncestor(
  *
  * Uses reference equality (`===`) to identify the target.
  */
-export function getNodeDepth(
-  root: Expression,
-  target: Expression,
-): number {
+export function getNodeDepth(root: Expression, target: Expression): number {
   let depth = 0;
   let currentDepth = 0;
 

@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * IndexConstraintOption
  */
-export type IndexConstraintOption = { key_block_size: Expression | null, using: Expression | null, parser: Expression | null, comment: Expression | null, visible: Expression | null, engine_attr: Expression | null, secondary_engine_attr: Expression | null, };
+export type IndexConstraintOption = {
+  key_block_size: Expression | null;
+  using: Expression | null;
+  parser: Expression | null;
+  comment: Expression | null;
+  visible: Expression | null;
+  engine_attr: Expression | null;
+  secondary_engine_attr: Expression | null;
+};

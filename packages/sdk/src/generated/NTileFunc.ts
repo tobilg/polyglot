@@ -5,12 +5,13 @@ import type { Ordered } from "./Ordered";
 /**
  * NTILE function (DuckDB allows ORDER BY inside)
  */
-export type NTileFunc = { 
-/**
- * num_buckets is optional to support Databricks NTILE() without arguments
- */
-num_buckets?: Expression | null, 
-/**
- * DuckDB: NTILE(n ORDER BY col) - order by inside function
- */
-order_by?: Array<Ordered> | null, };
+export type NTileFunc = {
+  /**
+   * num_buckets is optional to support Databricks NTILE() without arguments
+   */
+  num_buckets?: Expression | null;
+  /**
+   * DuckDB: NTILE(n ORDER BY col) - order by inside function
+   */
+  order_by?: Array<Ordered> | null;
+};

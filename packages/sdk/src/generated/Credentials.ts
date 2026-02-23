@@ -3,4 +3,8 @@
 /**
  * Credentials for external access (S3, Azure, etc.)
  */
-export type Credentials = { credentials: Array<[string, string]>, encryption: string | null, storage: string | null, };
+export type Credentials = {
+  credentials: Array<[string, string]>;
+  encryption: string | null;
+  storage: string | null;
+};

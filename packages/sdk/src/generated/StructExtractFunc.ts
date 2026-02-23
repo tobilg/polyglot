@@ -5,4 +5,4 @@ import type { Identifier } from "./Identifier";
 /**
  * STRUCT_EXTRACT function
  */
-export type StructExtractFunc = { this: Expression, field: Identifier, };
+export type StructExtractFunc = { this: Expression; field: Identifier };

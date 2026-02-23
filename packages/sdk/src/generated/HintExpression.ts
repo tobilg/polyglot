@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Individual hint expression
  */
-export type HintExpression = { "Function": { name: string, args: Array<Expression>, } } | { "Identifier": string } | { "Raw": string };
+export type HintExpression =
+  | { Function: { name: string; args: Array<Expression> } }
+  | { Identifier: string }
+  | { Raw: string };

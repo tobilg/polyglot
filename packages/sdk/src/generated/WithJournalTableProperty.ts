@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * WithJournalTableProperty
  */
-export type WithJournalTableProperty = { this: Expression, };
+export type WithJournalTableProperty = { this: Expression };

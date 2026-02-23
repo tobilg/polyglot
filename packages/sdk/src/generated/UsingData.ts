@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * USING DATA clause for data import statements
  */
-export type UsingData = { this: Expression, };
+export type UsingData = { this: Expression };

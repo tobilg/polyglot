@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * FreespaceProperty
  */
-export type FreespaceProperty = { this: Expression, percent: Expression | null, };
+export type FreespaceProperty = {
+  this: Expression;
+  percent: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Wraps around one or more WHEN [NOT] MATCHED [...] clauses.
  */
-export type Whens = { expressions: Array<Expression>, };
+export type Whens = { expressions: Array<Expression> };

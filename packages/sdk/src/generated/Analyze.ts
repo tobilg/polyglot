@@ -4,8 +4,16 @@ import type { Expression } from "./Expression";
 /**
  * Analyze
  */
-export type Analyze = { kind: string | null, this: Expression | null, options: Array<Expression>, mode: Expression | null, partition: Expression | null, expression: Expression | null, properties: Array<Expression>, 
-/**
- * Column list for ANALYZE tbl(col1, col2) syntax (PostgreSQL)
- */
-columns?: Array<string>, };
+export type Analyze = {
+  kind: string | null;
+  this: Expression | null;
+  options: Array<Expression>;
+  mode: Expression | null;
+  partition: Expression | null;
+  expression: Expression | null;
+  properties: Array<Expression>;
+  /**
+   * Column list for ANALYZE tbl(col1, col2) syntax (PostgreSQL)
+   */
+  columns?: Array<string>;
+};

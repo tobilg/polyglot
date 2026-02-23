@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * MatchAgainst
  */
-export type MatchAgainst = { this: Expression, expressions: Array<Expression>, modifier: Expression | null, };
+export type MatchAgainst = {
+  this: Expression;
+  expressions: Array<Expression>;
+  modifier: Expression | null;
+};

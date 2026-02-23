@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * UtcTimestamp
  */
-export type UtcTimestamp = { this: Expression | null, };
+export type UtcTimestamp = { this: Expression | null };

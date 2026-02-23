@@ -5,12 +5,13 @@ import type { UseKind } from "./UseKind";
 /**
  * USE statement (USE database, USE ROLE, USE WAREHOUSE, USE CATALOG, USE SCHEMA)
  */
-export type Use = { 
-/**
- * The kind of object (DATABASE, SCHEMA, ROLE, WAREHOUSE, CATALOG, or None for default)
- */
-kind: UseKind | null, 
-/**
- * The name of the object
- */
-this: Identifier, };
+export type Use = {
+  /**
+   * The kind of object (DATABASE, SCHEMA, ROLE, WAREHOUSE, CATALOG, or None for default)
+   */
+  kind: UseKind | null;
+  /**
+   * The name of the object
+   */
+  this: Identifier;
+};

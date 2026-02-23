@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SchemaCommentProperty
  */
-export type SchemaCommentProperty = { this: Expression, };
+export type SchemaCommentProperty = { this: Expression };

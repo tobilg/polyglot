@@ -5,12 +5,16 @@ import type { Identifier } from "./Identifier";
 /**
  * UNNEST function
  */
-export type UnnestFunc = { this: Expression, 
-/**
- * Additional arguments for multi-argument UNNEST (e.g., UNNEST(arr1, arr2))
- */
-expressions?: Array<Expression>, with_ordinality: boolean, alias: Identifier | null, 
-/**
- * BigQuery: offset alias for WITH OFFSET AS <name>
- */
-offset_alias?: Identifier | null, };
+export type UnnestFunc = {
+  this: Expression;
+  /**
+   * Additional arguments for multi-argument UNNEST (e.g., UNNEST(arr1, arr2))
+   */
+  expressions?: Array<Expression>;
+  with_ordinality: boolean;
+  alias: Identifier | null;
+  /**
+   * BigQuery: offset alias for WITH OFFSET AS <name>
+   */
+  offset_alias?: Identifier | null;
+};

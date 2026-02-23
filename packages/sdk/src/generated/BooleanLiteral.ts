@@ -3,4 +3,4 @@
 /**
  * Boolean literal
  */
-export type BooleanLiteral = { value: boolean, };
+export type BooleanLiteral = { value: boolean };

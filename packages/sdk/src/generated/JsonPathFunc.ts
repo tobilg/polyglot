@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSON path extraction
  */
-export type JsonPathFunc = { this: Expression, paths: Array<Expression>, };
+export type JsonPathFunc = { this: Expression; paths: Array<Expression> };

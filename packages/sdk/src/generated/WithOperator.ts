@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * WithOperator
  */
-export type WithOperator = { this: Expression, op: string, };
+export type WithOperator = { this: Expression; op: string };

@@ -4,12 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * Represent an EXISTS predicate (`EXISTS (SELECT ...)` or `NOT EXISTS (...)`).
  */
-export type Exists = { 
-/**
- * The subquery expression.
- */
-this: Expression, 
-/**
- * Whether this is NOT EXISTS.
- */
-not: boolean, };
+export type Exists = {
+  /**
+   * The subquery expression.
+   */
+  this: Expression;
+  /**
+   * Whether this is NOT EXISTS.
+   */
+  not: boolean;
+};

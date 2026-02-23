@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * StrToMap
  */
-export type StrToMap = { this: Expression, pair_delim: Expression | null, key_value_delim: Expression | null, duplicate_resolution_callback: Expression | null, };
+export type StrToMap = {
+  this: Expression;
+  pair_delim: Expression | null;
+  key_value_delim: Expression | null;
+  duplicate_resolution_callback: Expression | null;
+};

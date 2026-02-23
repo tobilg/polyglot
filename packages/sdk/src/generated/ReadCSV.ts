@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ReadCSV
  */
-export type ReadCSV = { this: Expression, expressions: Array<Expression>, };
+export type ReadCSV = { this: Expression; expressions: Array<Expression> };

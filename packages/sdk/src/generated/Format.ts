@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Format
  */
-export type Format = { this: Expression, expressions: Array<Expression>, };
+export type Format = { this: Expression; expressions: Array<Expression> };

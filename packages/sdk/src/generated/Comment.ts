@@ -4,24 +4,25 @@ import type { Expression } from "./Expression";
 /**
  * COMMENT ON statement
  */
-export type Comment = { 
-/**
- * The object being commented on
- */
-this: Expression, 
-/**
- * The object kind (COLUMN, TABLE, DATABASE, etc.)
- */
-kind: string, 
-/**
- * The comment text expression
- */
-expression: Expression, 
-/**
- * IF EXISTS clause
- */
-exists: boolean, 
-/**
- * MATERIALIZED keyword
- */
-materialized: boolean, };
+export type Comment = {
+  /**
+   * The object being commented on
+   */
+  this: Expression;
+  /**
+   * The object kind (COLUMN, TABLE, DATABASE, etc.)
+   */
+  kind: string;
+  /**
+   * The comment text expression
+   */
+  expression: Expression;
+  /**
+   * IF EXISTS clause
+   */
+  exists: boolean;
+  /**
+   * MATERIALIZED keyword
+   */
+  materialized: boolean;
+};

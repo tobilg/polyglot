@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * XMLKeyValueOption
  */
-export type XMLKeyValueOption = { this: Expression, expression: Expression | null, };
+export type XMLKeyValueOption = {
+  this: Expression;
+  expression: Expression | null;
+};

@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * CONCAT_WS function
  */
-export type ConcatWs = { separator: Expression, expressions: Array<Expression>, };
+export type ConcatWs = {
+  separator: Expression;
+  expressions: Array<Expression>;
+};

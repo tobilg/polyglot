@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * AlterSortKey
  */
-export type AlterSortKey = { this: Expression | null, expressions: Array<Expression>, compound: Expression | null, };
+export type AlterSortKey = {
+  this: Expression | null;
+  expressions: Array<Expression>;
+  compound: Expression | null;
+};

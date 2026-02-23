@@ -4,16 +4,17 @@ import type { Expression } from "./Expression";
 /**
  * Historical data / Time travel (Snowflake) - BEFORE (STATEMENT => ...) or AT (TIMESTAMP => ...)
  */
-export type HistoricalData = { 
-/**
- * The time travel kind: "BEFORE", "AT", or "END" (as an Identifier expression)
- */
-this: Expression, 
-/**
- * The time travel type: "STATEMENT", "TIMESTAMP", "OFFSET", "STREAM", or "VERSION"
- */
-kind: string, 
-/**
- * The expression value (e.g., the statement ID or timestamp)
- */
-expression: Expression, };
+export type HistoricalData = {
+  /**
+   * The time travel kind: "BEFORE", "AT", or "END" (as an Identifier expression)
+   */
+  this: Expression;
+  /**
+   * The time travel type: "STATEMENT", "TIMESTAMP", "OFFSET", "STREAM", or "VERSION"
+   */
+  kind: string;
+  /**
+   * The expression value (e.g., the statement ID or timestamp)
+   */
+  expression: Expression;
+};

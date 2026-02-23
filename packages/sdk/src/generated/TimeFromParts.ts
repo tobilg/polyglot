@@ -4,4 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * TimeFromParts
  */
-export type TimeFromParts = { hour: Expression | null, min: Expression | null, sec: Expression | null, nano: Expression | null, fractions: Expression | null, precision: bigint | null, };
+export type TimeFromParts = {
+  hour: Expression | null;
+  min: Expression | null;
+  sec: Expression | null;
+  nano: Expression | null;
+  fractions: Expression | null;
+  precision: bigint | null;
+};

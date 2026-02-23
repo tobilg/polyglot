@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Corr
  */
-export type Corr = { this: Expression, expression: Expression, null_on_zero_variance: Expression | null, };
+export type Corr = {
+  this: Expression;
+  expression: Expression;
+  null_on_zero_variance: Expression | null;
+};

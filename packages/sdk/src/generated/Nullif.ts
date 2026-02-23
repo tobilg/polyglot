@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Nullif
  */
-export type Nullif = { this: Expression, expression: Expression, };
+export type Nullif = { this: Expression; expression: Expression };

@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JSONExtractQuote
  */
-export type JSONExtractQuote = { option: Expression | null, scalar: Expression | null, };
+export type JSONExtractQuote = {
+  option: Expression | null;
+  scalar: Expression | null;
+};

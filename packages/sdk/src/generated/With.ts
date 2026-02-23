@@ -9,20 +9,21 @@ import type { Expression } from "./Expression";
  * that reference themselves. Each CTE is defined in the `ctes` vector and
  * can be referenced by name in subsequent CTEs and in the main query body.
  */
-export type With = { 
-/**
- * The list of CTE definitions, in order.
- */
-ctes: Array<Cte>, 
-/**
- * Whether the WITH RECURSIVE keyword was used.
- */
-recursive: boolean, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, 
-/**
- * SEARCH/CYCLE clause for recursive CTEs (PostgreSQL)
- */
-search?: Expression | null, };
+export type With = {
+  /**
+   * The list of CTE definitions, in order.
+   */
+  ctes: Array<Cte>;
+  /**
+   * Whether the WITH RECURSIVE keyword was used.
+   */
+  recursive: boolean;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+  /**
+   * SEARCH/CYCLE clause for recursive CTEs (PostgreSQL)
+   */
+  search?: Expression | null;
+};

@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * UnixToTime
  */
-export type UnixToTime = { this: Expression, scale: bigint | null, zone: Expression | null, hours: Expression | null, minutes: Expression | null, format: string | null, target_type: Expression | null, };
+export type UnixToTime = {
+  this: Expression;
+  scale: bigint | null;
+  zone: Expression | null;
+  hours: Expression | null;
+  minutes: Expression | null;
+  format: string | null;
+  target_type: Expression | null;
+};

@@ -4,32 +4,33 @@ import type { Expression } from "./Expression";
 /**
  * Generated identity column constraint
  */
-export type GeneratedAsIdentity = { 
-/**
- * True for ALWAYS, False for BY DEFAULT
- */
-always: boolean, 
-/**
- * ON NULL (only valid with BY DEFAULT)
- */
-on_null: boolean, 
-/**
- * START WITH value
- */
-start: Expression | null, 
-/**
- * INCREMENT BY value
- */
-increment: Expression | null, 
-/**
- * MINVALUE
- */
-minvalue: Expression | null, 
-/**
- * MAXVALUE
- */
-maxvalue: Expression | null, 
-/**
- * CYCLE option - Some(true) = CYCLE, Some(false) = NO CYCLE, None = not specified
- */
-cycle: boolean | null, };
+export type GeneratedAsIdentity = {
+  /**
+   * True for ALWAYS, False for BY DEFAULT
+   */
+  always: boolean;
+  /**
+   * ON NULL (only valid with BY DEFAULT)
+   */
+  on_null: boolean;
+  /**
+   * START WITH value
+   */
+  start: Expression | null;
+  /**
+   * INCREMENT BY value
+   */
+  increment: Expression | null;
+  /**
+   * MINVALUE
+   */
+  minvalue: Expression | null;
+  /**
+   * MAXVALUE
+   */
+  maxvalue: Expression | null;
+  /**
+   * CYCLE option - Some(true) = CYCLE, Some(false) = NO CYCLE, None = not specified
+   */
+  cycle: boolean | null;
+};

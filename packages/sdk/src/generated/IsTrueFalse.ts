@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * IS TRUE / IS FALSE predicate
  */
-export type IsTrueFalse = { this: Expression, not: boolean, };
+export type IsTrueFalse = { this: Expression; not: boolean };

@@ -270,7 +270,9 @@ export function renameColumns(
   node: Expression,
   mapping: Record<string, string>,
 ): Expression {
-  const result = parseAstResult(ast_rename_columns(exprToJson(node), JSON.stringify(mapping)));
+  const result = parseAstResult(
+    ast_rename_columns(exprToJson(node), JSON.stringify(mapping)),
+  );
   return result ?? node;
 }
 
@@ -289,7 +291,9 @@ export function renameTables(
   node: Expression,
   mapping: Record<string, string>,
 ): Expression {
-  const result = parseAstResult(ast_rename_tables(exprToJson(node), JSON.stringify(mapping)));
+  const result = parseAstResult(
+    ast_rename_tables(exprToJson(node), JSON.stringify(mapping)),
+  );
   return result ?? node;
 }
 
@@ -307,7 +311,9 @@ export function qualifyColumns(
   node: Expression,
   tableName: string,
 ): Expression {
-  const result = parseAstResult(ast_qualify_columns(exprToJson(node), tableName));
+  const result = parseAstResult(
+    ast_qualify_columns(exprToJson(node), tableName),
+  );
   return result ?? node;
 }
 
@@ -328,7 +334,9 @@ export function addWhere(
   condition: Expression,
   operator: 'and' | 'or' = 'and',
 ): Expression {
-  const result = parseAstResult(ast_add_where(exprToJson(node), exprToJson(condition), operator === 'or'));
+  const result = parseAstResult(
+    ast_add_where(exprToJson(node), exprToJson(condition), operator === 'or'),
+  );
   return result ?? node;
 }
 

@@ -4,12 +4,13 @@
  * A privilege with optional column list for GRANT/REVOKE
  * Examples: SELECT, UPDATE(col1, col2), ALL(col1, col2, col3)
  */
-export type Privilege = { 
-/**
- * The privilege name (e.g., SELECT, INSERT, UPDATE, ALL)
- */
-name: string, 
-/**
- * Optional column list for column-level privileges (e.g., UPDATE(col1, col2))
- */
-columns?: Array<string>, };
+export type Privilege = {
+  /**
+   * The privilege name (e.g., SELECT, INSERT, UPDATE, ALL)
+   */
+  name: string;
+  /**
+   * Optional column list for column-level privileges (e.g., UPDATE(col1, col2))
+   */
+  columns?: Array<string>;
+};

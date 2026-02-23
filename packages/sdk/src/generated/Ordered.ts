@@ -10,24 +10,25 @@ import type { WithFill } from "./WithFill";
  * controls the NULLS FIRST / NULLS LAST modifier; `None` means unspecified
  * (database default).
  */
-export type Ordered = { 
-/**
- * The expression to sort by.
- */
-this: Expression, 
-/**
- * Whether the sort direction is descending (true) or ascending (false).
- */
-desc: boolean, 
-/**
- * `Some(true)` = NULLS FIRST, `Some(false)` = NULLS LAST, `None` = unspecified.
- */
-nulls_first: boolean | null, 
-/**
- * Whether ASC was explicitly written (not just implied)
- */
-explicit_asc: boolean, 
-/**
- * ClickHouse WITH FILL clause
- */
-with_fill?: WithFill | null, };
+export type Ordered = {
+  /**
+   * The expression to sort by.
+   */
+  this: Expression;
+  /**
+   * Whether the sort direction is descending (true) or ascending (false).
+   */
+  desc: boolean;
+  /**
+   * `Some(true)` = NULLS FIRST, `Some(false)` = NULLS LAST, `None` = unspecified.
+   */
+  nulls_first: boolean | null;
+  /**
+   * Whether ASC was explicitly written (not just implied)
+   */
+  explicit_asc: boolean;
+  /**
+   * ClickHouse WITH FILL clause
+   */
+  with_fill?: WithFill | null;
+};

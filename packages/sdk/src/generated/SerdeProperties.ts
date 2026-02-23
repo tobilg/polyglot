@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * SerdeProperties
  */
-export type SerdeProperties = { expressions: Array<Expression>, with_: Expression | null, };
+export type SerdeProperties = {
+  expressions: Array<Expression>;
+  with_: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Tags are used for generating arbitrary sql like SELECT <span>x</span>.
  */
-export type Tag = { this: Expression | null, prefix: Expression | null, postfix: Expression | null, };
+export type Tag = {
+  this: Expression | null;
+  prefix: Expression | null;
+  postfix: Expression | null;
+};

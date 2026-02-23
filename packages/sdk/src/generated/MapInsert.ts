@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * MapInsert
  */
-export type MapInsert = { this: Expression, key: Expression | null, value: Expression | null, update_flag: Expression | null, };
+export type MapInsert = {
+  this: Expression;
+  key: Expression | null;
+  value: Expression | null;
+  update_flag: Expression | null;
+};

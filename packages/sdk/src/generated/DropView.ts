@@ -4,4 +4,8 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP VIEW statement
  */
-export type DropView = { name: TableRef, if_exists: boolean, materialized: boolean, };
+export type DropView = {
+  name: TableRef;
+  if_exists: boolean;
+  materialized: boolean;
+};

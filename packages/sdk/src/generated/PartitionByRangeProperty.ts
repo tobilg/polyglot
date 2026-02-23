@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * PartitionByRangeProperty
  */
-export type PartitionByRangeProperty = { partition_expressions: Expression | null, create_expressions: Expression | null, };
+export type PartitionByRangeProperty = {
+  partition_expressions: Expression | null;
+  create_expressions: Expression | null;
+};

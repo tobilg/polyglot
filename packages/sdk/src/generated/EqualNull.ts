@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * EqualNull
  */
-export type EqualNull = { this: Expression, expression: Expression, };
+export type EqualNull = { this: Expression; expression: Expression };

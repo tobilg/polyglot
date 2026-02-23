@@ -10,28 +10,29 @@ import type { Identifier } from "./Identifier";
  * `NOT MATERIALIZED` hints. ClickHouse supports an inverted syntax where
  * the expression comes before the alias (`alias_first`).
  */
-export type Cte = { 
-/**
- * The CTE name.
- */
-alias: Identifier, 
-/**
- * The CTE body (typically a SELECT, UNION, etc.).
- */
-this: Expression, 
-/**
- * Optional column alias list: `cte_name(c1, c2) AS (...)`.
- */
-columns: Array<Identifier>, 
-/**
- * `Some(true)` = MATERIALIZED, `Some(false)` = NOT MATERIALIZED, `None` = unspecified.
- */
-materialized: boolean | null, 
-/**
- * USING KEY (columns) for DuckDB recursive CTEs
- */
-key_expressions?: Array<Identifier>, 
-/**
- * ClickHouse supports expression-first WITH items: WITH <expr> AS <alias>
- */
-alias_first: boolean, };
+export type Cte = {
+  /**
+   * The CTE name.
+   */
+  alias: Identifier;
+  /**
+   * The CTE body (typically a SELECT, UNION, etc.).
+   */
+  this: Expression;
+  /**
+   * Optional column alias list: `cte_name(c1, c2) AS (...)`.
+   */
+  columns: Array<Identifier>;
+  /**
+   * `Some(true)` = MATERIALIZED, `Some(false)` = NOT MATERIALIZED, `None` = unspecified.
+   */
+  materialized: boolean | null;
+  /**
+   * USING KEY (columns) for DuckDB recursive CTEs
+   */
+  key_expressions?: Array<Identifier>;
+  /**
+   * ClickHouse supports expression-first WITH items: WITH <expr> AS <alias>
+   */
+  alias_first: boolean;
+};

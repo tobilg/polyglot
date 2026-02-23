@@ -4,12 +4,13 @@ import type { IntervalUnit } from "./IntervalUnit";
 /**
  * Interval span for ranges like HOUR TO SECOND
  */
-export type IntervalSpan = { 
-/**
- * Start unit (e.g., HOUR)
- */
-this: IntervalUnit, 
-/**
- * End unit (e.g., SECOND)
- */
-expression: IntervalUnit, };
+export type IntervalSpan = {
+  /**
+   * Start unit (e.g., HOUR)
+   */
+  this: IntervalUnit;
+  /**
+   * End unit (e.g., SECOND)
+   */
+  expression: IntervalUnit;
+};

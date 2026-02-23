@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Directory
  */
-export type Directory = { this: Expression, local: Expression | null, row_format: Expression | null, };
+export type Directory = {
+  this: Expression;
+  local: Expression | null;
+  row_format: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Week
  */
-export type Week = { this: Expression, mode: Expression | null, };
+export type Week = { this: Expression; mode: Expression | null };

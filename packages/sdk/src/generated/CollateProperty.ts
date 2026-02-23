@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CollateProperty
  */
-export type CollateProperty = { this: Expression, default: Expression | null, };
+export type CollateProperty = { this: Expression; default: Expression | null };

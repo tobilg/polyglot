@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SqlSecurityProperty
  */
-export type SqlSecurityProperty = { this: Expression, };
+export type SqlSecurityProperty = { this: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONSet
  */
-export type JSONSet = { this: Expression, expressions: Array<Expression>, };
+export type JSONSet = { this: Expression; expressions: Array<Expression> };

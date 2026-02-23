@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Struct expression
  */
-export type Struct = { fields: Array<[string | null, Expression]>, };
+export type Struct = { fields: Array<[string | null, Expression]> };

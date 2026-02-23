@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ARRAY_FILTER function (with lambda)
  */
-export type ArrayFilterFunc = { this: Expression, filter: Expression, };
+export type ArrayFilterFunc = { this: Expression; filter: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TO_TIMESTAMP function
  */
-export type ToTimestampFunc = { this: Expression, format: Expression | null, };
+export type ToTimestampFunc = { this: Expression; format: Expression | null };

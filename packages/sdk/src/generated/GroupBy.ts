@@ -7,16 +7,17 @@ import type { Expression } from "./Expression";
  * The `expressions` list may contain plain columns, ordinal positions,
  * ROLLUP/CUBE/GROUPING SETS expressions, or the special empty-set `()`.
  */
-export type GroupBy = { 
-/**
- * The grouping expressions.
- */
-expressions: Array<Expression>, 
-/**
- * GROUP BY modifier: Some(true) = ALL, Some(false) = DISTINCT, None = no modifier
- */
-all: boolean | null, 
-/**
- * ClickHouse: WITH TOTALS modifier
- */
-totals: boolean, };
+export type GroupBy = {
+  /**
+   * The grouping expressions.
+   */
+  expressions: Array<Expression>;
+  /**
+   * GROUP BY modifier: Some(true) = ALL, Some(false) = DISTINCT, None = no modifier
+   */
+  all: boolean | null;
+  /**
+   * ClickHouse: WITH TOTALS modifier
+   */
+  totals: boolean;
+};

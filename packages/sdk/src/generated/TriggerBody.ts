@@ -5,4 +5,6 @@ import type { TableRef } from "./TableRef";
 /**
  * Trigger body
  */
-export type TriggerBody = { "Execute": { function: TableRef, args: Array<Expression>, } } | { "Block": string };
+export type TriggerBody =
+  | { Execute: { function: TableRef; args: Array<Expression> } }
+  | { Block: string };

@@ -6,8 +6,15 @@ import type { JsonNullHandling } from "./JsonNullHandling";
 /**
  * JSON_OBJECT function
  */
-export type JsonObjectFunc = { pairs: Array<[Expression, Expression]>, null_handling: JsonNullHandling | null, with_unique_keys: boolean, returning_type: DataType | null, format_json: boolean, encoding: string | null, 
-/**
- * For JSON_OBJECT(*) syntax
- */
-star: boolean, };
+export type JsonObjectFunc = {
+  pairs: Array<[Expression, Expression]>;
+  null_handling: JsonNullHandling | null;
+  with_unique_keys: boolean;
+  returning_type: DataType | null;
+  format_json: boolean;
+  encoding: string | null;
+  /**
+   * For JSON_OBJECT(*) syntax
+   */
+  star: boolean;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Install
  */
-export type Install = { this: Expression, from_: Expression | null, force: Expression | null, };
+export type Install = {
+  this: Expression;
+  from_: Expression | null;
+  force: Expression | null;
+};

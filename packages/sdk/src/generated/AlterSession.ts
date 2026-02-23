@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * AlterSession
  */
-export type AlterSession = { expressions: Array<Expression>, unset: Expression | null, };
+export type AlterSession = {
+  expressions: Array<Expression>;
+  unset: Expression | null;
+};

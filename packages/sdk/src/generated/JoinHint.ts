@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JoinHint
  */
-export type JoinHint = { this: Expression, expressions: Array<Expression>, };
+export type JoinHint = { this: Expression; expressions: Array<Expression> };

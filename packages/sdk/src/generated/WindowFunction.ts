@@ -11,16 +11,17 @@ import type { Over } from "./Over";
  * function.  The `over` field carries the PARTITION BY, ORDER BY, and
  * frame specification.
  */
-export type WindowFunction = { 
-/**
- * The function expression (e.g. ROW_NUMBER(), SUM(amount)).
- */
-this: Expression, 
-/**
- * The OVER clause defining the window partitioning, ordering, and frame.
- */
-over: Over, 
-/**
- * Oracle KEEP clause: KEEP (DENSE_RANK FIRST|LAST ORDER BY ...)
- */
-keep?: Keep | null, };
+export type WindowFunction = {
+  /**
+   * The function expression (e.g. ROW_NUMBER(), SUM(amount)).
+   */
+  this: Expression;
+  /**
+   * The OVER clause defining the window partitioning, ordering, and frame.
+   */
+  over: Over;
+  /**
+   * Oracle KEEP clause: KEEP (DENSE_RANK FIRST|LAST ORDER BY ...)
+   */
+  keep?: Keep | null;
+};

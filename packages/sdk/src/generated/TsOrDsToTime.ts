@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * TsOrDsToTime
  */
-export type TsOrDsToTime = { this: Expression, format: string | null, safe: Expression | null, };
+export type TsOrDsToTime = {
+  this: Expression;
+  format: string | null;
+  safe: Expression | null;
+};

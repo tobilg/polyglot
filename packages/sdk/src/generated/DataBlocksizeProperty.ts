@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * DataBlocksizeProperty
  */
-export type DataBlocksizeProperty = { size: bigint | null, units: Expression | null, minimum: Expression | null, maximum: Expression | null, default: Expression | null, };
+export type DataBlocksizeProperty = {
+  size: bigint | null;
+  units: Expression | null;
+  minimum: Expression | null;
+  maximum: Expression | null;
+  default: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONType
  */
-export type JSONType = { this: Expression, expression: Expression | null, };
+export type JSONType = { this: Expression; expression: Expression | null };

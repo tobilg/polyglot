@@ -7,4 +7,12 @@ import type { TableRef } from "./TableRef";
 /**
  * Actions for ALTER VIEW
  */
-export type AlterViewAction = { "Rename": TableRef } | { "OwnerTo": Identifier } | { "SetSchema": Identifier } | { "SetAuthorization": string } | { "AlterColumn": { name: Identifier, action: AlterColumnAction, } } | { "AsSelect": Expression } | { "SetTblproperties": Array<[string, string]> } | { "UnsetTblproperties": Array<string> };
+export type AlterViewAction =
+  | { Rename: TableRef }
+  | { OwnerTo: Identifier }
+  | { SetSchema: Identifier }
+  | { SetAuthorization: string }
+  | { AlterColumn: { name: Identifier; action: AlterColumnAction } }
+  | { AsSelect: Expression }
+  | { SetTblproperties: Array<[string, string]> }
+  | { UnsetTblproperties: Array<string> };

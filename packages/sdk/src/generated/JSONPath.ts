@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * JSONPath
  */
-export type JSONPath = { expressions: Array<Expression>, escape: Expression | null, };
+export type JSONPath = {
+  expressions: Array<Expression>;
+  escape: Expression | null;
+};

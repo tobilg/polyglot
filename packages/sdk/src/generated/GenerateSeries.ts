@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * GenerateSeries
  */
-export type GenerateSeries = { start: Expression | null, end: Expression | null, step: Expression | null, is_end_exclusive: Expression | null, };
+export type GenerateSeries = {
+  start: Expression | null;
+  end: Expression | null;
+  step: Expression | null;
+  is_end_exclusive: Expression | null;
+};

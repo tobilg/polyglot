@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * MapPick
  */
-export type MapPick = { this: Expression, expressions: Array<Expression>, };
+export type MapPick = { this: Expression; expressions: Array<Expression> };

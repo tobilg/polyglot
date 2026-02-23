@@ -8,12 +8,14 @@
  * dialect). The generator uses this flag to decide whether to emit quoting
  * characters.
  */
-export type Identifier = { 
-/**
- * The raw text of the identifier, without any quoting characters.
- */
-name: string, 
-/**
- * Whether the identifier was quoted in the source SQL.
- */
-quoted: boolean, trailing_comments: Array<string>, };
+export type Identifier = {
+  /**
+   * The raw text of the identifier, without any quoting characters.
+   */
+  name: string;
+  /**
+   * Whether the identifier was quoted in the source SQL.
+   */
+  quoted: boolean;
+  trailing_comments: Array<string>;
+};

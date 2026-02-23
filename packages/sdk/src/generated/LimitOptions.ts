@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * LimitOptions
  */
-export type LimitOptions = { percent: Expression | null, rows: Expression | null, with_ties: Expression | null, };
+export type LimitOptions = {
+  percent: Expression | null;
+  rows: Expression | null;
+  with_ties: Expression | null;
+};

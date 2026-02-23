@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * REGEXP_REPLACE function
  */
-export type RegexpReplaceFunc = { this: Expression, pattern: Expression, replacement: Expression, flags: Expression | null, };
+export type RegexpReplaceFunc = {
+  this: Expression;
+  pattern: Expression;
+  replacement: Expression;
+  flags: Expression | null;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * NumberToStr
  */
-export type NumberToStr = { this: Expression, format: string, culture: Expression | null, };
+export type NumberToStr = {
+  this: Expression;
+  format: string;
+  culture: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Rollup
  */
-export type Rollup = { expressions: Array<Expression>, };
+export type Rollup = { expressions: Array<Expression> };

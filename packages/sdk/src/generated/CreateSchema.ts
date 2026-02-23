@@ -5,16 +5,21 @@ import type { Identifier } from "./Identifier";
 /**
  * CREATE SCHEMA statement
  */
-export type CreateSchema = { name: Identifier, if_not_exists: boolean, authorization: Identifier | null, clone_from: Identifier | null, 
-/**
- * AT/BEFORE clause for time travel (Snowflake)
- */
-at_clause: Expression | null, 
-/**
- * Schema properties like DEFAULT COLLATE
- */
-properties: Array<Expression>, 
-/**
- * Leading comments before the statement
- */
-leading_comments?: Array<string>, };
+export type CreateSchema = {
+  name: Identifier;
+  if_not_exists: boolean;
+  authorization: Identifier | null;
+  clone_from: Identifier | null;
+  /**
+   * AT/BEFORE clause for time travel (Snowflake)
+   */
+  at_clause: Expression | null;
+  /**
+   * Schema properties like DEFAULT COLLATE
+   */
+  properties: Array<Expression>;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments?: Array<string>;
+};

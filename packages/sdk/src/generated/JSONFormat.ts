@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * JSONFormat
  */
-export type JSONFormat = { this: Expression | null, options: Array<Expression>, is_json: Expression | null, to_json: Expression | null, };
+export type JSONFormat = {
+  this: Expression | null;
+  options: Array<Expression>;
+  is_json: Expression | null;
+  to_json: Expression | null;
+};

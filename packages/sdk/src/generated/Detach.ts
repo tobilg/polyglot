@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Detach
  */
-export type Detach = { this: Expression, exists: boolean, };
+export type Detach = { this: Expression; exists: boolean };

@@ -5,4 +5,4 @@ import type { Expression } from "./Expression";
 /**
  * EXTRACT function
  */
-export type ExtractFunc = { this: Expression, field: DateTimeField, };
+export type ExtractFunc = { this: Expression; field: DateTimeField };

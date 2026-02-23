@@ -7,8 +7,13 @@ import type { WindowFrame } from "./WindowFrame";
 /**
  * OVER clause
  */
-export type Over = { 
-/**
- * Named window reference (e.g., OVER w or OVER (w ORDER BY x))
- */
-window_name: Identifier | null, partition_by: Array<Expression>, order_by: Array<Ordered>, frame: WindowFrame | null, alias: Identifier | null, };
+export type Over = {
+  /**
+   * Named window reference (e.g., OVER w or OVER (w ORDER BY x))
+   */
+  window_name: Identifier | null;
+  partition_by: Array<Expression>;
+  order_by: Array<Ordered>;
+  frame: WindowFrame | null;
+  alias: Identifier | null;
+};

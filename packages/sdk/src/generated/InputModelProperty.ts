@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * InputModelProperty
  */
-export type InputModelProperty = { this: Expression, };
+export type InputModelProperty = { this: Expression };

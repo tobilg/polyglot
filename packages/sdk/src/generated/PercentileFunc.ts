@@ -5,4 +5,9 @@ import type { Ordered } from "./Ordered";
 /**
  * PERCENTILE_CONT / PERCENTILE_DISC function
  */
-export type PercentileFunc = { this: Expression, percentile: Expression, order_by: Array<Ordered> | null, filter: Expression | null, };
+export type PercentileFunc = {
+  this: Expression;
+  percentile: Expression;
+  order_by: Array<Ordered> | null;
+  filter: Expression | null;
+};

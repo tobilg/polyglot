@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * ApproxQuantile
  */
-export type ApproxQuantile = { this: Expression, quantile: Expression | null, accuracy: Expression | null, weight: Expression | null, error_tolerance: Expression | null, };
+export type ApproxQuantile = {
+  this: Expression;
+  quantile: Expression | null;
+  accuracy: Expression | null;
+  weight: Expression | null;
+  error_tolerance: Expression | null;
+};

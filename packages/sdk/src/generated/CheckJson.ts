@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CheckJson
  */
-export type CheckJson = { this: Expression, };
+export type CheckJson = { this: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * DefaultColumnConstraint - DEFAULT value for a column
  */
-export type DefaultColumnConstraint = { this: Expression, };
+export type DefaultColumnConstraint = { this: Expression };

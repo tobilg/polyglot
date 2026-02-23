@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TimeStrToTime
  */
-export type TimeStrToTime = { this: Expression, zone: Expression | null, };
+export type TimeStrToTime = { this: Expression; zone: Expression | null };

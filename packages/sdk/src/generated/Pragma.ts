@@ -5,20 +5,21 @@ import type { Identifier } from "./Identifier";
 /**
  * PRAGMA statement (SQLite)
  */
-export type Pragma = { 
-/**
- * Optional schema prefix (e.g., "schema" in "schema.pragma_name")
- */
-schema: Identifier | null, 
-/**
- * The pragma name
- */
-name: Identifier, 
-/**
- * Optional value for assignment (PRAGMA name = value)
- */
-value: Expression | null, 
-/**
- * Optional arguments for function-style pragmas (PRAGMA name(arg))
- */
-args: Array<Expression>, };
+export type Pragma = {
+  /**
+   * Optional schema prefix (e.g., "schema" in "schema.pragma_name")
+   */
+  schema: Identifier | null;
+  /**
+   * The pragma name
+   */
+  name: Identifier;
+  /**
+   * Optional value for assignment (PRAGMA name = value)
+   */
+  value: Expression | null;
+  /**
+   * Optional arguments for function-style pragmas (PRAGMA name(arg))
+   */
+  args: Array<Expression>;
+};

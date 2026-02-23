@@ -59,10 +59,7 @@ export interface PlanResult {
  * // result.plan.leaves[0].kind === "scan"
  * ```
  */
-export function plan(
-  sql: string,
-  dialect: string = 'generic',
-): PlanResult {
+export function plan(sql: string, dialect: string = 'generic'): PlanResult {
   const resultJson = wasmPlan(sql, dialect);
   return JSON.parse(resultJson) as PlanResult;
 }

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Clone
  */
-export type Clone = { this: Expression, shallow: Expression | null, copy: Expression | null, };
+export type Clone = {
+  this: Expression;
+  shallow: Expression | null;
+  copy: Expression | null;
+};

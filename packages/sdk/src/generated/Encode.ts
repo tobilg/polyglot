@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Encode
  */
-export type Encode = { this: Expression, charset: Expression | null, };
+export type Encode = { this: Expression; charset: Expression | null };

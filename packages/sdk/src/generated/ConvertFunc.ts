@@ -5,4 +5,8 @@ import type { Expression } from "./Expression";
 /**
  * CONVERT function (SQL Server style)
  */
-export type ConvertFunc = { this: Expression, to: DataType, style: Expression | null, };
+export type ConvertFunc = {
+  this: Expression;
+  to: DataType;
+  style: Expression | null;
+};

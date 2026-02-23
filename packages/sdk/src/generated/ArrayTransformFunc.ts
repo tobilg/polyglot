@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ARRAY_TRANSFORM / TRANSFORM function (with lambda)
  */
-export type ArrayTransformFunc = { this: Expression, transform: Expression, };
+export type ArrayTransformFunc = { this: Expression; transform: Expression };

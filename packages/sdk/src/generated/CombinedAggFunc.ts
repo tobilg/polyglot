@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * CombinedAggFunc
  */
-export type CombinedAggFunc = { this: Expression, expressions: Array<Expression>, };
+export type CombinedAggFunc = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

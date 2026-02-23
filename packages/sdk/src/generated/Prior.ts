@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Oracle PRIOR expression - references parent row's value in CONNECT BY
  */
-export type Prior = { this: Expression, };
+export type Prior = { this: Expression };

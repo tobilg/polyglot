@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Xor
  */
-export type Xor = { this: Expression | null, expression: Expression | null, expressions: Array<Expression>, };
+export type Xor = {
+  this: Expression | null;
+  expression: Expression | null;
+  expressions: Array<Expression>;
+};

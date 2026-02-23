@@ -6,8 +6,9 @@ import type { Expression } from "./Expression";
  *
  * Shared payload for `Not`, `Neg`, and `BitwiseNot` variants.
  */
-export type UnaryOp = { 
-/**
- * The operand expression.
- */
-this: Expression, };
+export type UnaryOp = {
+  /**
+   * The operand expression.
+   */
+  this: Expression;
+};

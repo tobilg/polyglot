@@ -9,44 +9,45 @@ import type { Ordered } from "./Ordered";
 /**
  * MATCH_RECOGNIZE clause for row pattern matching (Oracle/Snowflake/Presto/Trino)
  */
-export type MatchRecognize = { 
-/**
- * Source table/expression
- */
-this: Expression | null, 
-/**
- * PARTITION BY expressions
- */
-partition_by: Array<Expression> | null, 
-/**
- * ORDER BY expressions
- */
-order_by: Array<Ordered> | null, 
-/**
- * MEASURES definitions
- */
-measures: Array<MatchRecognizeMeasure> | null, 
-/**
- * Row semantics (ONE ROW PER MATCH, ALL ROWS PER MATCH, etc.)
- */
-rows: MatchRecognizeRows | null, 
-/**
- * AFTER MATCH SKIP behavior
- */
-after: MatchRecognizeAfter | null, 
-/**
- * PATTERN definition (stored as raw string for complex regex patterns)
- */
-pattern: string | null, 
-/**
- * DEFINE clauses (pattern variable definitions)
- */
-define: Array<[Identifier, Expression]> | null, 
-/**
- * Optional alias for the result
- */
-alias: Identifier | null, 
-/**
- * Whether AS keyword was explicitly present before alias
- */
-alias_explicit_as?: boolean, };
+export type MatchRecognize = {
+  /**
+   * Source table/expression
+   */
+  this: Expression | null;
+  /**
+   * PARTITION BY expressions
+   */
+  partition_by: Array<Expression> | null;
+  /**
+   * ORDER BY expressions
+   */
+  order_by: Array<Ordered> | null;
+  /**
+   * MEASURES definitions
+   */
+  measures: Array<MatchRecognizeMeasure> | null;
+  /**
+   * Row semantics (ONE ROW PER MATCH, ALL ROWS PER MATCH, etc.)
+   */
+  rows: MatchRecognizeRows | null;
+  /**
+   * AFTER MATCH SKIP behavior
+   */
+  after: MatchRecognizeAfter | null;
+  /**
+   * PATTERN definition (stored as raw string for complex regex patterns)
+   */
+  pattern: string | null;
+  /**
+   * DEFINE clauses (pattern variable definitions)
+   */
+  define: Array<[Identifier, Expression]> | null;
+  /**
+   * Optional alias for the result
+   */
+  alias: Identifier | null;
+  /**
+   * Whether AS keyword was explicitly present before alias
+   */
+  alias_explicit_as?: boolean;
+};

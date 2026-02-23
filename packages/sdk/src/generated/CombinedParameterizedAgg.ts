@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * CombinedParameterizedAgg
  */
-export type CombinedParameterizedAgg = { this: Expression, expressions: Array<Expression>, params: Array<Expression>, };
+export type CombinedParameterizedAgg = {
+  this: Expression;
+  expressions: Array<Expression>;
+  params: Array<Expression>;
+};

@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * SUM_IF / COUNT_IF function
  */
-export type SumIfFunc = { this: Expression, condition: Expression, filter: Expression | null, };
+export type SumIfFunc = {
+  this: Expression;
+  condition: Expression;
+  filter: Expression | null;
+};

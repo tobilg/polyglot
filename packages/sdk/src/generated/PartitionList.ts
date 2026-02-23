@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * PartitionList
  */
-export type PartitionList = { this: Expression, expressions: Array<Expression>, };
+export type PartitionList = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

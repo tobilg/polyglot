@@ -44,10 +44,7 @@ export {
 } from './ast';
 
 // Builders: Expression class & types
-export {
-  Expr,
-  type ExprInput,
-} from './builders';
+export { Expr, type ExprInput } from './builders';
 
 // Builders: Expression helpers
 export {
@@ -87,13 +84,7 @@ export {
 } from './builders';
 
 // Builders: Logical operators
-export {
-  and,
-  or,
-  not,
-  cast,
-  alias,
-} from './builders';
+export { and, or, not, cast, alias } from './builders';
 
 // Builders: Convenience functions
 export {
@@ -144,11 +135,7 @@ export {
 } from './builders';
 
 // Validation
-export {
-  ValidationSeverity,
-  validate,
-  validateWithSchema,
-} from './validation';
+export { ValidationSeverity, validate, validateWithSchema } from './validation';
 export type {
   ColumnSchema,
   Schema,

@@ -12,72 +12,73 @@ import type { With } from "./With";
  * Returns rows from the left operand that do not appear in the right operand.
  * When `all` is true, duplicates are subtracted according to their multiplicity.
  */
-export type Except = { 
-/**
- * The left-hand query operand.
- */
-left: Expression, 
-/**
- * The right-hand query operand (rows to subtract).
- */
-right: Expression, 
-/**
- * Whether EXCEPT ALL (true) or EXCEPT (false, which deduplicates).
- */
-all: boolean, 
-/**
- * Whether DISTINCT was explicitly specified
- */
-distinct: boolean, 
-/**
- * Optional WITH clause
- */
-with: With | null, 
-/**
- * ORDER BY applied to entire EXCEPT result
- */
-order_by: OrderBy | null, 
-/**
- * LIMIT applied to entire EXCEPT result
- */
-limit: Expression | null, 
-/**
- * OFFSET applied to entire EXCEPT result
- */
-offset: Expression | null, 
-/**
- * DISTRIBUTE BY clause (Hive/Spark)
- */
-distribute_by?: DistributeBy | null, 
-/**
- * SORT BY clause (Hive/Spark)
- */
-sort_by?: SortBy | null, 
-/**
- * CLUSTER BY clause (Hive/Spark)
- */
-cluster_by?: ClusterBy | null, 
-/**
- * DuckDB BY NAME modifier
- */
-by_name: boolean, 
-/**
- * BigQuery: Set operation side (LEFT, RIGHT, FULL)
- */
-side?: string | null, 
-/**
- * BigQuery: Set operation kind (INNER)
- */
-kind?: string | null, 
-/**
- * BigQuery: CORRESPONDING modifier
- */
-corresponding: boolean, 
-/**
- * BigQuery: STRICT modifier (before CORRESPONDING)
- */
-strict: boolean, 
-/**
- * BigQuery: BY (columns) after CORRESPONDING
- */
-on_columns?: Array<Expression>, };
+export type Except = {
+  /**
+   * The left-hand query operand.
+   */
+  left: Expression;
+  /**
+   * The right-hand query operand (rows to subtract).
+   */
+  right: Expression;
+  /**
+   * Whether EXCEPT ALL (true) or EXCEPT (false, which deduplicates).
+   */
+  all: boolean;
+  /**
+   * Whether DISTINCT was explicitly specified
+   */
+  distinct: boolean;
+  /**
+   * Optional WITH clause
+   */
+  with: With | null;
+  /**
+   * ORDER BY applied to entire EXCEPT result
+   */
+  order_by: OrderBy | null;
+  /**
+   * LIMIT applied to entire EXCEPT result
+   */
+  limit: Expression | null;
+  /**
+   * OFFSET applied to entire EXCEPT result
+   */
+  offset: Expression | null;
+  /**
+   * DISTRIBUTE BY clause (Hive/Spark)
+   */
+  distribute_by?: DistributeBy | null;
+  /**
+   * SORT BY clause (Hive/Spark)
+   */
+  sort_by?: SortBy | null;
+  /**
+   * CLUSTER BY clause (Hive/Spark)
+   */
+  cluster_by?: ClusterBy | null;
+  /**
+   * DuckDB BY NAME modifier
+   */
+  by_name: boolean;
+  /**
+   * BigQuery: Set operation side (LEFT, RIGHT, FULL)
+   */
+  side?: string | null;
+  /**
+   * BigQuery: Set operation kind (INNER)
+   */
+  kind?: string | null;
+  /**
+   * BigQuery: CORRESPONDING modifier
+   */
+  corresponding: boolean;
+  /**
+   * BigQuery: STRICT modifier (before CORRESPONDING)
+   */
+  strict: boolean;
+  /**
+   * BigQuery: BY (columns) after CORRESPONDING
+   */
+  on_columns?: Array<Expression>;
+};

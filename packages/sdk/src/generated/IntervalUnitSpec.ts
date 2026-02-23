@@ -7,8 +7,15 @@ import type { IntervalUnit } from "./IntervalUnit";
 /**
  * Specification for interval unit - can be a simple unit, a span (HOUR TO SECOND), or an expression
  */
-export type IntervalUnitSpec = { "type": "simple", unit: IntervalUnit, 
-/**
- * Whether to use plural form (e.g., DAYS vs DAY)
- */
-use_plural: boolean, } | { "type": "span" } & IntervalSpan | { "type": "expr_span" } & IntervalSpanExpr | { "type": "expr" } & Expression;
+export type IntervalUnitSpec =
+  | {
+      type: "simple";
+      unit: IntervalUnit;
+      /**
+       * Whether to use plural form (e.g., DAYS vs DAY)
+       */
+      use_plural: boolean;
+    }
+  | ({ type: "span" } & IntervalSpan)
+  | ({ type: "expr_span" } & IntervalSpanExpr)
+  | ({ type: "expr" } & Expression);

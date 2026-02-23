@@ -5,20 +5,21 @@ import type { Expression } from "./Expression";
 /**
  * PUT statement (Snowflake)
  */
-export type PutStmt = { 
-/**
- * Source file path
- */
-source: string, 
-/**
- * Whether source was quoted in the original SQL
- */
-source_quoted: boolean, 
-/**
- * Target stage
- */
-target: Expression, 
-/**
- * PUT parameters
- */
-params: Array<CopyParameter>, };
+export type PutStmt = {
+  /**
+   * Source file path
+   */
+  source: string;
+  /**
+   * Whether source was quoted in the original SQL
+   */
+  source_quoted: boolean;
+  /**
+   * Target stage
+   */
+  target: Expression;
+  /**
+   * PUT parameters
+   */
+  params: Array<CopyParameter>;
+};

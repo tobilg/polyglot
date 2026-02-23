@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * DictRange
  */
-export type DictRange = { this: Expression, min: Expression | null, max: Expression | null, };
+export type DictRange = {
+  this: Expression;
+  min: Expression | null;
+  max: Expression | null;
+};

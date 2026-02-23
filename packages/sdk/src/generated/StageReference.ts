@@ -4,24 +4,25 @@ import type { Expression } from "./Expression";
 /**
  * Stage reference (Snowflake) - @stage_name or @namespace.stage/path
  */
-export type StageReference = { 
-/**
- * Stage name including @ prefix (e.g., "@mystage", "@namespace.mystage")
- */
-name: string, 
-/**
- * Optional path within the stage (e.g., "/path/to/file.csv")
- */
-path: string | null, 
-/**
- * Optional FILE_FORMAT parameter
- */
-file_format: Expression | null, 
-/**
- * Optional PATTERN parameter
- */
-pattern: string | null, 
-/**
- * Whether the stage reference was originally quoted (e.g., '@mystage')
- */
-quoted?: boolean, };
+export type StageReference = {
+  /**
+   * Stage name including @ prefix (e.g., "@mystage", "@namespace.mystage")
+   */
+  name: string;
+  /**
+   * Optional path within the stage (e.g., "/path/to/file.csv")
+   */
+  path: string | null;
+  /**
+   * Optional FILE_FORMAT parameter
+   */
+  file_format: Expression | null;
+  /**
+   * Optional PATTERN parameter
+   */
+  pattern: string | null;
+  /**
+   * Whether the stage reference was originally quoted (e.g., '@mystage')
+   */
+  quoted?: boolean;
+};

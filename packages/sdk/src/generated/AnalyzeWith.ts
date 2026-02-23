@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AnalyzeWith
  */
-export type AnalyzeWith = { expressions: Array<Expression>, };
+export type AnalyzeWith = { expressions: Array<Expression> };

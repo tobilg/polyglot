@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * UserDefinedFunction
  */
-export type UserDefinedFunction = { this: Expression, expressions: Array<Expression>, wrapped: Expression | null, };
+export type UserDefinedFunction = {
+  this: Expression;
+  expressions: Array<Expression>;
+  wrapped: Expression | null;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AutoIncrementProperty
  */
-export type AutoIncrementProperty = { this: Expression, };
+export type AutoIncrementProperty = { this: Expression };

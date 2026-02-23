@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ForIn
  */
-export type ForIn = { this: Expression, expression: Expression, };
+export type ForIn = { this: Expression; expression: Expression };

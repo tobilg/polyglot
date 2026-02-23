@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * MergeTreeTTL
  */
-export type MergeTreeTTL = { expressions: Array<Expression>, where_: Expression | null, group: Expression | null, aggregates: Expression | null, };
+export type MergeTreeTTL = {
+  expressions: Array<Expression>;
+  where_: Expression | null;
+  group: Expression | null;
+  aggregates: Expression | null;
+};

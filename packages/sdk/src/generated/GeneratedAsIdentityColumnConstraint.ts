@@ -4,4 +4,14 @@ import type { Expression } from "./Expression";
 /**
  * GeneratedAsIdentityColumnConstraint
  */
-export type GeneratedAsIdentityColumnConstraint = { this: Expression | null, expression: Expression | null, on_null: Expression | null, start: Expression | null, increment: Expression | null, minvalue: Expression | null, maxvalue: Expression | null, cycle: Expression | null, order: Expression | null, };
+export type GeneratedAsIdentityColumnConstraint = {
+  this: Expression | null;
+  expression: Expression | null;
+  on_null: Expression | null;
+  start: Expression | null;
+  increment: Expression | null;
+  minvalue: Expression | null;
+  maxvalue: Expression | null;
+  cycle: Expression | null;
+  order: Expression | null;
+};

@@ -9,28 +9,30 @@ import type { Expression } from "./Expression";
  * (e.g. `Count`, `Sum`, `WindowFunction`). Functions that the parser does
  * not recognize as built-ins are represented with this struct.
  */
-export type Function = { 
-/**
- * The function name, as originally written (may be schema-qualified).
- */
-name: string, 
-/**
- * Positional arguments to the function.
- */
-args: Array<Expression>, 
-/**
- * Whether DISTINCT was specified inside the call (e.g. `COUNT(DISTINCT x)`).
- */
-distinct: boolean, trailing_comments: Array<string>, 
-/**
- * Whether this function uses bracket syntax (e.g., MAP[keys, values])
- */
-use_bracket_syntax: boolean, 
-/**
- * Whether this function was called without parentheses (e.g., CURRENT_TIMESTAMP vs CURRENT_TIMESTAMP())
- */
-no_parens: boolean, 
-/**
- * Whether the function name was quoted (e.g., `p.d.UdF` in BigQuery)
- */
-quoted: boolean, };
+export type Function = {
+  /**
+   * The function name, as originally written (may be schema-qualified).
+   */
+  name: string;
+  /**
+   * Positional arguments to the function.
+   */
+  args: Array<Expression>;
+  /**
+   * Whether DISTINCT was specified inside the call (e.g. `COUNT(DISTINCT x)`).
+   */
+  distinct: boolean;
+  trailing_comments: Array<string>;
+  /**
+   * Whether this function uses bracket syntax (e.g., MAP[keys, values])
+   */
+  use_bracket_syntax: boolean;
+  /**
+   * Whether this function was called without parentheses (e.g., CURRENT_TIMESTAMP vs CURRENT_TIMESTAMP())
+   */
+  no_parens: boolean;
+  /**
+   * Whether the function name was quoted (e.g., `p.d.UdF` in BigQuery)
+   */
+  quoted: boolean;
+};

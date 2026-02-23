@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * TsOrDsDiff
  */
-export type TsOrDsDiff = { this: Expression, expression: Expression, unit: string | null, };
+export type TsOrDsDiff = {
+  this: Expression;
+  expression: Expression;
+  unit: string | null;
+};

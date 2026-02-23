@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * MapCat
  */
-export type MapCat = { this: Expression, expression: Expression, };
+export type MapCat = { this: Expression; expression: Expression };

@@ -4,12 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * OUTPUT clause (TSQL) - used in INSERT, UPDATE, DELETE
  */
-export type OutputClause = { 
-/**
- * Columns/expressions to output
- */
-columns: Array<Expression>, 
-/**
- * Optional INTO target table or table variable
- */
-into_table: Expression | null, };
+export type OutputClause = {
+  /**
+   * Columns/expressions to output
+   */
+  columns: Array<Expression>;
+  /**
+   * Optional INTO target table or table variable
+   */
+  into_table: Expression | null;
+};

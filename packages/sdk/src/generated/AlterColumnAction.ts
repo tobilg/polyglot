@@ -5,12 +5,24 @@ import type { Expression } from "./Expression";
 /**
  * Actions for ALTER COLUMN
  */
-export type AlterColumnAction = { "SetDataType": { data_type: DataType, 
-/**
- * USING expression for type conversion (PostgreSQL)
- */
-using: Expression | null, 
-/**
- * COLLATE clause (TSQL: ALTER COLUMN col TYPE COLLATE collation_name)
- */
-collate?: string | null, } } | { "SetDefault": Expression } | "DropDefault" | "SetNotNull" | "DropNotNull" | { "Comment": string } | "SetVisible" | "SetInvisible";
+export type AlterColumnAction =
+  | {
+      SetDataType: {
+        data_type: DataType;
+        /**
+         * USING expression for type conversion (PostgreSQL)
+         */
+        using: Expression | null;
+        /**
+         * COLLATE clause (TSQL: ALTER COLUMN col TYPE COLLATE collation_name)
+         */
+        collate?: string | null;
+      };
+    }
+  | { SetDefault: Expression }
+  | "DropDefault"
+  | "SetNotNull"
+  | "DropNotNull"
+  | { Comment: string }
+  | "SetVisible"
+  | "SetInvisible";

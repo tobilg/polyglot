@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * IntervalOp
  */
-export type IntervalOp = { unit: string | null, expression: Expression, };
+export type IntervalOp = { unit: string | null; expression: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * RegrSyy
  */
-export type RegrSyy = { this: Expression, expression: Expression, };
+export type RegrSyy = { this: Expression; expression: Expression };

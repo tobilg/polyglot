@@ -4,4 +4,7 @@ import type { Identifier } from "./Identifier";
 /**
  * Actions for ALTER INDEX
  */
-export type AlterIndexAction = { "Rename": Identifier } | { "SetTablespace": Identifier } | { "Visible": boolean };
+export type AlterIndexAction =
+  | { Rename: Identifier }
+  | { SetTablespace: Identifier }
+  | { Visible: boolean };

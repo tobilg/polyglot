@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * TimestampTzFromParts
  */
-export type TimestampTzFromParts = { zone: Expression | null, };
+export type TimestampTzFromParts = { zone: Expression | null };

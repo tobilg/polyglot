@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * RangeBucket
  */
-export type RangeBucket = { this: Expression, expression: Expression, };
+export type RangeBucket = { this: Expression; expression: Expression };

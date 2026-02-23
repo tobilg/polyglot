@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ClusteredByProperty
  */
-export type ClusteredByProperty = { expressions: Array<Expression>, sorted_by: Expression | null, buckets: Expression | null, };
+export type ClusteredByProperty = {
+  expressions: Array<Expression>;
+  sorted_by: Expression | null;
+  buckets: Expression | null;
+};

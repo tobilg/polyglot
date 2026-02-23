@@ -12,66 +12,69 @@ import type { With } from "./With";
 /**
  * DELETE statement
  */
-export type Delete = { table: TableRef, 
-/**
- * ClickHouse: ON CLUSTER clause for distributed DDL
- */
-on_cluster?: OnCluster | null, 
-/**
- * Optional alias for the table
- */
-alias: Identifier | null, 
-/**
- * Whether the alias was declared with explicit AS keyword
- */
-alias_explicit_as: boolean, 
-/**
- * PostgreSQL/DuckDB USING clause - additional tables to join
- */
-using: Array<TableRef>, where_clause: Where | null, 
-/**
- * OUTPUT clause (TSQL)
- */
-output: OutputClause | null, 
-/**
- * Leading comments before the statement
- */
-leading_comments: Array<string>, 
-/**
- * WITH clause (CTEs)
- */
-with: With | null, 
-/**
- * LIMIT clause (MySQL)
- */
-limit: Expression | null, 
-/**
- * ORDER BY clause (MySQL)
- */
-order_by: OrderBy | null, 
-/**
- * RETURNING clause (PostgreSQL)
- */
-returning: Array<Expression>, 
-/**
- * MySQL multi-table DELETE: DELETE t1, t2 FROM ... or DELETE FROM t1, t2 USING ...
- * These are the target tables to delete from
- */
-tables: Array<TableRef>, 
-/**
- * True if tables were after FROM keyword (DELETE FROM t1, t2 USING syntax)
- * False if tables were before FROM keyword (DELETE t1, t2 FROM syntax)
- */
-tables_from_using: boolean, 
-/**
- * JOINs in MySQL multi-table DELETE: DELETE t1 FROM t1 LEFT JOIN t2 ...
- */
-joins: Array<Join>, 
-/**
- * FORCE INDEX hint (MySQL): DELETE FROM t FORCE INDEX (idx)
- */
-force_index: string | null, 
-/**
- * BigQuery-style DELETE without FROM keyword: DELETE table WHERE ...
- */
-no_from: boolean, };
+export type Delete = {
+  table: TableRef;
+  /**
+   * ClickHouse: ON CLUSTER clause for distributed DDL
+   */
+  on_cluster?: OnCluster | null;
+  /**
+   * Optional alias for the table
+   */
+  alias: Identifier | null;
+  /**
+   * Whether the alias was declared with explicit AS keyword
+   */
+  alias_explicit_as: boolean;
+  /**
+   * PostgreSQL/DuckDB USING clause - additional tables to join
+   */
+  using: Array<TableRef>;
+  where_clause: Where | null;
+  /**
+   * OUTPUT clause (TSQL)
+   */
+  output: OutputClause | null;
+  /**
+   * Leading comments before the statement
+   */
+  leading_comments: Array<string>;
+  /**
+   * WITH clause (CTEs)
+   */
+  with: With | null;
+  /**
+   * LIMIT clause (MySQL)
+   */
+  limit: Expression | null;
+  /**
+   * ORDER BY clause (MySQL)
+   */
+  order_by: OrderBy | null;
+  /**
+   * RETURNING clause (PostgreSQL)
+   */
+  returning: Array<Expression>;
+  /**
+   * MySQL multi-table DELETE: DELETE t1, t2 FROM ... or DELETE FROM t1, t2 USING ...
+   * These are the target tables to delete from
+   */
+  tables: Array<TableRef>;
+  /**
+   * True if tables were after FROM keyword (DELETE FROM t1, t2 USING syntax)
+   * False if tables were before FROM keyword (DELETE t1, t2 FROM syntax)
+   */
+  tables_from_using: boolean;
+  /**
+   * JOINs in MySQL multi-table DELETE: DELETE t1 FROM t1 LEFT JOIN t2 ...
+   */
+  joins: Array<Join>;
+  /**
+   * FORCE INDEX hint (MySQL): DELETE FROM t FORCE INDEX (idx)
+   */
+  force_index: string | null;
+  /**
+   * BigQuery-style DELETE without FROM keyword: DELETE table WHERE ...
+   */
+  no_from: boolean;
+};

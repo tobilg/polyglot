@@ -14,12 +14,77 @@ import type { StructField } from "./StructField";
  * Types that do not match any known variant fall through to `Custom { name }`,
  * preserving the original type name for round-trip fidelity.
  */
-export type DataType = { "data_type": "boolean" } | { "data_type": "tiny_int", length: number | null, } | { "data_type": "small_int", length: number | null, } | { "data_type": "int", length: number | null, integer_spelling?: boolean, } | { "data_type": "big_int", length: number | null, } | { "data_type": "float", precision: number | null, scale: number | null, real_spelling?: boolean, } | { "data_type": "double", precision: number | null, scale: number | null, } | { "data_type": "decimal", precision: number | null, scale: number | null, } | { "data_type": "char", length: number | null, } | { "data_type": "var_char", length: number | null, parenthesized_length?: boolean, } | { "data_type": "string", length: number | null, } | { "data_type": "text" } | { "data_type": "binary", length: number | null, } | { "data_type": "var_binary", length: number | null, } | { "data_type": "blob" } | { "data_type": "bit", length: number | null, } | { "data_type": "var_bit", length: number | null, } | { "data_type": "date" } | { "data_type": "time", precision: number | null, timezone: boolean, } | { "data_type": "timestamp", precision: number | null, timezone: boolean, } | { "data_type": "interval", unit: string | null, 
-/**
- * For range intervals like INTERVAL DAY TO HOUR
- */
-to?: string | null, } | { "data_type": "json" } | { "data_type": "json_b" } | { "data_type": "uuid" } | { "data_type": "array", element_type: DataType, 
-/**
- * Optional dimension size for PostgreSQL (e.g., [3] in INT[3])
- */
-dimension?: number | null, } | { "data_type": "list", element_type: DataType, } | { "data_type": "struct", fields: Array<StructField>, nested: boolean, } | { "data_type": "map", key_type: DataType, value_type: DataType, } | { "data_type": "enum", values: Array<string>, assignments?: Array<string | null>, } | { "data_type": "set", values: Array<string>, } | { "data_type": "union", fields: Array<[string, DataType]>, } | { "data_type": "vector", element_type: DataType | null, dimension: number | null, } | { "data_type": "object", fields: Array<[string, DataType, boolean]>, modifier: string | null, } | { "data_type": "custom", name: string, } | { "data_type": "geometry", subtype: string | null, srid: number | null, } | { "data_type": "geography", subtype: string | null, srid: number | null, } | { "data_type": "character_set", name: string, } | { "data_type": "unknown" };
+export type DataType =
+  | { data_type: "boolean" }
+  | { data_type: "tiny_int"; length: number | null }
+  | { data_type: "small_int"; length: number | null }
+  | { data_type: "int"; length: number | null; integer_spelling?: boolean }
+  | { data_type: "big_int"; length: number | null }
+  | {
+      data_type: "float";
+      precision: number | null;
+      scale: number | null;
+      real_spelling?: boolean;
+    }
+  | { data_type: "double"; precision: number | null; scale: number | null }
+  | { data_type: "decimal"; precision: number | null; scale: number | null }
+  | { data_type: "char"; length: number | null }
+  | {
+      data_type: "var_char";
+      length: number | null;
+      parenthesized_length?: boolean;
+    }
+  | { data_type: "string"; length: number | null }
+  | { data_type: "text" }
+  | { data_type: "binary"; length: number | null }
+  | { data_type: "var_binary"; length: number | null }
+  | { data_type: "blob" }
+  | { data_type: "bit"; length: number | null }
+  | { data_type: "var_bit"; length: number | null }
+  | { data_type: "date" }
+  | { data_type: "time"; precision: number | null; timezone: boolean }
+  | { data_type: "timestamp"; precision: number | null; timezone: boolean }
+  | {
+      data_type: "interval";
+      unit: string | null;
+      /**
+       * For range intervals like INTERVAL DAY TO HOUR
+       */
+      to?: string | null;
+    }
+  | { data_type: "json" }
+  | { data_type: "json_b" }
+  | { data_type: "uuid" }
+  | {
+      data_type: "array";
+      element_type: DataType;
+      /**
+       * Optional dimension size for PostgreSQL (e.g., [3] in INT[3])
+       */
+      dimension?: number | null;
+    }
+  | { data_type: "list"; element_type: DataType }
+  | { data_type: "struct"; fields: Array<StructField>; nested: boolean }
+  | { data_type: "map"; key_type: DataType; value_type: DataType }
+  | {
+      data_type: "enum";
+      values: Array<string>;
+      assignments?: Array<string | null>;
+    }
+  | { data_type: "set"; values: Array<string> }
+  | { data_type: "union"; fields: Array<[string, DataType]> }
+  | {
+      data_type: "vector";
+      element_type: DataType | null;
+      dimension: number | null;
+    }
+  | {
+      data_type: "object";
+      fields: Array<[string, DataType, boolean]>;
+      modifier: string | null;
+    }
+  | { data_type: "custom"; name: string }
+  | { data_type: "geometry"; subtype: string | null; srid: number | null }
+  | { data_type: "geography"; subtype: string | null; srid: number | null }
+  | { data_type: "character_set"; name: string }
+  | { data_type: "unknown" };

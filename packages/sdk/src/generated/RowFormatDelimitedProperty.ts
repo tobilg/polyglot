@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * RowFormatDelimitedProperty
  */
-export type RowFormatDelimitedProperty = { fields: Expression | null, escaped: Expression | null, collection_items: Expression | null, map_keys: Expression | null, lines: Expression | null, null: Expression | null, serde: Expression | null, };
+export type RowFormatDelimitedProperty = {
+  fields: Expression | null;
+  escaped: Expression | null;
+  collection_items: Expression | null;
+  map_keys: Expression | null;
+  lines: Expression | null;
+  null: Expression | null;
+  serde: Expression | null;
+};

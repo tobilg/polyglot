@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * MergeBlockRatioProperty
  */
-export type MergeBlockRatioProperty = { this: Expression | null, no: Expression | null, default: Expression | null, percent: Expression | null, };
+export type MergeBlockRatioProperty = {
+  this: Expression | null;
+  no: Expression | null;
+  default: Expression | null;
+  percent: Expression | null;
+};

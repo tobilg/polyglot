@@ -7,28 +7,29 @@ import type { Expression } from "./Expression";
  * 1. Simple binary: a OVERLAPS b (this, expression are set)
  * 2. Full ANSI: (a, b) OVERLAPS (c, d) (left_start, left_end, right_start, right_end are set)
  */
-export type OverlapsExpr = { 
-/**
- * Left operand for simple binary form
- */
-this: Expression | null, 
-/**
- * Right operand for simple binary form
- */
-expression: Expression | null, 
-/**
- * Left range start for full ANSI form
- */
-left_start: Expression | null, 
-/**
- * Left range end for full ANSI form
- */
-left_end: Expression | null, 
-/**
- * Right range start for full ANSI form
- */
-right_start: Expression | null, 
-/**
- * Right range end for full ANSI form
- */
-right_end: Expression | null, };
+export type OverlapsExpr = {
+  /**
+   * Left operand for simple binary form
+   */
+  this: Expression | null;
+  /**
+   * Right operand for simple binary form
+   */
+  expression: Expression | null;
+  /**
+   * Left range start for full ANSI form
+   */
+  left_start: Expression | null;
+  /**
+   * Left range end for full ANSI form
+   */
+  left_end: Expression | null;
+  /**
+   * Right range start for full ANSI form
+   */
+  right_start: Expression | null;
+  /**
+   * Right range end for full ANSI form
+   */
+  right_end: Expression | null;
+};

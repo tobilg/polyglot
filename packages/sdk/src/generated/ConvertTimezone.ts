@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ConvertTimezone
  */
-export type ConvertTimezone = { source_tz: Expression | null, target_tz: Expression | null, timestamp: Expression | null, options: Array<Expression>, };
+export type ConvertTimezone = {
+  source_tz: Expression | null;
+  target_tz: Expression | null;
+  timestamp: Expression | null;
+  options: Array<Expression>;
+};

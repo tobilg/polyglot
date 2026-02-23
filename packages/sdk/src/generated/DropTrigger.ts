@@ -5,4 +5,9 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP TRIGGER statement
  */
-export type DropTrigger = { name: Identifier, table: TableRef | null, if_exists: boolean, cascade: boolean, };
+export type DropTrigger = {
+  name: Identifier;
+  table: TableRef | null;
+  if_exists: boolean;
+  cascade: boolean;
+};

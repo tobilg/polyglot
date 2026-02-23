@@ -4,16 +4,17 @@ import type { Expression } from "./Expression";
 /**
  * Oracle CONNECT BY clause for hierarchical queries
  */
-export type Connect = { 
-/**
- * START WITH condition (optional, can come before or after CONNECT BY)
- */
-start: Expression | null, 
-/**
- * CONNECT BY condition (required, contains PRIOR references)
- */
-connect: Expression, 
-/**
- * NOCYCLE keyword to prevent infinite loops
- */
-nocycle: boolean, };
+export type Connect = {
+  /**
+   * START WITH condition (optional, can come before or after CONNECT BY)
+   */
+  start: Expression | null;
+  /**
+   * CONNECT BY condition (required, contains PRIOR references)
+   */
+  connect: Expression;
+  /**
+   * NOCYCLE keyword to prevent infinite loops
+   */
+  nocycle: boolean;
+};

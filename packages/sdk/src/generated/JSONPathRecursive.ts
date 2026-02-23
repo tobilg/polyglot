@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONPathRecursive
  */
-export type JSONPathRecursive = { this: Expression | null, };
+export type JSONPathRecursive = { this: Expression | null };

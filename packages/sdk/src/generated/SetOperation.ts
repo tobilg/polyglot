@@ -4,4 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * SetOperation
  */
-export type SetOperation = { with_: Expression | null, this: Expression, expression: Expression, distinct: boolean, by_name: Expression | null, side: Expression | null, kind: string | null, on: Expression | null, };
+export type SetOperation = {
+  with_: Expression | null;
+  this: Expression;
+  expression: Expression;
+  distinct: boolean;
+  by_name: Expression | null;
+  side: Expression | null;
+  kind: string | null;
+  on: Expression | null;
+};

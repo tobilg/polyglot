@@ -6,12 +6,16 @@ import type { Identifier } from "./Identifier";
 /**
  * CREATE DATABASE statement
  */
-export type CreateDatabase = { name: Identifier, if_not_exists: boolean, options: Array<DatabaseOption>, 
-/**
- * Snowflake CLONE source
- */
-clone_from: Identifier | null, 
-/**
- * AT/BEFORE clause for time travel (Snowflake)
- */
-at_clause: Expression | null, };
+export type CreateDatabase = {
+  name: Identifier;
+  if_not_exists: boolean;
+  options: Array<DatabaseOption>;
+  /**
+   * Snowflake CLONE source
+   */
+  clone_from: Identifier | null;
+  /**
+   * AT/BEFORE clause for time travel (Snowflake)
+   */
+  at_clause: Expression | null;
+};

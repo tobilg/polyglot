@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * FileFormatProperty
  */
-export type FileFormatProperty = { this: Expression | null, expressions: Array<Expression>, hive_format: Expression | null, };
+export type FileFormatProperty = {
+  this: Expression | null;
+  expressions: Array<Expression>;
+  hive_format: Expression | null;
+};

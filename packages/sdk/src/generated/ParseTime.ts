@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ParseTime
  */
-export type ParseTime = { this: Expression, format: string, };
+export type ParseTime = { this: Expression; format: string };

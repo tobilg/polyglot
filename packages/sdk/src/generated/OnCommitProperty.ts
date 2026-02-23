@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * OnCommitProperty
  */
-export type OnCommitProperty = { delete: Expression | null, };
+export type OnCommitProperty = { delete: Expression | null };

@@ -10,24 +10,26 @@ import type { Expression } from "./Expression";
  * `SafeCast` variants. Supports optional FORMAT (BigQuery) and DEFAULT ON
  * CONVERSION ERROR (Oracle) clauses.
  */
-export type Cast = { 
-/**
- * The expression being cast.
- */
-this: Expression, 
-/**
- * The target data type.
- */
-to: DataType, trailing_comments: Array<string>, 
-/**
- * Whether PostgreSQL `::` syntax was used (true) vs CAST() function (false)
- */
-double_colon_syntax: boolean, 
-/**
- * FORMAT clause for BigQuery: CAST(x AS STRING FORMAT 'format_string')
- */
-format?: Expression | null, 
-/**
- * DEFAULT value ON CONVERSION ERROR (Oracle): CAST(x AS type DEFAULT val ON CONVERSION ERROR)
- */
-default?: Expression | null, };
+export type Cast = {
+  /**
+   * The expression being cast.
+   */
+  this: Expression;
+  /**
+   * The target data type.
+   */
+  to: DataType;
+  trailing_comments: Array<string>;
+  /**
+   * Whether PostgreSQL `::` syntax was used (true) vs CAST() function (false)
+   */
+  double_colon_syntax: boolean;
+  /**
+   * FORMAT clause for BigQuery: CAST(x AS STRING FORMAT 'format_string')
+   */
+  format?: Expression | null;
+  /**
+   * DEFAULT value ON CONVERSION ERROR (Oracle): CAST(x AS type DEFAULT val ON CONVERSION ERROR)
+   */
+  default?: Expression | null;
+};

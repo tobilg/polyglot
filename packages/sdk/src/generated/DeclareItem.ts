@@ -4,8 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * DeclareItem
  */
-export type DeclareItem = { this: Expression, kind: string | null, default: Expression | null, has_as: boolean, 
-/**
- * BigQuery: additional variable names in multi-variable DECLARE (DECLARE X, Y, Z INT64)
- */
-additional_names?: Array<Expression>, };
+export type DeclareItem = {
+  this: Expression;
+  kind: string | null;
+  default: Expression | null;
+  has_as: boolean;
+  /**
+   * BigQuery: additional variable names in multi-variable DECLARE (DECLARE X, Y, Z INT64)
+   */
+  additional_names?: Array<Expression>;
+};

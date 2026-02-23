@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PreviousDay
  */
-export type PreviousDay = { this: Expression, expression: Expression, };
+export type PreviousDay = { this: Expression; expression: Expression };

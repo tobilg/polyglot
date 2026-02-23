@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * WithFill
  */
-export type WithFill = { from_: Expression | null, to: Expression | null, step: Expression | null, interpolate: Expression | null, };
+export type WithFill = {
+  from_: Expression | null;
+  to: Expression | null;
+  step: Expression | null;
+  interpolate: Expression | null;
+};

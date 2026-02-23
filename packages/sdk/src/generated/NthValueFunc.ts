@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * NTH_VALUE function
  */
-export type NthValueFunc = { this: Expression, offset: Expression, 
-/**
- * None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
- */
-ignore_nulls?: boolean | null, };
+export type NthValueFunc = {
+  this: Expression;
+  offset: Expression;
+  /**
+   * None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
+   */
+  ignore_nulls?: boolean | null;
+};

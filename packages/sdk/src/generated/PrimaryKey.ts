@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * PrimaryKey
  */
-export type PrimaryKey = { this: Expression | null, expressions: Array<Expression>, options: Array<Expression>, include: Expression | null, };
+export type PrimaryKey = {
+  this: Expression | null;
+  expressions: Array<Expression>;
+  options: Array<Expression>;
+  include: Expression | null;
+};

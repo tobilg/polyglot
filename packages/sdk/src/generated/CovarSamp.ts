@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CovarSamp
  */
-export type CovarSamp = { this: Expression, expression: Expression, };
+export type CovarSamp = { this: Expression; expression: Expression };

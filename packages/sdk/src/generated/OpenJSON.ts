@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * OpenJSON
  */
-export type OpenJSON = { this: Expression, path: Expression | null, expressions: Array<Expression>, };
+export type OpenJSON = {
+  this: Expression;
+  path: Expression | null;
+  expressions: Array<Expression>;
+};

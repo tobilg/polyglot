@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * GenerateDateArray
  */
-export type GenerateDateArray = { start: Expression | null, end: Expression | null, step: Expression | null, };
+export type GenerateDateArray = {
+  start: Expression | null;
+  end: Expression | null;
+  step: Expression | null;
+};

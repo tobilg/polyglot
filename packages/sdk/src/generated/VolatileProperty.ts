@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * VolatileProperty
  */
-export type VolatileProperty = { this: Expression | null, };
+export type VolatileProperty = { this: Expression | null };

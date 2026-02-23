@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * TableAlias
  */
-export type TableAlias = { this: Expression | null, columns: Array<Expression>, };
+export type TableAlias = {
+  this: Expression | null;
+  columns: Array<Expression>;
+};

@@ -5,4 +5,15 @@ import type { TableRef } from "./TableRef";
 /**
  * ALTER SEQUENCE statement
  */
-export type AlterSequence = { name: TableRef, if_exists: boolean, increment: bigint | null, minvalue: SequenceBound | null, maxvalue: SequenceBound | null, start: bigint | null, restart: bigint | null | null, cache: bigint | null, cycle: boolean | null, owned_by: TableRef | null | null, };
+export type AlterSequence = {
+  name: TableRef;
+  if_exists: boolean;
+  increment: bigint | null;
+  minvalue: SequenceBound | null;
+  maxvalue: SequenceBound | null;
+  start: bigint | null;
+  restart: bigint | null | null;
+  cache: bigint | null;
+  cycle: boolean | null;
+  owned_by: TableRef | null | null;
+};

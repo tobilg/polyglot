@@ -4,8 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Represent a HAVING clause containing a predicate over aggregate results.
  */
-export type Having = { 
-/**
- * The filter predicate, typically involving aggregate functions.
- */
-this: Expression, };
+export type Having = {
+  /**
+   * The filter predicate, typically involving aggregate functions.
+   */
+  this: Expression;
+};

@@ -10,16 +10,19 @@ import type { Expression } from "./Expression";
  * bitwise, and dialect-specific operators. Comment fields enable round-trip
  * preservation of inline comments around operators.
  */
-export type BinaryOp = { left: Expression, right: Expression, 
-/**
- * Comments after the left operand (before the operator)
- */
-left_comments: Array<string>, 
-/**
- * Comments after the operator (before the right operand)
- */
-operator_comments: Array<string>, 
-/**
- * Comments after the right operand
- */
-trailing_comments: Array<string>, };
+export type BinaryOp = {
+  left: Expression;
+  right: Expression;
+  /**
+   * Comments after the left operand (before the operator)
+   */
+  left_comments: Array<string>;
+  /**
+   * Comments after the operator (before the right operand)
+   */
+  operator_comments: Array<string>;
+  /**
+   * Comments after the right operand
+   */
+  trailing_comments: Array<string>;
+};

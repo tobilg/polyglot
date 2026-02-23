@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONPathSubscript
  */
-export type JSONPathSubscript = { this: Expression, };
+export type JSONPathSubscript = { this: Expression };

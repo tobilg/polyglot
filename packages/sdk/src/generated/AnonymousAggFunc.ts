@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * AnonymousAggFunc
  */
-export type AnonymousAggFunc = { this: Expression, expressions: Array<Expression>, };
+export type AnonymousAggFunc = {
+  this: Expression;
+  expressions: Array<Expression>;
+};

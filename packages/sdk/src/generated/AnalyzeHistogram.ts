@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * AnalyzeHistogram
  */
-export type AnalyzeHistogram = { this: Expression, expressions: Array<Expression>, expression: Expression | null, update_options: Expression | null, };
+export type AnalyzeHistogram = {
+  this: Expression;
+  expressions: Array<Expression>;
+  expression: Expression | null;
+  update_options: Expression | null;
+};

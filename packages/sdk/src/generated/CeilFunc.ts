@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * CEIL function with optional decimals and time unit (Druid: CEIL(time TO unit))
  */
-export type CeilFunc = { this: Expression, decimals?: Expression | null, 
-/**
- * Time unit for Druid-style CEIL(time TO unit) syntax
- */
-to?: Expression | null, };
+export type CeilFunc = {
+  this: Expression;
+  decimals?: Expression | null;
+  /**
+   * Time unit for Druid-style CEIL(time TO unit) syntax
+   */
+  to?: Expression | null;
+};

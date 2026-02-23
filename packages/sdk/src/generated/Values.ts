@@ -5,16 +5,17 @@ import type { Tuple } from "./Tuple";
 /**
  * VALUES table constructor: VALUES (1, 'a'), (2, 'b')
  */
-export type Values = { 
-/**
- * The rows of values
- */
-expressions: Array<Tuple>, 
-/**
- * Optional alias for the table
- */
-alias: Identifier | null, 
-/**
- * Optional column aliases: AS t(c1, c2)
- */
-column_aliases: Array<Identifier>, };
+export type Values = {
+  /**
+   * The rows of values
+   */
+  expressions: Array<Tuple>;
+  /**
+   * Optional alias for the table
+   */
+  alias: Identifier | null;
+  /**
+   * Optional column aliases: AS t(c1, c2)
+   */
+  column_aliases: Array<Identifier>;
+};

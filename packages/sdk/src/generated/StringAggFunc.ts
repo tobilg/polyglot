@@ -5,8 +5,14 @@ import type { Ordered } from "./Ordered";
 /**
  * STRING_AGG function (PostgreSQL/Standard SQL)
  */
-export type StringAggFunc = { this: Expression, separator: Expression | null, order_by: Array<Ordered> | null, distinct: boolean, filter: Expression | null, 
-/**
- * BigQuery LIMIT inside STRING_AGG
- */
-limit?: Expression | null, };
+export type StringAggFunc = {
+  this: Expression;
+  separator: Expression | null;
+  order_by: Array<Ordered> | null;
+  distinct: boolean;
+  filter: Expression | null;
+  /**
+   * BigQuery LIMIT inside STRING_AGG
+   */
+  limit?: Expression | null;
+};

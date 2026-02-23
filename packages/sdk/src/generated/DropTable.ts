@@ -4,12 +4,16 @@ import type { TableRef } from "./TableRef";
 /**
  * DROP TABLE statement
  */
-export type DropTable = { names: Array<TableRef>, if_exists: boolean, cascade: boolean, 
-/**
- * Oracle: CASCADE CONSTRAINTS
- */
-cascade_constraints: boolean, 
-/**
- * Oracle: PURGE
- */
-purge: boolean, };
+export type DropTable = {
+  names: Array<TableRef>;
+  if_exists: boolean;
+  cascade: boolean;
+  /**
+   * Oracle: CASCADE CONSTRAINTS
+   */
+  cascade_constraints: boolean;
+  /**
+   * Oracle: PURGE
+   */
+  purge: boolean;
+};

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PathColumnConstraint - PATH 'xpath' for XMLTABLE/JSON_TABLE columns
  */
-export type PathColumnConstraint = { this: Expression, };
+export type PathColumnConstraint = { this: Expression };

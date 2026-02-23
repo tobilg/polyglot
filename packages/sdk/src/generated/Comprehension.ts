@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * Comprehension
  */
-export type Comprehension = { this: Expression, expression: Expression, position: Expression | null, iterator: Expression | null, condition: Expression | null, };
+export type Comprehension = {
+  this: Expression;
+  expression: Expression;
+  position: Expression | null;
+  iterator: Expression | null;
+  condition: Expression | null;
+};

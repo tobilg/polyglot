@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * OnConflict
  */
-export type OnConflict = { duplicate: Expression | null, expressions: Array<Expression>, action: Expression | null, conflict_keys: Expression | null, index_predicate: Expression | null, constraint: Expression | null, where_: Expression | null, };
+export type OnConflict = {
+  duplicate: Expression | null;
+  expressions: Array<Expression>;
+  action: Expression | null;
+  conflict_keys: Expression | null;
+  index_predicate: Expression | null;
+  constraint: Expression | null;
+  where_: Expression | null;
+};

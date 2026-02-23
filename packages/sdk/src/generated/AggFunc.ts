@@ -5,21 +5,26 @@ import type { Ordered } from "./Ordered";
 /**
  * Generic aggregate function base type
  */
-export type AggFunc = { this: Expression, distinct: boolean, filter: Expression | null, order_by: Array<Ordered>, 
-/**
- * Original function name (case-preserving) when parsed from SQL
- */
-name?: string | null, 
-/**
- * IGNORE NULLS (true) or RESPECT NULLS (false), None if not specified
- */
-ignore_nulls?: boolean | null, 
-/**
- * HAVING MAX/MIN expr inside aggregate (BigQuery syntax)
- * e.g., ANY_VALUE(fruit HAVING MAX sold) - (expression, is_max: true for MAX, false for MIN)
- */
-having_max?: [Expression, boolean] | null, 
-/**
- * LIMIT inside aggregate (e.g., ARRAY_AGG(x ORDER BY y LIMIT 2))
- */
-limit?: Expression | null, };
+export type AggFunc = {
+  this: Expression;
+  distinct: boolean;
+  filter: Expression | null;
+  order_by: Array<Ordered>;
+  /**
+   * Original function name (case-preserving) when parsed from SQL
+   */
+  name?: string | null;
+  /**
+   * IGNORE NULLS (true) or RESPECT NULLS (false), None if not specified
+   */
+  ignore_nulls?: boolean | null;
+  /**
+   * HAVING MAX/MIN expr inside aggregate (BigQuery syntax)
+   * e.g., ANY_VALUE(fruit HAVING MAX sold) - (expression, is_max: true for MAX, false for MIN)
+   */
+  having_max?: [Expression, boolean] | null;
+  /**
+   * LIMIT inside aggregate (e.g., ARRAY_AGG(x ORDER BY y LIMIT 2))
+   */
+  limit?: Expression | null;
+};

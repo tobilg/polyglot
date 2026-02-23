@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * PartitionByRangePropertyDynamic
  */
-export type PartitionByRangePropertyDynamic = { this: Expression | null, start: Expression | null, end: Expression | null, every: Expression | null, };
+export type PartitionByRangePropertyDynamic = {
+  this: Expression | null;
+  start: Expression | null;
+  end: Expression | null;
+  every: Expression | null;
+};

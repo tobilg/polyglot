@@ -5,4 +5,4 @@ import type { Ordered } from "./Ordered";
  * CLUSTER BY clause (Hive/Spark)
  * Combines DISTRIBUTE BY and SORT BY on the same columns
  */
-export type ClusterBy = { expressions: Array<Ordered>, };
+export type ClusterBy = { expressions: Array<Ordered> };

@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * PartitionBoundSpec
  */
-export type PartitionBoundSpec = { this: Expression | null, expression: Expression | null, from_expressions: Expression | null, to_expressions: Expression | null, };
+export type PartitionBoundSpec = {
+  this: Expression | null;
+  expression: Expression | null;
+  from_expressions: Expression | null;
+  to_expressions: Expression | null;
+};

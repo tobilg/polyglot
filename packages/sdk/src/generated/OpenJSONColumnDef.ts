@@ -5,8 +5,13 @@ import type { Expression } from "./Expression";
 /**
  * OpenJSONColumnDef
  */
-export type OpenJSONColumnDef = { this: Expression, kind: string, path: Expression | null, as_json: Expression | null, 
-/**
- * The parsed data type for proper generation
- */
-data_type?: DataType | null, };
+export type OpenJSONColumnDef = {
+  this: Expression;
+  kind: string;
+  path: Expression | null;
+  as_json: Expression | null;
+  /**
+   * The parsed data type for proper generation
+   */
+  data_type?: DataType | null;
+};

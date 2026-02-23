@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Slice
  */
-export type Slice = { this: Expression | null, expression: Expression | null, step: Expression | null, };
+export type Slice = {
+  this: Expression | null;
+  expression: Expression | null;
+  step: Expression | null;
+};

@@ -255,8 +255,16 @@ mod tests {
         let result = d.parse("SELECT 1 + 2)");
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.line().is_some(), "Parse error should have line: {:?}", err);
-        assert!(err.column().is_some(), "Parse error should have column: {:?}", err);
+        assert!(
+            err.line().is_some(),
+            "Parse error should have line: {:?}",
+            err
+        );
+        assert!(
+            err.column().is_some(),
+            "Parse error should have column: {:?}",
+            err
+        );
         assert_eq!(err.line(), Some(1));
     }
 }

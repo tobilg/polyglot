@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Set
  */
-export type Set = { expressions: Array<Expression>, unset: Expression | null, tag: Expression | null, };
+export type Set = {
+  expressions: Array<Expression>;
+  unset: Expression | null;
+  tag: Expression | null;
+};

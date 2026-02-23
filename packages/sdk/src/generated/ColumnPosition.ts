@@ -4,4 +4,4 @@ import type { Identifier } from "./Identifier";
 /**
  * Column position for ADD COLUMN (MySQL/MariaDB)
  */
-export type ColumnPosition = "First" | { "After": Identifier };
+export type ColumnPosition = "First" | { After: Identifier };

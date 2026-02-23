@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ApproxTopKAccumulate
  */
-export type ApproxTopKAccumulate = { this: Expression, expression: Expression | null, };
+export type ApproxTopKAccumulate = {
+  this: Expression;
+  expression: Expression | null;
+};

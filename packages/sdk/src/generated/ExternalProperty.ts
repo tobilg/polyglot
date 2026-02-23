@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ExternalProperty
  */
-export type ExternalProperty = { this: Expression | null, };
+export type ExternalProperty = { this: Expression | null };

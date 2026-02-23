@@ -3,4 +3,4 @@
 /**
  * Automatically converts unit arg into a var.
  */
-export type TimeUnit = { unit: string | null, };
+export type TimeUnit = { unit: string | null };

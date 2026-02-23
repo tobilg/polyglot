@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * AnalyzeValidate
  */
-export type AnalyzeValidate = { kind: string, this: Expression | null, expression: Expression | null, };
+export type AnalyzeValidate = {
+  kind: string;
+  this: Expression | null;
+  expression: Expression | null;
+};

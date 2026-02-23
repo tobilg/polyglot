@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AtIndex
  */
-export type AtIndex = { this: Expression, expression: Expression, };
+export type AtIndex = { this: Expression; expression: Expression };

@@ -4,8 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * Variable argument function
  */
-export type VarArgFunc = { expressions: Array<Expression>, 
-/**
- * Original function name for round-trip preservation (e.g., COALESCE vs IFNULL)
- */
-original_name?: string | null, };
+export type VarArgFunc = {
+  expressions: Array<Expression>;
+  /**
+   * Original function name for round-trip preservation (e.g., COALESCE vs IFNULL)
+   */
+  original_name?: string | null;
+};

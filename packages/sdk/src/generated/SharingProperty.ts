@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SharingProperty
  */
-export type SharingProperty = { this: Expression | null, };
+export type SharingProperty = { this: Expression | null };

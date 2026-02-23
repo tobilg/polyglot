@@ -3,4 +3,11 @@
 /**
  * Sample method
  */
-export type SampleMethod = "Bernoulli" | "System" | "Block" | "Row" | "Percent" | "Bucket" | "Reservoir";
+export type SampleMethod =
+  | "Bernoulli"
+  | "System"
+  | "Block"
+  | "Row"
+  | "Percent"
+  | "Bucket"
+  | "Reservoir";

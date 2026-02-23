@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * ParseDatetime
  */
-export type ParseDatetime = { this: Expression, format: string | null, zone: Expression | null, };
+export type ParseDatetime = {
+  this: Expression;
+  format: string | null;
+  zone: Expression | null;
+};

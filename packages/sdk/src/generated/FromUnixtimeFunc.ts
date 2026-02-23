@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * FROM_UNIXTIME function
  */
-export type FromUnixtimeFunc = { this: Expression, format: Expression | null, };
+export type FromUnixtimeFunc = { this: Expression; format: Expression | null };

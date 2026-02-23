@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * OverflowTruncateBehavior
  */
-export type OverflowTruncateBehavior = { this: Expression | null, with_count: Expression | null, };
+export type OverflowTruncateBehavior = {
+  this: Expression | null;
+  with_count: Expression | null;
+};

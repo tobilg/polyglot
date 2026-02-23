@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ModelAttribute
  */
-export type ModelAttribute = { this: Expression, expression: Expression, };
+export type ModelAttribute = { this: Expression; expression: Expression };

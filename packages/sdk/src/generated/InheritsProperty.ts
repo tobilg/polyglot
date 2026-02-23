@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * InheritsProperty
  */
-export type InheritsProperty = { expressions: Array<Expression>, };
+export type InheritsProperty = { expressions: Array<Expression> };

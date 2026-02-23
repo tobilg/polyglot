@@ -4,12 +4,19 @@ import type { Expression } from "./Expression";
 /**
  * Lateral
  */
-export type Lateral = { this: Expression, view: Expression | null, outer: Expression | null, alias: string | null, 
-/**
- * Whether the alias was originally quoted (backtick/double-quote)
- */
-alias_quoted?: boolean, cross_apply: Expression | null, ordinality: Expression | null, 
-/**
- * Column aliases for the lateral expression (e.g., LATERAL func() AS alias(col1, col2))
- */
-column_aliases?: Array<string>, };
+export type Lateral = {
+  this: Expression;
+  view: Expression | null;
+  outer: Expression | null;
+  alias: string | null;
+  /**
+   * Whether the alias was originally quoted (backtick/double-quote)
+   */
+  alias_quoted?: boolean;
+  cross_apply: Expression | null;
+  ordinality: Expression | null;
+  /**
+   * Column aliases for the lateral expression (e.g., LATERAL func() AS alias(col1, col2))
+   */
+  column_aliases?: Array<string>;
+};

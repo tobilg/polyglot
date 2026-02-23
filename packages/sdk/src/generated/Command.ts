@@ -3,8 +3,9 @@
 /**
  * SQL Command (COMMIT, ROLLBACK, BEGIN, etc.)
  */
-export type Command = { 
-/**
- * The command text (e.g., "ROLLBACK", "COMMIT", "BEGIN")
- */
-this: string, };
+export type Command = {
+  /**
+   * The command text (e.g., "ROLLBACK", "COMMIT", "BEGIN")
+   */
+  this: string;
+};

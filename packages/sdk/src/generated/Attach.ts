@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Attach
  */
-export type Attach = { this: Expression, exists: boolean, expressions: Array<Expression>, };
+export type Attach = {
+  this: Expression;
+  exists: boolean;
+  expressions: Array<Expression>;
+};

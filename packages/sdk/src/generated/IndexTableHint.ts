@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * IndexTableHint
  */
-export type IndexTableHint = { this: Expression, expressions: Array<Expression>, target: Expression | null, };
+export type IndexTableHint = {
+  this: Expression;
+  expressions: Array<Expression>;
+  target: Expression | null;
+};

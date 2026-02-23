@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * Lock
  */
-export type Lock = { update: Expression | null, expressions: Array<Expression>, wait: Expression | null, key: Expression | null, };
+export type Lock = {
+  update: Expression | null;
+  expressions: Array<Expression>;
+  wait: Expression | null;
+  key: Expression | null;
+};

@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * RowFormatSerdeProperty
  */
-export type RowFormatSerdeProperty = { this: Expression, serde_properties: Expression | null, };
+export type RowFormatSerdeProperty = {
+  this: Expression;
+  serde_properties: Expression | null;
+};

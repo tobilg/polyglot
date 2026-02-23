@@ -4,4 +4,4 @@ import type { Identifier } from "./Identifier";
 /**
  * DROP DATABASE statement
  */
-export type DropDatabase = { name: Identifier, if_exists: boolean, };
+export type DropDatabase = { name: Identifier; if_exists: boolean };

@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * JSONStripNulls
  */
-export type JSONStripNulls = { this: Expression, expression: Expression | null, include_arrays: Expression | null, remove_empty: Expression | null, };
+export type JSONStripNulls = {
+  this: Expression;
+  expression: Expression | null;
+  include_arrays: Expression | null;
+  remove_empty: Expression | null;
+};

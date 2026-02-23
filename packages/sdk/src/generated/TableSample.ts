@@ -6,12 +6,22 @@ import type { Sample } from "./Sample";
  * TableSample - wraps an expression with a TABLESAMPLE clause
  * Used when TABLESAMPLE follows a non-Table expression (subquery, function, etc.)
  */
-export type TableSample = { 
-/**
- * The expression being sampled (subquery, function, etc.)
- */
-this?: Expression | null, 
-/**
- * The sample specification
- */
-sample?: Sample | null, expressions: Array<Expression>, method: string | null, bucket_numerator: Expression | null, bucket_denominator: Expression | null, bucket_field: Expression | null, percent: Expression | null, rows: Expression | null, size: bigint | null, seed: Expression | null, };
+export type TableSample = {
+  /**
+   * The expression being sampled (subquery, function, etc.)
+   */
+  this?: Expression | null;
+  /**
+   * The sample specification
+   */
+  sample?: Sample | null;
+  expressions: Array<Expression>;
+  method: string | null;
+  bucket_numerator: Expression | null;
+  bucket_denominator: Expression | null;
+  bucket_field: Expression | null;
+  percent: Expression | null;
+  rows: Expression | null;
+  size: bigint | null;
+  seed: Expression | null;
+};

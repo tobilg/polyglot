@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * MapDelete
  */
-export type MapDelete = { this: Expression, expressions: Array<Expression>, };
+export type MapDelete = { this: Expression; expressions: Array<Expression> };

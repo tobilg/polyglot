@@ -3,12 +3,13 @@
 /**
  * TSQL temporal column constraint: GENERATED ALWAYS AS ROW START|END [HIDDEN]
  */
-export type GeneratedAsRow = { 
-/**
- * true = ROW START, false = ROW END
- */
-start: boolean, 
-/**
- * HIDDEN modifier
- */
-hidden: boolean, };
+export type GeneratedAsRow = {
+  /**
+   * true = ROW START, false = ROW END
+   */
+  start: boolean;
+  /**
+   * HIDDEN modifier
+   */
+  hidden: boolean;
+};

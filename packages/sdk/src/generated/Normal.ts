@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Normal
  */
-export type Normal = { this: Expression, stddev: Expression | null, gen: Expression | null, };
+export type Normal = {
+  this: Expression;
+  stddev: Expression | null;
+  gen: Expression | null;
+};

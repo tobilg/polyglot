@@ -4,8 +4,14 @@ import type { Expression } from "./Expression";
 /**
  * Group
  */
-export type Group = { expressions: Array<Expression>, grouping_sets: Expression | null, cube: Expression | null, rollup: Expression | null, totals: Expression | null, 
-/**
- * GROUP BY modifier: Some(true) = ALL, Some(false) = DISTINCT, None = no modifier
- */
-all: boolean | null, };
+export type Group = {
+  expressions: Array<Expression>;
+  grouping_sets: Expression | null;
+  cube: Expression | null;
+  rollup: Expression | null;
+  totals: Expression | null;
+  /**
+   * GROUP BY modifier: Some(true) = ALL, Some(false) = DISTINCT, None = no modifier
+   */
+  all: boolean | null;
+};

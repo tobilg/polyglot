@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Reference
  */
-export type Reference = { this: Expression, expressions: Array<Expression>, options: Array<Expression>, };
+export type Reference = {
+  this: Expression;
+  expressions: Array<Expression>;
+  options: Array<Expression>;
+};

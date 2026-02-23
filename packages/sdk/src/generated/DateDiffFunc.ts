@@ -5,4 +5,8 @@ import type { IntervalUnit } from "./IntervalUnit";
 /**
  * DATEDIFF function
  */
-export type DateDiffFunc = { this: Expression, expression: Expression, unit: IntervalUnit | null, };
+export type DateDiffFunc = {
+  this: Expression;
+  expression: Expression;
+  unit: IntervalUnit | null;
+};

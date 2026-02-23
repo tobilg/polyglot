@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * InputOutputFormat
  */
-export type InputOutputFormat = { input_format: Expression | null, output_format: Expression | null, };
+export type InputOutputFormat = {
+  input_format: Expression | null;
+  output_format: Expression | null;
+};

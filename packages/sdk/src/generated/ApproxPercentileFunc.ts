@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * APPROX_PERCENTILE function
  */
-export type ApproxPercentileFunc = { this: Expression, percentile: Expression, accuracy: Expression | null, filter: Expression | null, };
+export type ApproxPercentileFunc = {
+  this: Expression;
+  percentile: Expression;
+  accuracy: Expression | null;
+  filter: Expression | null;
+};

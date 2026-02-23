@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONBObjectAgg
  */
-export type JSONBObjectAgg = { this: Expression, expression: Expression, };
+export type JSONBObjectAgg = { this: Expression; expression: Expression };

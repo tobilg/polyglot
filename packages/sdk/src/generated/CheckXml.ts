@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * CheckXml
  */
-export type CheckXml = { this: Expression, disable_auto_convert: Expression | null, };
+export type CheckXml = {
+  this: Expression;
+  disable_auto_convert: Expression | null;
+};

@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JSONExists
  */
-export type JSONExists = { this: Expression, path: Expression | null, passing: Expression | null, on_condition: Expression | null, from_dcolonqmark: Expression | null, };
+export type JSONExists = {
+  this: Expression;
+  path: Expression | null;
+  passing: Expression | null;
+  on_condition: Expression | null;
+  from_dcolonqmark: Expression | null;
+};

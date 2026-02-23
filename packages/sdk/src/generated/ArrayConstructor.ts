@@ -4,8 +4,11 @@ import type { Expression } from "./Expression";
 /**
  * ARRAY constructor
  */
-export type ArrayConstructor = { expressions: Array<Expression>, bracket_notation: boolean, 
-/**
- * True if LIST keyword was used instead of ARRAY (DuckDB)
- */
-use_list_keyword: boolean, };
+export type ArrayConstructor = {
+  expressions: Array<Expression>;
+  bracket_notation: boolean;
+  /**
+   * True if LIST keyword was used instead of ARRAY (DuckDB)
+   */
+  use_list_keyword: boolean;
+};

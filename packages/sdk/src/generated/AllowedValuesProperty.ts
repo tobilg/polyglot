@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AllowedValuesProperty
  */
-export type AllowedValuesProperty = { expressions: Array<Expression>, };
+export type AllowedValuesProperty = { expressions: Array<Expression> };

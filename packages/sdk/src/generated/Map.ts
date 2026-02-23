@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Map
  */
-export type Map = { keys: Array<Expression>, values: Array<Expression>, };
+export type Map = { keys: Array<Expression>; values: Array<Expression> };

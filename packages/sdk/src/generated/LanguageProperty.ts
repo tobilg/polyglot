@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * LanguageProperty
  */
-export type LanguageProperty = { this: Expression, };
+export type LanguageProperty = { this: Expression };

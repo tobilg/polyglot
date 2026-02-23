@@ -4,4 +4,8 @@ import type { Identifier } from "./Identifier";
 /**
  * DROP SCHEMA statement
  */
-export type DropSchema = { name: Identifier, if_exists: boolean, cascade: boolean, };
+export type DropSchema = {
+  name: Identifier;
+  if_exists: boolean;
+  cascade: boolean;
+};

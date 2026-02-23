@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * TableFromRows
  */
-export type TableFromRows = { this: Expression, alias: string | null, joins: Array<Expression>, pivots: Expression | null, sample: Expression | null, };
+export type TableFromRows = {
+  this: Expression;
+  alias: string | null;
+  joins: Array<Expression>;
+  pivots: Expression | null;
+  sample: Expression | null;
+};

@@ -3,4 +3,13 @@
 /**
  * Types of properties in CREATE FUNCTION for tracking their original order
  */
-export type FunctionPropertyKind = "Set" | "As" | "Language" | "Determinism" | "NullInput" | "Security" | "SqlDataAccess" | "Options" | "Environment";
+export type FunctionPropertyKind =
+  | "Set"
+  | "As"
+  | "Language"
+  | "Determinism"
+  | "NullInput"
+  | "Security"
+  | "SqlDataAccess"
+  | "Options"
+  | "Environment";

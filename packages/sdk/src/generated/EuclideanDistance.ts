@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * EuclideanDistance
  */
-export type EuclideanDistance = { this: Expression, expression: Expression, };
+export type EuclideanDistance = { this: Expression; expression: Expression };

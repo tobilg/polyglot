@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * RangeN
  */
-export type RangeN = { this: Expression, expressions: Array<Expression>, each: Expression | null, };
+export type RangeN = {
+  this: Expression;
+  expressions: Array<Expression>;
+  each: Expression | null;
+};

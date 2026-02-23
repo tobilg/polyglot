@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * JSONSchema
  */
-export type JSONSchema = { expressions: Array<Expression>, };
+export type JSONSchema = { expressions: Array<Expression> };

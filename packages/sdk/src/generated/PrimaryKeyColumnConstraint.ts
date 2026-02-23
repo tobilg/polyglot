@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * PrimaryKeyColumnConstraint
  */
-export type PrimaryKeyColumnConstraint = { desc: Expression | null, options: Array<Expression>, };
+export type PrimaryKeyColumnConstraint = {
+  desc: Expression | null;
+  options: Array<Expression>;
+};

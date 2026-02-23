@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Randn
  */
-export type Randn = { this: Expression | null, };
+export type Randn = { this: Expression | null };

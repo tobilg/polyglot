@@ -4,4 +4,13 @@ import type { Expression } from "./Expression";
 /**
  * TruncateTable
  */
-export type TruncateTable = { expressions: Array<Expression>, is_database: Expression | null, exists: boolean, only: Expression | null, cluster: Expression | null, identity: Expression | null, option: Expression | null, partition: Expression | null, };
+export type TruncateTable = {
+  expressions: Array<Expression>;
+  is_database: Expression | null;
+  exists: boolean;
+  only: Expression | null;
+  cluster: Expression | null;
+  identity: Expression | null;
+  option: Expression | null;
+  partition: Expression | null;
+};

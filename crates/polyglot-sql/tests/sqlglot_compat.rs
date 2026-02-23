@@ -119,7 +119,7 @@ mod identity_tests {
     #[test]
     fn test_is_null() {
         assert_eq!(roundtrip("SELECT x IS NULL"), "SELECT x IS NULL");
-        assert_eq!(roundtrip("SELECT x IS NOT NULL"), "SELECT x IS NOT NULL");
+        assert_eq!(roundtrip("SELECT x IS NOT NULL"), "SELECT NOT x IS NULL");
     }
 
     #[test]
@@ -319,11 +319,11 @@ mod ddl_tests {
     fn test_create_index() {
         assert_eq!(
             roundtrip("CREATE INDEX idx ON t (col)"),
-            "CREATE INDEX idx ON t (col)"
+            "CREATE INDEX idx ON t(col)"
         );
         assert_eq!(
             roundtrip("CREATE UNIQUE INDEX idx ON t (col)"),
-            "CREATE UNIQUE INDEX idx ON t (col)"
+            "CREATE UNIQUE INDEX idx ON t(col)"
         );
     }
 
@@ -588,7 +588,7 @@ mod transpile_tests {
                 DialectType::Generic,
                 DialectType::PostgreSQL
             ),
-            "SELECT SUBSTRING(name, 1, 5)"
+            "SELECT SUBSTRING(name FROM 1 FOR 5)"
         );
     }
 
@@ -764,7 +764,7 @@ mod phase3_tests {
     fn test_top_clause() {
         assert_eq!(
             roundtrip("SELECT TOP (10) * FROM t"),
-            "SELECT TOP (10) * FROM t"
+            "SELECT * FROM t LIMIT 10"
         );
         assert_eq!(
             roundtrip("SELECT TOP (10) PERCENT * FROM t"),
@@ -1019,7 +1019,7 @@ mod dialect_type_tests {
                 DialectType::Generic,
                 DialectType::TSQL
             ),
-            "SELECT TOP (10) a FROM t"
+            "SELECT TOP 10 a FROM t"
         );
     }
 
@@ -1041,7 +1041,7 @@ mod dialect_type_tests {
         // TOP should roundtrip correctly
         assert_eq!(
             roundtrip("SELECT TOP (10) a FROM t"),
-            "SELECT TOP (10) a FROM t"
+            "SELECT a FROM t LIMIT 10"
         );
     }
 

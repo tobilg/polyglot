@@ -4,4 +4,14 @@ import type { Expression } from "./Expression";
 /**
  * AlterSet
  */
-export type AlterSet = { expressions: Array<Expression>, option: Expression | null, tablespace: Expression | null, access_method: Expression | null, file_format: Expression | null, copy_options: Expression | null, tag: Expression | null, location: Expression | null, serde: Expression | null, };
+export type AlterSet = {
+  expressions: Array<Expression>;
+  option: Expression | null;
+  tablespace: Expression | null;
+  access_method: Expression | null;
+  file_format: Expression | null;
+  copy_options: Expression | null;
+  tag: Expression | null;
+  location: Expression | null;
+  serde: Expression | null;
+};

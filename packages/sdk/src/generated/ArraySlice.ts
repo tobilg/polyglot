@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Array slice (array[start:end])
  */
-export type ArraySlice = { this: Expression, start: Expression | null, end: Expression | null, };
+export type ArraySlice = {
+  this: Expression;
+  start: Expression | null;
+  end: Expression | null;
+};

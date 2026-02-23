@@ -3,4 +3,4 @@
 /**
  * CURRENT_TIME
  */
-export type CurrentTime = { precision: number | null, };
+export type CurrentTime = { precision: number | null };

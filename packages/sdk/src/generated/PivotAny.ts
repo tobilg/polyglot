@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * PivotAny
  */
-export type PivotAny = { this: Expression | null, };
+export type PivotAny = { this: Expression | null };

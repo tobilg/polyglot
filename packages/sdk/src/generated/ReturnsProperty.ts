@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ReturnsProperty
  */
-export type ReturnsProperty = { this: Expression | null, is_table: Expression | null, table: Expression | null, null: Expression | null, };
+export type ReturnsProperty = {
+  this: Expression | null;
+  is_table: Expression | null;
+  table: Expression | null;
+  null: Expression | null;
+};

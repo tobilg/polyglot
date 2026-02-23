@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * Into
  */
-export type IntoClause = { this: Expression | null, temporary: boolean, unlogged: Expression | null, bulk_collect: Expression | null, expressions: Array<Expression>, };
+export type IntoClause = {
+  this: Expression | null;
+  temporary: boolean;
+  unlogged: Expression | null;
+  bulk_collect: Expression | null;
+  expressions: Array<Expression>;
+};

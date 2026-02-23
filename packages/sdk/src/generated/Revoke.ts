@@ -6,36 +6,37 @@ import type { Privilege } from "./Privilege";
 /**
  * REVOKE statement
  */
-export type Revoke = { 
-/**
- * Privileges to revoke (e.g., SELECT, INSERT, UPDATE(col1, col2))
- */
-privileges: Array<Privilege>, 
-/**
- * Object kind (TABLE, SCHEMA, FUNCTION, etc.)
- */
-kind: string | null, 
-/**
- * The object to revoke from
- */
-securable: Identifier, 
-/**
- * Function parameter types (for FUNCTION kind)
- */
-function_params?: Array<string>, 
-/**
- * The grantees
- */
-principals: Array<GrantPrincipal>, 
-/**
- * GRANT OPTION FOR
- */
-grant_option: boolean, 
-/**
- * CASCADE
- */
-cascade: boolean, 
-/**
- * RESTRICT
- */
-restrict: boolean, };
+export type Revoke = {
+  /**
+   * Privileges to revoke (e.g., SELECT, INSERT, UPDATE(col1, col2))
+   */
+  privileges: Array<Privilege>;
+  /**
+   * Object kind (TABLE, SCHEMA, FUNCTION, etc.)
+   */
+  kind: string | null;
+  /**
+   * The object to revoke from
+   */
+  securable: Identifier;
+  /**
+   * Function parameter types (for FUNCTION kind)
+   */
+  function_params?: Array<string>;
+  /**
+   * The grantees
+   */
+  principals: Array<GrantPrincipal>;
+  /**
+   * GRANT OPTION FOR
+   */
+  grant_option: boolean;
+  /**
+   * CASCADE
+   */
+  cascade: boolean;
+  /**
+   * RESTRICT
+   */
+  restrict: boolean;
+};

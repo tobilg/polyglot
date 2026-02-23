@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * Zipf
  */
-export type Zipf = { this: Expression, elementcount: Expression | null, gen: Expression | null, };
+export type Zipf = {
+  this: Expression;
+  elementcount: Expression | null;
+  gen: Expression | null;
+};

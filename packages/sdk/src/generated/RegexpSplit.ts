@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * RegexpSplit
  */
-export type RegexpSplit = { this: Expression, expression: Expression, limit: Expression | null, };
+export type RegexpSplit = {
+  this: Expression;
+  expression: Expression;
+  limit: Expression | null;
+};

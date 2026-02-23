@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * CompressColumnConstraint
  */
-export type CompressColumnConstraint = { this: Expression | null, };
+export type CompressColumnConstraint = { this: Expression | null };

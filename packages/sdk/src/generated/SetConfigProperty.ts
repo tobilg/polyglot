@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * SetConfigProperty
  */
-export type SetConfigProperty = { this: Expression, };
+export type SetConfigProperty = { this: Expression };

@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * VarMap
  */
-export type VarMap = { keys: Array<Expression>, values: Array<Expression>, };
+export type VarMap = { keys: Array<Expression>; values: Array<Expression> };

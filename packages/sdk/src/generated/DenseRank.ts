@@ -4,8 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * DENSE_RANK function (Oracle allows hypothetical args with WITHIN GROUP)
  */
-export type DenseRank = { 
-/**
- * Oracle hypothetical rank: DENSE_RANK(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
- */
-args?: Array<Expression>, };
+export type DenseRank = {
+  /**
+   * Oracle hypothetical rank: DENSE_RANK(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
+   */
+  args?: Array<Expression>;
+};

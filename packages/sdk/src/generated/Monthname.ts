@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * Monthname
  */
-export type Monthname = { this: Expression, abbreviated: Expression | null, };
+export type Monthname = { this: Expression; abbreviated: Expression | null };

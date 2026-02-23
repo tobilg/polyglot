@@ -6,20 +6,21 @@ import type { Identifier } from "./Identifier";
  * LATERAL VIEW clause (Hive/Spark)
  * Used for unnesting arrays/maps with EXPLODE, POSEXPLODE, etc.
  */
-export type LateralView = { 
-/**
- * The table-generating function (EXPLODE, POSEXPLODE, etc.)
- */
-this: Expression, 
-/**
- * Table alias for the generated table
- */
-table_alias: Identifier | null, 
-/**
- * Column aliases for the generated columns
- */
-column_aliases: Array<Identifier>, 
-/**
- * OUTER keyword - preserve nulls when input is empty/null
- */
-outer: boolean, };
+export type LateralView = {
+  /**
+   * The table-generating function (EXPLODE, POSEXPLODE, etc.)
+   */
+  this: Expression;
+  /**
+   * Table alias for the generated table
+   */
+  table_alias: Identifier | null;
+  /**
+   * Column aliases for the generated columns
+   */
+  column_aliases: Array<Identifier>;
+  /**
+   * OUTER keyword - preserve nulls when input is empty/null
+   */
+  outer: boolean;
+};

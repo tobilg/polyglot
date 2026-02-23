@@ -7,8 +7,10 @@ import type { Expression } from "./Expression";
  * Preserves user-written parentheses so that `(a + b) * c` round-trips
  * correctly instead of being flattened to `a + b * c`.
  */
-export type Paren = { 
-/**
- * The inner expression wrapped by parentheses.
- */
-this: Expression, trailing_comments: Array<string>, };
+export type Paren = {
+  /**
+   * The inner expression wrapped by parentheses.
+   */
+  this: Expression;
+  trailing_comments: Array<string>;
+};

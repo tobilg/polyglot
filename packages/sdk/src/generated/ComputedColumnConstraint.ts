@@ -4,4 +4,9 @@ import type { Expression } from "./Expression";
 /**
  * ComputedColumnConstraint
  */
-export type ComputedColumnConstraint = { this: Expression, persisted: Expression | null, not_null: Expression | null, data_type: Expression | null, };
+export type ComputedColumnConstraint = {
+  this: Expression;
+  persisted: Expression | null;
+  not_null: Expression | null;
+  data_type: Expression | null;
+};

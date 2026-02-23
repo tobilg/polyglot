@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * NAMED_STRUCT function
  */
-export type NamedStructFunc = { pairs: Array<[Expression, Expression]>, };
+export type NamedStructFunc = { pairs: Array<[Expression, Expression]> };

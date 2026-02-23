@@ -10,44 +10,45 @@ import type { JoinKind } from "./JoinKind";
  * (USING column list), but not both. The `kind` field determines the join
  * type (INNER, LEFT, CROSS, etc.).
  */
-export type Join = { 
-/**
- * The right-hand table expression being joined.
- */
-this: Expression, 
-/**
- * The ON condition (mutually exclusive with `using`).
- */
-on: Expression | null, 
-/**
- * The USING column list (mutually exclusive with `on`).
- */
-using: Array<Identifier>, 
-/**
- * The join type (INNER, LEFT, RIGHT, FULL, CROSS, etc.).
- */
-kind: JoinKind, 
-/**
- * Whether INNER keyword was explicitly used (INNER JOIN vs JOIN)
- */
-use_inner_keyword: boolean, 
-/**
- * Whether OUTER keyword was explicitly used (LEFT OUTER JOIN vs LEFT JOIN)
- */
-use_outer_keyword: boolean, 
-/**
- * Whether the ON/USING condition was deferred (assigned right-to-left for chained JOINs)
- */
-deferred_condition: boolean, 
-/**
- * TSQL join hint: LOOP, HASH, MERGE (e.g., INNER LOOP JOIN)
- */
-join_hint?: string | null, 
-/**
- * Snowflake ASOF JOIN match condition (MATCH_CONDITION clause)
- */
-match_condition?: Expression | null, 
-/**
- * PIVOT/UNPIVOT operations that follow this join (Oracle/TSQL syntax)
- */
-pivots?: Array<Expression>, };
+export type Join = {
+  /**
+   * The right-hand table expression being joined.
+   */
+  this: Expression;
+  /**
+   * The ON condition (mutually exclusive with `using`).
+   */
+  on: Expression | null;
+  /**
+   * The USING column list (mutually exclusive with `on`).
+   */
+  using: Array<Identifier>;
+  /**
+   * The join type (INNER, LEFT, RIGHT, FULL, CROSS, etc.).
+   */
+  kind: JoinKind;
+  /**
+   * Whether INNER keyword was explicitly used (INNER JOIN vs JOIN)
+   */
+  use_inner_keyword: boolean;
+  /**
+   * Whether OUTER keyword was explicitly used (LEFT OUTER JOIN vs LEFT JOIN)
+   */
+  use_outer_keyword: boolean;
+  /**
+   * Whether the ON/USING condition was deferred (assigned right-to-left for chained JOINs)
+   */
+  deferred_condition: boolean;
+  /**
+   * TSQL join hint: LOOP, HASH, MERGE (e.g., INNER LOOP JOIN)
+   */
+  join_hint?: string | null;
+  /**
+   * Snowflake ASOF JOIN match condition (MATCH_CONDITION clause)
+   */
+  match_condition?: Expression | null;
+  /**
+   * PIVOT/UNPIVOT operations that follow this join (Oracle/TSQL syntax)
+   */
+  pivots?: Array<Expression>;
+};

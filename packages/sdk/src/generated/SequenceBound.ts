@@ -3,4 +3,4 @@
 /**
  * Sequence bound (value or NO MINVALUE/NO MAXVALUE)
  */
-export type SequenceBound = { "Value": bigint } | "None";
+export type SequenceBound = { Value: bigint } | "None";

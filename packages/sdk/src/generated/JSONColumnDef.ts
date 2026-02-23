@@ -4,4 +4,10 @@ import type { Expression } from "./Expression";
 /**
  * JSONColumnDef
  */
-export type JSONColumnDef = { this: Expression | null, kind: string | null, path: Expression | null, nested_schema: Expression | null, ordinality: Expression | null, };
+export type JSONColumnDef = {
+  this: Expression | null;
+  kind: string | null;
+  path: Expression | null;
+  nested_schema: Expression | null;
+  ordinality: Expression | null;
+};

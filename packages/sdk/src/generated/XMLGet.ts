@@ -4,4 +4,8 @@ import type { Expression } from "./Expression";
 /**
  * XMLGet
  */
-export type XMLGet = { this: Expression, expression: Expression, instance: Expression | null, };
+export type XMLGet = {
+  this: Expression;
+  expression: Expression;
+  instance: Expression | null;
+};

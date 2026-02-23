@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * ROUND function
  */
-export type RoundFunc = { this: Expression, decimals: Expression | null, };
+export type RoundFunc = { this: Expression; decimals: Expression | null };

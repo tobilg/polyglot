@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * ScopeResolution
  */
-export type ScopeResolution = { this: Expression | null, expression: Expression, };
+export type ScopeResolution = {
+  this: Expression | null;
+  expression: Expression;
+};

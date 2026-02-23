@@ -4,4 +4,4 @@ import type { Expression } from "./Expression";
 /**
  * AlgorithmProperty
  */
-export type AlgorithmProperty = { this: Expression, };
+export type AlgorithmProperty = { this: Expression };

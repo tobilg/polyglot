@@ -4,4 +4,8 @@ import type { Identifier } from "./Identifier";
 /**
  * Trigger event (INSERT, UPDATE, DELETE, TRUNCATE)
  */
-export type TriggerEvent = "Insert" | { "Update": Array<Identifier> | null } | "Delete" | "Truncate";
+export type TriggerEvent =
+  | "Insert"
+  | { Update: Array<Identifier> | null }
+  | "Delete"
+  | "Truncate";

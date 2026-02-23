@@ -4,4 +4,12 @@ import type { Expression } from "./Expression";
 /**
  * VectorSearch
  */
-export type VectorSearch = { this: Expression, column_to_search: Expression | null, query_table: Expression | null, query_column_to_search: Expression | null, top_k: Expression | null, distance_type: Expression | null, options: Array<Expression>, };
+export type VectorSearch = {
+  this: Expression;
+  column_to_search: Expression | null;
+  query_table: Expression | null;
+  query_column_to_search: Expression | null;
+  top_k: Expression | null;
+  distance_type: Expression | null;
+  options: Array<Expression>;
+};

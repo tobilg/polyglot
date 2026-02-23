@@ -6,32 +6,33 @@ import type { Expression } from "./Expression";
 /**
  * COPY statement (Snowflake, PostgreSQL, DuckDB, TSQL)
  */
-export type CopyStmt = { 
-/**
- * Target table or query
- */
-this: Expression, 
-/**
- * True for FROM (loading into table), false for TO (exporting)
- */
-kind: boolean, 
-/**
- * Source/destination file(s) or stage
- */
-files: Array<Expression>, 
-/**
- * Copy parameters
- */
-params: Array<CopyParameter>, 
-/**
- * Credentials for external access
- */
-credentials: Credentials | null, 
-/**
- * Whether the INTO keyword was used (COPY INTO vs COPY)
- */
-is_into: boolean, 
-/**
- * Whether parameters are wrapped in WITH (...) syntax
- */
-with_wrapped: boolean, };
+export type CopyStmt = {
+  /**
+   * Target table or query
+   */
+  this: Expression;
+  /**
+   * True for FROM (loading into table), false for TO (exporting)
+   */
+  kind: boolean;
+  /**
+   * Source/destination file(s) or stage
+   */
+  files: Array<Expression>;
+  /**
+   * Copy parameters
+   */
+  params: Array<CopyParameter>;
+  /**
+   * Credentials for external access
+   */
+  credentials: Credentials | null;
+  /**
+   * Whether the INTO keyword was used (COPY INTO vs COPY)
+   */
+  is_into: boolean;
+  /**
+   * Whether parameters are wrapped in WITH (...) syntax
+   */
+  with_wrapped: boolean;
+};

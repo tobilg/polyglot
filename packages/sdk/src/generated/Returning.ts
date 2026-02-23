@@ -4,4 +4,7 @@ import type { Expression } from "./Expression";
 /**
  * Returning
  */
-export type Returning = { expressions: Array<Expression>, into: Expression | null, };
+export type Returning = {
+  expressions: Array<Expression>;
+  into: Expression | null;
+};
