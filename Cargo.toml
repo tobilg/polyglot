@@ -4,13 +4,14 @@ members = [
     "crates/polyglot-sql",
     "crates/polyglot-sql-wasm",
     "crates/polyglot-sql-ffi",
+    "crates/polyglot-sql-python",
 ]
 exclude = [
     "examples/rust",
 ]
 
 [workspace.package]
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "MIT"
 authors = ["polyglot contributors"]

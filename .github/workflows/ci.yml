@@ -76,6 +76,28 @@ jobs:
       - name: Feature-gate check (WASM single dialect)
         run: cargo check -p polyglot-sql-wasm --no-default-features --features "console_error_panic_hook,dialect-clickhouse"
 
+  python-fast-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Python bindings tests
+        run: make test-python
+
+      - name: Python bindings typecheck
+        run: make typecheck-python
+
   sdk-build:
     needs: rust-test
     runs-on: ubuntu-latest
@@ -149,6 +171,201 @@ jobs:
         with:
           name: sdk-generated-bindings
           path: packages/sdk/src/generated/
+
+  python-wheels-linux:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rust-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Python wheels (Linux ${{ matrix.target }})
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: '2014'
+          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          sccache: true
+
+      - name: Smoke test built wheel (Linux x86_64)
+        if: matrix.target == 'x86_64'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist "polyglot-sql==${GITHUB_REF_NAME#v}"
+          python -c "import polyglot_sql; assert polyglot_sql.transpile('SELECT 1', read='postgres', write='postgres') == ['SELECT 1']"
+
+      - name: Upload wheel artifacts (Linux ${{ matrix.target }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-linux-${{ matrix.target }}
+          path: dist
+
+  python-wheels-macos:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rust-test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Python wheels (macOS ${{ matrix.target }})
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          sccache: true
+
+      - name: Smoke test built wheel (macOS)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist "polyglot-sql==${GITHUB_REF_NAME#v}"
+          python -c "import polyglot_sql; assert polyglot_sql.parse_one('SELECT 1', dialect='postgres')"
+
+      - name: Upload wheel artifacts (macOS ${{ matrix.target }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-macos-${{ matrix.target }}
+          path: dist
+
+  python-wheels-windows:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rust-test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Python wheels (Windows x86_64)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64-pc-windows-msvc
+          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          sccache: true
+
+      - name: Smoke test built wheel (Windows)
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist "polyglot-sql==$($env:GITHUB_REF_NAME.Substring(1))"
+          python -c "import polyglot_sql; assert polyglot_sql.dialects()"
+
+      - name: Upload wheel artifacts (Windows x86_64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-windows-x86_64
+          path: dist
+
+  python-sdist:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: rust-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Python source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path crates/polyglot-sql-python/Cargo.toml
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-sdist
+          path: dist
+
+  publish-pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [python-wheels-linux, python-wheels-macos, python-wheels-windows, python-sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/polyglot-sql
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Python distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify version consistency (tag, workspace, artifacts)
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          workspace_version="$(awk '
+            $0 ~ /^\\[workspace.package\\]/ { in_ws=1; next }
+            in_ws && $0 ~ /^version *=/ {
+              gsub(/"/, "", $3);
+              print $3;
+              exit;
+            }
+          ' Cargo.toml)"
+
+          if [ "$workspace_version" != "$expected_version" ]; then
+            echo "Workspace version mismatch: expected=$expected_version actual=$workspace_version"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import glob
+          import os
+          import re
+          import sys
+
+          expected = os.environ["GITHUB_REF_NAME"][1:]
+          files = glob.glob("dist/*")
+          if not files:
+              print("No dist artifacts found")
+              sys.exit(1)
+
+          bad = []
+          for path in files:
+              name = os.path.basename(path)
+              if name.endswith(".whl"):
+                  m = re.match(r"polyglot_sql-([0-9A-Za-z\\.]+)-", name)
+              elif name.endswith(".tar.gz"):
+                  m = re.match(r"polyglot_sql-([0-9A-Za-z\\.]+)\\.tar\\.gz", name)
+              else:
+                  continue
+              if not m or m.group(1) != expected:
+                  bad.append(name)
+
+          if bad:
+              print("Version mismatch in artifacts:", bad)
+              sys.exit(1)
+          print(f"Artifacts match expected version {expected}")
+          PY
+
+      - name: Smoke install from built artifacts (Linux)
+        run: |
+          expected_version="${GITHUB_REF_NAME#v}"
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist "polyglot-sql==${expected_version}"
+          python - <<'PY'
+          import os
+          import polyglot_sql
+          expected = os.environ["GITHUB_REF_NAME"][1:]
+          assert polyglot_sql.__version__ == expected, (polyglot_sql.__version__, expected)
+          assert polyglot_sql.transpile("SELECT 1", read="postgres", write="postgres") == ["SELECT 1"]
+          PY
+
+      - name: Publish Python package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-crate:
     if: startsWith(github.ref, 'refs/tags/v')

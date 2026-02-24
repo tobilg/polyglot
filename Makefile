@@ -10,7 +10,8 @@
         test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
         generate-bindings copy-bindings cargo-build-release \
         build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
-        bench-compare bench-rust bench-python \
+        develop-python test-python build-python typecheck-python \
+        bench-compare bench-rust bench-python bench-parse bench-parse-quick bench-parse-full \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
         bump-version
@@ -73,6 +74,9 @@ help:
 	@echo "  make bench-compare       - Compare polyglot-sql vs sqlglot performance"
 	@echo "  make bench-rust          - Run Rust benchmarks (JSON output)"
 	@echo "  make bench-python        - Run Python sqlglot benchmarks (JSON output)"
+	@echo "  make bench-parse         - Parse benchmark (core-only: polyglot + sqlglot)"
+	@echo "  make bench-parse-quick   - Parse benchmark fast mode (core-only + quick)"
+	@echo "  make bench-parse-full    - Parse benchmark (all available parsers)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
@@ -81,6 +85,10 @@ help:
 	@echo "  make build-ffi           - Build C FFI shared/static library"
 	@echo "  make generate-ffi-header - Generate C header via cbindgen/build.rs"
 	@echo "  make build-ffi-example   - Build and run C example"
+	@echo "  make develop-python      - Build/install Python extension in uv-managed env"
+	@echo "  make test-python         - Run Python bindings pytest suite"
+	@echo "  make build-python        - Build Python wheels (maturin)"
+	@echo "  make typecheck-python    - Type-check Python package stubs"
 	@echo "  make build-all           - Build everything"
 	@echo "  make fmt                 - Format all code (Rust + TypeScript SDK)"
 	@echo ""
@@ -303,6 +311,21 @@ bench-rust:
 bench-python:
 	@uv run --with sqlglot[c] python3 tools/bench-compare/bench_sqlglot.py
 
+# Parse benchmark (core): polyglot-sql (Rust/PyO3) vs sqlglot (C tokenizer) via pyperf
+bench-parse:
+	@uv sync --project tools/bench-compare && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only
+
+# Parse benchmark (core/quick): faster but less stable timings
+bench-parse-quick:
+	@uv sync --project tools/bench-compare && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only --quick
+
+# Parse benchmark (full): include optional third-party parsers when available
+bench-parse-full:
+	@uv sync --project tools/bench-compare && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet
+
 # =============================================================================
 # Build
 # =============================================================================
@@ -350,6 +373,7 @@ build-wasm-dialects:
 build-all:
 	@$(MAKE) cargo-build-release
 	@$(MAKE) build-ffi
+	@$(MAKE) build-python
 	@$(MAKE) generate-bindings
 	@$(MAKE) build-wasm
 
@@ -364,6 +388,22 @@ build-ffi:
 # Build C FFI static library (same build, staticlib is emitted with cdylib)
 build-ffi-static:
 	cargo build -p polyglot-sql-ffi --profile ffi_release
+
+# Build Python extension in development mode (uv-managed)
+develop-python:
+	cd crates/polyglot-sql-python && uv sync --group dev && uv run maturin develop
+
+# Run Python tests
+test-python:
+	cd crates/polyglot-sql-python && uv sync --group dev && uv run pytest
+
+# Build Python wheels (release)
+build-python:
+	cd crates/polyglot-sql-python && uv sync --group dev && uv run maturin build --release
+
+# Type-check Python package/stubs
+typecheck-python:
+	cd crates/polyglot-sql-python && uv sync --group dev && uv run pyright python/polyglot_sql/
 
 # Generate C header via build.rs/cbindgen
 generate-ffi-header:

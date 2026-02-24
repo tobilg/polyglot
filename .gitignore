@@ -44,6 +44,16 @@
 
 # Python
 .venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
 
 # pnpm
 .pnpm-store/

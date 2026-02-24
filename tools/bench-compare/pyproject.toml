@@ -1,0 +1,18 @@
+[project]
+name = "polyglot-bench-compare"
+version = "0.0.0"
+description = "Benchmark environment for parser performance comparisons."
+requires-python = ">=3.9"
+dependencies = [
+    "polyglot-sql",
+    "moz-sql-parser>=4.40.0",
+    "pyperf>=2.7.0",
+    "sqloxide>=0.1.56; python_version < '3.14'",
+    "sqlfluff>=3.4.2",
+    "sqlglot[c]>=29.0.0",
+    "sqlparse>=0.5.3",
+    "sqltree>=0.3.0",
+]
+
+[tool.uv.sources]
+polyglot-sql = { path = "../../crates/polyglot-sql-python", editable = true }

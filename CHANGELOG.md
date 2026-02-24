@@ -6,7 +6,17 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
-## [0.1.7] - Unreleased
+## [0.1.8] - 2026-02-24
+
+### Added
+- New `polyglot-sql-python` crate with first-party Python bindings (PyO3 + maturin) for parse, transpile, generate, format, validate, diff, lineage, and optimize flows.
+- Release CI support for Python package publishing (multi-platform wheel builds + PyPI publish on `v*` tags).
+- Dedicated benchmark project in `tools/bench-compare` with isolated `uv` environment management.
+
+### Fixed
+- Python local build/test artifacts are now ignored in git (`__pycache__`, `.pytest_cache`, coverage files, and related caches).
+
+## [0.1.7] - 2026-02-24
 
 ### Added
 - New `polyglot-sql-ffi` crate with a C-compatible API surface for parse, transpile, generate, format, validate, diff, lineage, and optimize flows.
@@ -52,6 +62,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/tobilg/polyglot/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/tobilg/polyglot/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/tobilg/polyglot/compare/v0.1.5...v0.1.6

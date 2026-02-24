@@ -1,8 +1,11 @@
 # Polyglot
 
-Rust/Wasm-powered SQL transpiler for 32 dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
+Rust/Wasm-powered SQL transpiler for 32+ dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
 
-Polyglot parses, generates, transpiles, and formats SQL across 32 database dialects. It ships as a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/)) and a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk) on npm).
+Polyglot parses, generates, transpiles, and formats SQL across 32+ database dialects. It ships as:
+- a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/))
+- a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
+- a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as the [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/) and [TypeScript API Docs](https://polyglot.gh.tobilg.com/).
 
@@ -18,6 +21,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **Validation** with syntax, semantic, and schema-aware checks
 - **AST visitor** utilities for walking, transforming, and analyzing queries
 - **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
+- **Python bindings** powered by PyO3 (`polyglot-sql` on PyPI)
 
 ## Supported Dialects (32)
 
@@ -93,6 +97,25 @@ const sql = select('id', 'name')
 
 See the full [TypeScript SDK README](packages/sdk/README.md) for more examples.
 
+### Python
+
+```bash
+pip install polyglot-sql
+```
+
+```python
+import polyglot_sql
+
+result = polyglot_sql.transpile(
+    "SELECT IFNULL(a, b) FROM t",
+    read="mysql",
+    write="postgres",
+)
+print(result[0])  # SELECT COALESCE(a, b) FROM t
+```
+
+See the full [Python bindings README](crates/polyglot-sql-python/README.md).
+
 ## Project Structure
 
 ```
@@ -100,7 +123,8 @@ polyglot/
 ├── crates/
 │   ├── polyglot-sql/           # Core Rust library (parser, generator, builder)
 │   ├── polyglot-sql-wasm/      # WASM bindings
-│   └── polyglot-sql-ffi/       # C ABI bindings (.so/.dylib/.dll + .a/.lib + header)
+│   ├── polyglot-sql-ffi/       # C ABI bindings (.so/.dylib/.dll + .a/.lib + header)
+│   └── polyglot-sql-python/    # Python bindings (PyO3 + maturin, published on PyPI)
 ├── packages/
 │   ├── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
 │   └── playground/             # Playground for testing the SDK (React 19, Tailwind v4, Vite)
@@ -139,6 +163,10 @@ cargo build -p polyglot-sql
 # Build C FFI crate (shared/static libs + generated header)
 cargo build -p polyglot-sql-ffi --profile ffi_release
 
+# Build Python extension / wheel
+make develop-python
+make build-python
+
 # Build WASM + TypeScript SDK
 make build-all
 
@@ -161,6 +189,18 @@ Polyglot provides a stable C ABI in `crates/polyglot-sql-ffi`.
   - `make test-ffi`
 
 For tagged releases (`v*`), CI also attaches prebuilt FFI artifacts and checksums to GitHub Releases.
+
+## Python Bindings
+
+Polyglot provides first-party Python bindings in `crates/polyglot-sql-python`.
+
+- Crate README: [`crates/polyglot-sql-python/README.md`](crates/polyglot-sql-python/README.md)
+- Package name on PyPI: `polyglot-sql`
+- Make targets:
+  - `make develop-python`
+  - `make test-python`
+  - `make typecheck-python`
+  - `make build-python`
 
 ## Testing
 
@@ -246,6 +286,10 @@ cargo +nightly fuzz run fuzz_transpile
 | `make extract-fixtures` | Regenerate JSON fixtures from Python |
 | `make setup-fixtures` | Create fixture symlink for Rust tests |
 | `make generate-bindings` | Generate TypeScript type bindings |
+| `make develop-python` | Build/install Python extension in uv-managed env |
+| `make test-python` | Run Python bindings tests |
+| `make typecheck-python` | Run Python bindings type-check |
+| `make build-python` | Build Python wheels with maturin |
 | `make clean` | Remove all build artifacts |
 
 ## Licenses

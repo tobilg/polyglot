@@ -1,0 +1,48 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "polyglot-sql"
+dynamic = ["version"]
+description = "Rust-powered SQL transpiler for 32+ dialects. Parse, generate, transpile, format, and validate SQL."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+keywords = ["sql", "transpiler", "parser", "dialect", "database"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/tobilg/polyglot"
+Documentation = "https://polyglot.gh.tobilg.com"
+Repository = "https://github.com/tobilg/polyglot"
+Issues = "https://github.com/tobilg/polyglot/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "polyglot_sql._polyglot_sql"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.7,<2.0",
+    "pytest>=8.0",
+    "pyright>=1.1.390",
+]
