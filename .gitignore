@@ -42,6 +42,12 @@
 
 **/.DS_Store
 
+# Python
+.venv/
+
+# pnpm
+.pnpm-store/
+
 # AI
 external-projects/
 CLAUDE.md
