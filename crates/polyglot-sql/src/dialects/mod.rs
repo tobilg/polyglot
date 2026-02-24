@@ -477,6 +477,7 @@ where
 
 /// Convert DuckDB C-style format strings to Presto C-style format strings.
 /// DuckDB and Presto both use C-style % directives but with different specifiers for some cases.
+#[cfg(feature = "transpile")]
 fn duckdb_to_presto_format(fmt: &str) -> String {
     // Order matters: handle longer patterns first to avoid partial replacements
     let mut result = fmt.to_string();
@@ -502,6 +503,7 @@ fn duckdb_to_presto_format(fmt: &str) -> String {
 
 /// Convert DuckDB C-style format strings to BigQuery format strings.
 /// BigQuery uses a mix of strftime-like directives.
+#[cfg(feature = "transpile")]
 fn duckdb_to_bigquery_format(fmt: &str) -> String {
     let mut result = fmt.to_string();
     // Handle longer patterns first
