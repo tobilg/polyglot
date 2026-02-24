@@ -6,6 +6,25 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ## [Unreleased]
 
+## [0.1.7] - Unreleased
+
+### Added
+- New `polyglot-sql-ffi` crate with a C-compatible API surface for parse, transpile, generate, format, validate, diff, lineage, and optimize flows.
+- Generated C header and end-to-end C example (`examples/c`) for native integration.
+- Release CI now builds multi-platform FFI artifacts and publishes archives plus checksums to GitHub Releases for `v*` tags.
+- Playground capabilities for lineage and schema-aware validation workflows.
+
+### Changed
+- SDK/WASM bridge now supports structured value APIs (`transpile_value`, `parse_value`, `generate_value`, `format_sql_value`, `get_dialects_value`) to reduce JSON serialization overhead.
+- Parser now rebalances long `AND`/`OR` chains into bounded-depth trees to improve stack behavior on very large predicates.
+- CI release pipeline hardening for SDK/WASM/docs/playground version consistency checks against the release tag.
+- Build/test flow updates across Makefile and CI to keep Rust, WASM, SDK, docs, playground, and FFI outputs aligned.
+
+### Fixed
+- Large-SQL formatting robustness (issue #27 reproduction case) for high condition counts in WASM/SDK usage.
+- WASM->TypeScript AST shape compatibility regressions by using JSON-compatible structured serialization.
+- Additional parser, optimizer, and validation edge cases discovered during large-query and release-hardening work.
+
 ## [0.1.6] - 2026-02-23
 
 ### Added
@@ -33,5 +52,6 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/tobilg/polyglot/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/tobilg/polyglot/compare/v0.1.5...v0.1.6
