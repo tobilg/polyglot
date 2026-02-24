@@ -19,6 +19,7 @@ pub mod diff;
 pub mod error;
 pub mod expressions;
 mod function_registry;
+pub mod function_catalog;
 pub mod generator;
 pub mod helper;
 pub mod lineage;
@@ -47,6 +48,7 @@ pub use ast_transforms::{
 pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
 pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
 pub use expressions::Expression;
+pub use function_catalog::{FunctionCatalog, FunctionSignature, HashMapFunctionCatalog};
 pub use generator::Generator;
 pub use helper::{
     csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,

@@ -39080,10 +39080,10 @@ impl Parser {
         }
     }
 
-    /// Parse a comma-separated list of expressions
-    /// Supports named arguments with => or := syntax
-    fn parse_expression_list(&mut self) -> Result<Vec<Expression>> {
-        let mut expressions = Vec::new();
+    /// Parse a comma-separated list of expressions.
+    /// Supports named arguments with => or := syntax.
+    fn parse_expression_list_with_capacity(&mut self, capacity_hint: usize) -> Result<Vec<Expression>> {
+        let mut expressions = Vec::with_capacity(capacity_hint);
 
         loop {
             // Check if this is a named argument: identifier => value or identifier := value
@@ -39254,6 +39254,54 @@ impl Parser {
         }
 
         Ok(expressions)
+    }
+
+    /// Parse a comma-separated list of expressions.
+    /// Supports named arguments with => or := syntax.
+    fn parse_expression_list(&mut self) -> Result<Vec<Expression>> {
+        self.parse_expression_list_with_capacity(0)
+    }
+
+    /// Estimate top-level expression count until the next unmatched `)`.
+    ///
+    /// This is used for pre-allocating comma-separated lists like `IN (...)`
+    /// to reduce `Vec` growth churn on very large lists.
+    fn estimate_expression_list_capacity_until_rparen(&self) -> usize {
+        if self.current >= self.tokens.len() || self.check(TokenType::RParen) {
+            return 0;
+        }
+
+        let mut idx = self.current;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut commas = 0usize;
+        let mut has_any_token = false;
+
+        while idx < self.tokens.len() {
+            let token_type = self.tokens[idx].token_type;
+            match token_type {
+                TokenType::LParen => paren_depth += 1,
+                TokenType::RParen => {
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                        break;
+                    }
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                TokenType::LBracket => bracket_depth += 1,
+                TokenType::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+                TokenType::LBrace => brace_depth += 1,
+                TokenType::RBrace => brace_depth = brace_depth.saturating_sub(1),
+                TokenType::Comma if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                    commas += 1;
+                }
+                _ => {}
+            }
+            has_any_token = true;
+            idx += 1;
+        }
+
+        if has_any_token { commas + 1 } else { 0 }
     }
 
     /// Parse function arguments with lambda support (for TRANSFORM and similar functions).
@@ -50075,8 +50123,9 @@ impl Parser {
             }))));
         }
 
-        // Parse value list
-        let expressions = self.parse_expression_list()?;
+        // Parse value list. Pre-size for large IN lists to reduce reallocations.
+        let capacity_hint = self.estimate_expression_list_capacity_until_rparen();
+        let expressions = self.parse_expression_list_with_capacity(capacity_hint)?;
         self.match_token(TokenType::RParen);
 
         Ok(Some(Expression::In(Box::new(In {

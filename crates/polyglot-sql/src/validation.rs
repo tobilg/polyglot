@@ -14,7 +14,7 @@ use crate::function_registry::canonical_typed_function_name_upper;
 use crate::optimizer::annotate_types;
 use crate::resolver::Resolver;
 use crate::schema::{MappingSchema, Schema as SqlSchema, SchemaError, SchemaResult, TABLE_PARTS};
-use crate::scope::build_scope;
+use crate::scope::{build_scope, walk_in_scope};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -2946,16 +2946,189 @@ fn check_semantics(stmt: &Expression) -> Vec<ValidationError> {
     errors
 }
 
+fn resolve_scope_source_name(scope: &crate::scope::Scope, name: &str) -> Option<String> {
+    scope
+        .sources
+        .get_key_value(name)
+        .map(|(k, _)| k.clone())
+        .or_else(|| {
+            scope
+                .sources
+                .keys()
+                .find(|source| source.eq_ignore_ascii_case(name))
+                .cloned()
+        })
+}
+
+fn source_has_column(columns: &[String], column_name: &str) -> bool {
+    columns
+        .iter()
+        .any(|c| c == "*" || c.eq_ignore_ascii_case(column_name))
+}
+
+fn source_display_name(scope: &crate::scope::Scope, source_name: &str) -> String {
+    scope
+        .sources
+        .get(source_name)
+        .map(|source| match &source.expression {
+            Expression::Table(table) => lower(&table_ref_display_name(table)),
+            _ => lower(source_name),
+        })
+        .unwrap_or_else(|| lower(source_name))
+}
+
+fn validate_select_columns_with_schema(
+    select: &crate::expressions::Select,
+    schema_map: &HashMap<String, TableSchemaEntry>,
+    resolver_schema: &MappingSchema,
+    strict: bool,
+) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    let select_expr = Expression::Select(Box::new(select.clone()));
+    let scope = build_scope(&select_expr);
+    let mut resolver = Resolver::new(&scope, resolver_schema, true);
+    let source_names: Vec<String> = scope.sources.keys().cloned().collect();
+
+    for node in walk_in_scope(&select_expr, false) {
+        let Expression::Column(column) = node else {
+            continue;
+        };
+
+        let col_name = lower(&column.name.name);
+        if col_name.is_empty() {
+            continue;
+        }
+
+        if let Some(table) = &column.table {
+            let Some(source_name) = resolve_scope_source_name(&scope, &table.name) else {
+                // The table qualifier is not a declared alias or source in this scope
+                errors.push(if strict {
+                    ValidationError::error(
+                        format!(
+                            "Unknown table or alias '{}' referenced by column '{}'",
+                            table.name, col_name
+                        ),
+                        validation_codes::E_UNRESOLVED_REFERENCE,
+                    )
+                } else {
+                    ValidationError::warning(
+                        format!(
+                            "Unknown table or alias '{}' referenced by column '{}'",
+                            table.name, col_name
+                        ),
+                        validation_codes::E_UNRESOLVED_REFERENCE,
+                    )
+                });
+                continue;
+            };
+
+            if let Ok(columns) = resolver.get_source_columns(&source_name) {
+                if !columns.is_empty() && !source_has_column(&columns, &col_name) {
+                    let table_name = source_display_name(&scope, &source_name);
+                    errors.push(if strict {
+                        ValidationError::error(
+                            format!("Unknown column '{}' in table '{}'", col_name, table_name),
+                            validation_codes::E_UNKNOWN_COLUMN,
+                        )
+                    } else {
+                        ValidationError::warning(
+                            format!("Unknown column '{}' in table '{}'", col_name, table_name),
+                            validation_codes::E_UNKNOWN_COLUMN,
+                        )
+                    });
+                }
+            }
+            continue;
+        }
+
+        let matching_sources: Vec<String> = source_names
+            .iter()
+            .filter_map(|source_name| {
+                resolver
+                    .get_source_columns(source_name)
+                    .ok()
+                    .filter(|columns| !columns.is_empty() && source_has_column(columns, &col_name))
+                    .map(|_| source_name.clone())
+            })
+            .collect();
+
+        if !matching_sources.is_empty() {
+            continue;
+        }
+
+        let known_sources: Vec<String> = source_names
+            .iter()
+            .filter_map(|source_name| {
+                resolver
+                    .get_source_columns(source_name)
+                    .ok()
+                    .filter(|columns| !columns.is_empty() && !columns.iter().any(|c| c == "*"))
+                    .map(|_| source_name.clone())
+            })
+            .collect();
+
+        if known_sources.len() == 1 {
+            let table_name = source_display_name(&scope, &known_sources[0]);
+            errors.push(if strict {
+                ValidationError::error(
+                    format!("Unknown column '{}' in table '{}'", col_name, table_name),
+                    validation_codes::E_UNKNOWN_COLUMN,
+                )
+            } else {
+                ValidationError::warning(
+                    format!("Unknown column '{}' in table '{}'", col_name, table_name),
+                    validation_codes::E_UNKNOWN_COLUMN,
+                )
+            });
+        } else if known_sources.len() > 1 {
+            errors.push(if strict {
+                ValidationError::error(
+                    format!(
+                        "Unknown column '{}' (not found in any referenced table)",
+                        col_name
+                    ),
+                    validation_codes::E_UNKNOWN_COLUMN,
+                )
+            } else {
+                ValidationError::warning(
+                    format!(
+                        "Unknown column '{}' (not found in any referenced table)",
+                        col_name
+                    ),
+                    validation_codes::E_UNKNOWN_COLUMN,
+                )
+            });
+        } else if !schema_map.is_empty() {
+            let found = schema_map
+                .values()
+                .any(|table_schema| table_schema.columns.contains_key(&col_name));
+            if !found {
+                errors.push(if strict {
+                    ValidationError::error(
+                        format!("Unknown column '{}'", col_name),
+                        validation_codes::E_UNKNOWN_COLUMN,
+                    )
+                } else {
+                    ValidationError::warning(
+                        format!("Unknown column '{}'", col_name),
+                        validation_codes::E_UNKNOWN_COLUMN,
+                    )
+                });
+            }
+        }
+    }
+
+    errors
+}
+
 fn validate_statement_with_schema(
     stmt: &Expression,
     schema_map: &HashMap<String, TableSchemaEntry>,
+    resolver_schema: &MappingSchema,
     strict: bool,
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let cte_aliases = collect_cte_aliases(stmt);
-
-    let mut referenced_tables: HashSet<String> = HashSet::new();
-    let mut table_aliases: HashMap<String, String> = HashMap::new();
     let mut seen_tables: HashSet<String> = HashSet::new();
 
     // Table validation (E200)
@@ -2975,18 +3148,12 @@ fn validate_statement_with_schema(
             .clone()
             .unwrap_or_else(|| lower(&table_ref_display_name(table)));
 
-        // Keep alias map for all seen table refs, including unknown ones.
-        if let Some(alias) = &table.alias {
-            table_aliases.insert(lower(&alias.name), table_key.clone());
-        }
-
-        if !seen_tables.insert(table_key.clone()) {
+        if !seen_tables.insert(table_key) {
             continue;
         }
-        referenced_tables.insert(table_key.clone());
 
         if resolved_key.is_none() {
-            let err = if strict {
+            errors.push(if strict {
                 ValidationError::error(
                     format!("Unknown table '{}'", table_ref_display_name(table)),
                     validation_codes::E_UNKNOWN_TABLE,
@@ -2996,121 +3163,20 @@ fn validate_statement_with_schema(
                     format!("Unknown table '{}'", table_ref_display_name(table)),
                     validation_codes::E_UNKNOWN_TABLE,
                 )
-            };
-            errors.push(err);
+            });
         }
     }
 
-    // Column validation (E201)
-    for node in stmt.find_all(|e| matches!(e, Expression::Column(_))) {
-        let Expression::Column(column) = node else {
+    for node in stmt.dfs() {
+        let Expression::Select(select) = node else {
             continue;
         };
-
-        let col_name = lower(&column.name.name);
-        if col_name.is_empty() {
-            continue;
-        }
-
-        let mut table_name = column.table.as_ref().map(|t| lower(&t.name));
-        if let Some(name) = &table_name {
-            if let Some(mapped) = table_aliases.get(name) {
-                table_name = Some(mapped.clone());
-            }
-        }
-
-        if let Some(table_name) = table_name {
-            if let Some(table_schema) = schema_map.get(&table_name) {
-                if !table_schema.columns.contains_key(&col_name) {
-                    let err = if strict {
-                        ValidationError::error(
-                            format!("Unknown column '{}' in table '{}'", col_name, table_name),
-                            validation_codes::E_UNKNOWN_COLUMN,
-                        )
-                    } else {
-                        ValidationError::warning(
-                            format!("Unknown column '{}' in table '{}'", col_name, table_name),
-                            validation_codes::E_UNKNOWN_COLUMN,
-                        )
-                    };
-                    errors.push(err);
-                }
-            }
-            continue;
-        }
-
-        if referenced_tables.len() == 1 {
-            if let Some(single_table) = referenced_tables.iter().next() {
-                if let Some(table_schema) = schema_map.get(single_table) {
-                    if !table_schema.columns.contains_key(&col_name) {
-                        let err = if strict {
-                            ValidationError::error(
-                                format!(
-                                    "Unknown column '{}' in table '{}'",
-                                    col_name, single_table
-                                ),
-                                validation_codes::E_UNKNOWN_COLUMN,
-                            )
-                        } else {
-                            ValidationError::warning(
-                                format!(
-                                    "Unknown column '{}' in table '{}'",
-                                    col_name, single_table
-                                ),
-                                validation_codes::E_UNKNOWN_COLUMN,
-                            )
-                        };
-                        errors.push(err);
-                    }
-                }
-            }
-        } else if referenced_tables.len() > 1 {
-            let found = referenced_tables.iter().any(|table_name| {
-                schema_map
-                    .get(table_name)
-                    .map(|s| s.columns.contains_key(&col_name))
-                    .unwrap_or(false)
-            });
-
-            if !found {
-                let err = if strict {
-                    ValidationError::error(
-                        format!(
-                            "Unknown column '{}' (not found in any referenced table)",
-                            col_name
-                        ),
-                        validation_codes::E_UNKNOWN_COLUMN,
-                    )
-                } else {
-                    ValidationError::warning(
-                        format!(
-                            "Unknown column '{}' (not found in any referenced table)",
-                            col_name
-                        ),
-                        validation_codes::E_UNKNOWN_COLUMN,
-                    )
-                };
-                errors.push(err);
-            }
-        } else if !schema_map.is_empty() {
-            let found = schema_map
-                .values()
-                .any(|table| table.columns.contains_key(&col_name));
-            if !found {
-                let err = if strict {
-                    ValidationError::error(
-                        format!("Unknown column '{}'", col_name),
-                        validation_codes::E_UNKNOWN_COLUMN,
-                    )
-                } else {
-                    ValidationError::warning(
-                        format!("Unknown column '{}'", col_name),
-                        validation_codes::E_UNKNOWN_COLUMN,
-                    )
-                };
-                errors.push(err);
-            }
-        }
+        errors.extend(validate_select_columns_with_schema(
+            select,
+            schema_map,
+            resolver_schema,
+            strict,
+        ));
     }
 
     errors
@@ -3165,7 +3231,12 @@ pub fn validate_with_schema(
         if options.semantic {
             all_errors.extend(check_semantics(stmt));
         }
-        all_errors.extend(validate_statement_with_schema(stmt, &schema_map, strict));
+        all_errors.extend(validate_statement_with_schema(
+            stmt,
+            &schema_map,
+            &resolver_schema,
+            strict,
+        ));
         if options.check_types {
             all_errors.extend(check_types(stmt, &schema_map, strict));
         }

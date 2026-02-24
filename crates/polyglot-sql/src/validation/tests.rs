@@ -196,6 +196,55 @@ fn test_validate_with_schema_unknown_column() {
 }
 
 #[test]
+fn test_validate_with_schema_cte_projected_alias_column() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions::default();
+    let result = validate_with_schema(
+        "WITH my_cte AS (SELECT id AS emp_id FROM users) SELECT emp_id FROM my_cte",
+        DialectType::ClickHouse,
+        &schema,
+        &opts,
+    );
+    assert!(result.valid, "{:?}", result.errors);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+}
+
+#[test]
+fn test_validate_with_schema_cte_projected_alias_column_non_strict() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        strict: Some(false),
+        check_types: true,
+        check_references: true,
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "WITH my_cte AS (SELECT id AS emp_id FROM users) SELECT emp_id FROM my_cte",
+        DialectType::ClickHouse,
+        &schema,
+        &opts,
+    );
+    assert!(result.valid, "{:?}", result.errors);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+}
+
+#[test]
+fn test_validate_with_schema_unknown_cte_projected_alias_column() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions::default();
+    let result = validate_with_schema(
+        "WITH my_cte AS (SELECT id AS emp_id FROM users) SELECT missing_col FROM my_cte",
+        DialectType::ClickHouse,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result.errors.iter().any(|e| {
+        e.code == validation_codes::E_UNKNOWN_COLUMN && e.message.contains("missing_col")
+    }));
+}
+
+#[test]
 fn test_validate_with_schema_join_columns() {
     let schema = base_schema();
     let opts = SchemaValidationOptions::default();
@@ -677,4 +726,55 @@ fn test_validate_with_schema_type_check_update_non_strict_warning() {
         .errors
         .iter()
         .any(|e| e.code == validation_codes::W_IMPLICIT_CAST_ASSIGNMENT));
+}
+
+#[test]
+fn test_validate_with_schema_unresolved_table_alias_in_join_on() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions::default();
+    let result = validate_with_schema(
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = q.user_id",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result.errors.iter().any(|e| {
+        e.code == validation_codes::E_UNRESOLVED_REFERENCE && e.message.contains("q")
+    }));
+}
+
+#[test]
+fn test_validate_with_schema_unresolved_table_alias_in_join_on_non_strict() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        strict: Some(false),
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = q.user_id",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    // Non-strict: valid but with a warning
+    assert!(result.valid);
+    assert!(result.errors.iter().any(|e| {
+        e.code == validation_codes::E_UNRESOLVED_REFERENCE
+            && e.message.contains("q")
+            && e.severity == crate::ValidationSeverity::Warning
+    }));
+}
+
+#[test]
+fn test_validate_with_schema_valid_aliases_in_join_on() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions::default();
+    let result = validate_with_schema(
+        "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(result.valid, "{:?}", result.errors);
 }

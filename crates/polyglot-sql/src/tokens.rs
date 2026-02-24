@@ -1391,6 +1391,8 @@ impl Default for Tokenizer {
 
 /// Internal state for tokenization
 struct TokenizerState<'a> {
+    source: &'a str,
+    source_is_ascii: bool,
     chars: Vec<char>,
     size: usize,
     tokens: Vec<Token>,
@@ -1403,10 +1405,12 @@ struct TokenizerState<'a> {
 }
 
 impl<'a> TokenizerState<'a> {
-    fn new(sql: &str, config: &'a TokenizerConfig) -> Self {
+    fn new(sql: &'a str, config: &'a TokenizerConfig) -> Self {
         let chars: Vec<char> = sql.chars().collect();
         let size = chars.len();
         Self {
+            source: sql,
+            source_is_ascii: sql.is_ascii(),
             chars,
             size,
             tokens: Vec::new(),
@@ -1456,6 +1460,15 @@ impl<'a> TokenizerState<'a> {
 
     fn is_at_end(&self) -> bool {
         self.current >= self.size
+    }
+
+    #[inline]
+    fn text_from_range(&self, start: usize, end: usize) -> String {
+        if self.source_is_ascii {
+            self.source[start..end].to_string()
+        } else {
+            self.chars[start..end].iter().collect()
+        }
     }
 
     fn peek(&self) -> char {
@@ -1564,7 +1577,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();
         }
-        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment = self.text_from_range(start, self.current);
         let comment_text = comment.trim().to_string();
         if let Some(last) = self.tokens.last_mut() {
             last.trailing_comments.push(comment_text);
@@ -1580,7 +1593,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();
         }
-        let comment: String = self.chars[start..self.current].iter().collect();
+        let comment = self.text_from_range(start, self.current);
         let comment_text = comment.trim().to_string();
         if let Some(last) = self.tokens.last_mut() {
             last.trailing_comments.push(comment_text);
@@ -1596,7 +1609,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() && self.peek() != '\n' {
             self.advance();
         }
-        let comment_text: String = self.chars[start..self.current].iter().collect();
+        let comment_text = self.text_from_range(start, self.current);
 
         // If the comment starts on a new line (after_newline), it's a leading comment
         // on the next token. Otherwise, it's a trailing comment on the previous token.
@@ -1638,7 +1651,7 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Get the content between /* and */ (preserving internal whitespace for nested comments)
-        let content: String = self.chars[content_start..self.current].iter().collect();
+        let content = self.text_from_range(content_start, self.current);
         self.advance(); // *
         self.advance(); // /
 
@@ -1679,7 +1692,7 @@ impl<'a> TokenizerState<'a> {
             ));
         }
 
-        let hint_text: String = self.chars[hint_start..self.current].iter().collect();
+        let hint_text = self.text_from_range(hint_start, self.current);
         self.advance(); // *
         self.advance(); // /
 
@@ -1697,7 +1710,7 @@ impl<'a> TokenizerState<'a> {
             self.advance();
         }
 
-        let number: String = self.chars[start..self.current].iter().collect();
+        let number = self.text_from_range(start, self.current);
         self.add_token_with_text(TokenType::Parameter, number);
         Ok(())
     }
@@ -1720,7 +1733,7 @@ impl<'a> TokenizerState<'a> {
         {
             self.advance();
         }
-        let tag: String = self.chars[tag_start..self.current].iter().collect();
+        let tag = self.text_from_range(tag_start, self.current);
 
         // Must have a closing $ after the tag
         if self.is_at_end() || self.peek() != '$' {
@@ -1748,7 +1761,7 @@ impl<'a> TokenizerState<'a> {
                     self.current + j < self.size && self.chars[self.current + j] == ch
                 });
                 if matches {
-                    let content: String = self.chars[content_start..self.current].iter().collect();
+                    let content = self.text_from_range(content_start, self.current);
                     // Consume closing tag
                     for _ in 0..closing_chars.len() {
                         self.advance();
@@ -1783,7 +1796,7 @@ impl<'a> TokenizerState<'a> {
             self.advance();
         }
 
-        let content: String = self.chars[start..self.current].iter().collect();
+        let content = self.text_from_range(start, self.current);
 
         if !self.is_at_end() {
             self.advance(); // consume first $
@@ -2457,7 +2470,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() && self.peek() != close_quote {
             self.advance();
         }
-        let value: String = self.chars[start..self.current].iter().collect();
+        let value = self.text_from_range(start, self.current);
         if !self.is_at_end() {
             self.advance(); // Closing quote
         }
@@ -2478,7 +2491,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() && self.peek() != close_quote && self.peek() != '"' {
             self.advance();
         }
-        let value: String = self.chars[start..self.current].iter().collect();
+        let value = self.text_from_range(start, self.current);
         if !self.is_at_end() {
             self.advance(); // Closing quote
         }
@@ -2537,18 +2550,15 @@ impl<'a> TokenizerState<'a> {
                     }
                     if is_hex_float {
                         // Hex float literal — emit as regular Number token with full text
-                        let full_text: String =
-                            self.chars[self.start..self.current].iter().collect();
+                        let full_text = self.text_from_range(self.start, self.current);
                         self.add_token_with_text(TokenType::Number, full_text);
                     } else if self.config.hex_string_is_integer_type {
                         // BigQuery/ClickHouse: 0xA represents an integer in hex notation
-                        let hex_value: String =
-                            self.chars[hex_start..self.current].iter().collect();
+                        let hex_value = self.text_from_range(hex_start, self.current);
                         self.add_token_with_text(TokenType::HexNumber, hex_value);
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
-                        let hex_value: String =
-                            self.chars[hex_start..self.current].iter().collect();
+                        let hex_value = self.text_from_range(hex_start, self.current);
                         self.add_token_with_text(TokenType::HexString, hex_value);
                     }
                     return Ok(());
@@ -2604,7 +2614,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
 
         // Check for numeric literal suffixes (e.g., 1L -> BIGINT, 1s -> SMALLINT in Hive/Spark)
         if !self.config.numeric_literals.is_empty() && !self.is_at_end() {
@@ -2682,7 +2692,7 @@ impl<'a> TokenizerState<'a> {
                         break;
                     }
                 }
-                let ident_text: String = self.chars[self.start..self.current].iter().collect();
+                let ident_text = self.text_from_range(self.start, self.current);
                 self.add_token_with_text(TokenType::Identifier, ident_text);
                 return Ok(());
             }
@@ -2719,7 +2729,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
         self.add_token_with_text(TokenType::Number, text);
         Ok(())
     }
@@ -2759,7 +2769,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
         let upper = text.to_uppercase();
 
         // Special-case NOT= (Teradata and other dialects)
@@ -3099,7 +3109,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
         self.add_token_with_text(TokenType::Var, text);
         Ok(())
     }
@@ -3123,7 +3133,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
         // These are always identifiers (variables or temp table names), never keywords
         self.add_token_with_text(TokenType::Var, text);
         Ok(())
@@ -3180,7 +3190,7 @@ impl<'a> TokenizerState<'a> {
                 if self.is_at_end() || self.peek() == '\n' {
                     // Found blank line or end of input - stop here
                     // Don't consume the second \n so subsequent SQL can be tokenized
-                    let raw: String = self.chars[raw_start..saved].iter().collect();
+                    let raw = self.text_from_range(raw_start, saved);
                     return Some(raw.trim().to_string());
                 }
                 // Not a blank line, continue scanning
@@ -3190,7 +3200,7 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Reached end of input
-        let raw: String = self.chars[raw_start..self.current].iter().collect();
+        let raw = self.text_from_range(raw_start, self.current);
         let trimmed = raw.trim().to_string();
         if trimmed.is_empty() {
             None
@@ -3200,7 +3210,7 @@ impl<'a> TokenizerState<'a> {
     }
 
     fn add_token(&mut self, token_type: TokenType) {
-        let text: String = self.chars[self.start..self.current].iter().collect();
+        let text = self.text_from_range(self.start, self.current);
         self.add_token_with_text(token_type, text);
     }
 

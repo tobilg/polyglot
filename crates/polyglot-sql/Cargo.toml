@@ -78,3 +78,7 @@ harness = false
 [[bench]]
 name = "transpile"
 harness = false
+
+[[bench]]
+name = "in_list"
+harness = false

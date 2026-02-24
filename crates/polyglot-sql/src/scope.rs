@@ -617,7 +617,26 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
                 .as_ref()
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| table.name.name.clone());
-            scope.add_source(name, expr.clone(), false);
+            let cte_source = if table.schema.is_none() && table.catalog.is_none() {
+                scope
+                    .cte_sources
+                    .get(&table.name.name)
+                    .or_else(|| {
+                        scope
+                            .cte_sources
+                            .iter()
+                            .find(|(cte_name, _)| cte_name.eq_ignore_ascii_case(&table.name.name))
+                            .map(|(_, source)| source)
+                    })
+            } else {
+                None
+            };
+
+            if let Some(source) = cte_source {
+                scope.add_source(name, source.expression.clone(), true);
+            } else {
+                scope.add_source(name, expr.clone(), false);
+            }
         }
         Expression::Subquery(subquery) => {
             let name = subquery

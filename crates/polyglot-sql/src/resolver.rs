@@ -173,6 +173,13 @@ impl<'a> Resolver<'a> {
             Expression::Except(except) => {
                 self.get_source_columns_from_set_op(&Expression::Except(except.clone()))?
             }
+            Expression::Cte(cte) => {
+                if !cte.columns.is_empty() {
+                    cte.columns.iter().map(|c| c.name.clone()).collect()
+                } else {
+                    self.get_named_selects(&cte.this)
+                }
+            }
             _ => Vec::new(),
         };
 
@@ -530,6 +537,20 @@ mod tests {
         assert!(all.contains("id"));
         assert!(all.contains("name"));
         assert!(all.contains("email"));
+    }
+
+    #[test]
+    fn test_resolver_cte_projected_alias_column() {
+        let ast = Parser::parse_sql(
+            "WITH my_cte AS (SELECT id AS emp_id FROM users) SELECT emp_id FROM my_cte",
+        )
+        .expect("Failed to parse");
+        let scope = build_scope(&ast[0]);
+        let schema = create_test_schema();
+        let mut resolver = Resolver::new(&scope, &schema, true);
+
+        let table = resolver.get_table("emp_id");
+        assert_eq!(table, Some("my_cte".to_string()));
     }
 
     #[test]
