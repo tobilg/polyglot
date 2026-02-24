@@ -126,6 +126,9 @@ pub struct SchemaValidationOptions {
     /// Enables semantic warnings (W001..W004).
     #[serde(default)]
     pub semantic: bool,
+    /// Enables strict syntax checks (e.g. rejects trailing commas before clause boundaries).
+    #[serde(default)]
+    pub strict_syntax: bool,
 }
 
 /// Validation error/warning codes used by schema-aware validation.
@@ -3123,7 +3126,13 @@ pub fn validate_with_schema(
     let strict = options.strict.unwrap_or(schema.strict.unwrap_or(true));
 
     // Syntax validation first.
-    let syntax_result = crate::validate(sql, dialect);
+    let syntax_result = crate::validate_with_options(
+        sql,
+        dialect,
+        &crate::ValidationOptions {
+            strict_syntax: options.strict_syntax,
+        },
+    );
     if !syntax_result.valid {
         return syntax_result;
     }

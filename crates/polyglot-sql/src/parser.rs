@@ -7451,7 +7451,7 @@ impl Parser {
             left = Expression::Or(Box::new(BinaryOp::new(left, right)));
         }
 
-        Ok(left)
+        Ok(Self::maybe_rebalance_boolean_chain(left, false))
     }
 
     /// Parse AND expression in CONNECT BY context
@@ -7463,7 +7463,7 @@ impl Parser {
             left = Expression::And(Box::new(BinaryOp::new(left, right)));
         }
 
-        Ok(left)
+        Ok(Self::maybe_rebalance_boolean_chain(left, true))
     }
 
     /// Parse comparison in CONNECT BY context
@@ -24059,7 +24059,7 @@ impl Parser {
             }));
         }
 
-        Ok(left)
+        Ok(Self::maybe_rebalance_boolean_chain(left, false))
     }
 
     /// Parse XOR expressions (MySQL logical XOR)
@@ -24129,7 +24129,104 @@ impl Parser {
             }));
         }
 
-        Ok(left)
+        Ok(Self::maybe_rebalance_boolean_chain(left, true))
+    }
+
+    /// Rebalance AND/OR chains into a balanced tree when no connector comments are present.
+    /// This keeps connector chain depth logarithmic for very large predicates.
+    fn maybe_rebalance_boolean_chain(expr: Expression, is_and: bool) -> Expression {
+        if !Self::should_rebalance_boolean_chain(&expr, is_and) {
+            return expr;
+        }
+
+        let terms = Self::flatten_boolean_terms_owned(expr, is_and);
+        if terms.len() <= 2 {
+            return Self::build_balanced_boolean_tree(terms, is_and);
+        }
+
+        Self::build_balanced_boolean_tree(terms, is_and)
+    }
+
+    fn should_rebalance_boolean_chain(expr: &Expression, is_and: bool) -> bool {
+        let mut leaf_count = 0usize;
+        let mut stack = vec![expr];
+
+        while let Some(node) = stack.pop() {
+            match (is_and, node) {
+                (true, Expression::And(op)) => {
+                    if !op.left_comments.is_empty()
+                        || !op.operator_comments.is_empty()
+                        || !op.trailing_comments.is_empty()
+                    {
+                        return false;
+                    }
+                    stack.push(&op.right);
+                    stack.push(&op.left);
+                }
+                (false, Expression::Or(op)) => {
+                    if !op.left_comments.is_empty()
+                        || !op.operator_comments.is_empty()
+                        || !op.trailing_comments.is_empty()
+                    {
+                        return false;
+                    }
+                    stack.push(&op.right);
+                    stack.push(&op.left);
+                }
+                _ => leaf_count += 1,
+            }
+        }
+
+        leaf_count > 2
+    }
+
+    fn flatten_boolean_terms_owned(expr: Expression, is_and: bool) -> Vec<Expression> {
+        let mut terms = Vec::new();
+        let mut stack = vec![expr];
+
+        while let Some(node) = stack.pop() {
+            match (is_and, node) {
+                (true, Expression::And(op)) => {
+                    stack.push(op.right);
+                    stack.push(op.left);
+                }
+                (false, Expression::Or(op)) => {
+                    stack.push(op.right);
+                    stack.push(op.left);
+                }
+                (_, other) => terms.push(other),
+            }
+        }
+
+        terms
+    }
+
+    fn build_balanced_boolean_tree(mut terms: Vec<Expression>, is_and: bool) -> Expression {
+        if terms.is_empty() {
+            return Expression::Null(Null);
+        }
+
+        while terms.len() > 1 {
+            let mut next = Vec::with_capacity((terms.len() + 1) / 2);
+            let mut iter = terms.into_iter();
+
+            while let Some(left) = iter.next() {
+                if let Some(right) = iter.next() {
+                    let combined = if is_and {
+                        Expression::And(Box::new(BinaryOp::new(left, right)))
+                    } else {
+                        Expression::Or(Box::new(BinaryOp::new(left, right)))
+                    };
+                    next.push(combined);
+                } else {
+                    next.push(left);
+                }
+            }
+
+            terms = next;
+        }
+
+        terms.pop().unwrap_or(Expression::Null(Null))
     }
 
     /// Parse NOT expressions
@@ -54550,6 +54647,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::traversal::ExpressionWalk;
 
     #[test]
     fn test_comment_before_limit() {
@@ -54601,6 +54699,42 @@ mod tests {
         let result = Parser::parse_sql("SELECT * FROM t WHERE x = 1").unwrap();
         let select = result[0].as_select().unwrap();
         assert!(select.where_clause.is_some());
+    }
+
+    #[test]
+    fn test_parse_balances_large_and_chain_depth() {
+        let mut sql = String::from("SELECT 1 WHERE c0 = 0");
+        for i in 1..4096 {
+            sql.push_str(&format!(" AND c{i} = {i}"));
+        }
+
+        let result = Parser::parse_sql(&sql).unwrap();
+        let select = result[0].as_select().unwrap();
+        let where_clause = select.where_clause.as_ref().expect("WHERE clause missing");
+        let depth = where_clause.this.tree_depth();
+        assert!(
+            depth < 128,
+            "Expected balanced boolean tree depth, got {}",
+            depth
+        );
+    }
+
+    #[test]
+    fn test_parse_balances_large_or_chain_depth() {
+        let mut sql = String::from("SELECT 1 WHERE c0 = 0");
+        for i in 1..4096 {
+            sql.push_str(&format!(" OR c{i} = {i}"));
+        }
+
+        let result = Parser::parse_sql(&sql).unwrap();
+        let select = result[0].as_select().unwrap();
+        let where_clause = select.where_clause.as_ref().expect("WHERE clause missing");
+        let depth = where_clause.this.tree_depth();
+        assert!(
+            depth < 128,
+            "Expected balanced boolean tree depth, got {}",
+            depth
+        );
     }
 
     #[test]

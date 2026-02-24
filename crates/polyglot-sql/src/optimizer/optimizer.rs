@@ -8,6 +8,7 @@
 use crate::dialects::DialectType;
 use crate::expressions::Expression;
 use crate::schema::Schema;
+use crate::traversal::ExpressionWalk;
 
 use super::annotate_types::annotate_types;
 use super::canonicalize::canonicalize;
@@ -94,6 +95,22 @@ pub const DEFAULT_RULES: &[OptimizationRule] = &[
     OptimizationRule::Simplify,
 ];
 
+const QUICK_RULES: &[OptimizationRule] =
+    &[OptimizationRule::Simplify, OptimizationRule::Canonicalize];
+const FAST_PATH_MAX_DEPTH: usize = 768;
+const FAST_PATH_MAX_CONNECTORS: usize = 10_000;
+const FAST_PATH_MAX_CONNECTOR_DEPTH: usize = 1024;
+const FAST_PATH_MAX_NODES: usize = 50_000;
+const CLONE_HEAVY_RULE_SKIP_NODES: usize = 20_000;
+
+#[derive(Debug, Clone, Copy)]
+struct ExpressionComplexity {
+    node_count: usize,
+    max_depth: usize,
+    connector_count: usize,
+    max_connector_depth: usize,
+}
+
 /// Optimize a SQL expression using the default set of rules.
 ///
 /// This function coordinates multiple optimization passes in the correct order
@@ -123,10 +140,78 @@ pub fn optimize_with_rules(
     config: &OptimizerConfig<'_>,
     rules: &[OptimizationRule],
 ) -> Expression {
-    for rule in rules {
+    let complexity = analyze_expression_complexity(&expression);
+    if rules == DEFAULT_RULES && should_skip_all_optimization(&complexity) {
+        return expression;
+    }
+
+    let active_rules = if rules == DEFAULT_RULES && should_use_quick_path(&complexity) {
+        QUICK_RULES
+    } else {
+        rules
+    };
+
+    for rule in active_rules {
+        if complexity.node_count >= CLONE_HEAVY_RULE_SKIP_NODES
+            && matches!(
+                rule,
+                OptimizationRule::Qualify | OptimizationRule::Normalize
+            )
+        {
+            continue;
+        }
         expression = apply_rule(expression, *rule, config);
     }
     expression
+}
+
+fn should_skip_all_optimization(complexity: &ExpressionComplexity) -> bool {
+    complexity.max_depth >= FAST_PATH_MAX_DEPTH
+        || complexity.max_connector_depth >= FAST_PATH_MAX_CONNECTOR_DEPTH
+}
+
+fn should_use_quick_path(complexity: &ExpressionComplexity) -> bool {
+    complexity.connector_count >= FAST_PATH_MAX_CONNECTORS
+        || complexity.max_connector_depth >= FAST_PATH_MAX_CONNECTOR_DEPTH
+        || complexity.node_count >= FAST_PATH_MAX_NODES
+}
+
+fn analyze_expression_complexity(expression: &Expression) -> ExpressionComplexity {
+    let mut node_count = 0usize;
+    let mut max_depth = 0usize;
+    let mut connector_count = 0usize;
+    let mut max_connector_depth = 0usize;
+    let mut stack: Vec<(&Expression, usize, usize)> = vec![(expression, 0, 0)];
+
+    while let Some((node, depth, connector_depth)) = stack.pop() {
+        node_count += 1;
+        max_depth = max_depth.max(depth);
+
+        match node {
+            Expression::And(op) | Expression::Or(op) => {
+                connector_count += 1;
+                let next_connector_depth = connector_depth + 1;
+                max_connector_depth = max_connector_depth.max(next_connector_depth);
+                stack.push((&op.right, depth + 1, next_connector_depth));
+                stack.push((&op.left, depth + 1, next_connector_depth));
+            }
+            Expression::Paren(paren) => {
+                stack.push((&paren.this, depth + 1, connector_depth));
+            }
+            _ => {
+                for child in node.children().into_iter().rev() {
+                    stack.push((child, depth + 1, 0));
+                }
+            }
+        }
+    }
+
+    ExpressionComplexity {
+        node_count,
+        max_depth,
+        connector_count,
+        max_connector_depth,
+    }
 }
 
 /// Apply a single optimization rule
@@ -187,9 +272,7 @@ pub fn quick_optimize(expression: Expression, dialect: Option<DialectType>) -> E
         ..Default::default()
     };
 
-    let rules = &[OptimizationRule::Simplify, OptimizationRule::Canonicalize];
-
-    optimize_with_rules(expression, &config, rules)
+    optimize_with_rules(expression, &config, QUICK_RULES)
 }
 
 #[cfg(test)]
@@ -292,5 +375,46 @@ mod tests {
         let result = optimize(expr, &config);
         let sql = gen(&result);
         assert!(sql.contains("ORDER BY"));
+    }
+
+    #[test]
+    fn test_analyze_expression_complexity_deep_connector_chain() {
+        let mut expr = Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
+            Expression::column("c0"),
+            Expression::number(0),
+        )));
+
+        for i in 1..1500 {
+            let predicate = Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
+                Expression::column(format!("c{i}")),
+                Expression::number(i as i64),
+            )));
+            expr = Expression::And(Box::new(crate::expressions::BinaryOp::new(expr, predicate)));
+        }
+
+        let complexity = analyze_expression_complexity(&expr);
+        assert!(complexity.max_connector_depth >= 1499);
+        assert!(complexity.connector_count >= 1499);
+    }
+
+    #[test]
+    fn test_optimize_handles_deep_connector_chain() {
+        let mut expr = Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
+            Expression::column("c0"),
+            Expression::number(0),
+        )));
+
+        for i in 1..2200 {
+            let predicate = Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
+                Expression::column(format!("c{i}")),
+                Expression::number(i as i64),
+            )));
+            expr = Expression::And(Box::new(crate::expressions::BinaryOp::new(expr, predicate)));
+        }
+
+        let config = OptimizerConfig::default();
+        let optimized = optimize(expr, &config);
+        let sql = gen(&optimized);
+        assert!(sql.contains("c2199 = 2199"), "{sql}");
     }
 }

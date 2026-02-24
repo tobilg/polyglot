@@ -228,6 +228,15 @@ describe('Polyglot SDK', () => {
 });
 
 describe('Edge cases', () => {
+  const buildLargeWhereSql = (conditions: number): string => {
+    const base = 'SELECT id, name, email, created_at FROM users WHERE ';
+    const parts = Array.from(
+      { length: conditions },
+      (_, i) => `field_${i} = 'value_${i}'`,
+    );
+    return base + parts.join(' AND ');
+  };
+
   it('should handle empty SQL string', () => {
     const result = parse('', Dialect.Generic);
     // Empty string should either succeed with empty AST or fail gracefully
@@ -284,6 +293,47 @@ describe('Edge cases', () => {
       expect(result.success).toBe(true);
       expect(result.errorLine).toBeUndefined();
       expect(result.errorColumn).toBeUndefined();
+    });
+  });
+
+  describe('WASM trap safeguards', () => {
+    it('should not throw from format on very large SQL inputs', () => {
+      const sql = buildLargeWhereSql(5000);
+      let result: ReturnType<typeof format> | undefined;
+
+      expect(() => {
+        result = format(sql, Dialect.PostgreSQL);
+      }).not.toThrow();
+
+      expect(result).toBeDefined();
+      expect(typeof result!.success).toBe('boolean');
+      if (!result!.success) {
+        expect(result!.error).toBeDefined();
+      }
+    });
+
+    it('should not throw from transpile on very large SQL inputs', () => {
+      const sql = buildLargeWhereSql(5000);
+      let result: ReturnType<typeof transpile> | undefined;
+
+      expect(() => {
+        result = transpile(sql, Dialect.PostgreSQL, Dialect.PostgreSQL);
+      }).not.toThrow();
+
+      expect(result).toBeDefined();
+      expect(typeof result!.success).toBe('boolean');
+      if (!result!.success) {
+        expect(result!.error).toBeDefined();
+      }
+    });
+
+    it('should return structured failure from generate when AST is not serializable', () => {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+
+      const result = generate(circular, Dialect.Generic);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('WASM generate failed');
     });
   });
 });

@@ -15,7 +15,8 @@ use polyglot_sql::{
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
     SchemaValidationOptions as CoreSchemaValidationOptions,
-    ValidationResult as CoreValidationResult, ValidationSchema as CoreValidationSchema,
+    ValidationOptions as CoreValidationOptions, ValidationResult as CoreValidationResult,
+    ValidationSchema as CoreValidationSchema,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -53,6 +54,41 @@ pub struct ParseResult {
     pub error_column: Option<usize>,
 }
 
+/// Result type for parse operations with structured AST values.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParseValueResult {
+    pub success: bool,
+    pub ast: Option<Vec<Expression>>,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_column: Option<usize>,
+}
+
+fn serialize_result<T>(result: &T) -> String
+where
+    T: Serialize,
+{
+    serde_json::to_string(result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
+    })
+}
+
+fn serialize_result_value<T>(result: &T) -> JsValue
+where
+    T: Serialize,
+{
+    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+    result
+        .serialize(&serializer)
+        .unwrap_or_else(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
 /// Transpile SQL from one dialect to another.
 ///
 /// # Arguments
@@ -67,12 +103,16 @@ pub fn transpile(sql: &str, read_dialect: &str, write_dialect: &str) -> String {
     set_panic_hook();
 
     let result = transpile_internal(sql, read_dialect, write_dialect);
-    serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(
-            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-            e
-        )
-    })
+    serialize_result(&result)
+}
+
+/// Transpile SQL and return a structured JS object instead of a JSON string.
+#[wasm_bindgen]
+pub fn transpile_value(sql: &str, read_dialect: &str, write_dialect: &str) -> JsValue {
+    set_panic_hook();
+
+    let result = transpile_internal(sql, read_dialect, write_dialect);
+    serialize_result_value(&result)
 }
 
 fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> TranspileResult {
@@ -134,31 +174,13 @@ pub fn parse(sql: &str, dialect: &str) -> String {
     set_panic_hook();
 
     let result = parse_internal(sql, dialect);
-    serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(
-            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-            e
-        )
-    })
+    serialize_result(&result)
 }
 
 fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
-    let dialect_type = match dialect.parse::<DialectType>() {
-        Ok(d) => d,
-        Err(e) => {
-            return ParseResult {
-                success: false,
-                ast: None,
-                error: Some(format!("Invalid dialect: {}", e)),
-                error_line: e.line(),
-                error_column: e.column(),
-            };
-        }
-    };
-
-    let d = Dialect::get(dialect_type);
-    match d.parse(sql) {
-        Ok(expressions) => match serde_json::to_string(&expressions) {
+    let result = parse_value_internal(sql, dialect);
+    match result.ast {
+        Some(expressions) => match serde_json::to_string(&expressions) {
             Ok(ast) => ParseResult {
                 success: true,
                 ast: Some(ast),
@@ -174,7 +196,49 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
                 error_column: None,
             },
         },
-        Err(e) => ParseResult {
+        None => ParseResult {
+            success: result.success,
+            ast: None,
+            error: result.error,
+            error_line: result.error_line,
+            error_column: result.error_column,
+        },
+    }
+}
+
+/// Parse SQL and return a structured JS object with AST values.
+#[wasm_bindgen]
+pub fn parse_value(sql: &str, dialect: &str) -> JsValue {
+    set_panic_hook();
+
+    let result = parse_value_internal(sql, dialect);
+    serialize_result_value(&result)
+}
+
+fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return ParseValueResult {
+                success: false,
+                ast: None,
+                error: Some(format!("Invalid dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
+            };
+        }
+    };
+
+    let d = Dialect::get(dialect_type);
+    match d.parse(sql) {
+        Ok(expressions) => ParseValueResult {
+            success: true,
+            ast: Some(expressions),
+            error: None,
+            error_line: None,
+            error_column: None,
+        },
+        Err(e) => ParseValueResult {
             success: false,
             ast: None,
             error: Some(e.to_string()),
@@ -197,12 +261,42 @@ pub fn generate(ast_json: &str, dialect: &str) -> String {
     set_panic_hook();
 
     let result = generate_internal(ast_json, dialect);
-    serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(
-            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-            e
-        )
-    })
+    serialize_result(&result)
+}
+
+/// Generate SQL from an AST represented as a structured JS value.
+#[wasm_bindgen]
+pub fn generate_value(ast: JsValue, dialect: &str) -> JsValue {
+    set_panic_hook();
+
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return serialize_result_value(&TranspileResult {
+                success: false,
+                sql: None,
+                error: Some(format!("Invalid dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
+            });
+        }
+    };
+
+    let expressions: Vec<Expression> = match serde_wasm_bindgen::from_value(ast) {
+        Ok(e) => e,
+        Err(e) => {
+            return serialize_result_value(&TranspileResult {
+                success: false,
+                sql: None,
+                error: Some(format!("Invalid AST value: {}", e)),
+                error_line: None,
+                error_column: None,
+            });
+        }
+    };
+
+    let result = generate_from_expressions_with_dialect(expressions, dialect_type);
+    serialize_result_value(&result)
 }
 
 fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
@@ -232,6 +326,13 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
         }
     };
 
+    generate_from_expressions_with_dialect(expressions, dialect_type)
+}
+
+fn generate_from_expressions_with_dialect(
+    expressions: Vec<Expression>,
+    dialect_type: DialectType,
+) -> TranspileResult {
     let d = Dialect::get(dialect_type);
     let results: Result<Vec<String>, _> = expressions.iter().map(|expr| d.generate(expr)).collect();
 
@@ -259,6 +360,16 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
 /// A JSON array of dialect names
 #[wasm_bindgen]
 pub fn get_dialects() -> String {
+    serialize_result(&get_dialects_internal())
+}
+
+/// Get a list of supported dialects as a structured JS array.
+#[wasm_bindgen]
+pub fn get_dialects_value() -> JsValue {
+    serialize_result_value(&get_dialects_internal())
+}
+
+fn get_dialects_internal() -> Vec<&'static str> {
     let mut dialects = vec!["generic"];
     #[cfg(feature = "dialect-postgresql")]
     dialects.push("postgresql");
@@ -326,7 +437,7 @@ pub fn get_dialects() -> String {
     dialects.push("exasol");
     #[cfg(feature = "dialect-datafusion")]
     dialects.push("datafusion");
-    serde_json::to_string(&dialects).unwrap()
+    dialects
 }
 
 /// Format/pretty-print SQL.
@@ -341,69 +452,63 @@ pub fn get_dialects() -> String {
 pub fn format_sql(sql: &str, dialect: &str) -> String {
     set_panic_hook();
 
+    let result = format_sql_internal(sql, dialect);
+    serialize_result(&result)
+}
+
+/// Format SQL and return a structured JS object instead of JSON text.
+#[wasm_bindgen]
+pub fn format_sql_value(sql: &str, dialect: &str) -> JsValue {
+    set_panic_hook();
+
+    let result = format_sql_internal(sql, dialect);
+    serialize_result_value(&result)
+}
+
+fn format_sql_internal(sql: &str, dialect: &str) -> TranspileResult {
     let dialect_type = match dialect.parse::<DialectType>() {
         Ok(d) => d,
         Err(e) => {
-            return format!(r#"{{"success":false,"error":"{}"}}"#, e);
-        }
-    };
-
-    let d = Dialect::get(dialect_type);
-    match d.parse(sql) {
-        Ok(expressions) => {
-            let formatted: Result<Vec<String>, _> = expressions
-                .iter()
-                .map(|expr| Generator::pretty_sql(expr))
-                .collect();
-
-            match formatted {
-                Ok(sql) => {
-                    let result = TranspileResult {
-                        success: true,
-                        sql: Some(sql),
-                        error: None,
-                        error_line: None,
-                        error_column: None,
-                    };
-                    serde_json::to_string(&result).unwrap_or_else(|e| {
-                        format!(
-                            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-                            e
-                        )
-                    })
-                }
-                Err(e) => {
-                    let result = TranspileResult {
-                        success: false,
-                        sql: None,
-                        error: Some(e.to_string()),
-                        error_line: e.line(),
-                        error_column: e.column(),
-                    };
-                    serde_json::to_string(&result).unwrap_or_else(|e| {
-                        format!(
-                            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-                            e
-                        )
-                    })
-                }
-            }
-        }
-        Err(e) => {
-            let result = TranspileResult {
+            return TranspileResult {
                 success: false,
                 sql: None,
                 error: Some(e.to_string()),
                 error_line: e.line(),
                 error_column: e.column(),
             };
-            serde_json::to_string(&result).unwrap_or_else(|e| {
-                format!(
-                    r#"{{"success":false,"error":"Serialization error: {}"}}"#,
-                    e
-                )
-            })
         }
+    };
+
+    let d = Dialect::get(dialect_type);
+    match d.parse(sql) {
+        Ok(expressions) => {
+            let formatted: Result<Vec<String>, _> =
+                expressions.iter().map(Generator::pretty_sql).collect();
+
+            match formatted {
+                Ok(sql) => TranspileResult {
+                    success: true,
+                    sql: Some(sql),
+                    error: None,
+                    error_line: None,
+                    error_column: None,
+                },
+                Err(e) => TranspileResult {
+                    success: false,
+                    sql: None,
+                    error: Some(e.to_string()),
+                    error_line: e.line(),
+                    error_column: e.column(),
+                },
+            }
+        }
+        Err(e) => TranspileResult {
+            success: false,
+            sql: None,
+            error: Some(e.to_string()),
+            error_line: e.line(),
+            error_column: e.column(),
+        },
     }
 }
 
@@ -440,6 +545,62 @@ fn validate_internal(sql: &str, dialect: &str) -> CoreValidationResult {
     };
 
     polyglot_sql::validate(sql, dialect_type)
+}
+
+/// Validate SQL syntax with additional options.
+///
+/// # Arguments
+/// * `sql` - The SQL string to validate
+/// * `dialect` - The dialect to use for validation
+/// * `options_json` - Options JSON matching ValidationOptions
+///
+/// # Returns
+/// A JSON string containing the ValidationResult
+#[wasm_bindgen]
+pub fn validate_with_options(sql: &str, dialect: &str, options_json: &str) -> String {
+    set_panic_hook();
+
+    let result = validate_with_options_internal(sql, dialect, options_json);
+    serde_json::to_string(&result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"valid":false,"errors":[{{"message":"Serialization error: {}","severity":"error","code":"E000"}}]}}"#,
+            e
+        )
+    })
+}
+
+fn validate_with_options_internal(
+    sql: &str,
+    dialect: &str,
+    options_json: &str,
+) -> CoreValidationResult {
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return CoreValidationResult::with_errors(vec![polyglot_sql::ValidationError::error(
+                format!("Invalid dialect: {}", e),
+                "E000",
+            )]);
+        }
+    };
+
+    let options = if options_json.trim().is_empty() {
+        CoreValidationOptions::default()
+    } else {
+        match serde_json::from_str::<CoreValidationOptions>(options_json) {
+            Ok(o) => o,
+            Err(e) => {
+                return CoreValidationResult::with_errors(vec![
+                    polyglot_sql::ValidationError::error(
+                        format!("Invalid validation options JSON: {}", e),
+                        "E000",
+                    ),
+                ]);
+            }
+        }
+    };
+
+    polyglot_sql::validate_with_options(sql, dialect_type, &options)
 }
 
 /// Validate SQL syntax + schema-aware checks (+ optional semantic warnings).
@@ -1312,6 +1473,14 @@ mod tests {
         let result = validate("SELECT FROM", "generic");
         assert!(result.contains("\"valid\":false"));
         assert!(result.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
+    fn test_validate_with_options_strict_syntax_trailing_comma() {
+        let options = r#"{"strictSyntax":true}"#;
+        let result = validate_with_options("SELECT name, FROM employees", "generic", options);
+        assert!(result.contains("\"valid\":false"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"E005\""), "Result: {}", result);
     }
 
     #[test]

@@ -124,4 +124,11 @@ export interface SchemaValidationOptions {
    * @default false
    */
   semantic?: boolean;
+
+  /**
+   * Enable strict syntax checks in addition to schema/type/reference checks.
+   * Rejects permissive parse forms such as trailing commas before clause boundaries.
+   * @default false
+   */
+  strictSyntax?: boolean;
 }

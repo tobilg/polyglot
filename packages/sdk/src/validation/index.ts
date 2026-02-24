@@ -4,10 +4,7 @@
  * Provides syntax and semantic validation for SQL queries.
  */
 
-import {
-  parse as wasmParse,
-  validate as wasmValidate,
-} from '../../wasm/polyglot_sql_wasm.js';
+import * as wasmModule from '../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../generated/Expression';
 import { validateSemantics } from './rules';
 import type {
@@ -28,6 +25,19 @@ export type {
 // Re-export schema validation
 export { validateWithSchema } from './schema-validator';
 export { ValidationSeverity } from './types';
+
+type WasmBindings = typeof wasmModule & {
+  parse_value?: (sql: string, dialect: string) => unknown;
+};
+
+const wasm = wasmModule as WasmBindings;
+
+function decodeWasmPayload<T>(payload: unknown): T {
+  if (typeof payload === 'string') {
+    return JSON.parse(payload) as T;
+  }
+  return payload as T;
+}
 
 /**
  * Dialect type for validation (matches the main Dialect enum)
@@ -77,7 +87,13 @@ export function validate(
   options: ValidationOptions = {},
 ): ValidationResult {
   // Step 1: Syntax validation via WASM
-  const resultJson = wasmValidate(sql, dialect);
+  const resultJson = options.strictSyntax
+    ? wasm.validate_with_options(
+        sql,
+        dialect,
+        JSON.stringify({ strictSyntax: true }),
+      )
+    : wasm.validate(sql, dialect);
   const syntaxResult: ValidationResult = JSON.parse(resultJson);
 
   // If syntax validation failed or semantic validation not requested, return
@@ -86,21 +102,24 @@ export function validate(
   }
 
   // Step 2: Parse the SQL to get AST for semantic validation
-  const parseResultJson = wasmParse(sql, dialect);
-  const parseResult = JSON.parse(parseResultJson);
+  const parseResult =
+    typeof wasm.parse_value === 'function'
+      ? decodeWasmPayload<{ success: boolean; ast?: Expression[] }>(
+          wasm.parse_value(sql, dialect),
+        )
+      : decodeWasmPayload<{ success: boolean; ast?: string }>(
+          wasm.parse(sql, dialect),
+        );
 
   if (!parseResult.success || !parseResult.ast) {
     // Parse should succeed if syntax validation passed, but handle edge cases
     return syntaxResult;
   }
 
-  // Parse the AST JSON
-  let ast: Expression[];
-  try {
-    ast = JSON.parse(parseResult.ast);
-  } catch {
-    return syntaxResult;
-  }
+  const ast: Expression[] =
+    typeof parseResult.ast === 'string'
+      ? JSON.parse(parseResult.ast)
+      : parseResult.ast;
 
   // Step 3: Run semantic validation on each statement
   const allErrors: ValidationError[] = [...syntaxResult.errors];

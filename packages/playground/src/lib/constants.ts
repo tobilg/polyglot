@@ -70,3 +70,40 @@ FROM employees
 WHERE salary > 50000
   AND hire_date >= '2024-01-01'
 ORDER BY name;`;
+
+export const DEFAULT_LINEAGE_SQL = `WITH monthly_sales AS (
+  SELECT
+    u.id AS user_id,
+    u.name AS user_name,
+    SUM(o.amount) AS total_sales,
+    COUNT(o.id) AS order_count
+  FROM users u
+  JOIN orders o ON u.id = o.customer_id
+  WHERE o.created_at >= '2024-01-01'
+  GROUP BY u.id, u.name
+)
+SELECT
+  ms.user_name,
+  ms.total_sales,
+  ms.order_count,
+  ROUND(ms.total_sales / ms.order_count, 2) AS avg_order_value
+FROM monthly_sales ms
+WHERE ms.total_sales > 1000
+ORDER BY ms.total_sales DESC;`;
+
+export const DEFAULT_LINEAGE_COLUMN = "avg_order_value";
+
+export const DEFAULT_VALIDATE_SCHEMA = JSON.stringify({
+  tables: [{
+    name: "employees",
+    columns: [
+      { name: "id", type: "integer", primaryKey: true },
+      { name: "name", type: "varchar", nullable: false },
+      { name: "age", type: "integer" },
+      { name: "department", type: "varchar" },
+      { name: "salary", type: "decimal" },
+      { name: "hire_date", type: "date" },
+    ],
+    primaryKey: ["id"],
+  }],
+}, null, 2);

@@ -94,6 +94,21 @@ pub enum NotInStyle {
     Infix,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectorOperator {
+    And,
+    Or,
+}
+
+impl ConnectorOperator {
+    fn keyword(self) -> &'static str {
+        match self {
+            Self::And => "AND",
+            Self::Or => "OR",
+        }
+    }
+}
+
 /// Identifier quote style (start/end characters)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdentifierQuoteStyle {
@@ -3001,8 +3016,8 @@ impl Generator {
             Expression::MethodCall(m) => self.generate_method_call(m),
             Expression::ArraySlice(s) => self.generate_array_slice(s),
 
-            Expression::And(op) => self.generate_binary_op(op, "AND"),
-            Expression::Or(op) => self.generate_binary_op(op, "OR"),
+            Expression::And(op) => self.generate_connector_op(op, ConnectorOperator::And),
+            Expression::Or(op) => self.generate_connector_op(op, ConnectorOperator::Or),
             Expression::Add(op) => self.generate_binary_op(op, "+"),
             Expression::Sub(op) => self.generate_binary_op(op, "-"),
             Expression::Mul(op) => self.generate_binary_op(op, "*"),
@@ -5479,22 +5494,21 @@ impl Generator {
 
     /// Generate JOIN ON condition with AND clauses on separate lines in pretty mode
     fn generate_join_on_condition(&mut self, expr: &Expression) -> Result<()> {
-        // If it's an AND expression, split each condition onto a new line
         if let Expression::And(and_op) = expr {
-            // Generate left side (might be another AND)
-            self.generate_join_on_condition(&and_op.left)?;
-            // AND on new line
-            self.write_newline();
-            self.write_indent();
-            self.write_keyword("AND");
-            self.write_space();
-            // Generate right side (should be a single condition)
-            self.generate_expression(&and_op.right)?;
-        } else {
-            // Base case: single condition
-            self.generate_expression(expr)?;
+            if let Some(conditions) = self.flatten_connector_terms(and_op, ConnectorOperator::And) {
+                self.generate_expression(conditions[0])?;
+                for condition in conditions.iter().skip(1) {
+                    self.write_newline();
+                    self.write_indent();
+                    self.write_keyword("AND");
+                    self.write_space();
+                    self.generate_expression(condition)?;
+                }
+                return Ok(());
+            }
         }
-        Ok(())
+
+        self.generate_expression(expr)
     }
 
     fn generate_joined_table(&mut self, jt: &JoinedTable) -> Result<()> {
@@ -20419,6 +20433,73 @@ impl Generator {
             self.write_formatted_comment(comment);
         }
         Ok(())
+    }
+
+    fn generate_connector_op(&mut self, op: &BinaryOp, connector: ConnectorOperator) -> Result<()> {
+        let keyword = connector.keyword();
+        let Some(terms) = self.flatten_connector_terms(op, connector) else {
+            return self.generate_binary_op(op, keyword);
+        };
+
+        self.generate_expression(terms[0])?;
+        for term in terms.iter().skip(1) {
+            if self.config.pretty && matches!(self.config.dialect, Some(DialectType::Snowflake)) {
+                self.write_newline();
+                self.write_indent();
+                self.write_keyword(keyword);
+            } else {
+                self.write_space();
+                self.write_keyword(keyword);
+            }
+            self.write_space();
+            self.generate_expression(term)?;
+        }
+
+        Ok(())
+    }
+
+    fn flatten_connector_terms<'a>(
+        &self,
+        root: &'a BinaryOp,
+        connector: ConnectorOperator,
+    ) -> Option<Vec<&'a Expression>> {
+        if !root.left_comments.is_empty()
+            || !root.operator_comments.is_empty()
+            || !root.trailing_comments.is_empty()
+        {
+            return None;
+        }
+
+        let mut terms = Vec::new();
+        let mut stack: Vec<&Expression> = vec![&root.right, &root.left];
+
+        while let Some(expr) = stack.pop() {
+            match (connector, expr) {
+                (ConnectorOperator::And, Expression::And(inner))
+                    if inner.left_comments.is_empty()
+                        && inner.operator_comments.is_empty()
+                        && inner.trailing_comments.is_empty() =>
+                {
+                    stack.push(&inner.right);
+                    stack.push(&inner.left);
+                }
+                (ConnectorOperator::Or, Expression::Or(inner))
+                    if inner.left_comments.is_empty()
+                        && inner.operator_comments.is_empty()
+                        && inner.trailing_comments.is_empty() =>
+                {
+                    stack.push(&inner.right);
+                    stack.push(&inner.left);
+                }
+                _ => terms.push(expr),
+            }
+        }
+
+        if terms.len() > 1 {
+            Some(terms)
+        } else {
+            None
+        }
     }
 
     /// Generate LIKE/ILIKE operation with optional ESCAPE clause
@@ -36579,5 +36660,43 @@ mod tests {
         let mut gen = Generator::with_config(config.clone());
         let result = gen.generate(&ast[0]).unwrap();
         assert_eq!(result, "SELECT 'it\\'s'");
+    }
+
+    #[test]
+    fn test_generate_deep_and_chain_without_stack_growth() {
+        let mut expr = Expression::Eq(Box::new(BinaryOp::new(
+            Expression::column("c0"),
+            Expression::number(0),
+        )));
+
+        for i in 1..2500 {
+            let predicate = Expression::Eq(Box::new(BinaryOp::new(
+                Expression::column(format!("c{i}")),
+                Expression::number(i as i64),
+            )));
+            expr = Expression::And(Box::new(BinaryOp::new(expr, predicate)));
+        }
+
+        let sql = Generator::sql(&expr).expect("deep AND chain should generate");
+        assert!(sql.contains("c2499 = 2499"), "{}", sql);
+    }
+
+    #[test]
+    fn test_generate_deep_or_chain_without_stack_growth() {
+        let mut expr = Expression::Eq(Box::new(BinaryOp::new(
+            Expression::column("c0"),
+            Expression::number(0),
+        )));
+
+        for i in 1..2500 {
+            let predicate = Expression::Eq(Box::new(BinaryOp::new(
+                Expression::column(format!("c{i}")),
+                Expression::number(i as i64),
+            )));
+            expr = Expression::Or(Box::new(BinaryOp::new(expr, predicate)));
+        }
+
+        let sql = Generator::sql(&expr).expect("deep OR chain should generate");
+        assert!(sql.contains("c2499 = 2499"), "{}", sql);
     }
 }

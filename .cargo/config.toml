@@ -1,2 +1,5 @@
 [env]
 RUST_MIN_STACK = "8388608"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=67108864"]

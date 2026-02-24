@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "once_cell",
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-ffi"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cbindgen",
  "polyglot-sql",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-wasm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

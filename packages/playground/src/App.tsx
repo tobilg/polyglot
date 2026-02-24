@@ -8,12 +8,14 @@ import { TranspileTab } from "@/components/tabs/transpile-tab";
 import { AstExplorerTab } from "@/components/tabs/ast-explorer-tab";
 import { FormatterTab } from "@/components/tabs/formatter-tab";
 import { ValidationTab } from "@/components/tabs/validation-tab";
+import { LineageTab } from "@/components/tabs/lineage-tab";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import {
   ArrowRightLeft,
   TreePine,
   AlignLeft,
   ShieldCheck,
+  GitBranch,
 } from "lucide-react";
 
 export default function App() {
@@ -45,6 +47,10 @@ export default function App() {
                 <ShieldCheck className="size-3.5" />
                 Validation
               </TabsTrigger>
+              <TabsTrigger value="lineage" className="gap-1.5">
+                <GitBranch className="size-3.5" />
+                Lineage
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="transpile" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
@@ -58,6 +64,9 @@ export default function App() {
             </TabsContent>
             <TabsContent value="validate" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
               <ValidationTab dialects={dialects} />
+            </TabsContent>
+            <TabsContent value="lineage" forceMount className="data-[state=inactive]:hidden flex-1 min-h-0 flex flex-col">
+              <LineageTab dialects={dialects} />
             </TabsContent>
           </Tabs>
         </main>

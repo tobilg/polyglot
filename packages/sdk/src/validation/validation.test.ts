@@ -39,6 +39,19 @@ describe('validate', () => {
       const result = validate('SELECT (1 + 2', 'generic');
       expect(result.valid).toBe(false);
     });
+
+    it('should reject trailing commas in strict syntax mode', () => {
+      const result = validate('SELECT name, FROM employees', 'generic', {
+        strictSyntax: true,
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.code === 'E005')).toBe(true);
+    });
+
+    it('should remain permissive for trailing commas without strict syntax mode', () => {
+      const result = validate('SELECT name, FROM employees', 'generic');
+      expect(result.valid).toBe(true);
+    });
   });
 
   describe('semantic validation', () => {

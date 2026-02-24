@@ -53,35 +53,17 @@ fn normalize_with_simplifier(
     max_distance: i64,
     simplifier: &Simplifier,
 ) -> NormalizeResult<Expression> {
-    let mut result = expression.clone();
-
-    // Walk through all connector nodes (AND/OR)
-    let connectors = collect_connectors(&expression);
-
-    for node in connectors {
-        if normalized(&node, dnf) {
-            continue;
-        }
-
-        // Estimate the cost of normalization
-        let distance = normalization_distance(&node, dnf, max_distance);
-
-        if distance > max_distance {
-            // Too expensive, return original
-            return Ok(expression);
-        }
-
-        // Apply distributive law repeatedly until normalized
-        let normalized_node = apply_distributive_law(&node, dnf, max_distance, simplifier)?;
-
-        // In a real implementation, we would replace the node in the AST
-        // For now, we just return the normalized version if it's the root
-        if is_same_expression(&node, &expression) {
-            result = normalized_node;
-        }
+    if normalized(&expression, dnf) {
+        return Ok(expression);
     }
 
-    Ok(result)
+    // Estimate full-tree cost first to avoid expensive expansion.
+    let distance = normalization_distance(&expression, dnf, max_distance);
+    if distance > max_distance {
+        return Ok(expression);
+    }
+
+    apply_distributive_law(&expression, dnf, max_distance, simplifier)
 }
 
 /// Check whether a given expression is in a normal form.
@@ -368,32 +350,6 @@ fn distribute_dnf(expression: &Expression, simplifier: &Simplifier) -> Expressio
 // Helper functions
 // ============================================================================
 
-/// Collect all connector (AND/OR) expressions from an AST
-fn collect_connectors(expression: &Expression) -> Vec<Expression> {
-    let mut result = Vec::new();
-    collect_connectors_recursive(expression, &mut result);
-    result
-}
-
-fn collect_connectors_recursive(expression: &Expression, result: &mut Vec<Expression>) {
-    match expression {
-        Expression::And(bin) => {
-            result.push(expression.clone());
-            collect_connectors_recursive(&bin.left, result);
-            collect_connectors_recursive(&bin.right, result);
-        }
-        Expression::Or(bin) => {
-            result.push(expression.clone());
-            collect_connectors_recursive(&bin.left, result);
-            collect_connectors_recursive(&bin.right, result);
-        }
-        Expression::Paren(paren) => {
-            collect_connectors_recursive(&paren.this, result);
-        }
-        _ => {}
-    }
-}
-
 /// Count the number of connector nodes in an expression
 fn count_connectors(expression: &Expression) -> usize {
     match expression {
@@ -411,12 +367,6 @@ fn unwrap_paren(expression: &Expression) -> &Expression {
         Expression::Paren(paren) => unwrap_paren(&paren.this),
         _ => expression,
     }
-}
-
-/// Check if two expressions are the same (simple identity check)
-fn is_same_expression(a: &Expression, b: &Expression) -> bool {
-    // Simple identity check - in a real implementation, this would be more sophisticated
-    std::ptr::eq(a as *const _, b as *const _) || format!("{:?}", a) == format!("{:?}", b)
 }
 
 /// Create an AND expression

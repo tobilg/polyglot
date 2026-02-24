@@ -396,6 +396,15 @@ fn collect_columns(expr: &Expression, columns: &mut Vec<ColumnRef>) {
             for e in &select.expressions {
                 collect_columns(e, columns);
             }
+            // Collect from JOIN ON / MATCH_CONDITION clauses
+            for join in &select.joins {
+                if let Some(on) = &join.on {
+                    collect_columns(on, columns);
+                }
+                if let Some(match_condition) = &join.match_condition {
+                    collect_columns(match_condition, columns);
+                }
+            }
             // Collect from WHERE
             if let Some(where_clause) = &select.where_clause {
                 collect_columns(&where_clause.this, columns);
@@ -416,8 +425,8 @@ fn collect_columns(expr: &Expression, columns: &mut Vec<ColumnRef>) {
                     collect_columns(e, columns);
                 }
             }
-            // Note: We don't recurse into FROM/JOIN subqueries here
-            // as those create their own scopes
+            // Note: We don't recurse into FROM/JOIN source subqueries here
+            // as those create their own scopes.
         }
         // Binary operations
         Expression::And(bin)
@@ -1164,9 +1173,30 @@ mod tests {
         let mut scope = parse_and_build_scope("SELECT t.a, t.b, s.c FROM t JOIN s ON t.id = s.id");
 
         let local = scope.local_columns();
-        // All columns are local since both t and s are in scope
-        assert_eq!(local.len(), 3);
+        // All columns are local since both t and s are in scope.
+        // Includes JOIN ON references (t.id, s.id).
+        assert_eq!(local.len(), 5);
         assert!(local.iter().all(|c| c.table.is_some()));
+    }
+
+    #[test]
+    fn test_columns_include_join_on_clause_references() {
+        let mut scope = parse_and_build_scope(
+            "SELECT o.total FROM orders o JOIN customers c ON c.id = o.customer_id",
+        );
+
+        let cols: Vec<String> = scope
+            .columns()
+            .iter()
+            .map(|c| match &c.table {
+                Some(t) => format!("{}.{}", t, c.name),
+                None => c.name.clone(),
+            })
+            .collect();
+
+        assert!(cols.contains(&"o.total".to_string()));
+        assert!(cols.contains(&"c.id".to_string()));
+        assert!(cols.contains(&"o.customer_id".to_string()));
     }
 
     #[test]

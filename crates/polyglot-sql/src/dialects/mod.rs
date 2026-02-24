@@ -161,7 +161,7 @@ use crate::error::Result;
 use crate::expressions::{Expression, FunctionBody};
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
-use crate::tokens::{Tokenizer, TokenizerConfig};
+use crate::tokens::{Token, Tokenizer, TokenizerConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -1940,6 +1940,11 @@ impl Dialect {
         parser.parse()
     }
 
+    /// Tokenize SQL using this dialect's tokenizer configuration.
+    pub fn tokenize(&self, sql: &str) -> Result<Vec<Token>> {
+        self.tokenizer.tokenize(sql)
+    }
+
     /// Get the generator config for a specific expression (supports hybrid dialects)
     fn get_config_for_expr(&self, expr: &Expression) -> GeneratorConfig {
         if let Some(ref config_fn) = self.generator_config_for_expr {
@@ -2260,6 +2265,21 @@ impl Dialect {
 
         let expressions = self.parse(sql)?;
         let target_dialect = Dialect::get(target);
+        let generic_identity =
+            self.dialect_type == DialectType::Generic && target == DialectType::Generic;
+
+        if generic_identity {
+            return expressions
+                .into_iter()
+                .map(|expr| {
+                    if pretty {
+                        target_dialect.generate_pretty_with_source(&expr, self.dialect_type)
+                    } else {
+                        target_dialect.generate_with_source(&expr, self.dialect_type)
+                    }
+                })
+                .collect();
+        }
 
         expressions
             .into_iter()
@@ -2283,6 +2303,21 @@ impl Dialect {
     ) -> Result<Vec<String>> {
         let expressions = self.parse(sql)?;
         let target_dialect = Dialect::get(target);
+        let generic_identity =
+            self.dialect_type == DialectType::Generic && target == DialectType::Generic;
+
+        if generic_identity {
+            return expressions
+                .into_iter()
+                .map(|expr| {
+                    if pretty {
+                        target_dialect.generate_pretty_with_source(&expr, self.dialect_type)
+                    } else {
+                        target_dialect.generate_with_source(&expr, self.dialect_type)
+                    }
+                })
+                .collect();
+        }
 
         expressions
             .into_iter()

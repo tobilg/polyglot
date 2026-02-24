@@ -5,13 +5,16 @@
 //!
 //! Ported from sqlglot's optimizer/qualify_columns.py
 
+use crate::dialects::transform_recursive;
 use crate::dialects::DialectType;
 use crate::expressions::{
-    Alias, Column, Expression, Identifier, Join, LateralView, Over, TableRef, With,
+    Alias, Column, Expression, Identifier, Join, LateralView, Literal, Over, Paren, Select,
+    TableRef, With,
 };
 use crate::resolver::{Resolver, ResolverError};
 use crate::schema::Schema;
-use crate::scope::{traverse_scope, Scope};
+use crate::scope::{build_scope, traverse_scope, Scope};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -116,40 +119,68 @@ pub fn qualify_columns(
 ) -> QualifyColumnsResult<Expression> {
     let infer_schema = options.infer_schema.unwrap_or(schema.is_empty());
     let dialect = options.dialect.or_else(|| schema.dialect());
+    let first_error: RefCell<Option<QualifyColumnsError>> = RefCell::new(None);
 
-    let result = expression.clone();
-
-    // Traverse all scopes and qualify columns
-    for scope in traverse_scope(&expression) {
-        let scope_expression = &scope.expression;
-        let is_select = matches!(scope_expression, Expression::Select(_));
-
-        // Create resolver for this scope
-        let mut resolver = Resolver::new(&scope, schema, infer_schema);
-
-        // Qualify columns - add table qualifiers
-        qualify_columns_in_scope(&scope, &mut resolver, options.allow_partial_qualification)?;
-
-        // Expand alias refs if enabled
-        if options.expand_alias_refs {
-            expand_alias_refs(&scope, &mut resolver, dialect)?;
+    let transformed = transform_recursive(expression, &|node| {
+        if first_error.borrow().is_some() {
+            return Ok(node);
         }
 
-        if is_select {
-            // Expand stars if enabled
-            if options.expand_stars {
-                expand_stars(&scope, &mut resolver)?;
+        match node {
+            Expression::Select(mut select) => {
+                if let Some(with) = &mut select.with {
+                    pushdown_cte_alias_columns_with(with);
+                }
+
+                let scope_expr = Expression::Select(select.clone());
+                let scope = build_scope(&scope_expr);
+                let mut resolver = Resolver::new(&scope, schema, infer_schema);
+
+                if let Err(err) = qualify_columns_in_scope(
+                    &mut select,
+                    &scope,
+                    &mut resolver,
+                    options.allow_partial_qualification,
+                ) {
+                    *first_error.borrow_mut() = Some(err);
+                }
+
+                if first_error.borrow().is_none() && options.expand_alias_refs {
+                    if let Err(err) = expand_alias_refs(&mut select, &mut resolver, dialect) {
+                        *first_error.borrow_mut() = Some(err);
+                    }
+                }
+
+                if first_error.borrow().is_none() && options.expand_stars {
+                    if let Err(err) = expand_stars(&mut select, &scope, &mut resolver) {
+                        *first_error.borrow_mut() = Some(err);
+                    }
+                }
+
+                if first_error.borrow().is_none() {
+                    if let Err(err) = qualify_outputs_select(&mut select) {
+                        *first_error.borrow_mut() = Some(err);
+                    }
+                }
+
+                if first_error.borrow().is_none() {
+                    if let Err(err) = expand_group_by(&mut select, dialect) {
+                        *first_error.borrow_mut() = Some(err);
+                    }
+                }
+
+                Ok(Expression::Select(select))
             }
-
-            // Ensure output columns are aliased
-            qualify_outputs(&scope)?;
+            _ => Ok(node),
         }
+    })
+    .map_err(|err| QualifyColumnsError::CannotAutoJoin(err.to_string()))?;
 
-        // Expand GROUP BY positional references
-        expand_group_by(&scope, dialect)?;
+    if let Some(err) = first_error.into_inner() {
+        return Err(err);
     }
 
-    Ok(result)
+    Ok(transformed)
 }
 
 /// Validate that all columns in an expression are qualified.
@@ -193,39 +224,39 @@ pub fn validate_qualify_columns(expression: &Expression) -> QualifyColumnsResult
 
 /// Qualify columns in a scope by adding table qualifiers
 fn qualify_columns_in_scope(
+    select: &mut Select,
     scope: &Scope,
     resolver: &mut Resolver,
     allow_partial: bool,
 ) -> QualifyColumnsResult<()> {
-    let columns = get_scope_columns(scope);
-
-    for column_ref in columns {
-        let column_table = &column_ref.table;
-        let column_name = &column_ref.name;
-
-        if let Some(table) = column_table {
-            // Column already has a table qualifier, validate it
-            if scope.sources.contains_key(table) {
-                if let Ok(source_columns) = resolver.get_source_columns(table) {
-                    if !allow_partial
-                        && !source_columns.is_empty()
-                        && !source_columns.contains(column_name)
-                        && !source_columns.contains(&"*".to_string())
-                    {
-                        return Err(QualifyColumnsError::UnknownColumn(column_name.clone()));
-                    }
-                }
-            }
-        } else {
-            // Column needs a table qualifier
-            if let Some(table) = resolver.get_table(column_name) {
-                // In a real implementation, we would modify the AST here
-                // For now, we just validate that we can find the table
-                let _ = table;
-            }
+    for expr in &mut select.expressions {
+        qualify_columns_in_expression(expr, scope, resolver, allow_partial)?;
+    }
+    if let Some(where_clause) = &mut select.where_clause {
+        qualify_columns_in_expression(&mut where_clause.this, scope, resolver, allow_partial)?;
+    }
+    if let Some(group_by) = &mut select.group_by {
+        for expr in &mut group_by.expressions {
+            qualify_columns_in_expression(expr, scope, resolver, allow_partial)?;
         }
     }
-
+    if let Some(having) = &mut select.having {
+        qualify_columns_in_expression(&mut having.this, scope, resolver, allow_partial)?;
+    }
+    if let Some(qualify) = &mut select.qualify {
+        qualify_columns_in_expression(&mut qualify.this, scope, resolver, allow_partial)?;
+    }
+    if let Some(order_by) = &mut select.order_by {
+        for ordered in &mut order_by.expressions {
+            qualify_columns_in_expression(&mut ordered.this, scope, resolver, allow_partial)?;
+        }
+    }
+    for join in &mut select.joins {
+        qualify_columns_in_expression(&mut join.this, scope, resolver, allow_partial)?;
+        if let Some(on) = &mut join.on {
+            qualify_columns_in_expression(on, scope, resolver, allow_partial)?;
+        }
+    }
     Ok(())
 }
 
@@ -236,29 +267,38 @@ fn qualify_columns_in_scope(
 /// becomes:
 /// `SELECT y.foo AS bar, y.foo * 2 AS baz FROM y`
 fn expand_alias_refs(
-    scope: &Scope,
+    select: &mut Select,
     _resolver: &mut Resolver,
     _dialect: Option<DialectType>,
 ) -> QualifyColumnsResult<()> {
-    let expression = &scope.expression;
+    let mut alias_to_expression: HashMap<String, (Expression, usize)> = HashMap::new();
 
-    if !matches!(expression, Expression::Select(_)) {
-        return Ok(());
-    }
-
-    // Build alias to expression mapping from SELECT list
-    let mut _alias_to_expression: HashMap<String, (Expression, usize)> = HashMap::new();
-
-    if let Expression::Select(select) = expression {
-        for (i, expr) in select.expressions.iter().enumerate() {
-            if let Expression::Alias(alias) = expr {
-                _alias_to_expression.insert(alias.alias.name.clone(), (alias.this.clone(), i + 1));
-            }
+    for (i, expr) in select.expressions.iter_mut().enumerate() {
+        replace_alias_refs_in_expression(expr, &alias_to_expression, false);
+        if let Expression::Alias(alias) = expr {
+            alias_to_expression.insert(alias.alias.name.clone(), (alias.this.clone(), i + 1));
         }
     }
 
-    // In a real implementation, we would walk through WHERE, GROUP BY, HAVING, etc.
-    // and replace column references to aliases with the aliased expression
+    if let Some(where_clause) = &mut select.where_clause {
+        replace_alias_refs_in_expression(&mut where_clause.this, &alias_to_expression, false);
+    }
+    if let Some(group_by) = &mut select.group_by {
+        for expr in &mut group_by.expressions {
+            replace_alias_refs_in_expression(expr, &alias_to_expression, true);
+        }
+    }
+    if let Some(having) = &mut select.having {
+        replace_alias_refs_in_expression(&mut having.this, &alias_to_expression, false);
+    }
+    if let Some(qualify) = &mut select.qualify {
+        replace_alias_refs_in_expression(&mut qualify.this, &alias_to_expression, false);
+    }
+    if let Some(order_by) = &mut select.order_by {
+        for ordered in &mut order_by.expressions {
+            replace_alias_refs_in_expression(&mut ordered.this, &alias_to_expression, false);
+        }
+    }
 
     Ok(())
 }
@@ -269,11 +309,15 @@ fn expand_alias_refs(
 /// `SELECT a, b FROM t GROUP BY 1, 2`
 /// becomes:
 /// `SELECT a, b FROM t GROUP BY a, b`
-fn expand_group_by(scope: &Scope, _dialect: Option<DialectType>) -> QualifyColumnsResult<()> {
-    if let Expression::Select(select) = &scope.expression {
-        if let Some(_group_by) = &select.group_by {
-            // In a real implementation, we would replace numeric literals
-            // with the corresponding SELECT expressions
+fn expand_group_by(select: &mut Select, _dialect: Option<DialectType>) -> QualifyColumnsResult<()> {
+    let projections = select.expressions.clone();
+
+    if let Some(group_by) = &mut select.group_by {
+        for group_expr in &mut group_by.expressions {
+            if let Some(index) = positional_reference(group_expr) {
+                let replacement = select_expression_at_position(&projections, index)?;
+                *group_expr = replacement;
+            }
         }
     }
     Ok(())
@@ -285,56 +329,54 @@ fn expand_group_by(scope: &Scope, _dialect: Option<DialectType>) -> QualifyColum
 /// `SELECT * FROM users`
 /// becomes:
 /// `SELECT users.id, users.name, users.email FROM users`
-fn expand_stars(scope: &Scope, resolver: &mut Resolver) -> QualifyColumnsResult<()> {
-    if let Expression::Select(select) = &scope.expression {
-        let mut _new_selections: Vec<Expression> = Vec::new();
-        let mut _has_star = false;
+fn expand_stars(
+    select: &mut Select,
+    scope: &Scope,
+    resolver: &mut Resolver,
+) -> QualifyColumnsResult<()> {
+    let mut new_selections: Vec<Expression> = Vec::new();
+    let mut has_star = false;
 
-        for expr in &select.expressions {
-            match expr {
-                Expression::Star(_) => {
-                    _has_star = true;
-                    // Expand to all columns from all sources
-                    for (source_name, _) in &scope.sources {
-                        if let Ok(columns) = resolver.get_source_columns(source_name) {
-                            if columns.contains(&"*".to_string()) || columns.is_empty() {
-                                // Can't expand - unknown columns
-                                return Ok(());
-                            }
-                            for col_name in columns {
-                                _new_selections
-                                    .push(create_qualified_column(&col_name, Some(source_name)));
-                            }
+    for expr in &select.expressions {
+        match expr {
+            Expression::Star(_) => {
+                has_star = true;
+                for source_name in scope.sources.keys() {
+                    if let Ok(columns) = resolver.get_source_columns(source_name) {
+                        if columns.contains(&"*".to_string()) || columns.is_empty() {
+                            return Ok(());
+                        }
+                        for col_name in columns {
+                            new_selections
+                                .push(create_qualified_column(&col_name, Some(source_name)));
                         }
                     }
-                }
-                Expression::Column(col) if is_star_column(col) => {
-                    _has_star = true;
-                    // Expand table.* to all columns from that table
-                    if let Some(table) = &col.table {
-                        let table_name = &table.name;
-                        if !scope.sources.contains_key(table_name) {
-                            return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
-                        }
-                        if let Ok(columns) = resolver.get_source_columns(table_name) {
-                            if columns.contains(&"*".to_string()) || columns.is_empty() {
-                                return Ok(());
-                            }
-                            for col_name in columns {
-                                _new_selections
-                                    .push(create_qualified_column(&col_name, Some(table_name)));
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    _new_selections.push(expr.clone());
                 }
             }
+            Expression::Column(col) if is_star_column(col) => {
+                has_star = true;
+                if let Some(table) = &col.table {
+                    let table_name = &table.name;
+                    if !scope.sources.contains_key(table_name) {
+                        return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
+                    }
+                    if let Ok(columns) = resolver.get_source_columns(table_name) {
+                        if columns.contains(&"*".to_string()) || columns.is_empty() {
+                            return Ok(());
+                        }
+                        for col_name in columns {
+                            new_selections
+                                .push(create_qualified_column(&col_name, Some(table_name)));
+                        }
+                    }
+                }
+            }
+            _ => new_selections.push(expr.clone()),
         }
+    }
 
-        // In a real implementation, we would replace the SELECT expressions
-        // with _new_selections if _has_star is true
+    if has_star {
+        select.expressions = new_selections;
     }
 
     Ok(())
@@ -347,35 +389,158 @@ fn expand_stars(scope: &Scope, resolver: &mut Resolver) -> QualifyColumnsResult<
 /// becomes:
 /// `SELECT a + b AS _col_0 FROM t`
 pub fn qualify_outputs(scope: &Scope) -> QualifyColumnsResult<()> {
-    if let Expression::Select(select) = &scope.expression {
-        let mut new_selections: Vec<Expression> = Vec::new();
+    if let Expression::Select(mut select) = scope.expression.clone() {
+        qualify_outputs_select(&mut select)?;
+    }
+    Ok(())
+}
 
-        for (i, expr) in select.expressions.iter().enumerate() {
-            match expr {
-                Expression::Alias(_) => {
-                    // Already aliased
-                    new_selections.push(expr.clone());
-                }
-                Expression::Column(col) => {
-                    // Use column name as alias
-                    new_selections.push(create_alias(expr.clone(), &col.name.name));
-                }
-                Expression::Star(_) => {
-                    // Don't alias stars
-                    new_selections.push(expr.clone());
-                }
-                _ => {
-                    // Need to add alias
-                    let alias_name = get_output_name(expr).unwrap_or_else(|| format!("_col_{}", i));
-                    new_selections.push(create_alias(expr.clone(), &alias_name));
-                }
+fn qualify_outputs_select(select: &mut Select) -> QualifyColumnsResult<()> {
+    let mut new_selections: Vec<Expression> = Vec::new();
+
+    for (i, expr) in select.expressions.iter().enumerate() {
+        match expr {
+            Expression::Alias(_) => new_selections.push(expr.clone()),
+            Expression::Column(col) => {
+                new_selections.push(create_alias(expr.clone(), &col.name.name));
+            }
+            Expression::Star(_) => new_selections.push(expr.clone()),
+            _ => {
+                let alias_name = get_output_name(expr).unwrap_or_else(|| format!("_col_{}", i));
+                new_selections.push(create_alias(expr.clone(), &alias_name));
             }
         }
+    }
 
-        // In a real implementation, we would replace the SELECT expressions
+    select.expressions = new_selections;
+    Ok(())
+}
+
+fn qualify_columns_in_expression(
+    expr: &mut Expression,
+    scope: &Scope,
+    resolver: &mut Resolver,
+    allow_partial: bool,
+) -> QualifyColumnsResult<()> {
+    let first_error: RefCell<Option<QualifyColumnsError>> = RefCell::new(None);
+    let resolver_cell: RefCell<&mut Resolver> = RefCell::new(resolver);
+
+    let transformed = transform_recursive(expr.clone(), &|node| {
+        if first_error.borrow().is_some() {
+            return Ok(node);
+        }
+
+        match node {
+            Expression::Column(mut col) => {
+                if let Err(err) = qualify_single_column(
+                    &mut col,
+                    scope,
+                    &mut resolver_cell.borrow_mut(),
+                    allow_partial,
+                ) {
+                    *first_error.borrow_mut() = Some(err);
+                }
+                Ok(Expression::Column(col))
+            }
+            _ => Ok(node),
+        }
+    })
+    .map_err(|err| QualifyColumnsError::CannotAutoJoin(err.to_string()))?;
+
+    if let Some(err) = first_error.into_inner() {
+        return Err(err);
+    }
+
+    *expr = transformed;
+    Ok(())
+}
+
+fn qualify_single_column(
+    col: &mut Column,
+    scope: &Scope,
+    resolver: &mut Resolver,
+    allow_partial: bool,
+) -> QualifyColumnsResult<()> {
+    if is_star_column(col) {
+        return Ok(());
+    }
+
+    if let Some(table) = &col.table {
+        let table_name = &table.name;
+        if !scope.sources.contains_key(table_name) {
+            return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
+        }
+
+        if let Ok(source_columns) = resolver.get_source_columns(table_name) {
+            if !allow_partial
+                && !source_columns.is_empty()
+                && !source_columns.contains(&col.name.name)
+                && !source_columns.contains(&"*".to_string())
+            {
+                return Err(QualifyColumnsError::UnknownColumn(col.name.name.clone()));
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(table_name) = resolver.get_table(&col.name.name) {
+        col.table = Some(Identifier::new(table_name));
+        return Ok(());
+    }
+
+    if !allow_partial {
+        return Err(QualifyColumnsError::UnknownColumn(col.name.name.clone()));
     }
 
     Ok(())
+}
+
+fn replace_alias_refs_in_expression(
+    expr: &mut Expression,
+    alias_to_expression: &HashMap<String, (Expression, usize)>,
+    literal_index: bool,
+) {
+    let transformed = transform_recursive(expr.clone(), &|node| match node {
+        Expression::Column(col) if col.table.is_none() => {
+            if let Some((alias_expr, index)) = alias_to_expression.get(&col.name.name) {
+                if literal_index && matches!(alias_expr, Expression::Literal(_)) {
+                    return Ok(Expression::number(*index as i64));
+                }
+                return Ok(Expression::Paren(Box::new(Paren {
+                    this: alias_expr.clone(),
+                    trailing_comments: vec![],
+                })));
+            }
+            Ok(Expression::Column(col))
+        }
+        other => Ok(other),
+    });
+
+    if let Ok(next) = transformed {
+        *expr = next;
+    }
+}
+
+fn positional_reference(expr: &Expression) -> Option<usize> {
+    match expr {
+        Expression::Literal(Literal::Number(value)) => value.parse::<usize>().ok(),
+        _ => None,
+    }
+}
+
+fn select_expression_at_position(
+    projections: &[Expression],
+    index: usize,
+) -> QualifyColumnsResult<Expression> {
+    if index == 0 || index > projections.len() {
+        return Err(QualifyColumnsError::UnknownOutputColumn(index.to_string()));
+    }
+
+    let projection = projections[index - 1].clone();
+    Ok(match projection {
+        Expression::Alias(alias) => alias.this.clone(),
+        other => other,
+    })
 }
 
 /// Returns the set of SQL reserved words for a given dialect.
@@ -1846,8 +2011,40 @@ pub fn quote_identifiers(expression: Expression, dialect: Option<DialectType>) -
 /// This is useful for dialects like Snowflake where CTE alias columns
 /// can be referenced in HAVING.
 pub fn pushdown_cte_alias_columns(_scope: &Scope) {
-    // For each CTE with alias columns, rename the SELECT columns to match
-    // In a real implementation, this would modify the AST
+    // Kept for API compatibility. The mutating implementation is applied within
+    // `qualify_columns` where AST ownership is available.
+}
+
+fn pushdown_cte_alias_columns_with(with: &mut With) {
+    for cte in &mut with.ctes {
+        if cte.columns.is_empty() {
+            continue;
+        }
+
+        if let Expression::Select(select) = &mut cte.this {
+            let mut next_expressions = Vec::with_capacity(select.expressions.len());
+
+            for (i, projection) in select.expressions.iter().enumerate() {
+                let Some(alias_name) = cte.columns.get(i) else {
+                    next_expressions.push(projection.clone());
+                    continue;
+                };
+
+                match projection {
+                    Expression::Alias(existing) => {
+                        let mut aliased = existing.clone();
+                        aliased.alias = alias_name.clone();
+                        next_expressions.push(Expression::Alias(aliased));
+                    }
+                    _ => {
+                        next_expressions.push(create_alias(projection.clone(), &alias_name.name));
+                    }
+                }
+            }
+
+            select.expressions = next_expressions;
+        }
+    }
 }
 
 // ============================================================================
@@ -2047,9 +2244,11 @@ fn get_output_name(expr: &Expression) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expressions::DataType;
     use crate::generator::Generator;
     use crate::parser::Parser;
     use crate::scope::build_scope;
+    use crate::{MappingSchema, Schema};
 
     fn gen(expr: &Expression) -> String {
         Generator::new().generate(expr).unwrap()
@@ -2190,6 +2389,78 @@ mod tests {
         let scope = build_scope(&expr);
         let result = qualify_outputs(&scope);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_qualify_columns_expands_star_with_schema() {
+        let expr = parse("SELECT * FROM users");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "users",
+                &[
+                    (
+                        "id".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    ("name".to_string(), DataType::Text),
+                    ("email".to_string(), DataType::Text),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(!sql.contains("SELECT *"));
+        assert!(sql.contains("users.id"));
+        assert!(sql.contains("users.name"));
+        assert!(sql.contains("users.email"));
+    }
+
+    #[test]
+    fn test_qualify_columns_expands_group_by_positions() {
+        let expr = parse("SELECT a, b FROM t GROUP BY 1, 2");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t",
+                &[
+                    (
+                        "a".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                    (
+                        "b".to_string(),
+                        DataType::Int {
+                            length: None,
+                            integer_spelling: false,
+                        },
+                    ),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(!sql.contains("GROUP BY 1"));
+        assert!(!sql.contains("GROUP BY 2"));
+        assert!(sql.contains("GROUP BY"));
+        assert!(sql.contains("t.a"));
+        assert!(sql.contains("t.b"));
     }
 
     // ======================================================================

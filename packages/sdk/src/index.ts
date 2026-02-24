@@ -6,14 +6,7 @@
  */
 
 // Import the WASM module - synchronously initialized on import via bundler target
-import {
-  format_sql as wasmFormatSql,
-  generate as wasmGenerate,
-  get_dialects as wasmGetDialects,
-  parse as wasmParse,
-  transpile as wasmTranspile,
-  version as wasmVersion,
-} from '../wasm/polyglot_sql_wasm.js';
+import * as wasmModule from '../wasm/polyglot_sql_wasm.js';
 
 /**
  * Supported SQL dialects
@@ -84,6 +77,53 @@ export interface ParseResult {
   errorColumn?: number;
 }
 
+type WasmBindings = typeof wasmModule & {
+  transpile_value?: (sql: string, read: string, write: string) => unknown;
+  parse_value?: (sql: string, dialect: string) => unknown;
+  generate_value?: (ast: unknown, dialect: string) => unknown;
+  format_sql_value?: (sql: string, dialect: string) => unknown;
+  get_dialects_value?: () => unknown;
+};
+
+const wasm = wasmModule as WasmBindings;
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  return String(error);
+}
+
+function transpileFailure(context: string, error: unknown): TranspileResult {
+  return {
+    success: false,
+    sql: undefined,
+    error: `WASM ${context} failed: ${errorMessage(error)}`,
+    errorLine: undefined,
+    errorColumn: undefined,
+  };
+}
+
+function parseFailure(context: string, error: unknown): ParseResult {
+  return {
+    success: false,
+    ast: undefined,
+    error: `WASM ${context} failed: ${errorMessage(error)}`,
+    errorLine: undefined,
+    errorColumn: undefined,
+  };
+}
+
+function decodeWasmPayload<T>(payload: unknown): T {
+  if (typeof payload === 'string') {
+    return JSON.parse(payload) as T;
+  }
+  return payload as T;
+}
+
 /**
  * Initialize the WASM module.
  * With the bundler target, the WASM module is synchronously initialized
@@ -131,8 +171,17 @@ export function transpile(
   read: Dialect,
   write: Dialect,
 ): TranspileResult {
-  const resultJson = wasmTranspile(sql, read, write);
-  return JSON.parse(resultJson) as TranspileResult;
+  try {
+    if (typeof wasm.transpile_value === 'function') {
+      return decodeWasmPayload<TranspileResult>(
+        wasm.transpile_value(sql, read, write),
+      );
+    }
+
+    return JSON.parse(wasm.transpile(sql, read, write)) as TranspileResult;
+  } catch (error) {
+    return transpileFailure('transpile', error);
+  }
 }
 
 /**
@@ -152,15 +201,19 @@ export function parse(
   sql: string,
   dialect: Dialect = Dialect.Generic,
 ): ParseResult {
-  const resultJson = wasmParse(sql, dialect);
-  const result = JSON.parse(resultJson);
+  try {
+    if (typeof wasm.parse_value === 'function') {
+      return decodeWasmPayload<ParseResult>(wasm.parse_value(sql, dialect));
+    }
 
-  // Parse the nested AST JSON if present
-  if (result.success && result.ast) {
-    result.ast = JSON.parse(result.ast);
+    const result = JSON.parse(wasm.parse(sql, dialect)) as ParseResult;
+    if (result.success && typeof result.ast === 'string') {
+      result.ast = JSON.parse(result.ast);
+    }
+    return result;
+  } catch (error) {
+    return parseFailure('parse', error);
   }
-
-  return result as ParseResult;
 }
 
 /**
@@ -174,9 +227,21 @@ export function generate(
   ast: any,
   dialect: Dialect = Dialect.Generic,
 ): TranspileResult {
-  const astJson = JSON.stringify(ast);
-  const resultJson = wasmGenerate(astJson, dialect);
-  return JSON.parse(resultJson) as TranspileResult;
+  try {
+    // Valid parse output is an array of Expression nodes.
+    // Keep legacy string path as fallback for non-array inputs
+    // (e.g. cyclic objects) to preserve error behavior.
+    if (typeof wasm.generate_value === 'function' && Array.isArray(ast)) {
+      return decodeWasmPayload<TranspileResult>(
+        wasm.generate_value(ast, dialect),
+      );
+    }
+
+    const astJson = JSON.stringify(ast);
+    return JSON.parse(wasm.generate(astJson, dialect)) as TranspileResult;
+  } catch (error) {
+    return transpileFailure('generate', error);
+  }
 }
 
 /**
@@ -196,8 +261,17 @@ export function format(
   sql: string,
   dialect: Dialect = Dialect.Generic,
 ): TranspileResult {
-  const resultJson = wasmFormatSql(sql, dialect);
-  return JSON.parse(resultJson) as TranspileResult;
+  try {
+    if (typeof wasm.format_sql_value === 'function') {
+      return decodeWasmPayload<TranspileResult>(
+        wasm.format_sql_value(sql, dialect),
+      );
+    }
+
+    return JSON.parse(wasm.format_sql(sql, dialect)) as TranspileResult;
+  } catch (error) {
+    return transpileFailure('format', error);
+  }
 }
 
 /**
@@ -223,7 +297,10 @@ export function format(
  * ```
  */
 export function getDialects(): string[] {
-  return JSON.parse(wasmGetDialects());
+  if (typeof wasm.get_dialects_value === 'function') {
+    return decodeWasmPayload<string[]>(wasm.get_dialects_value());
+  }
+  return JSON.parse(wasm.get_dialects());
 }
 
 /**
@@ -232,7 +309,7 @@ export function getDialects(): string[] {
  * @returns Version string
  */
 export function getVersion(): string {
-  return wasmVersion();
+  return wasm.version();
 }
 
 /**

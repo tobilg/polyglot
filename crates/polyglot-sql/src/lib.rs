@@ -35,6 +35,8 @@ pub mod traversal;
 pub mod trie;
 pub mod validation;
 
+use serde::{Deserialize, Serialize};
+
 pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
     get_identifiers, get_literals, get_subqueries, get_table_names, get_window_functions,
@@ -185,14 +187,19 @@ pub use validation::{
 pub fn transpile(sql: &str, read: DialectType, write: DialectType) -> Result<Vec<String>> {
     let read_dialect = Dialect::get(read);
     let write_dialect = Dialect::get(write);
+    let generic_identity = read == DialectType::Generic && write == DialectType::Generic;
 
     let expressions = read_dialect.parse(sql)?;
 
     expressions
         .into_iter()
         .map(|expr| {
-            let transformed = write_dialect.transform(expr)?;
-            write_dialect.generate_with_source(&transformed, read)
+            if generic_identity {
+                write_dialect.generate_with_source(&expr, read)
+            } else {
+                let transformed = write_dialect.transform(expr)?;
+                write_dialect.generate_with_source(&transformed, read)
+            }
         })
         .collect()
 }
@@ -254,6 +261,25 @@ pub fn generate(expression: &Expression, dialect: DialectType) -> Result<String>
 /// # Returns
 /// A validation result with any errors found
 pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
+    validate_with_options(sql, dialect, &ValidationOptions::default())
+}
+
+/// Options for syntax validation behavior.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationOptions {
+    /// When enabled, validation rejects non-canonical trailing commas that the parser
+    /// would otherwise accept for compatibility (e.g. `SELECT a, FROM t`).
+    #[serde(default)]
+    pub strict_syntax: bool,
+}
+
+/// Validate SQL syntax with additional validation options.
+pub fn validate_with_options(
+    sql: &str,
+    dialect: DialectType,
+    options: &ValidationOptions,
+) -> ValidationResult {
     let d = Dialect::get(dialect);
     match d.parse(sql) {
         Ok(expressions) => {
@@ -266,6 +292,11 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
                     return ValidationResult::with_errors(vec![ValidationError::error(
                         msg, "E004",
                     )]);
+                }
+            }
+            if options.strict_syntax {
+                if let Some(error) = strict_syntax_error(sql, &d) {
+                    return ValidationResult::with_errors(vec![error]);
                 }
             }
             ValidationResult::success()
@@ -294,6 +325,47 @@ pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
     }
 }
 
+fn strict_syntax_error(sql: &str, dialect: &Dialect) -> Option<ValidationError> {
+    let tokens = dialect.tokenize(sql).ok()?;
+
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.token_type != TokenType::Comma {
+            continue;
+        }
+
+        let next = tokens.get(idx + 1);
+        let (is_boundary, boundary_name) = match next.map(|t| t.token_type) {
+            Some(TokenType::From) => (true, "FROM"),
+            Some(TokenType::Where) => (true, "WHERE"),
+            Some(TokenType::GroupBy) => (true, "GROUP BY"),
+            Some(TokenType::Having) => (true, "HAVING"),
+            Some(TokenType::Order) | Some(TokenType::OrderBy) => (true, "ORDER BY"),
+            Some(TokenType::Limit) => (true, "LIMIT"),
+            Some(TokenType::Offset) => (true, "OFFSET"),
+            Some(TokenType::Union) => (true, "UNION"),
+            Some(TokenType::Intersect) => (true, "INTERSECT"),
+            Some(TokenType::Except) => (true, "EXCEPT"),
+            Some(TokenType::Qualify) => (true, "QUALIFY"),
+            Some(TokenType::Window) => (true, "WINDOW"),
+            Some(TokenType::Semicolon) | None => (true, "end of statement"),
+            _ => (false, ""),
+        };
+
+        if is_boundary {
+            let message = format!(
+                "Trailing comma before {} is not allowed in strict syntax mode",
+                boundary_name
+            );
+            return Some(
+                ValidationError::error(message, "E005")
+                    .with_location(token.span.line, token.span.column),
+            );
+        }
+    }
+
+    None
+}
+
 /// Transpile SQL from one dialect to another, using string dialect names.
 ///
 /// This supports both built-in dialect names (e.g., "postgresql", "mysql") and
@@ -311,14 +383,20 @@ pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<Strin
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read), 0, 0))?;
     let write_dialect = Dialect::get_by_name(write)
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write), 0, 0))?;
+    let generic_identity = read_dialect.dialect_type() == DialectType::Generic
+        && write_dialect.dialect_type() == DialectType::Generic;
 
     let expressions = read_dialect.parse(sql)?;
 
     expressions
         .into_iter()
         .map(|expr| {
-            let transformed = write_dialect.transform(expr)?;
-            write_dialect.generate_with_source(&transformed, read_dialect.dialect_type())
+            if generic_identity {
+                write_dialect.generate_with_source(&expr, read_dialect.dialect_type())
+            } else {
+                let transformed = write_dialect.transform(expr)?;
+                write_dialect.generate_with_source(&transformed, read_dialect.dialect_type())
+            }
         })
         .collect()
 }
@@ -339,4 +417,51 @@ pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String
     let d = Dialect::get_by_name(dialect)
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
     d.generate(expression)
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn validate_is_permissive_by_default_for_trailing_commas() {
+        let result = validate("SELECT name, FROM employees", DialectType::Generic);
+        assert!(result.valid, "Result: {:?}", result.errors);
+    }
+
+    #[test]
+    fn validate_with_options_rejects_trailing_comma_before_from() {
+        let options = ValidationOptions {
+            strict_syntax: true,
+        };
+        let result = validate_with_options(
+            "SELECT name, FROM employees",
+            DialectType::Generic,
+            &options,
+        );
+        assert!(!result.valid, "Result should be invalid");
+        assert!(
+            result.errors.iter().any(|e| e.code == "E005"),
+            "Expected E005, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn validate_with_options_rejects_trailing_comma_before_where() {
+        let options = ValidationOptions {
+            strict_syntax: true,
+        };
+        let result = validate_with_options(
+            "SELECT name FROM employees, WHERE salary > 10",
+            DialectType::Generic,
+            &options,
+        );
+        assert!(!result.valid, "Result should be invalid");
+        assert!(
+            result.errors.iter().any(|e| e.code == "E005"),
+            "Expected E005, got: {:?}",
+            result.errors
+        );
+    }
 }

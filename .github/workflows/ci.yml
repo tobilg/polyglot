@@ -144,6 +144,12 @@ jobs:
           name: dist
           path: packages/sdk/dist/
 
+      - name: Upload SDK generated bindings artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-generated-bindings
+          path: packages/sdk/src/generated/
+
   # sdk-dialect-builds:
   #   if: startsWith(github.ref, 'refs/tags/v')
   #   needs: rust-test
@@ -386,6 +392,12 @@ jobs:
         with:
           name: wasm
           path: packages/sdk/wasm/
+
+      - name: Download SDK generated bindings artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-generated-bindings
+          path: packages/sdk/src/generated/
 
       - name: Install dependencies
         run: pnpm install

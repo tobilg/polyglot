@@ -54,6 +54,14 @@ export interface ValidationOptions {
   semantic?: boolean;
 
   /**
+   * Enable strict syntax validation for non-canonical forms that are otherwise
+   * parsed permissively for compatibility (for example, trailing commas before
+   * clause boundaries like `SELECT a, FROM t`).
+   * @default false
+   */
+  strictSyntax?: boolean;
+
+  /**
    * Enable dialect-specific validation rules.
    * When true, additional dialect-specific rules are applied.
    * @default false

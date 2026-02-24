@@ -7,6 +7,8 @@
 
 use crate::expressions::*;
 use crate::scope::traverse_scope;
+use crate::scope::ColumnRef;
+use std::collections::HashMap;
 
 /// Remove unused joins from an expression.
 ///
@@ -73,7 +75,7 @@ pub fn eliminate_joins(expression: Expression) -> Expression {
                 None => continue,
             };
 
-            if should_eliminate_join(&mut scope, join, &alias) {
+            if should_eliminate_join(&mut scope, &select, idx, join, &alias) {
                 removals.push(JoinRemoval {
                     select_id: select_identity(&select),
                     join_index: idx,
@@ -176,11 +178,16 @@ fn get_table_alias_or_name(expr: &Expression) -> Option<String> {
 /// 1. It is a LEFT JOIN, AND
 /// 2. No columns from the joined source appear outside the ON clause
 ///
-/// The scope's `source_columns` method collects column references from
-/// the SELECT list, WHERE, HAVING, GROUP BY, and ORDER BY -- but not
-/// from JOIN ON clauses (those belong to the join, not the query body).
-/// So if `source_columns(alias)` is empty, the joined table is unused.
-fn should_eliminate_join(scope: &mut crate::scope::Scope, join: &Join, alias: &str) -> bool {
+/// The scope's `source_columns` includes JOIN conditions, so this check
+/// explicitly subtracts the current join's own ON / MATCH_CONDITION references
+/// and verifies whether any remaining references to the joined source exist.
+fn should_eliminate_join(
+    scope: &mut crate::scope::Scope,
+    _select: &Select,
+    _join_index: usize,
+    join: &Join,
+    alias: &str,
+) -> bool {
     // Only LEFT JOINs can be safely eliminated in the general case.
     // (INNER JOINs can filter rows, RIGHT/FULL JOINs can introduce NULLs
     // on the left side, CROSS JOINs affect cardinality.)
@@ -188,10 +195,229 @@ fn should_eliminate_join(scope: &mut crate::scope::Scope, join: &Join, alias: &s
         return false;
     }
 
-    // Check whether any columns from this source are referenced
-    // outside the ON clause.
+    // Check whether any columns from this source are referenced outside this join's
+    // own join condition (ON / MATCH_CONDITION). With `scope.columns()` now
+    // including all JOIN conditions, we subtract this join's own condition refs.
     let source_cols = scope.source_columns(alias);
-    source_cols.is_empty()
+    if source_cols.is_empty() {
+        return true;
+    }
+
+    let mut source_counts: HashMap<(String, String), usize> = HashMap::new();
+    for col in &source_cols {
+        if let Some(table) = &col.table {
+            *source_counts
+                .entry((table.clone(), col.name.clone()))
+                .or_insert(0) += 1;
+        }
+    }
+
+    if let Some(on) = &join.on {
+        subtract_columns_from_counts(alias, on, &mut source_counts);
+    }
+    if let Some(match_condition) = &join.match_condition {
+        subtract_columns_from_counts(alias, match_condition, &mut source_counts);
+    }
+
+    !source_counts.values().any(|&count| count > 0)
+}
+
+fn subtract_columns_from_counts(
+    alias: &str,
+    expr: &Expression,
+    counts: &mut HashMap<(String, String), usize>,
+) {
+    let mut cols: Vec<ColumnRef> = Vec::new();
+    collect_columns_in_expression(expr, &mut cols);
+
+    for col in cols {
+        if col.table.as_deref() != Some(alias) {
+            continue;
+        }
+        let key = (alias.to_string(), col.name);
+        if let Some(value) = counts.get_mut(&key) {
+            if *value > 0 {
+                *value -= 1;
+            }
+        }
+    }
+}
+
+fn collect_columns_in_expression(expr: &Expression, columns: &mut Vec<ColumnRef>) {
+    match expr {
+        Expression::Column(col) => {
+            columns.push(ColumnRef {
+                table: col.table.as_ref().map(|t| t.name.clone()),
+                name: col.name.name.clone(),
+            });
+        }
+        Expression::Select(select) => {
+            for e in &select.expressions {
+                collect_columns_in_expression(e, columns);
+            }
+            if let Some(from) = &select.from {
+                for e in &from.expressions {
+                    collect_columns_in_expression(e, columns);
+                }
+            }
+            for join in &select.joins {
+                collect_columns_in_expression(&join.this, columns);
+                if let Some(on) = &join.on {
+                    collect_columns_in_expression(on, columns);
+                }
+                if let Some(match_condition) = &join.match_condition {
+                    collect_columns_in_expression(match_condition, columns);
+                }
+            }
+            if let Some(where_clause) = &select.where_clause {
+                collect_columns_in_expression(&where_clause.this, columns);
+            }
+            if let Some(group_by) = &select.group_by {
+                for e in &group_by.expressions {
+                    collect_columns_in_expression(e, columns);
+                }
+            }
+            if let Some(having) = &select.having {
+                collect_columns_in_expression(&having.this, columns);
+            }
+            if let Some(order_by) = &select.order_by {
+                for o in &order_by.expressions {
+                    collect_columns_in_expression(&o.this, columns);
+                }
+            }
+            if let Some(qualify) = &select.qualify {
+                collect_columns_in_expression(&qualify.this, columns);
+            }
+            if let Some(limit) = &select.limit {
+                collect_columns_in_expression(&limit.this, columns);
+            }
+            if let Some(offset) = &select.offset {
+                collect_columns_in_expression(&offset.this, columns);
+            }
+        }
+        Expression::Alias(alias) => {
+            collect_columns_in_expression(&alias.this, columns);
+        }
+        Expression::Function(func) => {
+            for arg in &func.args {
+                collect_columns_in_expression(arg, columns);
+            }
+        }
+        Expression::AggregateFunction(agg) => {
+            for arg in &agg.args {
+                collect_columns_in_expression(arg, columns);
+            }
+        }
+        Expression::And(bin)
+        | Expression::Or(bin)
+        | Expression::Eq(bin)
+        | Expression::Neq(bin)
+        | Expression::Lt(bin)
+        | Expression::Lte(bin)
+        | Expression::Gt(bin)
+        | Expression::Gte(bin)
+        | Expression::Add(bin)
+        | Expression::Sub(bin)
+        | Expression::Mul(bin)
+        | Expression::Div(bin)
+        | Expression::Mod(bin)
+        | Expression::BitwiseAnd(bin)
+        | Expression::BitwiseOr(bin)
+        | Expression::BitwiseXor(bin)
+        | Expression::Concat(bin) => {
+            collect_columns_in_expression(&bin.left, columns);
+            collect_columns_in_expression(&bin.right, columns);
+        }
+        Expression::Like(like) | Expression::ILike(like) => {
+            collect_columns_in_expression(&like.left, columns);
+            collect_columns_in_expression(&like.right, columns);
+            if let Some(escape) = &like.escape {
+                collect_columns_in_expression(escape, columns);
+            }
+        }
+        Expression::Not(unary) | Expression::Neg(unary) | Expression::BitwiseNot(unary) => {
+            collect_columns_in_expression(&unary.this, columns);
+        }
+        Expression::Case(case) => {
+            if let Some(operand) = &case.operand {
+                collect_columns_in_expression(operand, columns);
+            }
+            for (when_expr, then_expr) in &case.whens {
+                collect_columns_in_expression(when_expr, columns);
+                collect_columns_in_expression(then_expr, columns);
+            }
+            if let Some(else_) = &case.else_ {
+                collect_columns_in_expression(else_, columns);
+            }
+        }
+        Expression::Cast(cast) => {
+            collect_columns_in_expression(&cast.this, columns);
+        }
+        Expression::In(in_expr) => {
+            collect_columns_in_expression(&in_expr.this, columns);
+            for e in &in_expr.expressions {
+                collect_columns_in_expression(e, columns);
+            }
+            if let Some(query) = &in_expr.query {
+                collect_columns_in_expression(query, columns);
+            }
+        }
+        Expression::Between(between) => {
+            collect_columns_in_expression(&between.this, columns);
+            collect_columns_in_expression(&between.low, columns);
+            collect_columns_in_expression(&between.high, columns);
+        }
+        Expression::Exists(exists) => {
+            collect_columns_in_expression(&exists.this, columns);
+        }
+        Expression::Subquery(subquery) => {
+            collect_columns_in_expression(&subquery.this, columns);
+        }
+        Expression::WindowFunction(wf) => {
+            collect_columns_in_expression(&wf.this, columns);
+            for p in &wf.over.partition_by {
+                collect_columns_in_expression(p, columns);
+            }
+            for o in &wf.over.order_by {
+                collect_columns_in_expression(&o.this, columns);
+            }
+            if let Some(frame) = &wf.over.frame {
+                collect_columns_from_window_bound(&frame.start, columns);
+                if let Some(end) = &frame.end {
+                    collect_columns_from_window_bound(end, columns);
+                }
+            }
+        }
+        Expression::Ordered(ord) => {
+            collect_columns_in_expression(&ord.this, columns);
+        }
+        Expression::Paren(paren) => {
+            collect_columns_in_expression(&paren.this, columns);
+        }
+        Expression::Join(join) => {
+            collect_columns_in_expression(&join.this, columns);
+            if let Some(on) = &join.on {
+                collect_columns_in_expression(on, columns);
+            }
+            if let Some(match_condition) = &join.match_condition {
+                collect_columns_in_expression(match_condition, columns);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_columns_from_window_bound(bound: &WindowFrameBound, columns: &mut Vec<ColumnRef>) {
+    match bound {
+        WindowFrameBound::Preceding(expr)
+        | WindowFrameBound::Following(expr)
+        | WindowFrameBound::Value(expr) => collect_columns_in_expression(expr, columns),
+        WindowFrameBound::CurrentRow
+        | WindowFrameBound::UnboundedPreceding
+        | WindowFrameBound::UnboundedFollowing
+        | WindowFrameBound::BarePreceding
+        | WindowFrameBound::BareFollowing => {}
+    }
 }
 
 /// Walk the expression tree, find matching Select nodes, and remove the
@@ -491,6 +717,20 @@ mod tests {
         assert!(
             sql.contains("JOIN"),
             "Expected JOIN to be preserved (column in ORDER BY), got: {}",
+            sql
+        );
+    }
+
+    #[test]
+    fn test_keep_left_join_used_in_other_join_condition() {
+        let expr =
+            parse("SELECT x.a FROM x LEFT JOIN y ON x.y_id = y.id LEFT JOIN z ON y.id = z.y_id");
+        let result = eliminate_joins(expr);
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("JOIN y"),
+            "Expected JOIN y to be preserved (used in another JOIN ON), got: {}",
             sql
         );
     }

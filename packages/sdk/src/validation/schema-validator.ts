@@ -21,6 +21,7 @@ type WasmSchemaValidationOptions = {
   check_references: boolean;
   strict: boolean;
   semantic: boolean;
+  strict_syntax: boolean;
 };
 
 function parseValidationResult(json: string): ValidationResult {
@@ -55,6 +56,7 @@ export function validateWithSchema(
     check_references: options.checkReferences ?? false,
     strict,
     semantic: options.semantic ?? false,
+    strict_syntax: options.strictSyntax ?? false,
   };
 
   const resultJson = wasmValidateWithSchema(
