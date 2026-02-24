@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "deploy": "pnpm run build && wrangler pages deploy dist"
+    "prepare:sdk": "node scripts/prepare-sdk-for-deploy.mjs",
+    "deploy": "pnpm run prepare:sdk && pnpm run build && wrangler pages deploy dist"
   },
   "dependencies": {
     "@polyglot-sql/sdk": "workspace:*",
