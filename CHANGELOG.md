@@ -4,7 +4,24 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
+## [0.1.9] - 2026-02-25
+
+### Added
+- Rust-side pre-parse formatting guard for deep set-operation chains (`UNION` / `INTERSECT` / `EXCEPT`) with new error code `E_GUARD_SET_OP_CHAIN_EXCEEDED`.
+- New FFI API: `polyglot_format_with_options(sql, dialect, options_json)` to override formatting guard limits per call.
+- Python formatting per-call guard overrides via keyword-only arguments on `format_sql(...)` / `format(...)`:
+  - `max_input_bytes`
+  - `max_tokens`
+  - `max_ast_nodes`
+  - `max_set_op_chain`
+
+### Changed
+- Formatting guard defaults now include `maxSetOpChain = 256` to fail fast before deep set-op stack-overflow scenarios in large generated queries.
+- ClickHouse `minus(...)` is treated as a function call in set-op guard detection (not as a set operation), avoiding false positives.
+
+### Fixed
+- Large/deep set-operation formatting now returns deterministic guard failures instead of process-level stack overflows in affected cases.
+- FFI and Python interfaces are now aligned with Rust/WASM/SDK by supporting per-call formatting guard configuration.
 
 ## [0.1.8] - 2026-02-24
 
@@ -62,7 +79,8 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/tobilg/polyglot/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/tobilg/polyglot/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/tobilg/polyglot/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/tobilg/polyglot/compare/v0.1.5...v0.1.6
