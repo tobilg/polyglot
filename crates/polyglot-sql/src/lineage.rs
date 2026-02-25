@@ -460,18 +460,12 @@ fn resolve_unqualified_column(
     all_cte_scopes: &[&Scope],
 ) {
     // Try to find which source this column belongs to.
-    // Filter to only FROM-clause sources: add_cte_source adds all CTEs to sources
-    // with Expression::Cte, but FROM-clause Table references overwrite with Expression::Table.
-    // So CTE-only entries (not referenced in FROM) have Expression::Cte — exclude those.
-    let from_source_names: Vec<&String> = scope
-        .sources
-        .iter()
-        .filter(|(_, info)| !matches!(info.expression, Expression::Cte(_)))
-        .map(|(name, _)| name)
-        .collect();
+    // Build the source list from the actual FROM/JOIN clauses to avoid
+    // mixing in CTE definitions that are in scope but not referenced.
+    let from_source_names = source_names_from_from_join(scope);
 
     if from_source_names.len() == 1 {
-        let tbl = from_source_names[0];
+        let tbl = &from_source_names[0];
         resolve_qualified_column(
             node,
             scope,
@@ -497,6 +491,54 @@ fn resolve_unqualified_column(
         node.source.clone(),
     );
     node.downstream.push(child);
+}
+
+fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
+    fn source_name(expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Table(table) => Some(
+                table
+                    .alias
+                    .as_ref()
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| table.name.name.clone()),
+            ),
+            Expression::Subquery(subquery) => {
+                subquery.alias.as_ref().map(|alias| alias.name.clone())
+            }
+            Expression::Paren(paren) => source_name(&paren.this),
+            _ => None,
+        }
+    }
+
+    let effective_expr = match &scope.expression {
+        Expression::Cte(cte) => &cte.this,
+        expr => expr,
+    };
+
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Expression::Select(select) = effective_expr {
+        if let Some(from) = &select.from {
+            for expr in &from.expressions {
+                if let Some(name) = source_name(expr) {
+                    if !name.is_empty() && seen.insert(name.clone()) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        for join in &select.joins {
+            if let Some(name) = source_name(&join.this) {
+                if !name.is_empty() && seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+
+    names
 }
 
 // ---------------------------------------------------------------------------
