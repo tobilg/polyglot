@@ -56,6 +56,7 @@ Formatting guard defaults from Rust core:
 - `maxInputBytes`: `16 * 1024 * 1024`
 - `maxTokens`: `1_000_000`
 - `maxAstNodes`: `1_000_000`
+- `maxSetOpChain`: `256`
 
 ```typescript
 import { formatWithOptions, Dialect } from '@polyglot-sql/sdk';
@@ -67,11 +68,16 @@ const result = formatWithOptions(
     maxInputBytes: 2 * 1024 * 1024,
     maxTokens: 250_000,
     maxAstNodes: 250_000,
+    maxSetOpChain: 128,
   },
 );
 
 if (!result.success) {
-  // Includes one of: E_GUARD_INPUT_TOO_LARGE, E_GUARD_TOKEN_BUDGET_EXCEEDED, E_GUARD_AST_BUDGET_EXCEEDED
+  // Includes one of:
+  // E_GUARD_INPUT_TOO_LARGE
+  // E_GUARD_TOKEN_BUDGET_EXCEEDED
+  // E_GUARD_AST_BUDGET_EXCEEDED
+  // E_GUARD_SET_OP_CHAIN_EXCEEDED
   console.error(result.error);
 }
 ```
@@ -561,6 +567,7 @@ const result = pg.transpile('SELECT 1', Dialect.MySQL, Dialect.PostgreSQL);
 const formatted = pg.format('SELECT a,b FROM t');
 const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic, {
   maxInputBytes: 2 * 1024 * 1024,
+  maxSetOpChain: 128,
 });
 ```
 

@@ -1,9 +1,9 @@
 use polyglot_sql_ffi::{
     polyglot_dialect_count, polyglot_dialect_list, polyglot_diff, polyglot_format,
-    polyglot_free_result, polyglot_free_string, polyglot_free_validation_result, polyglot_generate,
-    polyglot_lineage, polyglot_optimize, polyglot_parse, polyglot_parse_one,
-    polyglot_source_tables, polyglot_transpile, polyglot_validate, polyglot_version,
-    PolyglotResult, PolyglotValidationResult,
+    polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
+    polyglot_free_validation_result, polyglot_generate, polyglot_lineage, polyglot_optimize,
+    polyglot_parse, polyglot_parse_one, polyglot_source_tables, polyglot_transpile,
+    polyglot_validate, polyglot_version, PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
 use std::ffi::{CStr, CString};
@@ -108,6 +108,13 @@ fn test_null_pointer_inputs_on_other_apis() {
 
     let (status, _, _) = consume_result(polyglot_format(ptr::null(), dialect.as_ptr()));
     assert_eq!(status, 5);
+    let options_json = c("{}");
+    let (status, _, _) = consume_result(polyglot_format_with_options(
+        ptr::null(),
+        dialect.as_ptr(),
+        options_json.as_ptr(),
+    ));
+    assert_eq!(status, 5);
 
     let (status, _, _, _) = consume_validation(polyglot_validate(ptr::null(), dialect.as_ptr()));
     assert_eq!(status, 5);
@@ -194,6 +201,35 @@ fn test_format_sql() {
     let statements: Vec<String> = serde_json::from_str(&payload).expect("invalid json");
     assert_eq!(statements.len(), 1);
     assert!(statements[0].contains('\n') || statements[0].contains("SELECT"));
+}
+
+#[test]
+fn test_format_sql_with_options_guard_trigger() {
+    let sql = c("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3");
+    let dialect = c("generic");
+    let options = c(r#"{"maxSetOpChain":1}"#);
+    let (status, _, error) = consume_result(polyglot_format_with_options(
+        sql.as_ptr(),
+        dialect.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 2, "error={error:?}");
+    let err = error.expect("expected error message");
+    assert!(err.contains("E_GUARD_SET_OP_CHAIN_EXCEEDED"), "error={err}");
+}
+
+#[test]
+fn test_format_sql_with_options_invalid_json() {
+    let sql = c("SELECT 1");
+    let dialect = c("generic");
+    let options = c("{not-json");
+    let (status, _, error) = consume_result(polyglot_format_with_options(
+        sql.as_ptr(),
+        dialect.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 6);
+    assert!(error.is_some());
 }
 
 #[test]

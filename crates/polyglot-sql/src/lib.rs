@@ -171,6 +171,7 @@ pub use validation::{
 const DEFAULT_FORMAT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
 const DEFAULT_FORMAT_MAX_TOKENS: usize = 1_000_000;
 const DEFAULT_FORMAT_MAX_AST_NODES: usize = 1_000_000;
+const DEFAULT_FORMAT_MAX_SET_OP_CHAIN: usize = 256;
 
 fn default_format_max_input_bytes() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_INPUT_BYTES)
@@ -182,6 +183,10 @@ fn default_format_max_tokens() -> Option<usize> {
 
 fn default_format_max_ast_nodes() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_AST_NODES)
+}
+
+fn default_format_max_set_op_chain() -> Option<usize> {
+    Some(DEFAULT_FORMAT_MAX_SET_OP_CHAIN)
 }
 
 /// Guard options for SQL pretty-formatting.
@@ -203,6 +208,12 @@ pub struct FormatGuardOptions {
     /// `None` disables this check.
     #[serde(default = "default_format_max_ast_nodes")]
     pub max_ast_nodes: Option<usize>,
+    /// Maximum allowed count of set-operation operators (`UNION`/`INTERSECT`/`EXCEPT`)
+    /// observed in a statement before parsing.
+    ///
+    /// `None` disables this check.
+    #[serde(default = "default_format_max_set_op_chain")]
+    pub max_set_op_chain: Option<usize>,
 }
 
 impl Default for FormatGuardOptions {
@@ -211,6 +222,7 @@ impl Default for FormatGuardOptions {
             max_input_bytes: default_format_max_input_bytes(),
             max_tokens: default_format_max_tokens(),
             max_ast_nodes: default_format_max_ast_nodes(),
+            max_set_op_chain: default_format_max_set_op_chain(),
         }
     }
 }
@@ -251,6 +263,7 @@ fn parse_with_token_guard(
             ));
         }
     }
+    enforce_set_op_chain_guard(&tokens, options)?;
 
     let config = crate::parser::ParserConfig {
         dialect: Some(dialect.dialect_type()),
@@ -258,6 +271,68 @@ fn parse_with_token_guard(
     };
     let mut parser = Parser::with_source(tokens, config, sql.to_string());
     parser.parse()
+}
+
+fn is_trivia_token(token_type: TokenType) -> bool {
+    matches!(
+        token_type,
+        TokenType::Space | TokenType::Break | TokenType::LineComment | TokenType::BlockComment
+    )
+}
+
+fn next_significant_token(tokens: &[Token], start: usize) -> Option<&Token> {
+    tokens
+        .iter()
+        .skip(start)
+        .find(|token| !is_trivia_token(token.token_type))
+}
+
+fn is_set_operation_token(tokens: &[Token], idx: usize) -> bool {
+    let token = &tokens[idx];
+    match token.token_type {
+        TokenType::Union | TokenType::Intersect => true,
+        TokenType::Except => {
+            // MINUS is aliased to EXCEPT in the tokenizer, but in ClickHouse minus(...)
+            // is a function call rather than a set operation.
+            if token.text.eq_ignore_ascii_case("minus")
+                && matches!(
+                    next_significant_token(tokens, idx + 1).map(|t| t.token_type),
+                    Some(TokenType::LParen)
+                )
+            {
+                return false;
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn enforce_set_op_chain_guard(tokens: &[Token], options: &FormatGuardOptions) -> Result<()> {
+    let Some(max) = options.max_set_op_chain else {
+        return Ok(());
+    };
+
+    let mut set_op_count = 0usize;
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.token_type == TokenType::Semicolon {
+            set_op_count = 0;
+            continue;
+        }
+
+        if is_set_operation_token(tokens, idx) {
+            set_op_count += 1;
+            if set_op_count > max {
+                return Err(format_guard_error(
+                    "E_GUARD_SET_OP_CHAIN_EXCEEDED",
+                    set_op_count,
+                    max,
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn enforce_ast_guard(expressions: &[Expression], options: &FormatGuardOptions) -> Result<()> {
@@ -643,6 +718,7 @@ mod format_tests {
             max_input_bytes: Some(7),
             max_tokens: None,
             max_ast_nodes: None,
+            max_set_op_chain: None,
         };
         let err = format_with_options("SELECT 1", DialectType::Generic, &options)
             .expect_err("expected guard error");
@@ -655,6 +731,7 @@ mod format_tests {
             max_input_bytes: None,
             max_tokens: Some(1),
             max_ast_nodes: None,
+            max_set_op_chain: None,
         };
         let err = format_with_options("SELECT 1", DialectType::Generic, &options)
             .expect_err("expected guard error");
@@ -667,9 +744,52 @@ mod format_tests {
             max_input_bytes: None,
             max_tokens: None,
             max_ast_nodes: Some(1),
+            max_set_op_chain: None,
         };
         let err = format_with_options("SELECT 1", DialectType::Generic, &options)
             .expect_err("expected guard error");
         assert!(err.to_string().contains("E_GUARD_AST_BUDGET_EXCEEDED"));
+    }
+
+    #[test]
+    fn format_guard_rejects_set_op_chain_budget() {
+        let options = FormatGuardOptions {
+            max_input_bytes: None,
+            max_tokens: None,
+            max_ast_nodes: None,
+            max_set_op_chain: Some(1),
+        };
+        let err = format_with_options(
+            "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3",
+            DialectType::Generic,
+            &options,
+        )
+        .expect_err("expected guard error");
+        assert!(err.to_string().contains("E_GUARD_SET_OP_CHAIN_EXCEEDED"));
+    }
+
+    #[test]
+    fn format_guard_does_not_treat_clickhouse_minus_function_as_set_op() {
+        let options = FormatGuardOptions {
+            max_input_bytes: None,
+            max_tokens: None,
+            max_ast_nodes: None,
+            max_set_op_chain: Some(0),
+        };
+        let result = format_with_options("SELECT minus(3, 2)", DialectType::ClickHouse, &options);
+        assert!(result.is_ok(), "Result: {:?}", result);
+    }
+
+    #[test]
+    fn format_default_guard_rejects_deep_union_chain_before_parse() {
+        let base = "SELECT col0, col1 FROM t";
+        let mut sql = base.to_string();
+        for _ in 0..1100 {
+            sql.push_str(" UNION ALL ");
+            sql.push_str(base);
+        }
+
+        let err = format(&sql, DialectType::Athena).expect_err("expected guard error");
+        assert!(err.to_string().contains("E_GUARD_SET_OP_CHAIN_EXCEEDED"));
     }
 }

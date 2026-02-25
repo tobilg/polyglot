@@ -103,6 +103,7 @@ typedef struct {
 - `polyglot_parse_one(sql, dialect)`
 - `polyglot_generate(ast_json, dialect)` (expects `Vec<Expression>` JSON)
 - `polyglot_format(sql, dialect)`
+- `polyglot_format_with_options(sql, dialect, options_json)` (`FormatGuardOptions` JSON)
 - `polyglot_validate(sql, dialect)`
 - `polyglot_optimize(sql, dialect)` (full optimizer pipeline)
 - `polyglot_lineage(column_name, sql, dialect)`
@@ -121,11 +122,13 @@ typedef struct {
 - input bytes: `16 * 1024 * 1024`
 - tokens: `1_000_000`
 - AST nodes: `1_000_000`
+- set-op chain: `256`
 
 When a guard is exceeded, `status != 0` and `error` contains one of:
 - `E_GUARD_INPUT_TOO_LARGE`
 - `E_GUARD_TOKEN_BUDGET_EXCEEDED`
 - `E_GUARD_AST_BUDGET_EXCEEDED`
+- `E_GUARD_SET_OP_CHAIN_EXCEEDED`
 
 ```c
 #include "polyglot_sql.h"
@@ -139,6 +142,13 @@ if (r.status != 0 && r.error && strstr(r.error, "E_GUARD_") != NULL) {
 polyglot_free_result(r);
 ```
 
+Per-call overrides are supported via `polyglot_format_with_options`:
+
+```c
+const char *opts = "{\"maxSetOpChain\":1024,\"maxInputBytes\":33554432}";
+polyglot_result_t r = polyglot_format_with_options(sql, "generic", opts);
+```
+
 ## JSON Payload Contracts
 
 ### Success payloads (`polyglot_result_t.data`)
@@ -148,6 +158,7 @@ polyglot_free_result(r);
 - `polyglot_parse_one`: JSON `Expression`
 - `polyglot_generate`: JSON array of SQL strings
 - `polyglot_format`: JSON array of SQL strings
+- `polyglot_format_with_options`: JSON array of SQL strings
 - `polyglot_optimize`: JSON array of SQL strings
 - `polyglot_lineage`: JSON `LineageNode`
 - `polyglot_source_tables`: JSON array of source table names

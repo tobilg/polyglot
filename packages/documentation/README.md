@@ -68,10 +68,11 @@ const result = formatWithOptions('SELECT 1', Dialect.Generic, {
   maxInputBytes: 2 * 1024 * 1024,
   maxTokens: 250_000,
   maxAstNodes: 250_000,
+  maxSetOpChain: 128,
 });
 ```
 
-Default guard values: `maxInputBytes=16 MiB`, `maxTokens=1_000_000`, `maxAstNodes=1_000_000`.
+Default guard values: `maxInputBytes=16 MiB`, `maxTokens=1_000_000`, `maxAstNodes=1_000_000`, `maxSetOpChain=256`.
 
 ## Supported Dialects
 

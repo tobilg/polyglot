@@ -58,7 +58,15 @@ def generate(
 ) -> list[str]: ...
 
 
-def format_sql(sql: str, dialect: str = "generic") -> str: ...
+def format_sql(
+    sql: str,
+    dialect: str = "generic",
+    *,
+    max_input_bytes: int | None = None,
+    max_tokens: int | None = None,
+    max_ast_nodes: int | None = None,
+    max_set_op_chain: int | None = None,
+) -> str: ...
 
 
 def validate(sql: str, dialect: str = "generic") -> ValidationResult: ...
@@ -79,8 +87,15 @@ def diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict[str, Any]]
 def dialects() -> list[str]: ...
 
 
-def format(sql: str, dialect: str = "generic") -> str: ...
+def format(
+    sql: str,
+    dialect: str = "generic",
+    *,
+    max_input_bytes: int | None = None,
+    max_tokens: int | None = None,
+    max_ast_nodes: int | None = None,
+    max_set_op_chain: int | None = None,
+) -> str: ...
 
 
 __version__: str
-

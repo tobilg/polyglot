@@ -87,6 +87,8 @@ export interface FormatOptions {
   maxTokens?: number;
   /** Maximum AST node count after parsing */
   maxAstNodes?: number;
+  /** Maximum set-operation count (UNION/INTERSECT/EXCEPT) before parse */
+  maxSetOpChain?: number;
 }
 
 type WasmBindings = typeof wasmModule & {

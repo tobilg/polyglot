@@ -38,6 +38,7 @@ polyglot_sql.format_sql("SELECT a,b FROM t WHERE x=1", dialect="postgres")
 - input bytes: `16 * 1024 * 1024`
 - tokens: `1_000_000`
 - AST nodes: `1_000_000`
+- set-op chain: `256`
 
 ```python
 import polyglot_sql
@@ -47,6 +48,17 @@ try:
 except polyglot_sql.GenerateError as exc:
     # Guard failures contain E_GUARD_* codes in the message.
     print(str(exc))
+```
+
+Per-call guard overrides:
+
+```python
+pretty = polyglot_sql.format_sql(
+    "SELECT 1 UNION ALL SELECT 2",
+    dialect="generic",
+    max_set_op_chain=1024,
+    max_input_bytes=32 * 1024 * 1024,
+)
 ```
 
 ```python
@@ -63,8 +75,8 @@ All functions are exported from `polyglot_sql`.
 - `parse(sql: str, dialect: str = "generic") -> list[dict]`
 - `parse_one(sql: str, dialect: str = "generic") -> dict`
 - `generate(ast: dict | list[dict], dialect: str = "generic", *, pretty: bool = False) -> list[str]`
-- `format_sql(sql: str, dialect: str = "generic") -> str`
-- `format(sql: str, dialect: str = "generic") -> str` (alias of `format_sql`)
+- `format_sql(sql: str, dialect: str = "generic", *, max_input_bytes: int | None = None, max_tokens: int | None = None, max_ast_nodes: int | None = None, max_set_op_chain: int | None = None) -> str`
+- `format(sql: str, dialect: str = "generic", *, max_input_bytes: int | None = None, max_tokens: int | None = None, max_ast_nodes: int | None = None, max_set_op_chain: int | None = None) -> str` (alias of `format_sql`)
 - `validate(sql: str, dialect: str = "generic") -> ValidationResult`
 - `optimize(sql: str, dialect: str = "generic") -> str`
 - `lineage(column: str, sql: str, dialect: str = "generic") -> dict`
@@ -72,8 +84,6 @@ All functions are exported from `polyglot_sql`.
 - `diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict]`
 - `dialects() -> list[str]`
 - `__version__: str`
-
-Note: formatting guard limits are currently fixed to Rust core defaults (no per-call Python override yet).
 
 ## Supported Dialects
 

@@ -123,14 +123,16 @@ SQL formatting runs through guard limits in Rust core to prevent pathological in
 - `maxInputBytes`: `16 MiB` (default)
 - `maxTokens`: `1_000_000` (default)
 - `maxAstNodes`: `1_000_000` (default)
+- `maxSetOpChain`: `256` (default)
 
-Guard failures return error codes in the message (`E_GUARD_INPUT_TOO_LARGE`, `E_GUARD_TOKEN_BUDGET_EXCEEDED`, `E_GUARD_AST_BUDGET_EXCEEDED`).
+Guard failures return error codes in the message (`E_GUARD_INPUT_TOO_LARGE`, `E_GUARD_TOKEN_BUDGET_EXCEEDED`, `E_GUARD_AST_BUDGET_EXCEEDED`, `E_GUARD_SET_OP_CHAIN_EXCEEDED`).
 
 Configuration surface by runtime:
 - Rust: configurable via `format_with_options`.
 - WASM: configurable via `format_sql_with_options` / `format_sql_with_options_value`.
 - TypeScript SDK: configurable via `formatWithOptions`.
-- C FFI and Python: currently use core defaults (no per-call override yet).
+- C FFI: configurable via `polyglot_format_with_options`.
+- Python: configurable via keyword-only `format_sql(..., max_*)` overrides.
 
 WASM low-level example (from `polyglot-sql-wasm` exports):
 
@@ -141,7 +143,12 @@ await init();
 const raw = format_sql_with_options(
   "SELECT a,b FROM t",
   "generic",
-  JSON.stringify({ maxInputBytes: 2 * 1024 * 1024, maxTokens: 250000, maxAstNodes: 250000 }),
+  JSON.stringify({
+    maxInputBytes: 2 * 1024 * 1024,
+    maxTokens: 250000,
+    maxAstNodes: 250000,
+    maxSetOpChain: 128
+  }),
 );
 const result = JSON.parse(raw);
 ```
