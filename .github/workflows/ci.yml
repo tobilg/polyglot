@@ -605,7 +605,7 @@ jobs:
 
   deploy-playground:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-crate, publish-npm, publish-ffi-assets]
+    needs: [publish-crate, publish-npm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
