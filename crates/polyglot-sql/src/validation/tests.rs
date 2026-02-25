@@ -1,4 +1,6 @@
 use super::*;
+use crate::function_catalog::{FunctionNameCase, FunctionSignature, HashMapFunctionCatalog};
+use std::sync::Arc;
 
 #[test]
 fn test_canonical_type_family_aliases() {
@@ -144,6 +146,26 @@ fn mark_primary_key(schema: &mut ValidationSchema, table_name: &str, column_name
     }
 }
 
+fn test_function_catalog() -> Arc<HashMapFunctionCatalog> {
+    let mut catalog = HashMapFunctionCatalog::default();
+    catalog.register(
+        DialectType::Generic,
+        "abs",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        DialectType::Generic,
+        "coalesce",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        DialectType::Generic,
+        "foo",
+        vec![FunctionSignature::exact(1)],
+    );
+    Arc::new(catalog)
+}
+
 #[test]
 fn test_validate_with_schema_known_table_column() {
     let schema = base_schema();
@@ -193,6 +215,176 @@ fn test_validate_with_schema_unknown_column() {
             .any(|e| e.code == validation_codes::E_UNKNOWN_COLUMN
                 && e.message.contains("unknown_col"))
     );
+}
+
+#[test]
+fn test_validate_with_schema_function_catalog_unknown_function() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        function_catalog: Some(test_function_catalog()),
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT made_up_fn(id) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_UNKNOWN_FUNCTION));
+}
+
+#[test]
+fn test_validate_with_schema_function_catalog_invalid_arity() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        function_catalog: Some(test_function_catalog()),
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT FOO(id, age) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_INVALID_FUNCTION_ARITY));
+}
+
+#[test]
+fn test_validate_with_schema_function_catalog_valid_variadic() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        function_catalog: Some(test_function_catalog()),
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT COALESCE(name, email, 'fallback') FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(result.valid, "{:?}", result.errors);
+}
+
+#[test]
+fn test_validate_with_schema_function_catalog_dialect_case_sensitive() {
+    let schema = base_schema();
+    let mut catalog = HashMapFunctionCatalog::default();
+    catalog.set_dialect_name_case(DialectType::Generic, FunctionNameCase::Sensitive);
+    catalog.register(
+        DialectType::Generic,
+        "Foo",
+        vec![FunctionSignature::exact(1)],
+    );
+
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        function_catalog: Some(Arc::new(catalog)),
+        ..Default::default()
+    };
+
+    let valid = validate_with_schema("SELECT Foo(id) FROM users", DialectType::Generic, &schema, &opts);
+    assert!(valid.valid, "{:?}", valid.errors);
+
+    let invalid =
+        validate_with_schema("SELECT FOO(id) FROM users", DialectType::Generic, &schema, &opts);
+    assert!(!invalid.valid);
+    assert!(invalid
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_UNKNOWN_FUNCTION));
+}
+
+#[test]
+fn test_validate_with_schema_function_catalog_function_case_override() {
+    let schema = base_schema();
+    let mut catalog = HashMapFunctionCatalog::default();
+    catalog.set_dialect_name_case(DialectType::Generic, FunctionNameCase::Insensitive);
+    catalog.register(
+        DialectType::Generic,
+        "Bar",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.set_function_name_case(
+        DialectType::Generic,
+        "bar",
+        FunctionNameCase::Sensitive,
+    );
+
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        function_catalog: Some(Arc::new(catalog)),
+        ..Default::default()
+    };
+
+    let valid = validate_with_schema("SELECT Bar(id) FROM users", DialectType::Generic, &schema, &opts);
+    assert!(valid.valid, "{:?}", valid.errors);
+
+    let invalid =
+        validate_with_schema("SELECT BAR(id) FROM users", DialectType::Generic, &schema, &opts);
+    assert!(!invalid.valid);
+    assert!(invalid
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_UNKNOWN_FUNCTION));
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-all-dialects"
+))]
+#[test]
+fn test_validate_with_schema_uses_embedded_function_catalog_when_unset() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT made_up_fn(id) FROM users",
+        DialectType::ClickHouse,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_UNKNOWN_FUNCTION));
+}
+
+#[cfg(any(
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+#[test]
+fn test_validate_with_schema_uses_embedded_duckdb_function_catalog_when_unset() {
+    let schema = base_schema();
+    let opts = SchemaValidationOptions {
+        check_types: true,
+        ..Default::default()
+    };
+    let result = validate_with_schema(
+        "SELECT made_up_fn(id) FROM users",
+        DialectType::DuckDB,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result
+        .errors
+        .iter()
+        .any(|e| e.code == validation_codes::E_UNKNOWN_FUNCTION));
 }
 
 #[test]

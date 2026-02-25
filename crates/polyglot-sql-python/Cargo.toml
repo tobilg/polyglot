@@ -13,6 +13,12 @@ publish = false
 name = "_polyglot_sql"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+function-catalog-clickhouse = ["polyglot-sql/function-catalog-clickhouse"]
+function-catalog-duckdb = ["polyglot-sql/function-catalog-duckdb"]
+function-catalog-all-dialects = ["polyglot-sql/function-catalog-all-dialects"]
+
 [dependencies]
 polyglot-sql = { path = "../polyglot-sql" }
 pyo3 = { version = "0.28.2", features = ["extension-module"] }

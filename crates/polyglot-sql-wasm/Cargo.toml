@@ -76,6 +76,18 @@ dialect-drill = ["polyglot-sql/dialect-drill"]
 dialect-dremio = ["polyglot-sql/dialect-dremio"]
 dialect-exasol = ["polyglot-sql/dialect-exasol"]
 dialect-datafusion = ["polyglot-sql/dialect-datafusion"]
+function-catalog-clickhouse = [
+    "dialect-clickhouse",
+    "polyglot-sql/function-catalog-clickhouse",
+]
+function-catalog-duckdb = [
+    "dialect-duckdb",
+    "polyglot-sql/function-catalog-duckdb",
+]
+function-catalog-all-dialects = [
+    "all-dialects",
+    "polyglot-sql/function-catalog-all-dialects",
+]
 
 [dependencies.console_error_panic_hook]
 version = "0.1"

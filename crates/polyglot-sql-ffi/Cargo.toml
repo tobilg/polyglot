@@ -11,6 +11,12 @@ publish = false
 [lib]
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+default = []
+function-catalog-clickhouse = ["polyglot-sql/function-catalog-clickhouse"]
+function-catalog-duckdb = ["polyglot-sql/function-catalog-duckdb"]
+function-catalog-all-dialects = ["polyglot-sql/function-catalog-all-dialects"]
+
 [dependencies]
 polyglot-sql = { path = "../polyglot-sql" }
 serde = { workspace = true }

@@ -1522,6 +1522,34 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(
+        feature = "function-catalog-clickhouse",
+        feature = "function-catalog-all-dialects"
+    ))]
+    fn test_validate_with_schema_embedded_function_catalog_unknown_function() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "integer"}
+                    ]
+                }
+            ],
+            "strict": true
+        }"#;
+        let options = r#"{"check_types":true}"#;
+        let result = validate_with_schema(
+            "SELECT made_up_fn(id) FROM users",
+            schema,
+            "clickhouse",
+            options,
+        );
+        assert!(result.contains("\"valid\":false"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"E202\""), "Result: {}", result);
+    }
+
+    #[test]
     fn test_validate_with_schema_semantic_warning() {
         let schema = r#"{
             "tables": [

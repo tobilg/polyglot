@@ -10,6 +10,16 @@ use crate::error::{ValidationError, ValidationResult};
 use crate::expressions::{
     Column, DataType, Expression, Function, Insert, JoinKind, TableRef, Update,
 };
+use crate::function_catalog::FunctionCatalog;
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+use crate::function_catalog::{
+    FunctionNameCase as CoreFunctionNameCase, FunctionSignature as CoreFunctionSignature,
+    HashMapFunctionCatalog,
+};
 use crate::function_registry::canonical_typed_function_name_upper;
 use crate::optimizer::annotate_types;
 use crate::resolver::Resolver;
@@ -18,6 +28,14 @@ use crate::scope::{build_scope, walk_in_scope};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+use std::sync::LazyLock;
 
 /// Column definition used for schema-aware validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +130,7 @@ pub struct ValidationSchema {
 }
 
 /// Options for schema-aware validation.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct SchemaValidationOptions {
     /// Enables type compatibility checks for expressions, DML assignments, and set operations.
     #[serde(default)]
@@ -129,6 +147,145 @@ pub struct SchemaValidationOptions {
     /// Enables strict syntax checks (e.g. rejects trailing commas before clause boundaries).
     #[serde(default)]
     pub strict_syntax: bool,
+    /// Optional external function catalog plugin for dialect-specific function validation.
+    #[serde(skip, default)]
+    pub function_catalog: Option<Arc<dyn FunctionCatalog>>,
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+fn to_core_name_case(case: polyglot_sql_function_catalogs::FunctionNameCase) -> CoreFunctionNameCase {
+    match case {
+        polyglot_sql_function_catalogs::FunctionNameCase::Insensitive => {
+            CoreFunctionNameCase::Insensitive
+        }
+        polyglot_sql_function_catalogs::FunctionNameCase::Sensitive => CoreFunctionNameCase::Sensitive,
+    }
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+fn to_core_signatures(
+    signatures: Vec<polyglot_sql_function_catalogs::FunctionSignature>,
+) -> Vec<CoreFunctionSignature> {
+    signatures
+        .into_iter()
+        .map(|signature| CoreFunctionSignature {
+            min_arity: signature.min_arity,
+            max_arity: signature.max_arity,
+        })
+        .collect()
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+struct EmbeddedCatalogSink<'a> {
+    catalog: &'a mut HashMapFunctionCatalog,
+    dialect_cache: HashMap<&'static str, Option<DialectType>>,
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+impl<'a> EmbeddedCatalogSink<'a> {
+    fn resolve_dialect(&mut self, dialect: &'static str) -> Option<DialectType> {
+        if let Some(cached) = self.dialect_cache.get(dialect) {
+            return *cached;
+        }
+        let parsed = dialect.parse::<DialectType>().ok();
+        self.dialect_cache.insert(dialect, parsed);
+        parsed
+    }
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+impl<'a> polyglot_sql_function_catalogs::CatalogSink for EmbeddedCatalogSink<'a> {
+    fn set_dialect_name_case(
+        &mut self,
+        dialect: &'static str,
+        name_case: polyglot_sql_function_catalogs::FunctionNameCase,
+    ) {
+        if let Some(core_dialect) = self.resolve_dialect(dialect) {
+            self.catalog
+                .set_dialect_name_case(core_dialect, to_core_name_case(name_case));
+        }
+    }
+
+    fn set_function_name_case(
+        &mut self,
+        dialect: &'static str,
+        function_name: &str,
+        name_case: polyglot_sql_function_catalogs::FunctionNameCase,
+    ) {
+        if let Some(core_dialect) = self.resolve_dialect(dialect) {
+            self.catalog
+                .set_function_name_case(core_dialect, function_name, to_core_name_case(name_case));
+        }
+    }
+
+    fn register(
+        &mut self,
+        dialect: &'static str,
+        function_name: &str,
+        signatures: Vec<polyglot_sql_function_catalogs::FunctionSignature>,
+    ) {
+        if let Some(core_dialect) = self.resolve_dialect(dialect) {
+            self.catalog
+                .register(core_dialect, function_name, to_core_signatures(signatures));
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+fn embedded_function_catalog_arc() -> Arc<dyn FunctionCatalog> {
+    static EMBEDDED: LazyLock<Arc<HashMapFunctionCatalog>> = LazyLock::new(|| {
+        let mut catalog = HashMapFunctionCatalog::default();
+        let mut sink = EmbeddedCatalogSink {
+            catalog: &mut catalog,
+            dialect_cache: HashMap::new(),
+        };
+        polyglot_sql_function_catalogs::register_enabled_catalogs(&mut sink);
+        Arc::new(catalog)
+    });
+
+    EMBEDDED.clone()
+}
+
+#[cfg(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+))]
+fn default_embedded_function_catalog() -> Option<Arc<dyn FunctionCatalog>> {
+    Some(embedded_function_catalog_arc())
+}
+
+#[cfg(not(any(
+    feature = "function-catalog-clickhouse",
+    feature = "function-catalog-duckdb",
+    feature = "function-catalog-all-dialects"
+)))]
+fn default_embedded_function_catalog() -> Option<Arc<dyn FunctionCatalog>> {
+    None
 }
 
 /// Validation error/warning codes used by schema-aware validation.
@@ -137,6 +294,8 @@ pub mod validation_codes {
     pub const E_PARSE_OR_OPTIONS: &str = "E000";
     pub const E_UNKNOWN_TABLE: &str = "E200";
     pub const E_UNKNOWN_COLUMN: &str = "E201";
+    pub const E_UNKNOWN_FUNCTION: &str = "E202";
+    pub const E_INVALID_FUNCTION_ARITY: &str = "E203";
 
     pub const W_SELECT_STAR: &str = "W001";
     pub const W_AGGREGATE_WITHOUT_GROUP_BY: &str = "W002";
@@ -1337,6 +1496,10 @@ fn function_dispatch_name(name: &str) -> String {
     lower(canonical_typed_function_name_upper(&upper))
 }
 
+fn function_base_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name).trim()
+}
+
 fn check_generic_function(
     function: &Function,
     schema_map: &HashMap<String, TableSchemaEntry>,
@@ -1521,6 +1684,69 @@ fn check_generic_function(
         }
         _ => {}
     }
+}
+
+fn check_function_catalog(
+    function: &Function,
+    dialect: DialectType,
+    function_catalog: Option<&dyn FunctionCatalog>,
+    strict: bool,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(catalog) = function_catalog else {
+        return;
+    };
+
+    let raw_name = function_base_name(&function.name);
+    let normalized_name = function_dispatch_name(&function.name);
+    let arity = function.args.len();
+    let Some(signatures) = catalog.lookup(dialect, raw_name, &normalized_name) else {
+        errors.push(if strict {
+            ValidationError::error(
+                format!(
+                    "Unknown function '{}' for dialect {:?}",
+                    function.name, dialect
+                ),
+                validation_codes::E_UNKNOWN_FUNCTION,
+            )
+        } else {
+            ValidationError::warning(
+                format!(
+                    "Unknown function '{}' for dialect {:?}",
+                    function.name, dialect
+                ),
+                validation_codes::E_UNKNOWN_FUNCTION,
+            )
+        });
+        return;
+    };
+
+    if signatures.iter().any(|sig| sig.matches_arity(arity)) {
+        return;
+    }
+
+    let expected = signatures
+        .iter()
+        .map(|sig| sig.describe_arity())
+        .collect::<Vec<_>>()
+        .join(", ");
+    errors.push(if strict {
+        ValidationError::error(
+            format!(
+                "Invalid arity for function '{}': got {}, expected {}",
+                function.name, arity, expected
+            ),
+            validation_codes::E_INVALID_FUNCTION_ARITY,
+        )
+    } else {
+        ValidationError::warning(
+            format!(
+                "Invalid arity for function '{}': got {}, expected {}",
+                function.name, arity, expected
+            ),
+            validation_codes::E_INVALID_FUNCTION_ARITY,
+        )
+    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2267,7 +2493,9 @@ fn check_update_assignments(
 
 fn check_types(
     stmt: &Expression,
+    dialect: DialectType,
     schema_map: &HashMap<String, TableSchemaEntry>,
+    function_catalog: Option<&dyn FunctionCatalog>,
     strict: bool,
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
@@ -2561,6 +2789,13 @@ fn check_types(
                 }
             }
             Expression::Function(function) => {
+                check_function_catalog(
+                    function,
+                    dialect,
+                    function_catalog,
+                    strict,
+                    &mut errors,
+                );
                 check_generic_function(function, schema_map, &context, strict, &mut errors);
             }
             Expression::Upper(func)
@@ -3217,6 +3452,15 @@ pub fn validate_with_schema(
     let schema_map = build_schema_map(schema);
     let resolver_schema = build_resolver_schema(schema);
     let mut all_errors = syntax_result.errors;
+    let embedded_function_catalog = if options.check_types && options.function_catalog.is_none() {
+        default_embedded_function_catalog()
+    } else {
+        None
+    };
+    let effective_function_catalog = options
+        .function_catalog
+        .as_deref()
+        .or_else(|| embedded_function_catalog.as_deref());
     let declared_relationships = if options.check_references {
         build_declared_relationships(schema, &schema_map)
     } else {
@@ -3238,7 +3482,13 @@ pub fn validate_with_schema(
             strict,
         ));
         if options.check_types {
-            all_errors.extend(check_types(stmt, &schema_map, strict));
+            all_errors.extend(check_types(
+                stmt,
+                dialect,
+                &schema_map,
+                effective_function_catalog,
+                strict,
+            ));
         }
         if options.check_references {
             all_errors.extend(check_query_reference_quality(

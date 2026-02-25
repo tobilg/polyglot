@@ -122,6 +122,7 @@ See the full [Python bindings README](crates/polyglot-sql-python/README.md).
 polyglot/
 ├── crates/
 │   ├── polyglot-sql/           # Core Rust library (parser, generator, builder)
+│   ├── polyglot-sql-function-catalogs/ # Optional dialect function catalogs (feature-gated data)
 │   ├── polyglot-sql-wasm/      # WASM bindings
 │   ├── polyglot-sql-ffi/       # C ABI bindings (.so/.dylib/.dll + .a/.lib + header)
 │   └── polyglot-sql-python/    # Python bindings (PyO3 + maturin, published on PyPI)
@@ -201,6 +202,17 @@ Polyglot provides first-party Python bindings in `crates/polyglot-sql-python`.
   - `make test-python`
   - `make typecheck-python`
   - `make build-python`
+
+## Function Catalogs
+
+Optional dialect function catalogs are provided via `crates/polyglot-sql-function-catalogs`.
+
+- Crate README: [`crates/polyglot-sql-function-catalogs/README.md`](crates/polyglot-sql-function-catalogs/README.md)
+- Core feature flags:
+  - `function-catalog-clickhouse`
+  - `function-catalog-duckdb`
+  - `function-catalog-all-dialects`
+- Intended behavior: compile-time inclusion, one-time load in core, auto-use during schema validation type checks.
 
 ## Testing
 

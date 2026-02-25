@@ -591,6 +591,7 @@ version = "0.1.8"
 dependencies = [
  "criterion",
  "once_cell",
+ "polyglot-sql-function-catalogs",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -608,6 +609,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "polyglot-sql-function-catalogs"
+version = "0.1.8"
 
 [[package]]
 name = "polyglot-sql-python"
