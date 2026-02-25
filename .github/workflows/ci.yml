@@ -434,6 +434,7 @@ jobs:
             shared_lib: libpolyglot_sql_ffi.so
             static_lib: libpolyglot_sql_ffi.a
             use_cross: false
+            target_dir: target
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             archive_name: linux-aarch64
@@ -441,6 +442,7 @@ jobs:
             shared_lib: libpolyglot_sql_ffi.so
             static_lib: libpolyglot_sql_ffi.a
             use_cross: true
+            target_dir: target-cross
           - os: macos-15-intel
             target: x86_64-apple-darwin
             archive_name: macos-x86_64
@@ -448,6 +450,7 @@ jobs:
             shared_lib: libpolyglot_sql_ffi.dylib
             static_lib: libpolyglot_sql_ffi.a
             use_cross: false
+            target_dir: target
           - os: macos-latest
             target: aarch64-apple-darwin
             archive_name: macos-aarch64
@@ -455,6 +458,7 @@ jobs:
             shared_lib: libpolyglot_sql_ffi.dylib
             static_lib: libpolyglot_sql_ffi.a
             use_cross: false
+            target_dir: target
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive_name: windows-x86_64
@@ -462,6 +466,7 @@ jobs:
             shared_lib: polyglot_sql_ffi.dll
             static_lib: polyglot_sql_ffi.lib
             use_cross: false
+            target_dir: target
     steps:
       - uses: actions/checkout@v4
 
@@ -470,6 +475,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.use_cross }}
 
       - name: Install cross (linux aarch64)
         if: matrix.use_cross
@@ -477,10 +483,14 @@ jobs:
 
       - name: Build FFI artifacts with cross
         if: matrix.use_cross
+        env:
+          CARGO_TARGET_DIR: ${{ matrix.target_dir }}
         run: cross build -p polyglot-sql-ffi --profile ffi_release --target ${{ matrix.target }}
 
       - name: Build FFI artifacts with cargo
         if: ${{ !matrix.use_cross }}
+        env:
+          CARGO_TARGET_DIR: ${{ matrix.target_dir }}
         run: cargo build -p polyglot-sql-ffi --profile ffi_release --target ${{ matrix.target }}
 
       - name: Package archive (unix)
@@ -489,8 +499,8 @@ jobs:
           dir="polyglot-sql-ffi-${{ matrix.archive_name }}"
           mkdir -p "$dir"
           cp crates/polyglot-sql-ffi/polyglot_sql.h "$dir/"
-          cp "target/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
-          cp "target/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
+          cp "${{ matrix.target_dir }}/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
+          cp "${{ matrix.target_dir }}/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
           cp LICENSE "$dir/"
           tar -czf "${dir}.tar.gz" "$dir"
 
@@ -501,8 +511,8 @@ jobs:
           $dir = "polyglot-sql-ffi-${{ matrix.archive_name }}"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
           Copy-Item "crates/polyglot-sql-ffi/polyglot_sql.h" "$dir/"
-          Copy-Item "target/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
-          Copy-Item "target/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
+          Copy-Item "${{ matrix.target_dir }}/${{ matrix.target }}/ffi_release/${{ matrix.shared_lib }}" "$dir/"
+          Copy-Item "${{ matrix.target_dir }}/${{ matrix.target }}/ffi_release/${{ matrix.static_lib }}" "$dir/"
           Copy-Item "LICENSE" "$dir/"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
 
