@@ -10,10 +10,11 @@ use polyglot_sql::{
     dialects::{Dialect, DialectType},
     diff::{diff_with_config, DiffConfig, Edit},
     expressions::Expression,
-    generator::Generator,
+    format as core_format, format_with_options as core_format_with_options,
     lineage::{self, LineageNode},
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
+    FormatGuardOptions as CoreFormatGuardOptions,
     SchemaValidationOptions as CoreSchemaValidationOptions,
     ValidationOptions as CoreValidationOptions, ValidationResult as CoreValidationResult,
     ValidationSchema as CoreValidationSchema,
@@ -452,7 +453,7 @@ fn get_dialects_internal() -> Vec<&'static str> {
 pub fn format_sql(sql: &str, dialect: &str) -> String {
     set_panic_hook();
 
-    let result = format_sql_internal(sql, dialect);
+    let result = format_sql_internal(sql, dialect, None);
     serialize_result(&result)
 }
 
@@ -461,11 +462,59 @@ pub fn format_sql(sql: &str, dialect: &str) -> String {
 pub fn format_sql_value(sql: &str, dialect: &str) -> JsValue {
     set_panic_hook();
 
-    let result = format_sql_internal(sql, dialect);
+    let result = format_sql_internal(sql, dialect, None);
     serialize_result_value(&result)
 }
 
-fn format_sql_internal(sql: &str, dialect: &str) -> TranspileResult {
+/// Format SQL with explicit guard options supplied as JSON.
+#[wasm_bindgen]
+pub fn format_sql_with_options(sql: &str, dialect: &str, options_json: &str) -> String {
+    set_panic_hook();
+
+    let options: CoreFormatGuardOptions = match serde_json::from_str(options_json) {
+        Ok(v) => v,
+        Err(e) => {
+            return serialize_result(&TranspileResult {
+                success: false,
+                sql: None,
+                error: Some(format!("Invalid format options JSON: {}", e)),
+                error_line: None,
+                error_column: None,
+            });
+        }
+    };
+
+    let result = format_sql_internal(sql, dialect, Some(&options));
+    serialize_result(&result)
+}
+
+/// Format SQL with explicit guard options supplied as a JS object.
+#[wasm_bindgen]
+pub fn format_sql_with_options_value(sql: &str, dialect: &str, options: JsValue) -> JsValue {
+    set_panic_hook();
+
+    let options: CoreFormatGuardOptions = match serde_wasm_bindgen::from_value(options) {
+        Ok(v) => v,
+        Err(e) => {
+            return serialize_result_value(&TranspileResult {
+                success: false,
+                sql: None,
+                error: Some(format!("Invalid format options object: {}", e)),
+                error_line: None,
+                error_column: None,
+            });
+        }
+    };
+
+    let result = format_sql_internal(sql, dialect, Some(&options));
+    serialize_result_value(&result)
+}
+
+fn format_sql_internal(
+    sql: &str,
+    dialect: &str,
+    options: Option<&CoreFormatGuardOptions>,
+) -> TranspileResult {
     let dialect_type = match dialect.parse::<DialectType>() {
         Ok(d) => d,
         Err(e) => {
@@ -479,29 +528,19 @@ fn format_sql_internal(sql: &str, dialect: &str) -> TranspileResult {
         }
     };
 
-    let d = Dialect::get(dialect_type);
-    match d.parse(sql) {
-        Ok(expressions) => {
-            let formatted: Result<Vec<String>, _> =
-                expressions.iter().map(Generator::pretty_sql).collect();
+    let formatted = match options {
+        Some(opts) => core_format_with_options(sql, dialect_type, opts),
+        None => core_format(sql, dialect_type),
+    };
 
-            match formatted {
-                Ok(sql) => TranspileResult {
-                    success: true,
-                    sql: Some(sql),
-                    error: None,
-                    error_line: None,
-                    error_column: None,
-                },
-                Err(e) => TranspileResult {
-                    success: false,
-                    sql: None,
-                    error: Some(e.to_string()),
-                    error_line: e.line(),
-                    error_column: e.column(),
-                },
-            }
-        }
+    match formatted {
+        Ok(sql) => TranspileResult {
+            success: true,
+            sql: Some(sql),
+            error: None,
+            error_line: None,
+            error_column: None,
+        },
         Err(e) => TranspileResult {
             success: false,
             sql: None,
@@ -1896,6 +1935,28 @@ mod tests {
         let result = format_sql("SELECT a,b,c FROM t WHERE x=1", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
         assert!(result.contains("sql"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_format_sql_with_options_guard_failure() {
+        let options = r#"{"maxInputBytes":7}"#;
+        let result = format_sql_with_options("SELECT 1", "generic", options);
+        assert!(result.contains("\"success\":false"), "Result: {}", result);
+        assert!(
+            result.contains("E_GUARD_INPUT_TOO_LARGE"),
+            "Result: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_format_sql_guard_failure_does_not_poison_next_call() {
+        let options = r#"{"maxInputBytes":7}"#;
+        let first = format_sql_with_options("SELECT 1", "generic", options);
+        assert!(first.contains("\"success\":false"), "Result: {}", first);
+
+        let second = format_sql("SELECT a,b FROM t", "generic");
+        assert!(second.contains("\"success\":true"), "Result: {}", second);
     }
 
     // ============================================================================

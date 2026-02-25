@@ -59,6 +59,20 @@ import { format, Dialect } from '@polyglot-sql/sdk';
 const { sql } = format('SELECT a,b FROM t WHERE x=1', Dialect.PostgreSQL);
 ```
 
+### Format Guard Options
+
+```typescript
+import { formatWithOptions, Dialect } from '@polyglot-sql/sdk';
+
+const result = formatWithOptions('SELECT 1', Dialect.Generic, {
+  maxInputBytes: 2 * 1024 * 1024,
+  maxTokens: 250_000,
+  maxAstNodes: 250_000,
+});
+```
+
+Default guard values: `maxInputBytes=16 MiB`, `maxTokens=1_000_000`, `maxAstNodes=1_000_000`.
+
 ## Supported Dialects
 
 Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL (SQL Server), and Doris.

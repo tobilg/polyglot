@@ -308,10 +308,12 @@ jobs:
         run: |
           expected_version="${GITHUB_REF_NAME#v}"
           workspace_version="$(awk '
-            $0 ~ /^\\[workspace.package\\]/ { in_ws=1; next }
-            in_ws && $0 ~ /^version *=/ {
-              gsub(/"/, "", $3);
-              print $3;
+            $0 ~ /^\[workspace\.package\]/ { in_ws=1; next }
+            in_ws && $0 ~ /^version[[:space:]]*=/ {
+              line=$0;
+              gsub(/"/, "", line);
+              sub(/^.*=[[:space:]]*/, "", line);
+              print line;
               exit;
             }
           ' Cargo.toml)"

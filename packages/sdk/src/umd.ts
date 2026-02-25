@@ -19,6 +19,7 @@ export {
   ast,
   Dialect,
   format,
+  formatWithOptions,
   generate,
   getDialects,
   getVersion,
@@ -28,7 +29,7 @@ export {
   parse,
   transpile,
 } from './index';
-export type { ParseResult, TranspileResult } from './index';
+export type { FormatOptions, ParseResult, TranspileResult } from './index';
 
 // AST: Type guards & Visitors
 export {

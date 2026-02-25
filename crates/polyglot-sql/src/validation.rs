@@ -157,12 +157,16 @@ pub struct SchemaValidationOptions {
     feature = "function-catalog-duckdb",
     feature = "function-catalog-all-dialects"
 ))]
-fn to_core_name_case(case: polyglot_sql_function_catalogs::FunctionNameCase) -> CoreFunctionNameCase {
+fn to_core_name_case(
+    case: polyglot_sql_function_catalogs::FunctionNameCase,
+) -> CoreFunctionNameCase {
     match case {
         polyglot_sql_function_catalogs::FunctionNameCase::Insensitive => {
             CoreFunctionNameCase::Insensitive
         }
-        polyglot_sql_function_catalogs::FunctionNameCase::Sensitive => CoreFunctionNameCase::Sensitive,
+        polyglot_sql_function_catalogs::FunctionNameCase::Sensitive => {
+            CoreFunctionNameCase::Sensitive
+        }
     }
 }
 
@@ -233,8 +237,11 @@ impl<'a> polyglot_sql_function_catalogs::CatalogSink for EmbeddedCatalogSink<'a>
         name_case: polyglot_sql_function_catalogs::FunctionNameCase,
     ) {
         if let Some(core_dialect) = self.resolve_dialect(dialect) {
-            self.catalog
-                .set_function_name_case(core_dialect, function_name, to_core_name_case(name_case));
+            self.catalog.set_function_name_case(
+                core_dialect,
+                function_name,
+                to_core_name_case(name_case),
+            );
         }
     }
 
@@ -2789,13 +2796,7 @@ fn check_types(
                 }
             }
             Expression::Function(function) => {
-                check_function_catalog(
-                    function,
-                    dialect,
-                    function_catalog,
-                    strict,
-                    &mut errors,
-                );
+                check_function_catalog(function, dialect, function_catalog, strict, &mut errors);
                 check_generic_function(function, schema_map, &context, strict, &mut errors);
             }
             Expression::Upper(func)

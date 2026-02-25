@@ -77,11 +77,33 @@ export interface ParseResult {
   errorColumn?: number;
 }
 
+/**
+ * Guard options for formatting very large/complex SQL safely.
+ */
+export interface FormatOptions {
+  /** Maximum SQL input size in bytes */
+  maxInputBytes?: number;
+  /** Maximum token count after tokenization */
+  maxTokens?: number;
+  /** Maximum AST node count after parsing */
+  maxAstNodes?: number;
+}
+
 type WasmBindings = typeof wasmModule & {
   transpile_value?: (sql: string, read: string, write: string) => unknown;
   parse_value?: (sql: string, dialect: string) => unknown;
   generate_value?: (ast: unknown, dialect: string) => unknown;
   format_sql_value?: (sql: string, dialect: string) => unknown;
+  format_sql_with_options?: (
+    sql: string,
+    dialect: string,
+    options_json: string,
+  ) => string;
+  format_sql_with_options_value?: (
+    sql: string,
+    dialect: string,
+    options: FormatOptions,
+  ) => unknown;
   get_dialects_value?: () => unknown;
 };
 
@@ -261,7 +283,32 @@ export function format(
   sql: string,
   dialect: Dialect = Dialect.Generic,
 ): TranspileResult {
+  return formatWithOptions(sql, dialect, {});
+}
+
+/**
+ * Format/pretty-print SQL with explicit guard limits.
+ *
+ * This can be used to tune handling for very large SQL inputs.
+ */
+export function formatWithOptions(
+  sql: string,
+  dialect: Dialect = Dialect.Generic,
+  options: FormatOptions = {},
+): TranspileResult {
   try {
+    if (typeof wasm.format_sql_with_options_value === 'function') {
+      return decodeWasmPayload<TranspileResult>(
+        wasm.format_sql_with_options_value(sql, dialect, options),
+      );
+    }
+
+    if (typeof wasm.format_sql_with_options === 'function') {
+      return JSON.parse(
+        wasm.format_sql_with_options(sql, dialect, JSON.stringify(options)),
+      ) as TranspileResult;
+    }
+
     if (typeof wasm.format_sql_value === 'function') {
       return decodeWasmPayload<TranspileResult>(
         wasm.format_sql_value(sql, dialect),
@@ -361,6 +408,17 @@ export class Polyglot {
    */
   format(sql: string, dialect: Dialect = Dialect.Generic): TranspileResult {
     return format(sql, dialect);
+  }
+
+  /**
+   * Format SQL with explicit guard limits.
+   */
+  formatWithOptions(
+    sql: string,
+    dialect: Dialect = Dialect.Generic,
+    options: FormatOptions = {},
+  ): TranspileResult {
+    return formatWithOptions(sql, dialect, options);
   }
 
   /**

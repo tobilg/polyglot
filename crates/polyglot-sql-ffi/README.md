@@ -115,6 +115,30 @@ typedef struct {
 - `polyglot_free_result()`
 - `polyglot_free_validation_result()`
 
+### Formatting Guard Behavior
+
+`polyglot_format` uses Rust core formatting guards with default limits:
+- input bytes: `16 * 1024 * 1024`
+- tokens: `1_000_000`
+- AST nodes: `1_000_000`
+
+When a guard is exceeded, `status != 0` and `error` contains one of:
+- `E_GUARD_INPUT_TOO_LARGE`
+- `E_GUARD_TOKEN_BUDGET_EXCEEDED`
+- `E_GUARD_AST_BUDGET_EXCEEDED`
+
+```c
+#include "polyglot_sql.h"
+#include <stdio.h>
+#include <string.h>
+
+polyglot_result_t r = polyglot_format("SELECT 1", "generic");
+if (r.status != 0 && r.error && strstr(r.error, "E_GUARD_") != NULL) {
+    printf("Formatting guard triggered: %s\n", r.error);
+}
+polyglot_free_result(r);
+```
+
 ## JSON Payload Contracts
 
 ### Success payloads (`polyglot_result_t.data`)

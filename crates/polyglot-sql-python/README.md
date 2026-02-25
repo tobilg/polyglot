@@ -32,6 +32,23 @@ polyglot_sql.generate(ast, dialect="mysql")
 polyglot_sql.format_sql("SELECT a,b FROM t WHERE x=1", dialect="postgres")
 ```
 
+### Format Guard Behavior
+
+`format_sql` uses Rust core formatting guards with default limits:
+- input bytes: `16 * 1024 * 1024`
+- tokens: `1_000_000`
+- AST nodes: `1_000_000`
+
+```python
+import polyglot_sql
+
+try:
+    pretty = polyglot_sql.format_sql("SELECT 1", dialect="generic")
+except polyglot_sql.GenerateError as exc:
+    # Guard failures contain E_GUARD_* codes in the message.
+    print(str(exc))
+```
+
 ```python
 result = polyglot_sql.validate("SELECT 1", dialect="postgres")
 if result:
@@ -55,6 +72,8 @@ All functions are exported from `polyglot_sql`.
 - `diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict]`
 - `dialects() -> list[str]`
 - `__version__: str`
+
+Note: formatting guard limits are currently fixed to Rust core defaults (no per-call Python override yet).
 
 ## Supported Dialects
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   Dialect,
   format,
+  formatWithOptions,
   generate,
   getDialects,
   getVersion,
@@ -159,6 +160,24 @@ describe('Polyglot SDK', () => {
       const result = format('SELECT 1');
       expect(result.success).toBe(true);
     });
+
+    it('should return guard error when format limits are exceeded', () => {
+      const result = formatWithOptions('SELECT 1', Dialect.Generic, {
+        maxInputBytes: 7,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('E_GUARD_INPUT_TOO_LARGE');
+    });
+
+    it('should remain usable after guard failure', () => {
+      const guarded = formatWithOptions('SELECT 1', Dialect.Generic, {
+        maxInputBytes: 7,
+      });
+      expect(guarded.success).toBe(false);
+
+      const next = format('SELECT a,b FROM t', Dialect.Generic);
+      expect(next.success).toBe(true);
+    });
   });
 
   describe('Dialect enum', () => {
@@ -210,6 +229,15 @@ describe('Polyglot SDK', () => {
       const polyglot = Polyglot.getInstance();
       const result = polyglot.format('SELECT a,b FROM t', Dialect.Generic);
       expect(result.success).toBe(true);
+    });
+
+    it('should format SQL with options', () => {
+      const polyglot = Polyglot.getInstance();
+      const result = polyglot.formatWithOptions('SELECT 1', Dialect.Generic, {
+        maxInputBytes: 7,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('E_GUARD_INPUT_TOO_LARGE');
     });
 
     it('should get dialects', () => {

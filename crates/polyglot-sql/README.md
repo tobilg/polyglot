@@ -40,6 +40,33 @@ let sql = generate(&ast[0], DialectType::Postgres).unwrap();
 assert_eq!(sql, "SELECT 1 + 2");
 ```
 
+### Format With Guard Options
+
+Formatting is protected by guard limits by default:
+- `max_input_bytes`: `16 * 1024 * 1024`
+- `max_tokens`: `1_000_000`
+- `max_ast_nodes`: `1_000_000`
+
+You can override these limits per call:
+
+```rust
+use polyglot_sql::{format_with_options, DialectType, FormatGuardOptions};
+
+let options = FormatGuardOptions {
+    max_input_bytes: Some(2 * 1024 * 1024),
+    max_tokens: Some(250_000),
+    max_ast_nodes: Some(250_000),
+};
+
+let formatted = format_with_options("SELECT a,b FROM t", DialectType::Postgres, &options).unwrap();
+assert!(formatted[0].contains("SELECT"));
+```
+
+Guard failures include stable codes in the error message:
+- `E_GUARD_INPUT_TOO_LARGE`
+- `E_GUARD_TOKEN_BUDGET_EXCEEDED`
+- `E_GUARD_AST_BUDGET_EXCEEDED`
+
 ### Fluent Builder
 
 ```rust

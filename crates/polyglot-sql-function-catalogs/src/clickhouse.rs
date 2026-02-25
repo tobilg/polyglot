@@ -14,12 +14,24 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "__bitWrapperFunc", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "__filterContains", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "__getScalar", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "__patchPartitionID", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "__scalarSubqueryResult", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "__patchPartitionID",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "__scalarSubqueryResult",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "_CAST", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "abs", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "accurateCast", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "accurateCastOrDefault", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "accurateCastOrDefault",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "accurateCastOrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "acos", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "acosh", vec![FunctionSignature::exact(1)]);
@@ -34,7 +46,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "addNanoseconds", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "addQuarters", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "addressToLine", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "addressToLineWithInlines", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "addressToLineWithInlines",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "addressToSymbol", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "addSeconds", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "addTupleOfIntervals", vec![FunctionSignature::exact(2)]);
@@ -45,14 +61,26 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "age", vec![FunctionSignature::range(3, 4)]);
     catalog.register(d, "aggThrow", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "alphaTokens", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "analysisOfVariance", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "analysisOfVariance",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "and", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "any", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "any_respect_nulls", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "anyHeavy", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "anyLast", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "anyLast_respect_nulls", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "appendTrailingCharIfAbsent", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "anyLast_respect_nulls",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "appendTrailingCharIfAbsent",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "approx_top_k", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "approx_top_sum", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "argMax", vec![FunctionSignature::variadic(0)]);
@@ -65,7 +93,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "arrayConcat", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "arrayCount", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "arrayCumSum", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "arrayCumSumNonNegative", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "arrayCumSumNonNegative",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "arrayDifference", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayDistinct", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayDotProduct", vec![FunctionSignature::exact(2)]);
@@ -73,9 +105,21 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "arrayElementOrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayEnumerate", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayEnumerateDense", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "arrayEnumerateDenseRanked", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "arrayEnumerateUniq", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "arrayEnumerateUniqRanked", vec![FunctionSignature::exact(3)]);
+    catalog.register(
+        d,
+        "arrayEnumerateDenseRanked",
+        vec![FunctionSignature::exact(3)],
+    );
+    catalog.register(
+        d,
+        "arrayEnumerateUniq",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "arrayEnumerateUniqRanked",
+        vec![FunctionSignature::exact(3)],
+    );
     catalog.register(d, "arrayExcept", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "arrayExists", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "arrayFill", vec![FunctionSignature::variadic(2)]);
@@ -91,13 +135,25 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "arrayLast", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "arrayLastIndex", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "arrayLastOrNull", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "arrayLevenshteinDistance", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "arrayLevenshteinDistanceWeighted", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "arrayLevenshteinDistance",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "arrayLevenshteinDistanceWeighted",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "arrayMap", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "arrayMax", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "arrayMin", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "arrayNormalizedGini", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "arrayPartialReverseSort", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "arrayPartialReverseSort",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "arrayPartialShuffle", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayPartialSort", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "arrayPopBack", vec![FunctionSignature::exact(1)]);
@@ -107,7 +163,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "arrayPushFront", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "arrayRandomSample", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "arrayReduce", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "arrayReduceInRanges", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "arrayReduceInRanges",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "arrayResize", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "arrayReverse", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arrayReverseFill", vec![FunctionSignature::variadic(2)]);
@@ -126,7 +186,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "arraySplit", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "arrayStringConcat", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "arraySum", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "arraySymmetricDifference", vec![FunctionSignature::variadic(3)]);
+    catalog.register(
+        d,
+        "arraySymmetricDifference",
+        vec![FunctionSignature::variadic(3)],
+    );
     catalog.register(d, "arrayUnion", vec![FunctionSignature::variadic(3)]);
     catalog.register(d, "arrayUniq", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "arrayWithConstant", vec![FunctionSignature::exact(2)]);
@@ -160,7 +224,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "bitmapAnd", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "bitmapAndCardinality", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "bitmapAndnot", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "bitmapAndnotCardinality", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "bitmapAndnotCardinality",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "bitmapBuild", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "bitmapCardinality", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "bitmapContains", vec![FunctionSignature::exact(2)]);
@@ -192,17 +260,29 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "bitXor", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "BLAKE3", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "blockNumber", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "blockSerializedSize", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "blockSerializedSize",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "blockSize", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "boundingRatio", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "buildId", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "byteHammingDistance", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "byteSize", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "byteSwap", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "caseWithExpression", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "caseWithExpression",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "CAST", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "catboostEvaluate", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "categoricalInformationValue", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "categoricalInformationValue",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "cbrt", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "ceil", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "changeDay", vec![FunctionSignature::exact(2)]);
@@ -219,9 +299,21 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "colorSRGBToOKLCH", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "compareSubstrings", vec![FunctionSignature::exact(5)]);
     catalog.register(d, "concat", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "concatAssumeInjective", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "concatWithSeparator", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "concatWithSeparatorAssumeInjective", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "concatAssumeInjective",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "concatWithSeparator",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "concatWithSeparatorAssumeInjective",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "connectionId", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "contingency", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "conv", vec![FunctionSignature::exact(3)]);
@@ -236,10 +328,22 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "countDigits", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "countEqual", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "countMatches", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "countMatchesCaseInsensitive", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "countMatchesCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "countSubstrings", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "countSubstringsCaseInsensitive", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "countSubstringsCaseInsensitiveUTF8", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "countSubstringsCaseInsensitive",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "countSubstringsCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "covarPop", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "covarPopMatrix", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "covarPopStable", vec![FunctionSignature::variadic(0)]);
@@ -247,7 +351,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "covarSampMatrix", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "covarSampStable", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "cramersV", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "cramersVBiasCorrected", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "cramersVBiasCorrected",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "CRC32", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "CRC32IEEE", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "CRC64", vec![FunctionSignature::exact(1)]);
@@ -260,36 +368,100 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "cutFragment", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "cutIPv6", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "cutQueryString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "cutQueryStringAndFragment", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "cutToFirstSignificantSubdomain", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainCustom", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainCustomRFC", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainCustomWithWWW", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainCustomWithWWWRFC", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainRFC", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainWithWWW", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "cutToFirstSignificantSubdomainWithWWWRFC", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "cutQueryStringAndFragment",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomain",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainCustom",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainCustomRFC",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainCustomWithWWW",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainCustomWithWWWRFC",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainRFC",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainWithWWW",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "cutToFirstSignificantSubdomainWithWWWRFC",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "cutURLParameter", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "cutWWW", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "damerauLevenshteinDistance", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "damerauLevenshteinDistance",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "DATE", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "dateDiff", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "dateName", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "dateTime64ToSnowflake", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "dateTime64ToSnowflakeID", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "dateTime64ToSnowflake",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "dateTime64ToSnowflakeID",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "dateTimeToSnowflake", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "dateTimeToSnowflakeID", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "dateTimeToSnowflakeID",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "dateTimeToUUIDv7", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "dateTrunc", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "decodeHTMLComponent", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "decodeURLComponent", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "decodeURLFormComponent", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "decodeURLFormComponent",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "decodeXMLComponent", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "decrypt", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "defaultProfiles", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "defaultRoles", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "defaultValueOfArgumentType", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "defaultValueOfTypeName", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "defaultValueOfArgumentType",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "defaultValueOfTypeName",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "degrees", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "deltaSum", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "deltaSumTimestamp", vec![FunctionSignature::variadic(0)]);
@@ -298,8 +470,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "detectCharset", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "detectLanguage", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "detectLanguageMixed", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "detectLanguageUnknown", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "detectProgrammingLanguage", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "detectLanguageUnknown",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "detectProgrammingLanguage",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "detectTonality", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "dictGet", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetAll", vec![FunctionSignature::exact(3)]);
@@ -307,19 +487,43 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "dictGetDate", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetDateOrDefault", vec![FunctionSignature::exact(4)]);
     catalog.register(d, "dictGetDateTime", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetDateTimeOrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetDateTimeOrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetDescendants", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetFloat32", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetFloat32OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetFloat32OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetFloat64", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetFloat64OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetFloat64OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetHierarchy", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "dictGetInt16", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetInt16OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetInt16OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetInt32", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetInt32OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetInt32OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetInt64", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetInt64OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetInt64OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetInt8", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetInt8OrDefault", vec![FunctionSignature::exact(4)]);
     catalog.register(d, "dictGetIPv4", vec![FunctionSignature::exact(3)]);
@@ -329,23 +533,51 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "dictGetOrDefault", vec![FunctionSignature::exact(4)]);
     catalog.register(d, "dictGetOrNull", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetString", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetStringOrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetStringOrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetUInt16", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetUInt16OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetUInt16OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetUInt32", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetUInt32OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetUInt32OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetUInt64", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetUInt64OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetUInt64OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetUInt8", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "dictGetUInt8OrDefault", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "dictGetUInt8OrDefault",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "dictGetUUID", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "dictGetUUIDOrDefault", vec![FunctionSignature::exact(4)]);
     catalog.register(d, "dictHas", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "dictIsIn", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "displayName", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "distinctDynamicTypes", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "distinctDynamicTypes",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "distinctJSONPaths", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "distinctJSONPathsAndTypes", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "distinctJSONPathsAndTypes",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "divide", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "divideDecimal", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "divideOrNull", vec![FunctionSignature::exact(2)]);
@@ -378,92 +610,264 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "enabledProfiles", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "enabledRoles", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "encodeURLComponent", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "encodeURLFormComponent", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "encodeURLFormComponent",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "encodeXMLComponent", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "encrypt", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "endsWith", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "endsWithCaseInsensitive", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "endsWithCaseInsensitiveUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "endsWithCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "endsWithCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "endsWithUTF8", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "entropy", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "equals", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "erf", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "erfc", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "errorCodeToName", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "estimateCompressionRatio", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "estimateCompressionRatio",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "evalMLMethod", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "exp", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "exp10", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "exp2", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "exponentialMovingAverage", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "exponentialTimeDecayedAvg", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "exponentialTimeDecayedCount", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "exponentialTimeDecayedMax", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "exponentialTimeDecayedSum", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "exponentialMovingAverage",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "exponentialTimeDecayedAvg",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "exponentialTimeDecayedCount",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "exponentialTimeDecayedMax",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "exponentialTimeDecayedSum",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "extract", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "extractAll", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "extractAllGroupsHorizontal", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "extractAllGroupsVertical", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "extractAllGroupsHorizontal",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "extractAllGroupsVertical",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "extractGroups", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "extractKeyValuePairs", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "extractKeyValuePairsWithEscaping", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "extractKeyValuePairs",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "extractKeyValuePairsWithEscaping",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "extractTextFromHTML", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "extractURLParameter", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "extractURLParameterNames", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "extractURLParameterNames",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "extractURLParameters", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "factorial", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "farmFingerprint64", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "farmHash64", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "file", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "filesystemAvailable", vec![FunctionSignature::range(0, 1)]);
-    catalog.register(d, "filesystemCapacity", vec![FunctionSignature::range(0, 1)]);
-    catalog.register(d, "filesystemUnreserved", vec![FunctionSignature::range(0, 1)]);
+    catalog.register(
+        d,
+        "filesystemAvailable",
+        vec![FunctionSignature::range(0, 1)],
+    );
+    catalog.register(
+        d,
+        "filesystemCapacity",
+        vec![FunctionSignature::range(0, 1)],
+    );
+    catalog.register(
+        d,
+        "filesystemUnreserved",
+        vec![FunctionSignature::range(0, 1)],
+    );
     catalog.register(d, "finalizeAggregation", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "financialInternalRateOfReturn", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "financialInternalRateOfReturnExtended", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "financialNetPresentValue", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "financialNetPresentValueExtended", vec![FunctionSignature::exact(3)]);
+    catalog.register(
+        d,
+        "financialInternalRateOfReturn",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "financialInternalRateOfReturnExtended",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "financialNetPresentValue",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "financialNetPresentValueExtended",
+        vec![FunctionSignature::exact(3)],
+    );
     catalog.register(d, "firstLine", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "firstNonDefault", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "firstSignificantSubdomain", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "firstSignificantSubdomainCustom", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "firstSignificantSubdomainCustomRFC", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "firstSignificantSubdomainRFC", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "firstSignificantSubdomain",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "firstSignificantSubdomainCustom",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "firstSignificantSubdomainCustomRFC",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "firstSignificantSubdomainRFC",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "flameGraph", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "flattenTuple", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "floor", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "format", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "formatDateTime", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "formatDateTimeInJodaSyntax", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "formatDateTimeInJodaSyntax",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "formatQuery", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "formatQueryOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "formatQuerySingleLine", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "formatQuerySingleLineOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "formatReadableDecimalSize", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "formatReadableQuantity", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "formatQuerySingleLine",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "formatQuerySingleLineOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "formatReadableDecimalSize",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "formatReadableQuantity",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "formatReadableSize", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "formatReadableTimeDelta", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "formatReadableTimeDelta",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "formatRow", vec![FunctionSignature::variadic(3)]);
-    catalog.register(d, "formatRowNoNewline", vec![FunctionSignature::variadic(3)]);
+    catalog.register(
+        d,
+        "formatRowNoNewline",
+        vec![FunctionSignature::variadic(3)],
+    );
     catalog.register(d, "FQDN", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "fragment", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromDaysSinceYearZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromDaysSinceYearZero32", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromModifiedJulianDay", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromModifiedJulianDayOrNull", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "fromDaysSinceYearZero",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromDaysSinceYearZero32",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromModifiedJulianDay",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromModifiedJulianDayOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "fromUnixTimestamp", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromUnixTimestamp64Micro", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromUnixTimestamp64Milli", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromUnixTimestamp64Nano", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromUnixTimestamp64Second", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "fromUnixTimestampInJodaSyntax", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "fromUnixTimestamp64Micro",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromUnixTimestamp64Milli",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromUnixTimestamp64Nano",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromUnixTimestamp64Second",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "fromUnixTimestampInJodaSyntax",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "fromUTCTimestamp", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "fuzzBits", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "gccMurmurHash", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "gcd", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "generateRandomStructure", vec![FunctionSignature::range(0, 2)]);
+    catalog.register(
+        d,
+        "generateRandomStructure",
+        vec![FunctionSignature::range(0, 2)],
+    );
     catalog.register(d, "generateSerialID", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "generateSnowflakeID", vec![FunctionSignature::range(0, 2)]);
+    catalog.register(
+        d,
+        "generateSnowflakeID",
+        vec![FunctionSignature::range(0, 2)],
+    );
     catalog.register(d, "generateULID", vec![FunctionSignature::range(0, 1)]);
     catalog.register(d, "generateUUIDv4", vec![FunctionSignature::range(0, 1)]);
     catalog.register(d, "generateUUIDv7", vec![FunctionSignature::range(0, 1)]);
@@ -475,7 +879,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "geoToS2", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "getClientHTTPHeader", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "getMacro", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "getMaxTableNameLengthForDatabase", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "getMaxTableNameLengthForDatabase",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "getMergeTreeSetting", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "getOSKernelVersion", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "getServerPort", vec![FunctionSignature::exact(1)]);
@@ -484,15 +892,31 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "getSettingOrDefault", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "getSizeOfEnumType", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "getSubcolumn", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "getTypeSerializationStreams", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "getTypeSerializationStreams",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "globalIn", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "globalInIgnoreSet", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "globalNotIn", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "globalNotInIgnoreSet", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "globalNotInIgnoreSet",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "globalNotNullIn", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "globalNotNullInIgnoreSet", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "globalNotNullInIgnoreSet",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "globalNullIn", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "globalNullInIgnoreSet", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "globalNullInIgnoreSet",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "globalVariable", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "greatCircleAngle", vec![FunctionSignature::exact(4)]);
     catalog.register(d, "greatCircleDistance", vec![FunctionSignature::exact(4)]);
@@ -500,11 +924,27 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "greaterOrEquals", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "greatest", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "groupArray", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "groupArrayInsertAt", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "groupArrayIntersect", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "groupArrayInsertAt",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "groupArrayIntersect",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "groupArrayLast", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "groupArrayMovingAvg", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "groupArrayMovingSum", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "groupArrayMovingAvg",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "groupArrayMovingSum",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "groupArraySample", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "groupArraySorted", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "groupBitAnd", vec![FunctionSignature::variadic(0)]);
@@ -515,7 +955,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "groupBitOr", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "groupBitXor", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "groupConcat", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "groupNumericIndexedVector", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "groupNumericIndexedVector",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "groupUniqArray", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "h3CellAreaM2", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3CellAreaRads2", vec![FunctionSignature::exact(1)]);
@@ -525,22 +969,54 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "h3EdgeLengthM", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3ExactEdgeLengthKm", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3ExactEdgeLengthM", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3ExactEdgeLengthRads", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "h3ExactEdgeLengthRads",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "h3GetBaseCell", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3GetDestinationIndexFromUnidirectionalEdge", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "h3GetDestinationIndexFromUnidirectionalEdge",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "h3GetFaces", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3GetIndexesFromUnidirectionalEdge", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3GetOriginIndexFromUnidirectionalEdge", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "h3GetIndexesFromUnidirectionalEdge",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "h3GetOriginIndexFromUnidirectionalEdge",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "h3GetPentagonIndexes", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3GetRes0Indexes", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "h3GetResolution", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3GetUnidirectionalEdge", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "h3GetUnidirectionalEdgeBoundary", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3GetUnidirectionalEdgesFromHexagon", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "h3GetUnidirectionalEdge",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "h3GetUnidirectionalEdgeBoundary",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "h3GetUnidirectionalEdgesFromHexagon",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "h3HexAreaKm2", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3HexAreaM2", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3HexRing", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "h3IndexesAreNeighbors", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "h3IndexesAreNeighbors",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "h3IsPentagon", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3IsResClassIII", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3IsValid", vec![FunctionSignature::exact(1)]);
@@ -556,7 +1032,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "h3ToGeoBoundary", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "h3ToParent", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "h3ToString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "h3UnidirectionalEdgeIsValid", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "h3UnidirectionalEdgeIsValid",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "halfMD5", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "has", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "hasAll", vec![FunctionSignature::exact(2)]);
@@ -565,14 +1045,34 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "hasAnyTokens", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "hasColumnInTable", vec![FunctionSignature::range(2, 6)]);
     catalog.register(d, "hasSubsequence", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "hasSubsequenceCaseInsensitive", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "hasSubsequenceCaseInsensitiveUTF8", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "hasSubsequenceUTF8", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "hasSubsequenceCaseInsensitive",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "hasSubsequenceCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "hasSubsequenceUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "hasSubstr", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "hasThreadFuzzer", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "hasToken", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "hasTokenCaseInsensitive", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "hasTokenCaseInsensitiveOrNull", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "hasTokenCaseInsensitive",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "hasTokenCaseInsensitiveOrNull",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "hasTokenOrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "hex", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "hilbertDecode", vec![FunctionSignature::exact(2)]);
@@ -602,9 +1102,17 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "inIgnoreSet", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "initcap", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "initcapUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "initializeAggregation", vec![FunctionSignature::variadic(2)]);
+    catalog.register(
+        d,
+        "initializeAggregation",
+        vec![FunctionSignature::variadic(2)],
+    );
     catalog.register(d, "initialQueryID", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "initialQueryStartTime", vec![FunctionSignature::exact(0)]);
+    catalog.register(
+        d,
+        "initialQueryStartTime",
+        vec![FunctionSignature::exact(0)],
+    );
     catalog.register(d, "intDiv", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "intDivOrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "intDivOrZero", vec![FunctionSignature::exact(2)]);
@@ -615,25 +1123,53 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "intHash64", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "IPv4CIDRToRange", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "IPv4NumToString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "IPv4NumToStringClassC", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "IPv4NumToStringClassC",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "IPv4StringToNum", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "IPv4StringToNumOrDefault", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "IPv4StringToNumOrNull", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "IPv4StringToNumOrDefault",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "IPv4StringToNumOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "IPv4ToIPv6", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "IPv6CIDRToRange", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "IPv6NumToString", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "IPv6StringToNum", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "IPv6StringToNumOrDefault", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "IPv6StringToNumOrNull", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "IPv6StringToNumOrDefault",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "IPv6StringToNumOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "isConstant", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isDecimalOverflow", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "isDynamicElementInSharedData", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "isDynamicElementInSharedData",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "isFinite", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isInfinite", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isIPAddressInRange", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "isIPv4String", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isIPv6String", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "isMergeTreePartCoveredBy", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "isMergeTreePartCoveredBy",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "isNaN", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isNotDistinctFrom", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "isNotNull", vec![FunctionSignature::exact(1)]);
@@ -644,7 +1180,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "isValidUTF8", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "isZeroOrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "jaroSimilarity", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "jaroWinklerSimilarity", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "jaroWinklerSimilarity",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "javaHash", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "javaHashUTF16LE", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "joinGet", vec![FunctionSignature::exact(3)]);
@@ -653,46 +1193,126 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "JSON_QUERY", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "JSON_VALUE", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "JSONAllPaths", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "JSONAllPathsWithTypes", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "JSONAllPathsWithTypes",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "JSONArrayLength", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "JSONDynamicPaths", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "JSONDynamicPathsWithTypes", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "JSONDynamicPathsWithTypes",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "JSONExtract", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "JSONExtractArrayRaw", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractArrayRawCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractArrayRaw",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractArrayRawCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractBool", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractBoolCaseInsensitive", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractCaseInsensitive", vec![FunctionSignature::variadic(2)]);
+    catalog.register(
+        d,
+        "JSONExtractBoolCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractCaseInsensitive",
+        vec![FunctionSignature::variadic(2)],
+    );
     catalog.register(d, "JSONExtractFloat", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractFloatCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractFloatCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractInt", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractIntCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractIntCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractKeys", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractKeysAndValues", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "JSONExtractKeysAndValuesCaseInsensitive", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "JSONExtractKeysAndValuesRaw", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractKeysAndValuesRawCaseInsensitive", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractKeysCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractKeysAndValues",
+        vec![FunctionSignature::variadic(2)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractKeysAndValuesCaseInsensitive",
+        vec![FunctionSignature::variadic(2)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractKeysAndValuesRaw",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractKeysAndValuesRawCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "JSONExtractKeysCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractRaw", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractRawCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractRawCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractString", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractStringCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractStringCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONExtractUInt", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "JSONExtractUIntCaseInsensitive", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "JSONExtractUIntCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "JSONHas", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "JSONKey", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "JSONLength", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "JSONMergePatch", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "JSONSharedDataPaths", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "JSONSharedDataPathsWithTypes", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "JSONSharedDataPathsWithTypes",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "JSONType", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "jumpConsistentHash", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "kafkaMurmurHash", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "keccak256", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "kolmogorovSmirnovTest", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "kolmogorovSmirnovTest",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "kostikConsistentHash", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "kql_array_sort_asc", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "kql_array_sort_desc", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "kql_array_sort_asc",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "kql_array_sort_desc",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "kurtPop", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "kurtSamp", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "L1Distance", vec![FunctionSignature::exact(2)]);
@@ -706,7 +1326,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "L2SquaredNorm", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "lag", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "lagInFrame", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "largestTriangleThreeBuckets", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "largestTriangleThreeBuckets",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "lcm", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "lead", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "leadInFrame", vec![FunctionSignature::variadic(0)]);
@@ -732,7 +1356,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "log1p", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "log2", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "logTrace", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "lowCardinalityIndices", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "lowCardinalityIndices",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "lowCardinalityKeys", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "lower", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "lowerUTF8", vec![FunctionSignature::exact(1)]);
@@ -762,7 +1390,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "mapFilter", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "mapFromArrays", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "mapKeys", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "mapPartialReverseSort", vec![FunctionSignature::range(1, 3)]);
+    catalog.register(
+        d,
+        "mapPartialReverseSort",
+        vec![FunctionSignature::range(1, 3)],
+    );
     catalog.register(d, "mapPartialSort", vec![FunctionSignature::range(1, 3)]);
     catalog.register(d, "mapPopulateSeries", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "mapReverseSort", vec![FunctionSignature::range(0, 2)]);
@@ -775,7 +1407,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "max", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "max2", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "maxIntersections", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "maxIntersectionsPosition", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "maxIntersectionsPosition",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "maxMappedArrays", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "MD4", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "MD5", vec![FunctionSignature::exact(1)]);
@@ -785,8 +1421,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "min", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "min2", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "minMappedArrays", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "minSampleSizeContinuous", vec![FunctionSignature::exact(5)]);
-    catalog.register(d, "minSampleSizeConversion", vec![FunctionSignature::exact(4)]);
+    catalog.register(
+        d,
+        "minSampleSizeContinuous",
+        vec![FunctionSignature::exact(5)],
+    );
+    catalog.register(
+        d,
+        "minSampleSizeConversion",
+        vec![FunctionSignature::exact(4)],
+    );
     catalog.register(d, "minus", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "modulo", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "moduloLegacy", vec![FunctionSignature::variadic(0)]);
@@ -795,31 +1439,111 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "monthName", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "mortonDecode", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "mortonEncode", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "multiFuzzyMatchAllIndices", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiFuzzyMatchAny", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiFuzzyMatchAnyIndex", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "multiFuzzyMatchAllIndices",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiFuzzyMatchAny",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiFuzzyMatchAnyIndex",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "multiIf", vec![FunctionSignature::variadic(5)]);
-    catalog.register(d, "multiMatchAllIndices", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "multiMatchAllIndices",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "multiMatchAny", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "multiMatchAnyIndex", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "multiMatchAnyIndex",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "multiply", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "multiplyDecimal", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "multiSearchAllPositions", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "multiSearchAllPositionsCaseInsensitive", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "multiSearchAllPositionsCaseInsensitiveUTF8", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiSearchAllPositionsUTF8", vec![FunctionSignature::variadic(2)]);
+    catalog.register(
+        d,
+        "multiSearchAllPositions",
+        vec![FunctionSignature::variadic(2)],
+    );
+    catalog.register(
+        d,
+        "multiSearchAllPositionsCaseInsensitive",
+        vec![FunctionSignature::variadic(2)],
+    );
+    catalog.register(
+        d,
+        "multiSearchAllPositionsCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiSearchAllPositionsUTF8",
+        vec![FunctionSignature::variadic(2)],
+    );
     catalog.register(d, "multiSearchAny", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "multiSearchAnyCaseInsensitive", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "multiSearchAnyCaseInsensitiveUTF8", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "multiSearchAnyUTF8", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "multiSearchFirstIndex", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiSearchFirstIndexCaseInsensitive", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiSearchFirstIndexCaseInsensitiveUTF8", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiSearchFirstIndexUTF8", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "multiSearchFirstPosition", vec![FunctionSignature::variadic(2)]);
-    catalog.register(d, "multiSearchFirstPositionCaseInsensitive", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "multiSearchFirstPositionCaseInsensitiveUTF8", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "multiSearchFirstPositionUTF8", vec![FunctionSignature::variadic(1)]);
+    catalog.register(
+        d,
+        "multiSearchAnyCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "multiSearchAnyCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "multiSearchAnyUTF8",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstIndex",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstIndexCaseInsensitive",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstIndexCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstIndexUTF8",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstPosition",
+        vec![FunctionSignature::variadic(2)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstPositionCaseInsensitive",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstPositionCaseInsensitiveUTF8",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "multiSearchFirstPositionUTF8",
+        vec![FunctionSignature::variadic(1)],
+    );
     catalog.register(d, "murmurHash2_32", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "murmurHash2_64", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "murmurHash3_128", vec![FunctionSignature::variadic(1)]);
@@ -830,31 +1554,83 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "nested", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "netloc", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "ngramDistance", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "ngramDistanceCaseInsensitive", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "ngramDistanceCaseInsensitiveUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "ngramDistanceCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "ngramDistanceCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "ngramDistanceUTF8", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "ngramMinHash", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "ngramMinHashArg", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramMinHashArgCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramMinHashArgCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "ngramMinHashArgCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "ngramMinHashArgCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "ngramMinHashArgUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramMinHashCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramMinHashCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "ngramMinHashCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "ngramMinHashCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "ngramMinHashUTF8", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "ngrams", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "ngramSearch", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "ngramSearchCaseInsensitive", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "ngramSearchCaseInsensitiveUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "ngramSearchCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "ngramSearchCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "ngramSearchUTF8", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "ngramSimHash", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramSimHashCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "ngramSimHashCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "ngramSimHashCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "ngramSimHashCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "ngramSimHashUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "nonNegativeDerivative", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "nonNegativeDerivative",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "normalizedQueryHash", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "normalizedQueryHashKeepNames", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "normalizedQueryHashKeepNames",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "normalizeQuery", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "normalizeQueryKeepNames", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "normalizeQueryKeepNames",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "normalizeUTF8NFC", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "normalizeUTF8NFD", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "normalizeUTF8NFKC", vec![FunctionSignature::exact(1)]);
@@ -870,7 +1646,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "notInIgnoreSet", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "notLike", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "notNullIn", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "notNullInIgnoreSet", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "notNullInIgnoreSet",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "now", vec![FunctionSignature::range(0, 1)]);
     catalog.register(d, "now64", vec![FunctionSignature::range(0, 2)]);
     catalog.register(d, "nowInBlock", vec![FunctionSignature::range(0, 1)]);
@@ -880,55 +1660,219 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "nullIf", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "nullIn", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "nullInIgnoreSet", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "numericIndexedVectorAllValueSum", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "numericIndexedVectorBuild", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "numericIndexedVectorCardinality", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "numericIndexedVectorGetValue", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseAdd", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseDivide", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseEqual", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseGreater", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseGreaterEqual", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseLess", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseLessEqual", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseMultiply", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseNotEqual", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorPointwiseSubtract", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "numericIndexedVectorShortDebugString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "numericIndexedVectorToMap", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "numericIndexedVectorAllValueSum",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorBuild",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorCardinality",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorGetValue",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseAdd",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseDivide",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseEqual",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseGreater",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseGreaterEqual",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseLess",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseLessEqual",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseMultiply",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseNotEqual",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorPointwiseSubtract",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorShortDebugString",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "numericIndexedVectorToMap",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "or", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "overlay", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "overlayUTF8", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "parseDateTime", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "parseDateTime32BestEffort", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime32BestEffortOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime32BestEffortOrZero", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "parseDateTime32BestEffort",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime32BestEffortOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime32BestEffortOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "parseDateTime64", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTime64BestEffort", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64BestEffortOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64BestEffortOrZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64BestEffortUS", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64BestEffortUSOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64BestEffortUSOrZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTime64InJodaSyntax", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTime64InJodaSyntaxOrNull", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTime64InJodaSyntaxOrZero", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTime64OrNull", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTime64OrZero", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTimeBestEffort", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeBestEffortOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeBestEffortOrZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeBestEffortUS", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeBestEffortUSOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeBestEffortUSOrZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseDateTimeInJodaSyntax", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTimeInJodaSyntaxOrNull", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "parseDateTimeInJodaSyntaxOrZero", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "parseDateTime64BestEffort",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64BestEffortOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64BestEffortOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64BestEffortUS",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64BestEffortUSOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64BestEffortUSOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64InJodaSyntax",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64InJodaSyntaxOrNull",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64InJodaSyntaxOrZero",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64OrNull",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTime64OrZero",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffort",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffortOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffortOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffortUS",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffortUSOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeBestEffortUSOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeInJodaSyntax",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeInJodaSyntaxOrNull",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "parseDateTimeInJodaSyntaxOrZero",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "parseDateTimeOrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "parseDateTimeOrZero", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "parseReadableSize", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseReadableSizeOrNull", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "parseReadableSizeOrZero", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "parseReadableSizeOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "parseReadableSizeOrZero",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "parseTimeDelta", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "partitionId", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "path", vec![FunctionSignature::exact(1)]);
@@ -938,29 +1882,109 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "plus", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "pointInEllipses", vec![FunctionSignature::variadic(10)]);
     catalog.register(d, "pointInPolygon", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "polygonAreaCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonAreaSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonConvexHullCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonPerimeterCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonPerimeterSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsDistanceCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsDistanceSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsEqualsCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsIntersectCartesian", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "polygonsIntersectionCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsIntersectionSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsIntersectSpherical", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "polygonsSymDifferenceCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsSymDifferenceSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsUnionCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsUnionSpherical", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsWithinCartesian", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "polygonsWithinSpherical", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "polygonAreaCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonAreaSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonConvexHullCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonPerimeterCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonPerimeterSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsDistanceCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsDistanceSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsEqualsCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsIntersectCartesian",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "polygonsIntersectionCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsIntersectionSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsIntersectSpherical",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "polygonsSymDifferenceCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsSymDifferenceSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsUnionCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsUnionSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsWithinCartesian",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "polygonsWithinSpherical",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "port", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "portRFC", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "position", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "positionCaseInsensitive", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "positionCaseInsensitiveUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "positionCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "positionCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "positionUTF8", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "positiveModulo", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "positiveModuloOrNull", vec![FunctionSignature::exact(2)]);
@@ -972,45 +1996,133 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "punycodeEncode", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "quantile", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "quantileBFloat16", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileBFloat16Weighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileBFloat16Weighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileDD", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileDeterministic", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileDeterministic",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileExact", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileExactExclusive", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileExactExclusive",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileExactHigh", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileExactInclusive", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileExactInclusive",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileExactLow", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileExactWeighted", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileExactWeightedInterpolated", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileExactWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantileExactWeightedInterpolated",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileGK", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileInterpolatedWeighted", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilePrometheusHistogram", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileInterpolatedWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantilePrometheusHistogram",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantiles", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "quantilesBFloat16", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesBFloat16Weighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesBFloat16Weighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesDD", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesDeterministic", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesDeterministic",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesExact", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesExactExclusive", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesExactHigh", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesExactInclusive", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesExactExclusive",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantilesExactHigh",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantilesExactInclusive",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesExactLow", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesExactWeighted", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesExactWeightedInterpolated", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesExactWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantilesExactWeightedInterpolated",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesGK", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesInterpolatedWeighted", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesPrometheusHistogram", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesInterpolatedWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "quantilesPrometheusHistogram",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesTDigest", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesTDigestWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesTDigestWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantilesTiming", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantilesTimingWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantilesTimingWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileTDigest", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileTDigestWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileTDigestWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "quantileTiming", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "quantileTimingWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "quantileTimingWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "queryID", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "queryString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "queryStringAndFragment", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "queryStringAndFragment",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "radians", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "rand", vec![FunctionSignature::range(0, 1)]);
     catalog.register(d, "rand64", vec![FunctionSignature::range(0, 1)]);
@@ -1035,13 +2147,25 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "rank", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "rankCorr", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "readWKBLineString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "readWKBMultiLineString", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "readWKBMultiLineString",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "readWKBMultiPolygon", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "readWKBPoint", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "readWKBPolygon", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "readWKTLineString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "readWKTMultiLineString", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "readWKTMultiPolygon", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "readWKTMultiLineString",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "readWKTMultiPolygon",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "readWKTPoint", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "readWKTPolygon", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "readWKTRing", vec![FunctionSignature::variadic(0)]);
@@ -1059,8 +2183,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "regionToTopContinent", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "reinterpret", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "reinterpretAsDate", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "reinterpretAsDateTime", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "reinterpretAsFixedString", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "reinterpretAsDateTime",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "reinterpretAsFixedString",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "reinterpretAsFloat32", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "reinterpretAsFloat64", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "reinterpretAsInt128", vec![FunctionSignature::exact(1)]);
@@ -1104,23 +2236,43 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "runningAccumulate", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "runningConcurrency", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "runningDifference", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "runningDifferenceStartingWithFirstValue", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "runningDifferenceStartingWithFirstValue",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "s2CapContains", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2CapUnion", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2CellsIntersect", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2GetNeighbors", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2RectAdd", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2RectContains", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "s2RectIntersection", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "s2RectIntersection",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "s2RectUnion", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "s2ToGeo", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sequenceCount", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sequenceMatch", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "sequenceMatchEvents", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "sequenceMatchEvents",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "sequenceNextNode", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "seriesDecomposeSTL", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "seriesOutliersDetectTukey", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "seriesPeriodDetectFFT", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "seriesOutliersDetectTukey",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "seriesPeriodDetectFFT",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "serverTimezone", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "serverUUID", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "SHA1", vec![FunctionSignature::exact(1)]);
@@ -1134,37 +2286,81 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "showCertificate", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "sigmoid", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sign", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "simpleJSONExtractBool", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "simpleJSONExtractFloat", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "simpleJSONExtractBool",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "simpleJSONExtractFloat",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "simpleJSONExtractInt", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "simpleJSONExtractRaw", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "simpleJSONExtractString", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "simpleJSONExtractUInt", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "simpleJSONExtractString",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "simpleJSONExtractUInt",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "simpleJSONHas", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "simpleLinearRegression", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "simpleLinearRegression",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "sin", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "singleValueOrNull", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sinh", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "sipHash128", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "sipHash128Keyed", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "sipHash128Reference", vec![FunctionSignature::variadic(1)]);
-    catalog.register(d, "sipHash128ReferenceKeyed", vec![FunctionSignature::variadic(2)]);
+    catalog.register(
+        d,
+        "sipHash128Reference",
+        vec![FunctionSignature::variadic(1)],
+    );
+    catalog.register(
+        d,
+        "sipHash128ReferenceKeyed",
+        vec![FunctionSignature::variadic(2)],
+    );
     catalog.register(d, "sipHash64", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "sipHash64Keyed", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "skewPop", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "skewSamp", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sleep", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "sleepEachRow", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "snowflakeIDToDateTime", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "snowflakeIDToDateTime64", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "snowflakeIDToDateTime",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "snowflakeIDToDateTime64",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "snowflakeToDateTime", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "snowflakeToDateTime64", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "snowflakeToDateTime64",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "soundex", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "space", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "sparkbar", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sparseGrams", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "sparseGramsHashes", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "sparseGramsHashesUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "sparseGramsHashesUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "sparseGramsUTF8", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "splitByChar", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "splitByNonAlpha", vec![FunctionSignature::exact(1)]);
@@ -1175,25 +2371,57 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "sqidEncode", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "sqrt", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "startsWith", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "startsWithCaseInsensitive", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "startsWithCaseInsensitiveUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "startsWithCaseInsensitive",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "startsWithCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "startsWithUTF8", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "stddevPop", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "stddevPopStable", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "stddevSamp", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "stddevSampStable", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "stem", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "stochasticLinearRegression", vec![FunctionSignature::variadic(3)]);
-    catalog.register(d, "stochasticLogisticRegression", vec![FunctionSignature::variadic(3)]);
+    catalog.register(
+        d,
+        "stochasticLinearRegression",
+        vec![FunctionSignature::variadic(3)],
+    );
+    catalog.register(
+        d,
+        "stochasticLogisticRegression",
+        vec![FunctionSignature::variadic(3)],
+    );
     catalog.register(d, "stringBytesEntropy", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "stringBytesUniq", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "stringJaccardIndex", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "stringJaccardIndexUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "stringJaccardIndexUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "stringToH3", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "structureToCapnProtoSchema", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "structureToProtobufSchema", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "structureToCapnProtoSchema",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "structureToProtobufSchema",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "studentTTest", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "studentTTestOneSample", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "studentTTestOneSample",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "subBitmap", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "subDate", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "substring", vec![FunctionSignature::exact(2)]);
@@ -1210,16 +2438,28 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "subtractNanoseconds", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "subtractQuarters", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "subtractSeconds", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "subtractTupleOfIntervals", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "subtractTupleOfIntervals",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "subtractWeeks", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "subtractYears", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "sum", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sumCount", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sumKahan", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "sumMapFiltered", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "sumMapFilteredWithOverflow", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "sumMapFilteredWithOverflow",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "sumMappedArrays", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "sumMapWithOverflow", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "sumMapWithOverflow",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "sumWithOverflow", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "svg", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "synonyms", vec![FunctionSignature::exact(2)]);
@@ -1231,23 +2471,79 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "throwIf", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "tid", vec![FunctionSignature::exact(0)]);
     catalog.register(d, "timeDiff", vec![FunctionSignature::range(3, 4)]);
-    catalog.register(d, "timeSeriesChangesToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesDeltaToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesDerivToGrid", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "timeSeriesChangesToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesDeltaToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesDerivToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "timeSeriesFromGrid", vec![FunctionSignature::exact(4)]);
-    catalog.register(d, "timeSeriesGroupArray", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "timeSeriesGroupArray",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "timeSeriesIdToTags", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "timeSeriesIdToTagsGroup", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "timeSeriesInstantDeltaToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesInstantRateToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesLastTwoSamples", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesPredictLinearToGrid", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "timeSeriesIdToTagsGroup",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesInstantDeltaToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesInstantRateToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesLastTwoSamples",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesPredictLinearToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "timeSeriesRange", vec![FunctionSignature::exact(3)]);
-    catalog.register(d, "timeSeriesRateToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesResampleToGridWithStaleness", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesResetsToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesStoreTags", vec![FunctionSignature::variadic(4)]);
-    catalog.register(d, "timeSeriesTagsGroupToTags", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "timeSeriesRateToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesResampleToGridWithStaleness",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesResetsToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesStoreTags",
+        vec![FunctionSignature::variadic(4)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesTagsGroupToTags",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "timeSlot", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "timeSlots", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "timestamp", vec![FunctionSignature::exact(1)]);
@@ -1270,10 +2566,18 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toDateTime", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDateTime32", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDateTime64", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "toDateTime64OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDateTime64OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDateTime64OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDateTime64OrZero", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toDateTimeOrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDateTimeOrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDateTimeOrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDateTimeOrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "today", vec![FunctionSignature::exact(0)]);
@@ -1282,29 +2586,53 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toDayOfYear", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDaysSinceYearZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toDecimal128", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "toDecimal128OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDecimal128OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDecimal128OrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal128OrZero", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal256", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "toDecimal256OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDecimal256OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDecimal256OrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal256OrZero", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal32", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "toDecimal32OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDecimal32OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDecimal32OrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal32OrZero", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal64", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "toDecimal64OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toDecimal64OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toDecimal64OrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimal64OrZero", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toDecimalString", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "toFixedString", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toFloat32", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toFloat32OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toFloat32OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toFloat32OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toFloat32OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toFloat64", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toFloat64OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toFloat64OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toFloat64OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toFloat64OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toHour", vec![FunctionSignature::exact(1)]);
@@ -1335,8 +2663,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toInterval", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "toIntervalDay", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toIntervalHour", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toIntervalMicrosecond", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toIntervalMillisecond", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "toIntervalMicrosecond",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "toIntervalMillisecond",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "toIntervalMinute", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toIntervalMonth", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toIntervalNanosecond", vec![FunctionSignature::exact(1)]);
@@ -1362,7 +2698,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toMillisecond", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toMinute", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toModifiedJulianDay", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toModifiedJulianDayOrNull", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "toModifiedJulianDayOrNull",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "toMonday", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toMonth", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toMonthNumSinceEpoch", vec![FunctionSignature::exact(1)]);
@@ -1382,16 +2722,32 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toRelativeYearNum", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toSecond", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toStartOfDay", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toStartOfFifteenMinutes", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "toStartOfFifteenMinutes",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "toStartOfFiveMinutes", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toStartOfHour", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toStartOfInterval", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toStartOfISOYear", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toStartOfMicrosecond", vec![FunctionSignature::range(1, 2)]);
-    catalog.register(d, "toStartOfMillisecond", vec![FunctionSignature::range(1, 2)]);
+    catalog.register(
+        d,
+        "toStartOfMicrosecond",
+        vec![FunctionSignature::range(1, 2)],
+    );
+    catalog.register(
+        d,
+        "toStartOfMillisecond",
+        vec![FunctionSignature::range(1, 2)],
+    );
     catalog.register(d, "toStartOfMinute", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toStartOfMonth", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toStartOfNanosecond", vec![FunctionSignature::range(1, 2)]);
+    catalog.register(
+        d,
+        "toStartOfNanosecond",
+        vec![FunctionSignature::range(1, 2)],
+    );
     catalog.register(d, "toStartOfQuarter", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toStartOfSecond", vec![FunctionSignature::range(1, 2)]);
     catalog.register(d, "toStartOfTenMinutes", vec![FunctionSignature::exact(1)]);
@@ -1409,7 +2765,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toTimezone", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toTypeName", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt128", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toUInt128OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toUInt128OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toUInt128OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt128OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt16", vec![FunctionSignature::exact(1)]);
@@ -1417,7 +2777,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toUInt16OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt16OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt256", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toUInt256OrDefault", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "toUInt256OrDefault",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "toUInt256OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt256OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt32", vec![FunctionSignature::exact(1)]);
@@ -1433,10 +2797,26 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toUInt8OrNull", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUInt8OrZero", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUnixTimestamp", vec![FunctionSignature::range(1, 2)]);
-    catalog.register(d, "toUnixTimestamp64Micro", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toUnixTimestamp64Milli", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toUnixTimestamp64Nano", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "toUnixTimestamp64Second", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "toUnixTimestamp64Micro",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "toUnixTimestamp64Milli",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "toUnixTimestamp64Nano",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "toUnixTimestamp64Second",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "toUTCTimestamp", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "toUUID", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toUUIDOrDefault", vec![FunctionSignature::exact(2)]);
@@ -1451,8 +2831,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "toYYYYMMDD", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "toYYYYMMDDhhmmss", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "transactionID", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "transactionLatestSnapshot", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "transactionOldestSnapshot", vec![FunctionSignature::exact(0)]);
+    catalog.register(
+        d,
+        "transactionLatestSnapshot",
+        vec![FunctionSignature::exact(0)],
+    );
+    catalog.register(
+        d,
+        "transactionOldestSnapshot",
+        vec![FunctionSignature::exact(0)],
+    );
     catalog.register(d, "transform", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "translate", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "translateUTF8", vec![FunctionSignature::exact(3)]);
@@ -1479,16 +2867,28 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "tupleIntDiv", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "tupleIntDivByNumber", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "tupleIntDivOrZero", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "tupleIntDivOrZeroByNumber", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "tupleIntDivOrZeroByNumber",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "tupleMinus", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "tupleModulo", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "tupleModuloByNumber", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "tupleMultiply", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "tupleMultiplyByNumber", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "tupleMultiplyByNumber",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "tupleNames", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "tupleNegate", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "tuplePlus", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "tupleToNameValuePairs", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "tupleToNameValuePairs",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "ULIDStringToDateTime", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "unbin", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "unhex", vec![FunctionSignature::exact(1)]);
@@ -1513,7 +2913,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "UUIDStringToNum", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "UUIDToNum", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "UUIDv7ToDateTime", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "validateNestedArraySizes", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "validateNestedArraySizes",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "variantElement", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "variantType", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "varPop", vec![FunctionSignature::variadic(0)]);
@@ -1529,34 +2933,98 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "wkb", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "wkt", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "wordShingleMinHash", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashArg", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashArgCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashArgCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashArgUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleMinHashUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "wordShingleMinHashArg",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashArgCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashArgCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashArgUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleMinHashUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "wordShingleSimHash", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleSimHashCaseInsensitive", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleSimHashCaseInsensitiveUTF8", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "wordShingleSimHashUTF8", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "wordShingleSimHashCaseInsensitive",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleSimHashCaseInsensitiveUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "wordShingleSimHashUTF8",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "wyHash64", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "xor", vec![FunctionSignature::variadic(2)]);
     catalog.register(d, "xxh3", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "xxHash32", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "xxHash64", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "yesterday", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "YYYYMMDDhhmmssToDateTime", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "YYYYMMDDhhmmssToDateTime64", vec![FunctionSignature::exact(1)]);
+    catalog.register(
+        d,
+        "YYYYMMDDhhmmssToDateTime",
+        vec![FunctionSignature::exact(1)],
+    );
+    catalog.register(
+        d,
+        "YYYYMMDDhhmmssToDateTime64",
+        vec![FunctionSignature::exact(1)],
+    );
     catalog.register(d, "YYYYMMDDToDate", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "YYYYMMDDToDate32", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "zookeeperSessionUptime", vec![FunctionSignature::exact(0)]);
+    catalog.register(
+        d,
+        "zookeeperSessionUptime",
+        vec![FunctionSignature::exact(0)],
+    );
     catalog.register(d, "anova", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "any_value", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "any_value_respect_nulls", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "anyLastRespectNulls", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "any_value_respect_nulls",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "anyLastRespectNulls",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "anyRespectNulls", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "anyValueRespectNulls", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "anyValueRespectNulls",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "approx_top_count", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "array_agg", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "array_concat_agg", vec![FunctionSignature::variadic(0)]);
@@ -1568,7 +3036,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "byteSlice", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "caseWithExpr", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "caseWithoutExpr", vec![FunctionSignature::variadic(5)]);
-    catalog.register(d, "caseWithoutExpression", vec![FunctionSignature::variadic(5)]);
+    catalog.register(
+        d,
+        "caseWithoutExpression",
+        vec![FunctionSignature::variadic(5)],
+    );
     catalog.register(d, "ceiling", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "CHAR_LENGTH", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "CHARACTER_LENGTH", vec![FunctionSignature::exact(1)]);
@@ -1602,8 +3074,16 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "distanceLp", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "extractAllGroups", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "first_value", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "first_value_respect_nulls", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "firstValueRespectNulls", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "first_value_respect_nulls",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "firstValueRespectNulls",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "flatten", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "FORMAT_BYTES", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "FROM_BASE64", vec![FunctionSignature::exact(1)]);
@@ -1621,18 +3101,34 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "INET_ATON", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "INET_NTOA", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "initial_query_id", vec![FunctionSignature::exact(0)]);
-    catalog.register(d, "initial_query_start_time", vec![FunctionSignature::exact(0)]);
+    catalog.register(
+        d,
+        "initial_query_start_time",
+        vec![FunctionSignature::exact(0)],
+    );
     catalog.register(d, "instr", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "isASCII", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "JSON_ARRAY_LENGTH", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "jsonMergePatch", vec![FunctionSignature::variadic(1)]);
     catalog.register(d, "LAST_DAY", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "last_value", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "last_value_respect_nulls", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "lastValueRespectNulls", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "last_value_respect_nulls",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "lastValueRespectNulls",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "lcase", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "levenshteinDistance", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "levenshteinDistanceUTF8", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "levenshteinDistanceUTF8",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "ln", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "lpad", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "ltrim", vec![FunctionSignature::exact(1)]);
@@ -1642,23 +3138,55 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "mapFromString", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "median", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "medianBFloat16", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianBFloat16Weighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianBFloat16Weighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "medianDD", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianDeterministic", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianDeterministic",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "medianExact", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "medianExactHigh", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "medianExactLow", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianExactWeighted", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianExactWeightedInterpolated", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianExactWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "medianExactWeightedInterpolated",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "medianGK", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianInterpolatedWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianInterpolatedWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "medianTDigest", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianTDigestWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianTDigestWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "medianTiming", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "medianTimingWeighted", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "medianTimingWeighted",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "mid", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "MILLISECOND", vec![FunctionSignature::exact(1)]);
-    catalog.register(d, "minSampleSizeContinous", vec![FunctionSignature::exact(5)]);
+    catalog.register(
+        d,
+        "minSampleSizeContinous",
+        vec![FunctionSignature::exact(5)],
+    );
     catalog.register(d, "MINUTE", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "mismatches", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "mod", vec![FunctionSignature::exact(2)]);
@@ -1679,7 +3207,11 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "pmod", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "pmodOrNull", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "positive_modulo", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "positive_modulo_or_null", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "positive_modulo_or_null",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "power", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "QUARTER", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "query_id", vec![FunctionSignature::exact(0)]);
@@ -1711,9 +3243,21 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "SUBSTRING_INDEX", vec![FunctionSignature::exact(3)]);
     catalog.register(d, "SVG", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "time_bucket", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "timeSeriesIdeltaToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesIrateToGrid", vec![FunctionSignature::variadic(0)]);
-    catalog.register(d, "timeSeriesLastToGrid", vec![FunctionSignature::variadic(0)]);
+    catalog.register(
+        d,
+        "timeSeriesIdeltaToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesIrateToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
+    catalog.register(
+        d,
+        "timeSeriesLastToGrid",
+        vec![FunctionSignature::variadic(0)],
+    );
     catalog.register(d, "TIMESTAMP_DIFF", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "timestamp_diff", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "timestampDiff", vec![FunctionSignature::variadic(0)]);
@@ -1735,12 +3279,28 @@ pub(crate) fn register<S: CatalogSink>(catalog: &mut S) {
     catalog.register(d, "VAR_SAMP", vec![FunctionSignature::variadic(0)]);
     catalog.register(d, "vectorDifference", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "vectorSum", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "visitParamExtractBool", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "visitParamExtractFloat", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "visitParamExtractBool",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "visitParamExtractFloat",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "visitParamExtractInt", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "visitParamExtractRaw", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "visitParamExtractString", vec![FunctionSignature::exact(2)]);
-    catalog.register(d, "visitParamExtractUInt", vec![FunctionSignature::exact(2)]);
+    catalog.register(
+        d,
+        "visitParamExtractString",
+        vec![FunctionSignature::exact(2)],
+    );
+    catalog.register(
+        d,
+        "visitParamExtractUInt",
+        vec![FunctionSignature::exact(2)],
+    );
     catalog.register(d, "visitParamHas", vec![FunctionSignature::exact(2)]);
     catalog.register(d, "week", vec![FunctionSignature::exact(1)]);
     catalog.register(d, "width_bucket", vec![FunctionSignature::exact(4)]);

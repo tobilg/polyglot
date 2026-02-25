@@ -116,6 +116,36 @@ print(result[0])  # SELECT COALESCE(a, b) FROM t
 
 See the full [Python bindings README](crates/polyglot-sql-python/README.md).
 
+## Format Guard Rails
+
+SQL formatting runs through guard limits in Rust core to prevent pathological inputs from exhausting memory:
+
+- `maxInputBytes`: `16 MiB` (default)
+- `maxTokens`: `1_000_000` (default)
+- `maxAstNodes`: `1_000_000` (default)
+
+Guard failures return error codes in the message (`E_GUARD_INPUT_TOO_LARGE`, `E_GUARD_TOKEN_BUDGET_EXCEEDED`, `E_GUARD_AST_BUDGET_EXCEEDED`).
+
+Configuration surface by runtime:
+- Rust: configurable via `format_with_options`.
+- WASM: configurable via `format_sql_with_options` / `format_sql_with_options_value`.
+- TypeScript SDK: configurable via `formatWithOptions`.
+- C FFI and Python: currently use core defaults (no per-call override yet).
+
+WASM low-level example (from `polyglot-sql-wasm` exports):
+
+```javascript
+import init, { format_sql_with_options } from "./polyglot_sql_wasm.js";
+
+await init();
+const raw = format_sql_with_options(
+  "SELECT a,b FROM t",
+  "generic",
+  JSON.stringify({ maxInputBytes: 2 * 1024 * 1024, maxTokens: 250000, maxAstNodes: 250000 }),
+);
+const result = JSON.parse(raw);
+```
+
 ## Project Structure
 
 ```
@@ -226,11 +256,13 @@ Polyglot currently runs **10,220 SQLGlot fixture cases** plus additional project
 | SQLGlot transpile (generic) | 145 | 100% |
 | SQLGlot parser | 29 | 100% |
 | SQLGlot pretty-print | 23 | 100% |
-| Lib unit tests | 810 | 100% |
+| Lib unit tests | 835 | 100% |
 | Custom dialect identity | 276 | 100% |
 | Custom dialect transpilation | 347 | 100% |
 | ClickHouse parser corpus (non-skipped) | 7,047 | 100% |
-| **Total (strict pass/fail case count)** | **18,700** | **100%** |
+| FFI integration tests | 20 | 100% |
+| Python bindings tests (`make test-python`) | 69 | 100% |
+| **Total (strict Rust/FFI pass/fail case count)** | **18,745** | **100%** |
 
 ```bash
 # Setup fixtures (required once)
@@ -238,7 +270,7 @@ make setup-fixtures
 
 # Run all tests
 make test-rust-all          # All SQLGlot fixture suites
-make test-rust-lib          # Lib unit tests
+make test-rust-lib          # Lib unit tests (835)
 make test-rust-verify       # Full strict verification suite
 make test-ffi               # FFI crate integration tests
 
@@ -246,6 +278,8 @@ make test-ffi               # FFI crate integration tests
 make test-rust-identity     # 956 generic identity cases
 make test-rust-dialect      # 3,554 dialect identity cases
 make test-rust-transpile    # 5,513 transpilation cases
+make test-rust-transpile-generic # 145 generic transpile cases
+make test-rust-parser       # 29 parser cases
 make test-rust-pretty       # 23 pretty-print cases
 
 # Additional tests
@@ -284,24 +318,34 @@ cargo +nightly fuzz run fuzz_transpile
 | Target | Description |
 |--------|-------------|
 | `make help` | Show all available commands |
-| `make build-all` | Build WASM + Rust (release) |
+| `make build-all` | Build core release + FFI + Python + bindings + WASM/SDK |
 | `make build-wasm` | Build WASM package + TypeScript SDK |
 | `make build-ffi` | Build C FFI crate (`ffi_release` profile) |
+| `make generate-ffi-header` | Generate C header via cbindgen/build.rs |
 | `make build-ffi-example` | Build + run C example against FFI lib |
+| `make develop-python` | Build/install Python extension in uv-managed env |
+| `make build-python` | Build Python wheels with maturin |
 | `make test-ffi` | Run FFI integration tests |
-| `make test-rust` | Run all sqlglot compatibility tests |
+| `make test-rust` | Run SQLGlot-named Rust tests in `polyglot-sql` |
 | `make test-rust-all` | Run all 10,220 SQLGlot fixture cases |
-| `make test-rust-lib` | Run 810 lib unit tests |
+| `make test-rust-lib` | Run 835 lib unit tests |
 | `make test-rust-verify` | Full verification suite |
+| `make test-rust-clickhouse-parser` | Run strict ClickHouse parser suite |
+| `make test-rust-clickhouse-coverage` | Run ClickHouse coverage suite (report-only) |
 | `make test-compare` | Compare against Python sqlglot |
 | `make bench-compare` | Performance comparison |
+| `make bench-parse` | Core parse benchmark (polyglot vs sqlglot) |
+| `make bench-parse-quick` | Faster core parse benchmark mode |
+| `make bench-parse-full` | Parse benchmark including optional parsers |
 | `make extract-fixtures` | Regenerate JSON fixtures from Python |
 | `make setup-fixtures` | Create fixture symlink for Rust tests |
 | `make generate-bindings` | Generate TypeScript type bindings |
-| `make develop-python` | Build/install Python extension in uv-managed env |
 | `make test-python` | Run Python bindings tests |
 | `make typecheck-python` | Run Python bindings type-check |
-| `make build-python` | Build Python wheels with maturin |
+| `make documentation-build` | Build documentation site |
+| `make documentation-deploy` | Deploy documentation to Cloudflare Pages |
+| `make playground-build` | Build playground |
+| `make playground-deploy` | Deploy playground to Cloudflare Pages |
 | `make clean` | Remove all build artifacts |
 
 ## Licenses

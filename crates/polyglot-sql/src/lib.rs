@@ -18,8 +18,8 @@ pub mod dialects;
 pub mod diff;
 pub mod error;
 pub mod expressions;
-mod function_registry;
 pub mod function_catalog;
+mod function_registry;
 pub mod generator;
 pub mod helper;
 pub mod lineage;
@@ -168,6 +168,127 @@ pub use validation::{
     SchemaTableReference, SchemaValidationOptions, ValidationSchema,
 };
 
+const DEFAULT_FORMAT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+const DEFAULT_FORMAT_MAX_TOKENS: usize = 1_000_000;
+const DEFAULT_FORMAT_MAX_AST_NODES: usize = 1_000_000;
+
+fn default_format_max_input_bytes() -> Option<usize> {
+    Some(DEFAULT_FORMAT_MAX_INPUT_BYTES)
+}
+
+fn default_format_max_tokens() -> Option<usize> {
+    Some(DEFAULT_FORMAT_MAX_TOKENS)
+}
+
+fn default_format_max_ast_nodes() -> Option<usize> {
+    Some(DEFAULT_FORMAT_MAX_AST_NODES)
+}
+
+/// Guard options for SQL pretty-formatting.
+///
+/// These limits protect against extremely large/complex queries that can cause
+/// high memory pressure in constrained runtimes (for example browser WASM).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatGuardOptions {
+    /// Maximum allowed SQL input size in bytes.
+    /// `None` disables this check.
+    #[serde(default = "default_format_max_input_bytes")]
+    pub max_input_bytes: Option<usize>,
+    /// Maximum allowed number of tokens after tokenization.
+    /// `None` disables this check.
+    #[serde(default = "default_format_max_tokens")]
+    pub max_tokens: Option<usize>,
+    /// Maximum allowed AST node count after parsing.
+    /// `None` disables this check.
+    #[serde(default = "default_format_max_ast_nodes")]
+    pub max_ast_nodes: Option<usize>,
+}
+
+impl Default for FormatGuardOptions {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: default_format_max_input_bytes(),
+            max_tokens: default_format_max_tokens(),
+            max_ast_nodes: default_format_max_ast_nodes(),
+        }
+    }
+}
+
+fn format_guard_error(code: &str, actual: usize, limit: usize) -> Error {
+    Error::generate(format!(
+        "{code}: value {actual} exceeds configured limit {limit}"
+    ))
+}
+
+fn enforce_input_guard(sql: &str, options: &FormatGuardOptions) -> Result<()> {
+    if let Some(max) = options.max_input_bytes {
+        let input_bytes = sql.len();
+        if input_bytes > max {
+            return Err(format_guard_error(
+                "E_GUARD_INPUT_TOO_LARGE",
+                input_bytes,
+                max,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn parse_with_token_guard(
+    sql: &str,
+    dialect: &Dialect,
+    options: &FormatGuardOptions,
+) -> Result<Vec<Expression>> {
+    let tokens = dialect.tokenize(sql)?;
+    if let Some(max) = options.max_tokens {
+        let token_count = tokens.len();
+        if token_count > max {
+            return Err(format_guard_error(
+                "E_GUARD_TOKEN_BUDGET_EXCEEDED",
+                token_count,
+                max,
+            ));
+        }
+    }
+
+    let config = crate::parser::ParserConfig {
+        dialect: Some(dialect.dialect_type()),
+        ..Default::default()
+    };
+    let mut parser = Parser::with_source(tokens, config, sql.to_string());
+    parser.parse()
+}
+
+fn enforce_ast_guard(expressions: &[Expression], options: &FormatGuardOptions) -> Result<()> {
+    if let Some(max) = options.max_ast_nodes {
+        let ast_nodes: usize = expressions.iter().map(node_count).sum();
+        if ast_nodes > max {
+            return Err(format_guard_error(
+                "E_GUARD_AST_BUDGET_EXCEEDED",
+                ast_nodes,
+                max,
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn format_with_dialect(
+    sql: &str,
+    dialect: &Dialect,
+    options: &FormatGuardOptions,
+) -> Result<Vec<String>> {
+    enforce_input_guard(sql, options)?;
+    let expressions = parse_with_token_guard(sql, dialect, options)?;
+    enforce_ast_guard(&expressions, options)?;
+
+    expressions
+        .iter()
+        .map(|expr| dialect.generate_pretty(expr))
+        .collect()
+}
+
 /// Transpile SQL from one dialect to another.
 ///
 /// # Arguments
@@ -254,6 +375,23 @@ pub fn parse_one(sql: &str, dialect: DialectType) -> Result<Expression> {
 pub fn generate(expression: &Expression, dialect: DialectType) -> Result<String> {
     let d = Dialect::get(dialect);
     d.generate(expression)
+}
+
+/// Format/pretty-print SQL statements.
+///
+/// Uses [`FormatGuardOptions::default`] guards.
+pub fn format(sql: &str, dialect: DialectType) -> Result<Vec<String>> {
+    format_with_options(sql, dialect, &FormatGuardOptions::default())
+}
+
+/// Format/pretty-print SQL statements with configurable guard limits.
+pub fn format_with_options(
+    sql: &str,
+    dialect: DialectType,
+    options: &FormatGuardOptions,
+) -> Result<Vec<String>> {
+    let d = Dialect::get(dialect);
+    format_with_dialect(sql, &d, options)
 }
 
 /// Validate SQL syntax.
@@ -423,6 +561,24 @@ pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String
     d.generate(expression)
 }
 
+/// Format SQL using a string dialect name.
+///
+/// Uses [`FormatGuardOptions::default`] guards.
+pub fn format_by_name(sql: &str, dialect: &str) -> Result<Vec<String>> {
+    format_with_options_by_name(sql, dialect, &FormatGuardOptions::default())
+}
+
+/// Format SQL using a string dialect name with configurable guard limits.
+pub fn format_with_options_by_name(
+    sql: &str,
+    dialect: &str,
+    options: &FormatGuardOptions,
+) -> Result<Vec<String>> {
+    let d = Dialect::get_by_name(dialect)
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
+    format_with_dialect(sql, &d, options)
+}
+
 #[cfg(test)]
 mod validation_tests {
     use super::*;
@@ -467,5 +623,53 @@ mod validation_tests {
             "Expected E005, got: {:?}",
             result.errors
         );
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn format_basic_query() {
+        let result = format("SELECT a,b FROM t", DialectType::Generic).expect("format failed");
+        assert_eq!(result.len(), 1);
+        assert!(result[0].contains('\n'));
+    }
+
+    #[test]
+    fn format_guard_rejects_large_input() {
+        let options = FormatGuardOptions {
+            max_input_bytes: Some(7),
+            max_tokens: None,
+            max_ast_nodes: None,
+        };
+        let err = format_with_options("SELECT 1", DialectType::Generic, &options)
+            .expect_err("expected guard error");
+        assert!(err.to_string().contains("E_GUARD_INPUT_TOO_LARGE"));
+    }
+
+    #[test]
+    fn format_guard_rejects_token_budget() {
+        let options = FormatGuardOptions {
+            max_input_bytes: None,
+            max_tokens: Some(1),
+            max_ast_nodes: None,
+        };
+        let err = format_with_options("SELECT 1", DialectType::Generic, &options)
+            .expect_err("expected guard error");
+        assert!(err.to_string().contains("E_GUARD_TOKEN_BUDGET_EXCEEDED"));
+    }
+
+    #[test]
+    fn format_guard_rejects_ast_budget() {
+        let options = FormatGuardOptions {
+            max_input_bytes: None,
+            max_tokens: None,
+            max_ast_nodes: Some(1),
+        };
+        let err = format_with_options("SELECT 1", DialectType::Generic, &options)
+            .expect_err("expected guard error");
+        assert!(err.to_string().contains("E_GUARD_AST_BUDGET_EXCEEDED"));
     }
 }

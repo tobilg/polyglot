@@ -293,11 +293,20 @@ fn test_validate_with_schema_function_catalog_dialect_case_sensitive() {
         ..Default::default()
     };
 
-    let valid = validate_with_schema("SELECT Foo(id) FROM users", DialectType::Generic, &schema, &opts);
+    let valid = validate_with_schema(
+        "SELECT Foo(id) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
     assert!(valid.valid, "{:?}", valid.errors);
 
-    let invalid =
-        validate_with_schema("SELECT FOO(id) FROM users", DialectType::Generic, &schema, &opts);
+    let invalid = validate_with_schema(
+        "SELECT FOO(id) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
     assert!(!invalid.valid);
     assert!(invalid
         .errors
@@ -315,11 +324,7 @@ fn test_validate_with_schema_function_catalog_function_case_override() {
         "Bar",
         vec![FunctionSignature::exact(1)],
     );
-    catalog.set_function_name_case(
-        DialectType::Generic,
-        "bar",
-        FunctionNameCase::Sensitive,
-    );
+    catalog.set_function_name_case(DialectType::Generic, "bar", FunctionNameCase::Sensitive);
 
     let opts = SchemaValidationOptions {
         check_types: true,
@@ -327,11 +332,20 @@ fn test_validate_with_schema_function_catalog_function_case_override() {
         ..Default::default()
     };
 
-    let valid = validate_with_schema("SELECT Bar(id) FROM users", DialectType::Generic, &schema, &opts);
+    let valid = validate_with_schema(
+        "SELECT Bar(id) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
     assert!(valid.valid, "{:?}", valid.errors);
 
-    let invalid =
-        validate_with_schema("SELECT BAR(id) FROM users", DialectType::Generic, &schema, &opts);
+    let invalid = validate_with_schema(
+        "SELECT BAR(id) FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
     assert!(!invalid.valid);
     assert!(invalid
         .errors

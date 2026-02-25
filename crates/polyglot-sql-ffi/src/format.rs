@@ -1,5 +1,6 @@
-use crate::helpers::{dialect_by_name, err_result, ok_json_result, panic_result, required_arg};
+use crate::helpers::{err_result, ok_json_result, panic_result, required_arg};
 use crate::types::{PolyglotResult, STATUS_GENERATE_ERROR, STATUS_PARSE_ERROR};
+use polyglot_sql::Error;
 use std::os::raw::c_char;
 
 /// Pretty-print SQL for a dialect.
@@ -21,23 +22,11 @@ fn format_impl(sql: *const c_char, dialect: *const c_char) -> PolyglotResult {
         Err(result) => return result,
     };
 
-    let dialect = match dialect_by_name(&dialect_name) {
-        Ok(dialect) => dialect,
-        Err(result) => return result,
-    };
-
-    let expressions = match dialect.parse(&sql) {
-        Ok(expressions) => expressions,
-        Err(error) => return err_result(STATUS_PARSE_ERROR, error.to_string()),
-    };
-
-    let mut formatted = Vec::with_capacity(expressions.len());
-    for expression in &expressions {
-        match dialect.generate_pretty(expression) {
-            Ok(sql) => formatted.push(sql),
-            Err(error) => return err_result(STATUS_GENERATE_ERROR, error.to_string()),
+    match polyglot_sql::format_by_name(&sql, &dialect_name) {
+        Ok(formatted) => ok_json_result(&formatted),
+        Err(error @ (Error::Tokenize { .. } | Error::Parse { .. } | Error::Syntax { .. })) => {
+            err_result(STATUS_PARSE_ERROR, error.to_string())
         }
+        Err(error) => err_result(STATUS_GENERATE_ERROR, error.to_string()),
     }
-
-    ok_json_result(&formatted)
 }

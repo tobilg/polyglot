@@ -618,16 +618,13 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| table.name.name.clone());
             let cte_source = if table.schema.is_none() && table.catalog.is_none() {
-                scope
-                    .cte_sources
-                    .get(&table.name.name)
-                    .or_else(|| {
-                        scope
-                            .cte_sources
-                            .iter()
-                            .find(|(cte_name, _)| cte_name.eq_ignore_ascii_case(&table.name.name))
-                            .map(|(_, source)| source)
-                    })
+                scope.cte_sources.get(&table.name.name).or_else(|| {
+                    scope
+                        .cte_sources
+                        .iter()
+                        .find(|(cte_name, _)| cte_name.eq_ignore_ascii_case(&table.name.name))
+                        .map(|(_, source)| source)
+                })
             } else {
                 None
             };

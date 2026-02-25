@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "criterion",
  "once_cell",
@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-ffi"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "cbindgen",
  "polyglot-sql",
@@ -612,11 +612,11 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-function-catalogs"
-version = "0.1.8"
+version = "0.1.9"
 
 [[package]]
 name = "polyglot-sql-python"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "polyglot-sql",
  "pyo3",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-wasm"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

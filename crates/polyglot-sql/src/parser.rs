@@ -39082,7 +39082,10 @@ impl Parser {
 
     /// Parse a comma-separated list of expressions.
     /// Supports named arguments with => or := syntax.
-    fn parse_expression_list_with_capacity(&mut self, capacity_hint: usize) -> Result<Vec<Expression>> {
+    fn parse_expression_list_with_capacity(
+        &mut self,
+        capacity_hint: usize,
+    ) -> Result<Vec<Expression>> {
         let mut expressions = Vec::with_capacity(capacity_hint);
 
         loop {
@@ -39301,7 +39304,11 @@ impl Parser {
             idx += 1;
         }
 
-        if has_any_token { commas + 1 } else { 0 }
+        if has_any_token {
+            commas + 1
+        } else {
+            0
+        }
     }
 
     /// Parse function arguments with lambda support (for TRANSFORM and similar functions).
