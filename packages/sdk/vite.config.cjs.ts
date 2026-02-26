@@ -17,7 +17,7 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: resolve(__dirname, 'src/index.ts'),
+      entry: resolve(__dirname, 'src/core.ts'),
       name: 'PolyglotSQL',
       formats: ['cjs'],
       fileName: () => 'index.cjs',
