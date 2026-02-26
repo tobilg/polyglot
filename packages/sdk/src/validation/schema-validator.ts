@@ -4,7 +4,7 @@
  * Delegates schema-aware validation to the Rust core via WASM bindings.
  */
 
-import { validate_with_schema as wasmValidateWithSchema } from '../../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from '../wasm-loader';
 import type { Schema, SchemaValidationOptions } from './schema';
 import type { ValidationError, ValidationResult } from './types';
 
@@ -59,7 +59,8 @@ export function validateWithSchema(
     strict_syntax: options.strictSyntax ?? false,
   };
 
-  const resultJson = wasmValidateWithSchema(
+  const wasm = getWasmSync();
+  const resultJson = wasm.validate_with_schema(
     sql,
     JSON.stringify(schema),
     dialect,

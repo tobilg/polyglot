@@ -6,7 +6,7 @@
  * move, update, keep).
  */
 
-import { diff_sql as wasmDiffSql } from '../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from './wasm-loader';
 import type { Expression } from './generated/Expression';
 
 /** Types of edit operations */
@@ -64,7 +64,8 @@ export function diff(
   options: DiffOptions = {},
 ): DiffResult {
   const { deltaOnly = false, f = 0.6, t = 0.6 } = options;
-  const resultJson = wasmDiffSql(source, target, dialect, deltaOnly, f, t);
+  const wasm = getWasmSync();
+  const resultJson = wasm.diff_sql(source, target, dialect, deltaOnly, f, t);
   return JSON.parse(resultJson) as DiffResult;
 }
 

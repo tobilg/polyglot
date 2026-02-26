@@ -15,16 +15,7 @@ import {
   isExpressionValue,
 } from '../helpers';
 import type { NodePredicate, VisitorCallback, VisitorConfig } from './types';
-import {
-  ast_get_column_names,
-  ast_get_table_names,
-  ast_get_aggregate_functions,
-  ast_get_window_functions,
-  ast_get_functions,
-  ast_get_subqueries,
-  ast_get_literals,
-  ast_node_count,
-} from '../../../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from '../../wasm-loader';
 
 /** Serialize Expression to JSON for WASM functions */
 function exprToJson(node: Expression): string {
@@ -307,7 +298,7 @@ export function getIdentifiers(node: Expression): Expression[] {
  * Get all function calls in the AST (via WASM)
  */
 export function getFunctions(node: Expression): Expression[] {
-  const result = JSON.parse(ast_get_functions(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_functions(exprToJson(node)));
   return result.success ? JSON.parse(result.ast) : [];
 }
 
@@ -315,7 +306,7 @@ export function getFunctions(node: Expression): Expression[] {
  * Get all aggregate function calls in the AST (via WASM)
  */
 export function getAggregateFunctions(node: Expression): Expression[] {
-  const result = JSON.parse(ast_get_aggregate_functions(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_aggregate_functions(exprToJson(node)));
   return result.success ? JSON.parse(result.ast) : [];
 }
 
@@ -323,7 +314,7 @@ export function getAggregateFunctions(node: Expression): Expression[] {
  * Get all window function calls in the AST (via WASM)
  */
 export function getWindowFunctions(node: Expression): Expression[] {
-  const result = JSON.parse(ast_get_window_functions(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_window_functions(exprToJson(node)));
   return result.success ? JSON.parse(result.ast) : [];
 }
 
@@ -331,7 +322,7 @@ export function getWindowFunctions(node: Expression): Expression[] {
  * Get all subqueries in the AST (via WASM)
  */
 export function getSubqueries(node: Expression): Expression[] {
-  const result = JSON.parse(ast_get_subqueries(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_subqueries(exprToJson(node)));
   return result.success ? JSON.parse(result.ast) : [];
 }
 
@@ -339,7 +330,7 @@ export function getSubqueries(node: Expression): Expression[] {
  * Get all literals in the AST (via WASM)
  */
 export function getLiterals(node: Expression): Expression[] {
-  const result = JSON.parse(ast_get_literals(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_literals(exprToJson(node)));
   return result.success ? JSON.parse(result.ast) : [];
 }
 
@@ -347,7 +338,7 @@ export function getLiterals(node: Expression): Expression[] {
  * Get all column names as strings (via WASM)
  */
 export function getColumnNames(node: Expression): string[] {
-  const result = JSON.parse(ast_get_column_names(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_column_names(exprToJson(node)));
   return result.success ? result.result : [];
 }
 
@@ -355,7 +346,7 @@ export function getColumnNames(node: Expression): string[] {
  * Get all table names as strings (via WASM)
  */
 export function getTableNames(node: Expression): string[] {
-  const result = JSON.parse(ast_get_table_names(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_get_table_names(exprToJson(node)));
   return result.success ? result.result : [];
 }
 
@@ -404,7 +395,7 @@ export function getDepth(node: Expression): number {
  * Count the total number of nodes in the AST (via WASM)
  */
 export function nodeCount(node: Expression): number {
-  const result = JSON.parse(ast_node_count(exprToJson(node)));
+  const result = JSON.parse(getWasmSync().ast_node_count(exprToJson(node)));
   return result.success ? result.result : 0;
 }
 

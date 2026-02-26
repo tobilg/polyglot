@@ -7,6 +7,7 @@
  */
 
 import type {
+  WasmAssignmentArray as WasmAssignmentArrayType,
   WasmCaseBuilder as WasmCaseBuilderType,
   WasmDeleteBuilder as WasmDeleteBuilderType,
   WasmExprArray as WasmExprArrayType,
@@ -19,34 +20,7 @@ import type {
   WasmWindowDefBuilder as WasmWindowDefBuilderType,
 } from '../wasm/polyglot_sql_wasm.js';
 
-import {
-  WasmAssignmentArray as WasmAssignmentArrayClass,
-  WasmCaseBuilder as WasmCaseBuilderClass,
-  WasmDeleteBuilder as WasmDeleteBuilderClass,
-  WasmExprArray as WasmExprArrayClass,
-  WasmInsertBuilder as WasmInsertBuilderClass,
-  WasmMergeBuilder as WasmMergeBuilderClass,
-  WasmSelectBuilder as WasmSelectBuilderClass,
-  WasmUpdateBuilder as WasmUpdateBuilderClass,
-  WasmWindowDefBuilder as WasmWindowDefBuilderClass,
-  wasm_alias,
-  wasm_and,
-  wasm_boolean,
-  wasm_case_of,
-  wasm_cast,
-  wasm_col,
-  wasm_func,
-  wasm_lit,
-  wasm_not,
-  wasm_null,
-  wasm_or,
-  wasm_sql_expr,
-  wasm_star,
-  wasm_subquery,
-  wasm_table,
-  wasm_count_distinct,
-  wasm_extract,
-} from '../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from './wasm-loader';
 
 // ============================================================================
 // Types
@@ -61,16 +35,18 @@ export type ExprInput = Expr | string | number | boolean | null;
 
 /** Convert an ExprInput to a WasmExpr handle. */
 function toWasm(value: ExprInput): WasmExprType {
+  const wasm = getWasmSync();
   if (value instanceof Expr) return value._w;
-  if (typeof value === 'string') return wasm_col(value);
+  if (typeof value === 'string') return wasm.wasm_col(value);
   if (typeof value === 'number' || typeof value === 'boolean' || value === null)
-    return wasm_lit(value);
-  return wasm_null();
+    return wasm.wasm_lit(value);
+  return wasm.wasm_null();
 }
 
 /** Convert an array of ExprInput to a WasmExprArray. */
 function toWasmArray(items: ExprInput[]): WasmExprArrayType {
-  const arr = new WasmExprArrayClass();
+  const wasm = getWasmSync();
+  const arr = new wasm.WasmExprArray();
   for (const item of items) {
     if (item instanceof Expr) {
       arr.push(item._w);
@@ -83,9 +59,9 @@ function toWasmArray(items: ExprInput[]): WasmExprArrayType {
         arr.push_float(item);
       }
     } else if (typeof item === 'boolean' || item === null) {
-      arr.push(wasm_lit(item));
+      arr.push(wasm.wasm_lit(item));
     } else {
-      arr.push(wasm_null());
+      arr.push(wasm.wasm_null());
     }
   }
   return arr;
@@ -251,7 +227,8 @@ export class WindowDefBuilder {
   _w: WasmWindowDefBuilderType;
 
   constructor() {
-    this._w = new WasmWindowDefBuilderClass();
+    this._w = new (getWasmSync() as { WasmWindowDefBuilder: new () => WasmWindowDefBuilderType })
+      .WasmWindowDefBuilder();
   }
 
   /** Set the PARTITION BY expressions. */
@@ -278,37 +255,37 @@ export class WindowDefBuilder {
 
 /** Create a column reference. Supports dotted names like `'users.id'`. */
 export function col(name: string): Expr {
-  return new Expr(wasm_col(name));
+  return new Expr(getWasmSync().wasm_col(name));
 }
 
 /** Create a literal value (string, number, boolean, or null). */
 export function lit(value: string | number | boolean | null): Expr {
-  return new Expr(wasm_lit(value));
+  return new Expr(getWasmSync().wasm_lit(value));
 }
 
 /** Create a star (*) expression. */
 export function star(): Expr {
-  return new Expr(wasm_star());
+  return new Expr(getWasmSync().wasm_star());
 }
 
 /** Create a SQL NULL expression. */
 export function sqlNull(): Expr {
-  return new Expr(wasm_null());
+  return new Expr(getWasmSync().wasm_null());
 }
 
 /** Create a SQL boolean literal. */
 export function boolean(value: boolean): Expr {
-  return new Expr(wasm_boolean(value));
+  return new Expr(getWasmSync().wasm_boolean(value));
 }
 
 /** Create a table reference. Supports dotted names like `'schema.table'`. */
 export function table(name: string): Expr {
-  return new Expr(wasm_table(name));
+  return new Expr(getWasmSync().wasm_table(name));
 }
 
 /** Parse a raw SQL fragment into an expression. */
 export function sqlExpr(sql: string): Expr {
-  return new Expr(wasm_sql_expr(sql));
+  return new Expr(getWasmSync().wasm_sql_expr(sql));
 }
 
 /** Alias for `sqlExpr()` — parse a SQL condition string. */
@@ -318,22 +295,22 @@ export function condition(sql: string): Expr {
 
 /** Create a generic function call expression. */
 export function func(name: string, ...args: ExprInput[]): Expr {
-  return new Expr(wasm_func(name, toWasmArray(args)));
+  return new Expr(getWasmSync().wasm_func(name, toWasmArray(args)));
 }
 
 /** Create a NOT expression. */
 export function not(expr: ExprInput): Expr {
-  return new Expr(wasm_not(toWasm(expr)));
+  return new Expr(getWasmSync().wasm_not(toWasm(expr)));
 }
 
 /** Create a CAST(expr AS type) expression. */
 export function cast(expr: ExprInput, to: string): Expr {
-  return new Expr(wasm_cast(toWasm(expr), to));
+  return new Expr(getWasmSync().wasm_cast(toWasm(expr), to));
 }
 
 /** Create an expr AS name alias expression. */
 export function alias(expr: ExprInput, name: string): Expr {
-  return new Expr(wasm_alias(toWasm(expr), name));
+  return new Expr(getWasmSync().wasm_alias(toWasm(expr), name));
 }
 
 /**
@@ -347,7 +324,7 @@ export function alias(expr: ExprInput, name: string): Expr {
  * ```
  */
 export function subquery(query: SelectBuilder, alias: string): Expr {
-  return new Expr(wasm_subquery(query._w, alias));
+  return new Expr(getWasmSync().wasm_subquery(query._w, alias));
 }
 
 // Variadic logical operators
@@ -359,9 +336,10 @@ export function and(...conditions: ExprInput[]): Expr {
     return conditions[0] instanceof Expr
       ? conditions[0]
       : new Expr(toWasm(conditions[0]));
+  const wasm = getWasmSync();
   let result = toWasm(conditions[0]);
   for (let i = 1; i < conditions.length; i++) {
-    result = wasm_and(result, toWasm(conditions[i]));
+    result = wasm.wasm_and(result, toWasm(conditions[i]));
   }
   return new Expr(result);
 }
@@ -373,9 +351,10 @@ export function or(...conditions: ExprInput[]): Expr {
     return conditions[0] instanceof Expr
       ? conditions[0]
       : new Expr(toWasm(conditions[0]));
+  const wasm = getWasmSync();
   let result = toWasm(conditions[0]);
   for (let i = 1; i < conditions.length; i++) {
-    result = wasm_or(result, toWasm(conditions[i]));
+    result = wasm.wasm_or(result, toWasm(conditions[i]));
   }
   return new Expr(result);
 }
@@ -390,7 +369,7 @@ export function count(expr?: ExprInput): Expr {
   return expr !== undefined ? func('COUNT', expr) : func('COUNT', star());
 }
 export function countDistinct(expr: ExprInput): Expr {
-  return new Expr(wasm_count_distinct(toWasm(expr)));
+  return new Expr(getWasmSync().wasm_count_distinct(toWasm(expr)));
 }
 export function sum(expr: ExprInput): Expr {
   return func('SUM', expr);
@@ -509,7 +488,7 @@ export function currentTimestamp(): Expr {
   return func('CURRENT_TIMESTAMP');
 }
 export function extract(unit: string, from: ExprInput): Expr {
-  return new Expr(wasm_extract(unit, toWasm(from)));
+  return new Expr(getWasmSync().wasm_extract(unit, toWasm(from)));
 }
 
 // -- Window functions --
@@ -546,7 +525,8 @@ export class SelectBuilder {
   _w: WasmSelectBuilderType;
 
   constructor() {
-    this._w = new WasmSelectBuilderClass();
+    this._w = new (getWasmSync() as { WasmSelectBuilder: new () => WasmSelectBuilderType })
+      .WasmSelectBuilder();
   }
 
   /** Add columns to the SELECT list. Accepts Expr, strings (→ col), or '*'. */
@@ -750,7 +730,9 @@ export class InsertBuilder {
   _w: WasmInsertBuilderType;
 
   constructor(tableName: string) {
-    this._w = new WasmInsertBuilderClass(tableName);
+    this._w = new (getWasmSync() as {
+      WasmInsertBuilder: new (tableName: string) => WasmInsertBuilderType;
+    }).WasmInsertBuilder(tableName);
   }
 
   /** Set the target column names. */
@@ -817,7 +799,9 @@ export class UpdateBuilder {
   _w: WasmUpdateBuilderType;
 
   constructor(tableName: string) {
-    this._w = new WasmUpdateBuilderClass(tableName);
+    this._w = new (getWasmSync() as {
+      WasmUpdateBuilder: new (tableName: string) => WasmUpdateBuilderType;
+    }).WasmUpdateBuilder(tableName);
   }
 
   /** Add a SET column = value assignment. */
@@ -878,7 +862,9 @@ export class DeleteBuilder {
   _w: WasmDeleteBuilderType;
 
   constructor(tableName: string) {
-    this._w = new WasmDeleteBuilderClass(tableName);
+    this._w = new (getWasmSync() as {
+      WasmDeleteBuilder: new (tableName: string) => WasmDeleteBuilderType;
+    }).WasmDeleteBuilder(tableName);
   }
 
   /** Set the WHERE clause. */
@@ -934,7 +920,9 @@ export class MergeBuilder {
   _w: WasmMergeBuilderType;
 
   constructor(target: string) {
-    this._w = new WasmMergeBuilderClass(target);
+    this._w = new (getWasmSync() as {
+      WasmMergeBuilder: new (target: string) => WasmMergeBuilderType;
+    }).WasmMergeBuilder(target);
   }
 
   /** Set the source table and ON condition. */
@@ -945,7 +933,9 @@ export class MergeBuilder {
 
   /** Add a WHEN MATCHED THEN UPDATE SET clause. */
   whenMatchedUpdate(assignments: Record<string, ExprInput>): this {
-    const arr = new WasmAssignmentArrayClass();
+    const arr = new (getWasmSync() as {
+      WasmAssignmentArray: new () => WasmAssignmentArrayType;
+    }).WasmAssignmentArray();
     for (const [column, value] of Object.entries(assignments)) {
       arr.push(column, toWasm(value));
     }
@@ -1035,12 +1025,15 @@ export class CaseBuilder {
 
 /** Create a searched CASE builder (CASE WHEN ... THEN ...). */
 export function caseWhen(): CaseBuilder {
-  return new CaseBuilder(new WasmCaseBuilderClass());
+  return new CaseBuilder(
+    new (getWasmSync() as { WasmCaseBuilder: new () => WasmCaseBuilderType })
+      .WasmCaseBuilder(),
+  );
 }
 
 /** Create a simple CASE builder (CASE operand WHEN value THEN ...). */
 export function caseOf(operand: ExprInput): CaseBuilder {
-  return new CaseBuilder(wasm_case_of(toWasm(operand)));
+  return new CaseBuilder(getWasmSync().wasm_case_of(toWasm(operand)));
 }
 
 // ============================================================================

@@ -20,15 +20,7 @@ import type {
   TransformCallback,
   TransformConfig,
 } from './types';
-import {
-  ast_rename_columns,
-  ast_rename_tables,
-  ast_qualify_columns,
-  ast_add_where,
-  ast_remove_where,
-  ast_set_limit,
-  ast_set_distinct,
-} from '../../../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from '../../wasm-loader';
 
 /** Serialize Expression to JSON for WASM functions */
 function exprToJson(node: Expression): string {
@@ -271,7 +263,7 @@ export function renameColumns(
   mapping: Record<string, string>,
 ): Expression {
   const result = parseAstResult(
-    ast_rename_columns(exprToJson(node), JSON.stringify(mapping)),
+    getWasmSync().ast_rename_columns(exprToJson(node), JSON.stringify(mapping)),
   );
   return result ?? node;
 }
@@ -292,7 +284,7 @@ export function renameTables(
   mapping: Record<string, string>,
 ): Expression {
   const result = parseAstResult(
-    ast_rename_tables(exprToJson(node), JSON.stringify(mapping)),
+    getWasmSync().ast_rename_tables(exprToJson(node), JSON.stringify(mapping)),
   );
   return result ?? node;
 }
@@ -312,7 +304,7 @@ export function qualifyColumns(
   tableName: string,
 ): Expression {
   const result = parseAstResult(
-    ast_qualify_columns(exprToJson(node), tableName),
+    getWasmSync().ast_qualify_columns(exprToJson(node), tableName),
   );
   return result ?? node;
 }
@@ -335,7 +327,7 @@ export function addWhere(
   operator: 'and' | 'or' = 'and',
 ): Expression {
   const result = parseAstResult(
-    ast_add_where(exprToJson(node), exprToJson(condition), operator === 'or'),
+    getWasmSync().ast_add_where(exprToJson(node), exprToJson(condition), operator === 'or'),
   );
   return result ?? node;
 }
@@ -344,7 +336,7 @@ export function addWhere(
  * Remove the WHERE clause from a SELECT (via WASM)
  */
 export function removeWhere(node: Expression): Expression {
-  const result = parseAstResult(ast_remove_where(exprToJson(node)));
+  const result = parseAstResult(getWasmSync().ast_remove_where(exprToJson(node)));
   return result ?? node;
 }
 
@@ -405,7 +397,7 @@ export function setLimit(
   limit: number | Expression,
 ): Expression {
   if (typeof limit === 'number') {
-    const result = parseAstResult(ast_set_limit(exprToJson(node), limit));
+    const result = parseAstResult(getWasmSync().ast_set_limit(exprToJson(node), limit));
     return result ?? node;
   }
 
@@ -473,7 +465,7 @@ export function setDistinct(
   node: Expression,
   distinct: boolean = true,
 ): Expression {
-  const result = parseAstResult(ast_set_distinct(exprToJson(node), distinct));
+  const result = parseAstResult(getWasmSync().ast_set_distinct(exprToJson(node), distinct));
   return result ?? node;
 }
 

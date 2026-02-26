@@ -5,8 +5,7 @@
  * between different database dialects (PostgreSQL, MySQL, BigQuery, etc.)
  */
 
-// Import the WASM module - synchronously initialized on import via bundler target
-import * as wasmModule from '../wasm/polyglot_sql_wasm.js';
+import { getWasmSync, isWasmLoaded, loadWasm } from './wasm-loader';
 
 /**
  * Supported SQL dialects
@@ -91,25 +90,6 @@ export interface FormatOptions {
   maxSetOpChain?: number;
 }
 
-type WasmBindings = typeof wasmModule & {
-  transpile_value?: (sql: string, read: string, write: string) => unknown;
-  parse_value?: (sql: string, dialect: string) => unknown;
-  generate_value?: (ast: unknown, dialect: string) => unknown;
-  format_sql_value?: (sql: string, dialect: string) => unknown;
-  format_sql_with_options?: (
-    sql: string,
-    dialect: string,
-    options_json: string,
-  ) => string;
-  format_sql_with_options_value?: (
-    sql: string,
-    dialect: string,
-    options: FormatOptions,
-  ) => unknown;
-  get_dialects_value?: () => unknown;
-};
-
-const wasm = wasmModule as WasmBindings;
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
@@ -150,18 +130,18 @@ function decodeWasmPayload<T>(payload: unknown): T {
 
 /**
  * Initialize the WASM module.
- * With the bundler target, the WASM module is synchronously initialized
- * on import. This function is kept for backwards compatibility.
+ * Must be called before using any other SDK functions (required for CJS).
+ * Safe to call multiple times.
  */
 export async function init(): Promise<void> {
-  return Promise.resolve();
+  await loadWasm();
 }
 
 /**
  * Check if the WASM module is initialized.
  */
 export function isInitialized(): boolean {
-  return true;
+  return isWasmLoaded();
 }
 
 /**
@@ -196,6 +176,7 @@ export function transpile(
   write: Dialect,
 ): TranspileResult {
   try {
+    const wasm = getWasmSync();
     if (typeof wasm.transpile_value === 'function') {
       return decodeWasmPayload<TranspileResult>(
         wasm.transpile_value(sql, read, write),
@@ -226,6 +207,7 @@ export function parse(
   dialect: Dialect = Dialect.Generic,
 ): ParseResult {
   try {
+    const wasm = getWasmSync();
     if (typeof wasm.parse_value === 'function') {
       return decodeWasmPayload<ParseResult>(wasm.parse_value(sql, dialect));
     }
@@ -252,6 +234,7 @@ export function generate(
   dialect: Dialect = Dialect.Generic,
 ): TranspileResult {
   try {
+    const wasm = getWasmSync();
     // Valid parse output is an array of Expression nodes.
     // Keep legacy string path as fallback for non-array inputs
     // (e.g. cyclic objects) to preserve error behavior.
@@ -299,6 +282,7 @@ export function formatWithOptions(
   options: FormatOptions = {},
 ): TranspileResult {
   try {
+    const wasm = getWasmSync();
     if (typeof wasm.format_sql_with_options_value === 'function') {
       return decodeWasmPayload<TranspileResult>(
         wasm.format_sql_with_options_value(sql, dialect, options),
@@ -346,6 +330,7 @@ export function formatWithOptions(
  * ```
  */
 export function getDialects(): string[] {
+  const wasm = getWasmSync();
   if (typeof wasm.get_dialects_value === 'function') {
     return decodeWasmPayload<string[]>(wasm.get_dialects_value());
   }
@@ -358,7 +343,7 @@ export function getDialects(): string[] {
  * @returns Version string
  */
 export function getVersion(): string {
-  return wasm.version();
+  return getWasmSync().version();
 }
 
 /**

@@ -5,7 +5,7 @@
  * (scan, join, aggregate, sort, set operations).
  */
 
-import { plan as wasmPlan } from '../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from './wasm-loader';
 import type { Expression } from './generated/Expression';
 
 export type JoinType = 'inner' | 'left' | 'right' | 'full' | 'cross';
@@ -60,6 +60,7 @@ export interface PlanResult {
  * ```
  */
 export function plan(sql: string, dialect: string = 'generic'): PlanResult {
-  const resultJson = wasmPlan(sql, dialect);
+  const wasm = getWasmSync();
+  const resultJson = wasm.plan(sql, dialect);
   return JSON.parse(resultJson) as PlanResult;
 }

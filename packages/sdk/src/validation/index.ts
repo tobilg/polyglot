@@ -4,7 +4,7 @@
  * Provides syntax and semantic validation for SQL queries.
  */
 
-import * as wasmModule from '../../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from '../wasm-loader';
 import type { Expression } from '../generated/Expression';
 import { validateSemantics } from './rules';
 import type {
@@ -25,12 +25,6 @@ export type {
 // Re-export schema validation
 export { validateWithSchema } from './schema-validator';
 export { ValidationSeverity } from './types';
-
-type WasmBindings = typeof wasmModule & {
-  parse_value?: (sql: string, dialect: string) => unknown;
-};
-
-const wasm = wasmModule as WasmBindings;
 
 function decodeWasmPayload<T>(payload: unknown): T {
   if (typeof payload === 'string') {
@@ -86,6 +80,7 @@ export function validate(
   dialect: ValidateDialect | string = 'generic',
   options: ValidationOptions = {},
 ): ValidationResult {
+  const wasm = getWasmSync();
   // Step 1: Syntax validation via WASM
   const resultJson = options.strictSyntax
     ? wasm.validate_with_options(

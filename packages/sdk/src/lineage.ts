@@ -5,10 +5,7 @@
  * Supports CTEs, derived tables, subqueries, JOINs, and set operations.
  */
 
-import {
-  lineage_sql as wasmLineage,
-  source_tables as wasmSourceTables,
-} from '../wasm/polyglot_sql_wasm.js';
+import { getWasmSync } from './wasm-loader';
 import type { Expression } from './generated/Expression';
 
 /** A node in the column lineage tree */
@@ -56,7 +53,8 @@ export function lineage(
   dialect: string = 'generic',
   trimSelects: boolean = false,
 ): LineageResult {
-  const resultJson = wasmLineage(sql, column, dialect, trimSelects);
+  const wasm = getWasmSync();
+  const resultJson = wasm.lineage_sql(sql, column, dialect, trimSelects);
   return JSON.parse(resultJson) as LineageResult;
 }
 
@@ -78,6 +76,7 @@ export function getSourceTables(
   sql: string,
   dialect: string = 'generic',
 ): SourceTablesResult {
-  const resultJson = wasmSourceTables(sql, column, dialect);
+  const wasm = getWasmSync();
+  const resultJson = wasm.source_tables(sql, column, dialect);
   return JSON.parse(resultJson) as SourceTablesResult;
 }
