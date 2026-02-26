@@ -15,9 +15,9 @@ use polyglot_sql::{
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
     FormatGuardOptions as CoreFormatGuardOptions,
-    SchemaValidationOptions as CoreSchemaValidationOptions,
-    Token, ValidationOptions as CoreValidationOptions,
-    ValidationResult as CoreValidationResult, ValidationSchema as CoreValidationSchema,
+    SchemaValidationOptions as CoreSchemaValidationOptions, Token,
+    ValidationOptions as CoreValidationOptions, ValidationResult as CoreValidationResult,
+    ValidationSchema as CoreValidationSchema,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -138,8 +138,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 error: Some(format!("Invalid read dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             };
         }
     };
@@ -153,8 +153,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 error: Some(format!("Invalid write dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             };
         }
     };
@@ -176,8 +176,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
-                error_start: e.start(),
-        error_end: e.end(),
+            error_start: e.start(),
+            error_end: e.end(),
         },
     }
 }
@@ -252,8 +252,8 @@ fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             };
         }
     };
@@ -275,8 +275,8 @@ fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
-                error_start: e.start(),
-        error_end: e.end(),
+            error_start: e.start(),
+            error_end: e.end(),
         },
     }
 }
@@ -311,8 +311,8 @@ pub fn generate_value(ast: JsValue, dialect: &str) -> JsValue {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             });
         }
     };
@@ -346,8 +346,8 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             };
         }
     };
@@ -393,8 +393,8 @@ fn generate_from_expressions_with_dialect(
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
-                error_start: e.start(),
-        error_end: e.end(),
+            error_start: e.start(),
+            error_end: e.end(),
         },
     }
 }
@@ -572,8 +572,8 @@ fn format_sql_internal(
                 error: Some(e.to_string()),
                 error_line: e.line(),
                 error_column: e.column(),
-                        error_start: e.start(),
-            error_end: e.end(),
+                error_start: e.start(),
+                error_end: e.end(),
             };
         }
     };
@@ -599,8 +599,8 @@ fn format_sql_internal(
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
-                error_start: e.start(),
-        error_end: e.end(),
+            error_start: e.start(),
+            error_end: e.end(),
         },
     }
 }

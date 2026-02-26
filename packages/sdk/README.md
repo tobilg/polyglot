@@ -766,6 +766,44 @@ For browser use without a bundler:
 </script>
 ```
 
+## CommonJS (CJS) Usage
+
+For Node.js projects using `require()`, the SDK ships a CJS build. Since WASM cannot be loaded synchronously, you must call `init()` before using any other function:
+
+```javascript
+const { init, transpile, parse, select, col, lit, isInitialized } = require('@polyglot-sql/sdk');
+
+async function main() {
+  await init();
+
+  // Now all functions work
+  const result = transpile('SELECT IFNULL(a, b)', 'mysql', 'postgresql');
+  console.log(result.sql[0]); // SELECT COALESCE(a, b)
+
+  const parsed = parse('SELECT 1', 'generic');
+  console.log(parsed.success); // true
+
+  const sql = select('id', 'name').from('users')
+    .where(col('id').eq(lit(1)))
+    .toSql();
+  console.log(sql); // SELECT id, name FROM users WHERE id = 1
+}
+
+main();
+```
+
+You can check initialization status with `isInitialized()`:
+
+```javascript
+const { init, isInitialized } = require('@polyglot-sql/sdk');
+
+console.log(isInitialized()); // false
+await init();
+console.log(isInitialized()); // true
+```
+
+> **Note:** The ESM build (`import`) auto-initializes via top-level `await`, so `init()` is not required there. The CJS build requires it because `require()` is synchronous.
+
 ## License
 
 [MIT](../../LICENSE)

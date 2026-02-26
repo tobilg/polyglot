@@ -1779,9 +1779,9 @@ impl CustomDialectBuilder {
 use std::str::FromStr;
 
 fn register_custom_dialect(config: CustomDialectConfig) -> Result<()> {
-    let mut registry = CUSTOM_DIALECT_REGISTRY
-        .write()
-        .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0, 0, 0))?;
+    let mut registry = CUSTOM_DIALECT_REGISTRY.write().map_err(|e| {
+        crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0, 0, 0)
+    })?;
 
     if registry.contains_key(&config.name) {
         return Err(crate::error::Error::parse(
@@ -31472,12 +31472,19 @@ mod tests {
 
     #[test]
     fn test_generate_date_array_snowflake() {
-        let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
-            "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
-            DialectType::Snowflake,
-        ).unwrap();
-        eprintln!("GDA -> Snowflake: {}", result[0]);
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let dialect = Dialect::get(DialectType::Generic);
+                let result = dialect.transpile_to(
+                    "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+                    DialectType::Snowflake,
+                ).unwrap();
+                eprintln!("GDA -> Snowflake: {}", result[0]);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

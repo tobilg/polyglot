@@ -155,7 +155,7 @@ macro_rules! transpile_test_fn {
         #[test]
         fn $test_name() {
             let handle = std::thread::Builder::new()
-                .stack_size(8 * 1024 * 1024) // 8MB stack
+                .stack_size(16 * 1024 * 1024) // 16MB stack (debug builds need more due to large Expression enum frames)
                 .spawn(|| {
                     let results = run_dialect_transpilation_tests($dialect);
                     results.print_summary(&format!("{} Transpilation", $dialect.to_uppercase()));
@@ -196,39 +196,48 @@ mod dialect_pairs {
     use super::*;
 
     fn test_dialect_pair(source: &str, target: &str) {
-        let fixture = match DIALECT_FIXTURES.get(source) {
-            Some(f) => f,
-            None => {
-                println!("Skipping {} -> {} - fixtures not available", source, target);
-                return;
-            }
-        };
+        let source = source.to_string();
+        let target = target.to_string();
+        // Use larger stack to avoid overflow in debug builds
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || {
+                let fixture = match DIALECT_FIXTURES.get(source.as_str()) {
+                    Some(f) => f,
+                    None => {
+                        println!("Skipping {} -> {} - fixtures not available", source, target);
+                        return;
+                    }
+                };
 
-        let source_type = match parse_dialect(&fixture.dialect) {
-            Some(d) => d,
-            None => return,
-        };
+                let source_type = match parse_dialect(&fixture.dialect) {
+                    Some(d) => d,
+                    None => return,
+                };
 
-        let target_type = match parse_dialect(target) {
-            Some(d) => d,
-            None => return,
-        };
+                let target_type = match parse_dialect(&target) {
+                    Some(d) => d,
+                    None => return,
+                };
 
-        let mut results = TestResults::default();
+                let mut results = TestResults::default();
 
-        for (i, test) in fixture.transpilation.iter().enumerate() {
-            if let Some(expected) = test.write.get(target) {
-                let test_id = format!("{}->{}:{}", source, target, i);
-                let result = transpile_test(&test.sql, source_type, target_type, expected);
-                results.record(&test_id, result);
-            }
-        }
+                for (i, test) in fixture.transpilation.iter().enumerate() {
+                    if let Some(expected) = test.write.get(target.as_str()) {
+                        let test_id = format!("{}->{}:{}", source, target, i);
+                        let result = transpile_test(&test.sql, source_type, target_type, expected);
+                        results.record(&test_id, result);
+                    }
+                }
 
-        results.print_summary(&format!(
-            "{} -> {}",
-            source.to_uppercase(),
-            target.to_uppercase()
-        ));
+                results.print_summary(&format!(
+                    "{} -> {}",
+                    source.to_uppercase(),
+                    target.to_uppercase()
+                ));
+            })
+            .unwrap();
+        handle.join().unwrap();
     }
 
     #[test]
@@ -267,10 +276,6 @@ mod dialect_pairs {
     }
 
     #[test]
-    #[cfg_attr(
-        debug_assertions,
-        ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
-    )]
     fn test_postgres_to_duckdb() {
         test_dialect_pair("postgres", "duckdb");
     }

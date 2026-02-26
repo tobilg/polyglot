@@ -329,14 +329,17 @@ mod nesting_tests {
     }
 
     #[test]
-    #[cfg_attr(
-        debug_assertions,
-        ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
-    )]
     fn test_complex_nested_expression() {
-        let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
-        let result = Parser::parse_sql(sql);
-        assert!(result.is_ok(), "Complex nested math should parse");
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
+                let result = Parser::parse_sql(sql);
+                assert!(result.is_ok(), "Complex nested math should parse");
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 

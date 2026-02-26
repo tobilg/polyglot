@@ -120,9 +120,9 @@ impl Error {
     /// Get the end byte offset if available
     pub fn end(&self) -> Option<usize> {
         match self {
-            Error::Tokenize { end, .. }
-            | Error::Parse { end, .. }
-            | Error::Syntax { end, .. } => Some(*end),
+            Error::Tokenize { end, .. } | Error::Parse { end, .. } | Error::Syntax { end, .. } => {
+                Some(*end)
+            }
             _ => None,
         }
     }

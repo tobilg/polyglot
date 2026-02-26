@@ -11509,12 +11509,25 @@ impl Parser {
             }
         }
 
+        // BigQuery (and others): CREATE TABLE t PARTITION BY ... CLUSTER BY ... OPTIONS(...) AS (SELECT ...)
+        // When there are no column definitions, skip straight to property/AS parsing
+        let no_column_defs = !self.check(TokenType::LParen)
+            && (self.check(TokenType::Partition)
+                || self.check(TokenType::PartitionBy)
+                || self.check(TokenType::Cluster)
+                || self.check_identifier("OPTIONS")
+                || self.check(TokenType::As));
+
         // Parse column definitions
-        self.expect(TokenType::LParen)?;
+        if !no_column_defs {
+            self.expect(TokenType::LParen)?;
+        }
 
         // For DYNAMIC TABLE, column list contains only names without types
         // e.g., CREATE DYNAMIC TABLE t (col1, col2, col3) TARGET_LAG=... AS SELECT ...
-        let (columns, constraints) = if table_modifier == Some("DYNAMIC") {
+        let (columns, constraints) = if no_column_defs {
+            (Vec::new(), Vec::new())
+        } else if table_modifier == Some("DYNAMIC") {
             // Check if this looks like a simple column name list (just identifiers separated by commas)
             // by peeking ahead - if next token after identifier is comma or rparen, it's a name-only list
             let saved = self.current;
@@ -11555,7 +11568,9 @@ impl Parser {
             self.parse_column_definitions()?
         };
 
-        self.expect(TokenType::RParen)?;
+        if !no_column_defs {
+            self.expect(TokenType::RParen)?;
+        }
 
         // Parse COMMENT before WITH properties (Presto: CREATE TABLE x (...) COMMENT 'text' WITH (...))
         let pre_with_comment = if self.check(TokenType::Comment) {
@@ -12097,7 +12112,8 @@ impl Parser {
         }
 
         // Handle AS SELECT after columns/WITH (CTAS with column definitions)
-        let as_select = if self.match_token(TokenType::As) {
+        // When there are no column definitions, AS comes after PARTITION BY/CLUSTER BY/OPTIONS
+        let as_select = if !no_column_defs && self.match_token(TokenType::As) {
             Some(self.parse_statement()?)
         } else {
             None
@@ -12314,6 +12330,22 @@ impl Parser {
                 sql: format!("CLUSTER BY {}", cluster_names.join(", ")),
             }));
         }
+
+        // No-column-defs path: OPTIONS and AS SELECT come after PARTITION BY / CLUSTER BY
+        if no_column_defs {
+            if self.match_identifier("OPTIONS") {
+                let options = self.parse_options_list()?;
+                table_properties.push(Expression::Properties(Box::new(Properties {
+                    expressions: options,
+                })));
+            }
+        }
+
+        let as_select = if no_column_defs && self.match_token(TokenType::As) {
+            Some(self.parse_statement()?)
+        } else {
+            as_select
+        };
 
         // For EXTERNAL tables, parse additional Snowflake options that may come after PARTITION BY
         // (location=@s2/logs/, partition_type = user_specified, file_format = (...), etc.)

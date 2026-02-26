@@ -1,17 +1,21 @@
 {
   "name": "@polyglot-sql/sdk",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "SQL dialect translator powered by WebAssembly",
   "type": "module",
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "unpkg": "./dist/cdn/polyglot.esm.js",
   "jsdelivr": "./dist/cdn/polyglot.esm.js",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": {
+        "import": "./dist/index.d.ts",
+        "require": "./dist/index.d.cts"
+      },
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./cdn": {
       "types": "./dist/index.d.ts",
@@ -26,10 +30,11 @@
     "build:bindings": "cd ../.. && make generate-bindings",
     "build:wasm": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm",
     "build:esm": "vite build",
+    "build:cjs": "vite build --config vite.config.cjs.ts && cp dist/index.d.ts dist/index.d.cts",
     "build:umd": "vite build --config vite.config.umd.ts",
     "build:dialect": "vite build --config vite.config.dialect.ts",
     "build:dialects": "for d in postgresql mysql bigquery snowflake duckdb tsql clickhouse; do POLYGLOT_DIALECT=$d pnpm run build:dialect; done",
-    "build": "pnpm run build:esm && pnpm run build:umd",
+    "build": "pnpm run build:esm && pnpm run build:cjs && pnpm run build:umd",
     "build:all": "pnpm run build && pnpm run build:dialects",
     "test": "vitest run",
     "test:watch": "vitest",

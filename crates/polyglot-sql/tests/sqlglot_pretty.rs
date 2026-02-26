@@ -35,68 +35,76 @@ static PRETTY_FIXTURES: Lazy<Option<PrettyFixtures>> = Lazy::new(|| {
 
 /// Test all pretty-print fixtures
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
-)]
 fn test_sqlglot_pretty_all() {
-    let fixtures = match PRETTY_FIXTURES.as_ref() {
-        Some(f) => f,
-        None => {
-            println!("Skipping pretty tests - fixtures not available");
-            println!("Run `make extract-fixtures && make setup-fixtures` to set up test fixtures");
-            return;
-        }
-    };
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let fixtures = match PRETTY_FIXTURES.as_ref() {
+                Some(f) => f,
+                None => {
+                    println!("Skipping pretty tests - fixtures not available");
+                    println!(
+                        "Run `make extract-fixtures && make setup-fixtures` to set up test fixtures"
+                    );
+                    return;
+                }
+            };
 
-    println!("Found {} pretty test cases", fixtures.tests.len());
+            println!("Found {} pretty test cases", fixtures.tests.len());
 
-    let mut results = TestResults::default();
+            let mut results = TestResults::default();
 
-    for test in &fixtures.tests {
-        let test_id = format!("pretty:{}", test.line);
-        let result = pretty_test(&test.input, &test.expected);
-        results.record_with_sql(&test_id, &test.input, test.line, result);
-    }
+            for test in &fixtures.tests {
+                let test_id = format!("pretty:{}", test.line);
+                let result = pretty_test(&test.input, &test.expected);
+                results.record_with_sql(&test_id, &test.input, test.line, result);
+            }
 
-    results.print_summary("SQLGlot Pretty-Print");
+            results.print_summary("SQLGlot Pretty-Print");
 
-    let min_pass_rate = 1.0; // 100% required
+            let min_pass_rate = 1.0; // 100% required
 
-    assert!(
-        results.pass_rate() >= min_pass_rate,
-        "Pass rate {:.1}% is below threshold {:.1}%",
-        results.pass_rate() * 100.0,
-        min_pass_rate * 100.0
-    );
+            assert!(
+                results.pass_rate() >= min_pass_rate,
+                "Pass rate {:.1}% is below threshold {:.1}%",
+                results.pass_rate() * 100.0,
+                min_pass_rate * 100.0
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 /// Test a sample of pretty-print fixtures for quick verification
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "Stack overflow in debug builds due to large stack frames - passes in release mode"
-)]
 fn test_sqlglot_pretty_sample() {
-    let fixtures = match PRETTY_FIXTURES.as_ref() {
-        Some(f) => f,
-        None => {
-            println!("Skipping pretty sample tests - fixtures not available");
-            return;
-        }
-    };
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let fixtures = match PRETTY_FIXTURES.as_ref() {
+                Some(f) => f,
+                None => {
+                    println!("Skipping pretty sample tests - fixtures not available");
+                    return;
+                }
+            };
 
-    // Test first 10 fixtures as a quick check
-    let sample_size = 10.min(fixtures.tests.len());
-    let mut results = TestResults::default();
+            // Test first 10 fixtures as a quick check
+            let sample_size = 10.min(fixtures.tests.len());
+            let mut results = TestResults::default();
 
-    for test in fixtures.tests.iter().take(sample_size) {
-        let test_id = format!("pretty:{}", test.line);
-        let result = pretty_test(&test.input, &test.expected);
-        results.record(&test_id, result);
-    }
+            for test in fixtures.tests.iter().take(sample_size) {
+                let test_id = format!("pretty:{}", test.line);
+                let result = pretty_test(&test.input, &test.expected);
+                results.record(&test_id, result);
+            }
 
-    results.print_summary("SQLGlot Pretty-Print (Sample)");
+            results.print_summary("SQLGlot Pretty-Print (Sample)");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 /// Debug test for the 3 remaining failing pretty-print cases

@@ -157,15 +157,33 @@ fn bench_rust_parse_quick_equivalent(c: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(500));
     group.measurement_time(Duration::from_secs(3));
 
-    group.bench_with_input(BenchmarkId::new("parse_one", "short"), &SQLGLOT_SHORT, |b, sql| {
-        b.iter(|| parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed"))
-    });
-    group.bench_with_input(BenchmarkId::new("parse_one", "long"), &SQLGLOT_LONG, |b, sql| {
-        b.iter(|| parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed"))
-    });
-    group.bench_with_input(BenchmarkId::new("parse_one", "tpch"), &SQLGLOT_TPCH, |b, sql| {
-        b.iter(|| parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed"))
-    });
+    group.bench_with_input(
+        BenchmarkId::new("parse_one", "short"),
+        &SQLGLOT_SHORT,
+        |b, sql| {
+            b.iter(|| {
+                parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed")
+            })
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("parse_one", "long"),
+        &SQLGLOT_LONG,
+        |b, sql| {
+            b.iter(|| {
+                parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed")
+            })
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("parse_one", "tpch"),
+        &SQLGLOT_TPCH,
+        |b, sql| {
+            b.iter(|| {
+                parse_one(black_box(sql), DialectType::Generic).expect("parse should succeed")
+            })
+        },
+    );
 
     let crazy = build_crazy_query();
     group.bench_with_input(BenchmarkId::new("parse_one", "crazy"), &crazy, |b, sql| {
