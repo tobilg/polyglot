@@ -462,9 +462,37 @@ const cartesian = validateWithSchema(
 );
 ```
 
+## Tokenize
+
+Access the raw SQL token stream with full source position spans. Useful for syntax highlighting, custom linters, or editor integrations.
+
+```typescript
+import { tokenize, Dialect } from '@polyglot-sql/sdk';
+
+const result = tokenize('SELECT a, b FROM t', Dialect.Generic);
+if (result.success) {
+  for (const token of result.tokens!) {
+    console.log(token.tokenType, token.text, token.span);
+    // "Select" "SELECT" { start: 0, end: 6, line: 1, column: 1 }
+    // "Var"    "a"      { start: 7, end: 8, line: 1, column: 8 }
+    // ...
+  }
+}
+```
+
+Each token includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tokenType` | `string` | Token type name (e.g. `"Select"`, `"Var"`, `"Comma"`) |
+| `text` | `string` | Raw source text of the token |
+| `span` | `SpanInfo` | Source position: `start`/`end` byte offsets, `line`/`column` (1-based) |
+| `comments` | `string[]` | Leading comments attached to this token |
+| `trailingComments` | `string[]` | Trailing comments attached to this token |
+
 ## Error Reporting
 
-Parse and transpile errors include source position information, making it easy to highlight errors in editors or show precise error messages.
+Parse, transpile, and tokenize errors include source position information with both line/column and byte offset ranges, making it easy to highlight errors in editors or show precise error messages.
 
 ```typescript
 import { parse, transpile, Dialect } from '@polyglot-sql/sdk';
@@ -474,15 +502,19 @@ if (!result.success) {
   console.log(result.error);       // "Parse error at line 1, column 11: ..."
   console.log(result.errorLine);   // 1
   console.log(result.errorColumn); // 11
+  console.log(result.errorStart);  // 10 (byte offset)
+  console.log(result.errorEnd);    // 11 (byte offset, exclusive)
 }
 ```
 
-Both `ParseResult` and `TranspileResult` include optional position fields:
+`ParseResult`, `TranspileResult`, and `TokenizeResult` include optional position fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `errorLine` | `number \| undefined` | 1-based line number where the error occurred |
 | `errorColumn` | `number \| undefined` | 1-based column number where the error occurred |
+| `errorStart` | `number \| undefined` | Start byte offset of the error range (0-based) |
+| `errorEnd` | `number \| undefined` | End byte offset of the error range (exclusive) |
 
 These fields are only present when `success` is `false`. On success, they are `undefined`.
 
@@ -582,6 +614,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | `generate(ast, dialect?)` | Generate SQL from AST |
 | `format(sql, dialect?)` | Pretty-print SQL |
 | `formatWithOptions(sql, dialect?, options?)` | Pretty-print SQL with guard overrides |
+| `tokenize(sql, dialect?)` | Tokenize SQL into a token stream with source spans |
 | `validate(sql, dialect?, options?)` | Validate SQL syntax/semantics |
 | `validateWithSchema(sql, schema, dialect?, options?)` | Validate against a database schema |
 | `getDialects()` | List supported dialect names |

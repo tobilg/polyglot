@@ -12,7 +12,7 @@
         build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
         develop-python test-python build-python typecheck-python \
         python-docs-build python-docs-preview python-docs-deploy \
-        bench-compare bench-rust bench-python bench-parse bench-parse-quick bench-parse-full \
+        bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
         bump-version
@@ -74,6 +74,7 @@ help:
 	@echo "Benchmarks:"
 	@echo "  make bench-compare       - Compare polyglot-sql vs sqlglot performance"
 	@echo "  make bench-rust          - Run Rust benchmarks (JSON output)"
+	@echo "  make bench-rust-parsing-report - Run rust_parsing bench + generate Markdown report"
 	@echo "  make bench-python        - Run Python sqlglot benchmarks (JSON output)"
 	@echo "  make bench-parse         - Parse benchmark (core-only: polyglot + sqlglot)"
 	@echo "  make bench-parse-quick   - Parse benchmark fast mode (core-only + quick)"
@@ -309,6 +310,18 @@ bench-compare:
 # Run Rust benchmarks (JSON output)
 bench-rust:
 	@cargo run --example bench_json -p polyglot-sql --release
+
+# Run rust_parsing Criterion bench and render Markdown summary report
+bench-rust-parsing-report:
+	@cargo bench -p polyglot-sql --bench rust_parsing -- --noplot
+	@uv run python3 tools/bench-compare/criterion_to_markdown.py \
+		--criterion-dir target/criterion \
+		--group rust_parse_quick_equivalent/parse_one \
+		--queries short,long,tpch,crazy \
+		--title "Rust Parsing Benchmark Report" \
+		--output target/criterion/rust_parsing_report.md
+	@echo "Wrote target/criterion/rust_parsing_report.md"
+	@cat target/criterion/rust_parsing_report.md
 
 # Run Python sqlglot benchmarks (JSON output)
 bench-python:

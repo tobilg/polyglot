@@ -343,6 +343,7 @@ cargo +nightly fuzz run fuzz_transpile
 | `make test-rust-clickhouse-coverage` | Run ClickHouse coverage suite (report-only) |
 | `make test-compare` | Compare against Python sqlglot |
 | `make bench-compare` | Performance comparison |
+| `make bench-rust-parsing-report` | Run `rust_parsing` bench and generate Markdown report |
 | `make bench-parse` | Core parse benchmark (polyglot vs sqlglot) |
 | `make bench-parse-quick` | Faster core parse benchmark mode |
 | `make bench-parse-full` | Parse benchmark including optional parsers |
@@ -359,7 +360,32 @@ cargo +nightly fuzz run fuzz_transpile
 | `make playground-deploy` | Deploy playground to Cloudflare Pages |
 | `make clean` | Remove all build artifacts |
 
+## Rust Parsing Markdown Report
+
+For a release-note friendly summary of the pure Rust parse benchmark (`short`, `long`, `tpch`, `crazy`), run:
+
+```bash
+make bench-rust-parsing-report
+```
+
+This will:
+- run `cargo bench -p polyglot-sql --bench rust_parsing`
+- read Criterion results from `target/criterion/rust_parse_quick_equivalent/parse_one`
+- generate `target/criterion/rust_parsing_report.md` with a Markdown table (mean, std dev, 95% CI, baseline delta if available)
+
+Latest generated result snapshot:
+
+- Generated: 2026-02-26 13:43:10 UTC
+- Source: `target/criterion/rust_parse_quick_equivalent/parse_one`
+
+| Query | Mean | Std Dev | 95% CI (mean) | Change vs baseline |
+|---|---:|---:|---:|---:|
+| short | 51.28 us | 481.03 ns | 51.09 us - 51.60 us | -8.40% |
+| long | 259.61 us | 666.53 ns | 259.23 us - 260.01 us | -5.21% |
+| tpch | 268.59 us | 776.85 ns | 268.15 us - 269.07 us | -0.03% |
+| crazy | 1.03 ms | 66.07 us | 992.65 us - 1.07 ms | +6.05% |
+
 ## Licenses
 
-[MIT](LICENSE)
+[MIT](LICENSE)  
 [sqlglot MIT](licenses/SQLGLOT_LICENSE.md)

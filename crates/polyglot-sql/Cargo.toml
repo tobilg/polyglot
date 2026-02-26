@@ -95,3 +95,7 @@ harness = false
 [[bench]]
 name = "in_list"
 harness = false
+
+[[bench]]
+name = "rust_parsing"
+harness = false

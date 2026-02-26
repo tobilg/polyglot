@@ -7,6 +7,7 @@ mod helpers;
 mod lineage;
 mod optimize;
 mod parse;
+mod tokenize;
 mod transpile;
 mod types;
 mod validate;
@@ -25,6 +26,7 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lineage::lineage, m)?)?;
     m.add_function(wrap_pyfunction!(lineage::source_tables, m)?)?;
     m.add_function(wrap_pyfunction!(diff::diff, m)?)?;
+    m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::dialects, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::version, m)?)?;
 

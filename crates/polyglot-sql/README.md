@@ -232,22 +232,51 @@ Schema-aware validation emits stable codes such as:
 - `E210-E217` and `W210-W216` for type checks
 - `E220`, `E221`, `W220`, `W221`, `W222` for reference/FK checks
 
+### Tokenize
+
+Access the raw token stream with full source position spans. Each token carries a `Span` with byte offsets and line/column numbers.
+
+```rust
+use polyglot_sql::{DialectType, Dialect};
+
+let dialect = Dialect::new(DialectType::Generic);
+let tokens = dialect.tokenize("SELECT a, b FROM t").unwrap();
+
+for token in &tokens {
+    println!("{:?} {:?} {:?}", token.token_type, token.text, token.span);
+    // Select "SELECT" Span { start: 0, end: 6, line: 1, column: 1 }
+    // Var    "a"      Span { start: 7, end: 8, line: 1, column: 8 }
+    // ...
+}
+```
+
+The `Span` struct provides:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `start` | `usize` | Start byte offset (0-based) |
+| `end` | `usize` | End byte offset (exclusive) |
+| `line` | `usize` | Line number (1-based) |
+| `column` | `usize` | Column number (1-based) |
+
 ### Error Reporting
 
-Parse and tokenize errors include source position information (line and column numbers), making it straightforward to provide precise error feedback.
+Parse and tokenize errors include source position information with line/column numbers and byte offset ranges, making it straightforward to provide precise error feedback.
 
 ```rust
 use polyglot_sql::{parse, DialectType};
 
 let result = parse("SELECT 1 +", DialectType::Generic);
 if let Err(e) = result {
-    println!("{}", e);          // "Parse error at line 1, column 11: ..."
+    println!("{}", e);            // "Parse error at line 1, column 11: ..."
     println!("{:?}", e.line());   // Some(1)
     println!("{:?}", e.column()); // Some(11)
+    println!("{:?}", e.start());  // Some(10) — byte offset
+    println!("{:?}", e.end());    // Some(11) — byte offset (exclusive)
 }
 ```
 
-The `Error` enum provides `line()` and `column()` accessors that return `Option<usize>` for `Parse`, `Tokenize`, and `Syntax` error variants:
+The `Error` enum provides `line()`, `column()`, `start()`, and `end()` accessors that return `Option<usize>` for `Parse`, `Tokenize`, and `Syntax` error variants:
 
 ```rust
 use polyglot_sql::error::Error;
