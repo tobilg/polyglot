@@ -313,17 +313,17 @@ bench-python:
 
 # Parse benchmark (core): polyglot-sql (Rust/PyO3) vs sqlglot (C tokenizer) via pyperf
 bench-parse:
-	@uv sync --project tools/bench-compare && \
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only
 
 # Parse benchmark (core/quick): faster but less stable timings
 bench-parse-quick:
-	@uv sync --project tools/bench-compare && \
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only --quick
 
 # Parse benchmark (full): include optional third-party parsers when available
 bench-parse-full:
-	@uv sync --project tools/bench-compare && \
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet
 
 # =============================================================================
