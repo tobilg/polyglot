@@ -36,6 +36,7 @@
 *.exe
 *.out
 *.app
+examples/c/polyglot_example
 
 # debug information files
 *.dwo

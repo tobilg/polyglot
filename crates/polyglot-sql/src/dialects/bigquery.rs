@@ -48,6 +48,8 @@ impl DialectImpl for BigQueryDialect {
         config.hex_number_strings = true;
         // BigQuery: 0xA represents integer 10 (not binary/blob)
         config.hex_string_is_integer_type = true;
+        // BigQuery supports # as single-line comments.
+        config.hash_comments = true;
         config
     }
 
@@ -1383,6 +1385,7 @@ impl BigQueryDialect {
 mod tests {
     use super::*;
     use crate::dialects::Dialect;
+    use crate::parse_one;
 
     fn transpile_to_bigquery(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
@@ -1592,5 +1595,13 @@ mod tests {
     fn test_last_day_week_modifier_stripped() {
         // WEEK(SUNDAY) should become WEEK in BigQuery LAST_DAY function
         bigquery_identity("LAST_DAY(col, WEEK(MONDAY))", "LAST_DAY(col, WEEK)");
+    }
+
+    #[test]
+    fn test_hash_line_comment_parses() {
+        // Regression test for issue #38:
+        // BigQuery should accept # as a single-line comment.
+        let result = parse_one("SELECT 1 as a #hello world", DialectType::BigQuery);
+        assert!(result.is_ok(), "Expected parse to succeed, got: {result:?}");
     }
 }

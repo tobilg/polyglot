@@ -732,7 +732,9 @@ pub enum Expression {
     OnProperty(Box<OnProperty>),
     OnCommitProperty(Box<OnCommitProperty>),
     PartitionedByProperty(Box<PartitionedByProperty>),
+    PartitionByProperty(Box<PartitionByProperty>),
     PartitionedByBucket(Box<PartitionedByBucket>),
+    ClusterByColumnsProperty(Box<ClusterByColumnsProperty>),
     PartitionByTruncate(Box<PartitionByTruncate>),
     PartitionByRangeProperty(Box<PartitionByRangeProperty>),
     PartitionByRangePropertyDynamic(Box<PartitionByRangePropertyDynamic>),
@@ -779,6 +781,7 @@ pub enum Expression {
     EncodeProperty(Box<EncodeProperty>),
     IncludeProperty(Box<IncludeProperty>),
     Properties(Box<Properties>),
+    OptionsProperty(Box<OptionsProperty>),
     InputOutputFormat(Box<InputOutputFormat>),
     Reference(Box<Reference>),
     QueryOption(Box<QueryOption>),
@@ -9054,12 +9057,28 @@ pub struct PartitionedByProperty {
     pub this: Box<Expression>,
 }
 
+/// BigQuery PARTITION BY property in CREATE TABLE statements.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct PartitionByProperty {
+    #[serde(default)]
+    pub expressions: Vec<Expression>,
+}
+
 /// PartitionedByBucket
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionedByBucket {
     pub this: Box<Expression>,
     pub expression: Box<Expression>,
+}
+
+/// BigQuery CLUSTER BY property in CREATE TABLE statements.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct ClusterByColumnsProperty {
+    #[serde(default)]
+    pub columns: Vec<Identifier>,
 }
 
 /// PartitionByTruncate
@@ -9512,6 +9531,22 @@ pub struct IncludeProperty {
 pub struct Properties {
     #[serde(default)]
     pub expressions: Vec<Expression>,
+}
+
+/// Key/value pair in a BigQuery OPTIONS (...) clause.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct OptionEntry {
+    pub key: Identifier,
+    pub value: Expression,
+}
+
+/// Typed BigQuery OPTIONS (...) property for CREATE TABLE and related DDL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct OptionsProperty {
+    #[serde(default)]
+    pub entries: Vec<OptionEntry>,
 }
 
 /// InputOutputFormat

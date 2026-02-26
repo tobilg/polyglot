@@ -3365,6 +3365,7 @@ impl Generator {
             Expression::ChecksumProperty(e) => self.generate_checksum_property(e),
             Expression::Clone(e) => self.generate_clone(e),
             Expression::ClusterBy(e) => self.generate_cluster_by(e),
+            Expression::ClusterByColumnsProperty(e) => self.generate_cluster_by_columns_property(e),
             Expression::ClusteredByProperty(e) => self.generate_clustered_by_property(e),
             Expression::CollateProperty(e) => self.generate_collate_property(e),
             Expression::ColumnConstraint(e) => self.generate_column_constraint(e),
@@ -3624,6 +3625,7 @@ impl Generator {
             Expression::PartitionByTruncate(e) => self.generate_partition_by_truncate(e),
             Expression::PartitionList(e) => self.generate_partition_list(e),
             Expression::PartitionRange(e) => self.generate_partition_range(e),
+            Expression::PartitionByProperty(e) => self.generate_partition_by_property(e),
             Expression::PartitionedByBucket(e) => self.generate_partitioned_by_bucket(e),
             Expression::PartitionedByProperty(e) => self.generate_partitioned_by_property(e),
             Expression::PartitionedOfProperty(e) => self.generate_partitioned_of_property(e),
@@ -3640,6 +3642,7 @@ impl Generator {
             }
             Expression::PathColumnConstraint(e) => self.generate_path_column_constraint(e),
             Expression::ProjectionDef(e) => self.generate_projection_def(e),
+            Expression::OptionsProperty(e) => self.generate_options_property(e),
             Expression::Properties(e) => self.generate_properties(e),
             Expression::Property(e) => self.generate_property(e),
             Expression::PseudoType(e) => self.generate_pseudo_type(e),
@@ -24806,6 +24809,19 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_cluster_by_columns_property(&mut self, e: &ClusterByColumnsProperty) -> Result<()> {
+        // BigQuery table property: CLUSTER BY col1, col2
+        self.write_keyword("CLUSTER BY");
+        self.write_space();
+        for (i, col) in e.columns.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_identifier(col)?;
+        }
+        Ok(())
+    }
+
     fn generate_clustered_by_property(&mut self, e: &ClusteredByProperty) -> Result<()> {
         // Python: return f"CLUSTERED BY ({expressions}){sorted_by} INTO {buckets} BUCKETS"
         self.write_keyword("CLUSTERED BY");
@@ -30767,6 +30783,19 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_partition_by_property(&mut self, e: &PartitionByProperty) -> Result<()> {
+        // BigQuery table property: PARTITION BY expression [, expression ...]
+        self.write_keyword("PARTITION BY");
+        self.write_space();
+        for (i, expr) in e.expressions.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(expr)?;
+        }
+        Ok(())
+    }
+
     fn generate_partitioned_by_property(&mut self, e: &PartitionedByProperty) -> Result<()> {
         // PARTITIONED BY this (Teradata/ClickHouse use PARTITION BY)
         if matches!(
@@ -30983,6 +31012,45 @@ impl Generator {
         if let Some(value) = &e.value {
             self.write("=");
             self.generate_expression(value)?;
+        }
+        Ok(())
+    }
+
+    fn generate_options_property(&mut self, e: &OptionsProperty) -> Result<()> {
+        self.write_keyword("OPTIONS");
+        if e.entries.is_empty() {
+            self.write(" ()");
+            return Ok(());
+        }
+
+        if self.config.pretty {
+            self.write(" (");
+            self.write_newline();
+            self.indent_level += 1;
+            for (i, entry) in e.entries.iter().enumerate() {
+                if i > 0 {
+                    self.write(",");
+                    self.write_newline();
+                }
+                self.write_indent();
+                self.generate_identifier(&entry.key)?;
+                self.write("=");
+                self.generate_expression(&entry.value)?;
+            }
+            self.indent_level -= 1;
+            self.write_newline();
+            self.write(")");
+        } else {
+            self.write(" (");
+            for (i, entry) in e.entries.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_identifier(&entry.key)?;
+                self.write("=");
+                self.generate_expression(&entry.value)?;
+            }
+            self.write(")");
         }
         Ok(())
     }

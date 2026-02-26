@@ -385,29 +385,11 @@ jobs:
         run: |
           set -euo pipefail
           crate="polyglot-sql-function-catalogs"
-          expected_version="${GITHUB_REF_NAME#v}"
-
-          if CRATE_NAME="${crate}" EXPECTED_VERSION="${expected_version}" python3 - <<'PY'
-          import json
-          import os
-          import sys
-          import urllib.request
-
-          crate = os.environ["CRATE_NAME"]
-          expected = os.environ["EXPECTED_VERSION"]
-          url = f"https://crates.io/api/v1/crates/{crate}"
-          try:
-              with urllib.request.urlopen(url, timeout=20) as r:
-                  payload = json.load(r)
-          except Exception:
-              sys.exit(1)
-
-          versions = [v.get("num") for v in payload.get("versions", [])]
-          sys.exit(0 if expected in versions else 1)
-          PY
-            echo "${crate} ${expected_version} already present on crates.io"
+          version="${GITHUB_REF_NAME#v}"
+          if ./scripts/check-crate-version.sh "$crate" "$version"; then
+            echo "${crate} ${version} already present on crates.io"
           else
-            cargo publish -p "${crate}"
+            cargo publish -p "$crate"
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -416,33 +398,16 @@ jobs:
         run: |
           set -euo pipefail
           crate="polyglot-sql-function-catalogs"
-          expected_version="${GITHUB_REF_NAME#v}"
-
+          version="${GITHUB_REF_NAME#v}"
           for attempt in $(seq 1 30); do
-            if CRATE_NAME="${crate}" EXPECTED_VERSION="${expected_version}" python3 - <<'PY'
-          import json
-          import os
-          import sys
-          import urllib.request
-
-          crate = os.environ["CRATE_NAME"]
-          expected = os.environ["EXPECTED_VERSION"]
-          url = f"https://crates.io/api/v1/crates/{crate}"
-          with urllib.request.urlopen(url, timeout=20) as r:
-              payload = json.load(r)
-          versions = [v.get("num") for v in payload.get("versions", [])]
-          sys.exit(0 if expected in versions else 1)
-          PY
-            then
-              echo "${crate} ${expected_version} is available on crates.io"
+            if ./scripts/check-crate-version.sh "$crate" "$version"; then
+              echo "${crate} ${version} is available on crates.io"
               exit 0
             fi
-
-            echo "Waiting for ${crate} ${expected_version} to appear on crates.io (attempt ${attempt}/30)"
+            echo "Waiting for ${crate} ${version} to appear on crates.io (attempt ${attempt}/30)"
             sleep 10
           done
-
-          echo "Timed out waiting for ${crate} ${expected_version} to appear on crates.io"
+          echo "Timed out waiting for ${crate} ${version} to appear on crates.io"
           exit 1
 
       - name: Publish main crate to crates.io
@@ -675,7 +640,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -715,7 +680,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -774,7 +739,7 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

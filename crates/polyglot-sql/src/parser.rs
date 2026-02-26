@@ -11871,7 +11871,14 @@ impl Parser {
         }
 
         // BigQuery: OPTIONS (key=value, ...) on table - comes after column definitions
-        if self.match_identifier("OPTIONS") {
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::BigQuery)
+        ) {
+            if let Some(options_property) = self.parse_bigquery_options_property()? {
+                table_properties.push(options_property);
+            }
+        } else if self.match_identifier("OPTIONS") {
             let options = self.parse_options_list()?;
             table_properties.push(Expression::Properties(Box::new(Properties {
                 expressions: options,
@@ -12124,200 +12131,221 @@ impl Parser {
         }
 
         // Parse PARTITION BY RANGE/LIST/HASH(columns) for regular CREATE TABLE
+        let is_bigquery = matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::BigQuery)
+        );
         if !is_teradata && (self.check(TokenType::Partition) || self.check(TokenType::PartitionBy))
         {
-            let saved = self.current;
-            let is_partition_by = if self.match_token(TokenType::PartitionBy) {
-                true
-            } else if self.match_token(TokenType::Partition) {
-                self.match_token(TokenType::By)
+            let parsed_bigquery_partition = if is_bigquery {
+                if let Some(partition_property) = self.parse_bigquery_partition_by_property()? {
+                    table_properties.push(partition_property);
+                    true
+                } else {
+                    false
+                }
             } else {
                 false
             };
-            if is_partition_by {
-                let partition_kind = if self.check(TokenType::Range) {
-                    self.advance();
-                    Some("RANGE".to_string())
-                } else if self.check(TokenType::List) {
-                    self.advance();
-                    Some("LIST".to_string())
-                } else if (self.check(TokenType::Identifier) || self.check(TokenType::Var))
-                    && self.check_next(TokenType::LParen)
-                {
-                    // Only treat identifier as partition method (like HASH) if followed by (
-                    Some(self.advance().text.to_uppercase())
-                } else {
-                    // No explicit partition method (RANGE/LIST/HASH), just PARTITION BY (cols)
-                    None
-                };
 
-                // StarRocks/Doris: PARTITION BY func(), col (bare expressions without RANGE/LIST)
-                // When the partition_kind was consumed as an identifier that's actually a function call
-                // and the content after the parenthesized args includes a comma, it's a bare expression list
-                if is_doris_starrocks
-                    && partition_kind.is_some()
-                    && !matches!(
-                        partition_kind.as_deref(),
-                        Some("RANGE") | Some("LIST") | Some("HASH") | Some("KEY")
-                    )
-                {
-                    // Backtrack: re-parse as bare PARTITION BY with comma-separated expressions
-                    let func_name = partition_kind.unwrap();
-                    let mut raw_sql = format!("PARTITION BY {}", func_name);
-                    // Helper closure for consuming parenthesized content with proper spacing
-                    fn consume_parens(parser: &mut Parser, raw_sql: &mut String) {
-                        if !parser.check(TokenType::LParen) {
-                            return;
-                        }
-                        parser.advance();
-                        raw_sql.push('(');
-                        let mut depth = 1;
-                        let mut last_type: Option<TokenType> = None;
-                        while !parser.is_at_end() && depth > 0 {
-                            let tok = parser.advance();
-                            if tok.token_type == TokenType::LParen {
-                                depth += 1;
-                            } else if tok.token_type == TokenType::RParen {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                            }
-                            // Add space after commas
-                            if matches!(last_type, Some(TokenType::Comma)) {
-                                raw_sql.push(' ');
-                            }
-                            if tok.token_type == TokenType::String {
-                                raw_sql.push('\'');
-                                raw_sql.push_str(&tok.text);
-                                raw_sql.push('\'');
-                            } else {
-                                raw_sql.push_str(&tok.text);
-                            }
-                            last_type = Some(tok.token_type.clone());
-                        }
-                        raw_sql.push(')');
-                    }
-                    consume_parens(self, &mut raw_sql);
-                    // Consume more comma-separated expressions
-                    while self.match_token(TokenType::Comma) {
-                        raw_sql.push_str(", ");
-                        let tok = self.advance();
-                        raw_sql.push_str(&tok.text);
-                        consume_parens(self, &mut raw_sql);
-                    }
-                    table_properties.push(Expression::Raw(Raw { sql: raw_sql }));
-                } else
-                // For Doris/StarRocks/MySQL RANGE/LIST, use structured parsing
-                if (is_doris_starrocks
-                    || matches!(
-                        self.config.dialect,
-                        Some(crate::dialects::DialectType::MySQL)
-                            | Some(crate::dialects::DialectType::SingleStore)
-                            | Some(crate::dialects::DialectType::TiDB)
-                    ))
-                    && matches!(partition_kind.as_deref(), Some("RANGE") | Some("LIST"))
-                {
-                    let partition_expr = self.parse_doris_partition_by_range_or_list(
-                        partition_kind
-                            .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or("RANGE"),
-                    )?;
-                    table_properties.push(partition_expr);
+            if !parsed_bigquery_partition {
+                let saved = self.current;
+                let is_partition_by = if self.match_token(TokenType::PartitionBy) {
+                    true
+                } else if self.match_token(TokenType::Partition) {
+                    self.match_token(TokenType::By)
                 } else {
-                    // Generic raw SQL parsing for other dialects
-                    let no_partition_kind = partition_kind.is_none();
-                    let mut raw_sql = match partition_kind {
-                        Some(kind) => format!("PARTITION BY {}", kind),
-                        None => "PARTITION BY ".to_string(),
-                    };
-                    if self.check(TokenType::LParen) {
+                    false
+                };
+                if is_partition_by {
+                    let partition_kind = if self.check(TokenType::Range) {
                         self.advance();
-                        raw_sql.push('(');
-                        let mut depth = 1;
-                        let mut last_tok_type: Option<TokenType> = None;
-                        while !self.is_at_end() && depth > 0 {
-                            let tok = self.advance();
-                            if tok.token_type == TokenType::LParen {
-                                depth += 1;
-                            } else if tok.token_type == TokenType::RParen {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
+                        Some("RANGE".to_string())
+                    } else if self.check(TokenType::List) {
+                        self.advance();
+                        Some("LIST".to_string())
+                    } else if (self.check(TokenType::Identifier) || self.check(TokenType::Var))
+                        && self.check_next(TokenType::LParen)
+                    {
+                        // Only treat identifier as partition method (like HASH) if followed by (
+                        Some(self.advance().text.to_uppercase())
+                    } else {
+                        // No explicit partition method (RANGE/LIST/HASH), just PARTITION BY (cols)
+                        None
+                    };
+
+                    // StarRocks/Doris: PARTITION BY func(), col (bare expressions without RANGE/LIST)
+                    // When the partition_kind was consumed as an identifier that's actually a function call
+                    // and the content after the parenthesized args includes a comma, it's a bare expression list
+                    if is_doris_starrocks
+                        && partition_kind.is_some()
+                        && !matches!(
+                            partition_kind.as_deref(),
+                            Some("RANGE") | Some("LIST") | Some("HASH") | Some("KEY")
+                        )
+                    {
+                        // Backtrack: re-parse as bare PARTITION BY with comma-separated expressions
+                        let func_name = partition_kind.unwrap();
+                        let mut raw_sql = format!("PARTITION BY {}", func_name);
+                        // Helper closure for consuming parenthesized content with proper spacing
+                        fn consume_parens(parser: &mut Parser, raw_sql: &mut String) {
+                            if !parser.check(TokenType::LParen) {
+                                return;
+                            }
+                            parser.advance();
+                            raw_sql.push('(');
+                            let mut depth = 1;
+                            let mut last_type: Option<TokenType> = None;
+                            while !parser.is_at_end() && depth > 0 {
+                                let tok = parser.advance();
+                                if tok.token_type == TokenType::LParen {
+                                    depth += 1;
+                                } else if tok.token_type == TokenType::RParen {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
+                                    }
                                 }
+                                // Add space after commas
+                                if matches!(last_type, Some(TokenType::Comma)) {
+                                    raw_sql.push(' ');
+                                }
+                                if tok.token_type == TokenType::String {
+                                    raw_sql.push('\'');
+                                    raw_sql.push_str(&tok.text);
+                                    raw_sql.push('\'');
+                                } else {
+                                    raw_sql.push_str(&tok.text);
+                                }
+                                last_type = Some(tok.token_type.clone());
                             }
-                            // Add space before token if needed for proper formatting
-                            let needs_space = match (&last_tok_type, &tok.token_type) {
-                                // Add space after comma
-                                (Some(TokenType::Comma), _) => true,
-                                // Add space after identifiers/keywords before other identifiers/keywords
-                                (Some(TokenType::Identifier), TokenType::Identifier) => true,
-                                _ => false,
-                            };
-                            if needs_space {
-                                raw_sql.push(' ');
-                            }
-                            // Handle string literals - preserve quotes
-                            if tok.token_type == TokenType::String {
-                                raw_sql.push('\'');
-                                raw_sql.push_str(&tok.text);
-                                raw_sql.push('\'');
-                            } else {
-                                raw_sql.push_str(&tok.text);
-                            }
-                            last_tok_type = Some(tok.token_type.clone());
+                            raw_sql.push(')');
                         }
-                        raw_sql.push(')');
-                    } else if no_partition_kind {
-                        // BigQuery: PARTITION BY expr (bare column name, no parens, no method)
-                        // Parse the expression as a simple identifier/expression
-                        let mut first = true;
-                        while !self.is_at_end()
-                            && !self.check(TokenType::Cluster)
-                            && !self.check(TokenType::As)
-                            && !self.check(TokenType::Semicolon)
-                            && !self.check(TokenType::RParen)
-                        {
-                            if !first {
-                                raw_sql.push_str(", ");
-                            }
-                            first = false;
+                        consume_parens(self, &mut raw_sql);
+                        // Consume more comma-separated expressions
+                        while self.match_token(TokenType::Comma) {
+                            raw_sql.push_str(", ");
                             let tok = self.advance();
                             raw_sql.push_str(&tok.text);
-                            // Handle function calls: PARTITION BY DATE(col)
-                            if self.check(TokenType::LParen) {
-                                self.advance();
-                                raw_sql.push('(');
-                                let mut depth = 1;
-                                while !self.is_at_end() && depth > 0 {
-                                    let t = self.advance();
-                                    if t.token_type == TokenType::LParen {
-                                        depth += 1;
-                                    } else if t.token_type == TokenType::RParen {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            break;
-                                        }
+                            consume_parens(self, &mut raw_sql);
+                        }
+                        table_properties.push(Expression::Raw(Raw { sql: raw_sql }));
+                    } else
+                    // For Doris/StarRocks/MySQL RANGE/LIST, use structured parsing
+                    if (is_doris_starrocks
+                        || matches!(
+                            self.config.dialect,
+                            Some(crate::dialects::DialectType::MySQL)
+                                | Some(crate::dialects::DialectType::SingleStore)
+                                | Some(crate::dialects::DialectType::TiDB)
+                        ))
+                        && matches!(partition_kind.as_deref(), Some("RANGE") | Some("LIST"))
+                    {
+                        let partition_expr = self.parse_doris_partition_by_range_or_list(
+                            partition_kind
+                                .as_ref()
+                                .map(|s| s.as_str())
+                                .unwrap_or("RANGE"),
+                        )?;
+                        table_properties.push(partition_expr);
+                    } else {
+                        // Generic raw SQL parsing for other dialects
+                        let no_partition_kind = partition_kind.is_none();
+                        let mut raw_sql = match partition_kind {
+                            Some(kind) => format!("PARTITION BY {}", kind),
+                            None => "PARTITION BY ".to_string(),
+                        };
+                        if self.check(TokenType::LParen) {
+                            self.advance();
+                            raw_sql.push('(');
+                            let mut depth = 1;
+                            let mut last_tok_type: Option<TokenType> = None;
+                            while !self.is_at_end() && depth > 0 {
+                                let tok = self.advance();
+                                if tok.token_type == TokenType::LParen {
+                                    depth += 1;
+                                } else if tok.token_type == TokenType::RParen {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        break;
                                     }
-                                    raw_sql.push_str(&t.text);
                                 }
-                                raw_sql.push(')');
+                                // Add space before token if needed for proper formatting
+                                let needs_space = match (&last_tok_type, &tok.token_type) {
+                                    // Add space after comma
+                                    (Some(TokenType::Comma), _) => true,
+                                    // Add space after identifiers/keywords before other identifiers/keywords
+                                    (Some(TokenType::Identifier), TokenType::Identifier) => true,
+                                    _ => false,
+                                };
+                                if needs_space {
+                                    raw_sql.push(' ');
+                                }
+                                // Handle string literals - preserve quotes
+                                if tok.token_type == TokenType::String {
+                                    raw_sql.push('\'');
+                                    raw_sql.push_str(&tok.text);
+                                    raw_sql.push('\'');
+                                } else {
+                                    raw_sql.push_str(&tok.text);
+                                }
+                                last_tok_type = Some(tok.token_type.clone());
                             }
-                            if !self.match_token(TokenType::Comma) {
-                                break;
+                            raw_sql.push(')');
+                        } else if no_partition_kind {
+                            // Bare PARTITION BY expression list without a partition method
+                            let mut first = true;
+                            while !self.is_at_end()
+                                && !self.check(TokenType::Cluster)
+                                && !self.check(TokenType::As)
+                                && !self.check(TokenType::Semicolon)
+                                && !self.check(TokenType::RParen)
+                                && !self.check_identifier("OPTIONS")
+                            {
+                                if !first {
+                                    raw_sql.push_str(", ");
+                                }
+                                first = false;
+                                let tok = self.advance();
+                                raw_sql.push_str(&tok.text);
+                                // Handle function calls: PARTITION BY DATE(col)
+                                if self.check(TokenType::LParen) {
+                                    self.advance();
+                                    raw_sql.push('(');
+                                    let mut depth = 1;
+                                    while !self.is_at_end() && depth > 0 {
+                                        let t = self.advance();
+                                        if t.token_type == TokenType::LParen {
+                                            depth += 1;
+                                        } else if t.token_type == TokenType::RParen {
+                                            depth -= 1;
+                                            if depth == 0 {
+                                                break;
+                                            }
+                                        }
+                                        raw_sql.push_str(&t.text);
+                                    }
+                                    raw_sql.push(')');
+                                }
+                                if !self.match_token(TokenType::Comma) {
+                                    break;
+                                }
                             }
                         }
+                        table_properties.push(Expression::Raw(Raw { sql: raw_sql }));
                     }
-                    table_properties.push(Expression::Raw(Raw { sql: raw_sql }));
+                } else {
+                    self.current = saved;
                 }
-            } else {
-                self.current = saved;
             }
         }
 
         // Parse CLUSTER BY (BigQuery) after PARTITION BY
-        if self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
+        if is_bigquery {
+            if let Some(cluster_property) = self.parse_bigquery_cluster_by_property()? {
+                table_properties.push(cluster_property);
+            }
+        } else if self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
             let mut cluster_names = Vec::new();
             loop {
                 let name = self.expect_identifier_or_keyword()?;
@@ -12333,7 +12361,14 @@ impl Parser {
 
         // No-column-defs path: OPTIONS and AS SELECT come after PARTITION BY / CLUSTER BY
         if no_column_defs {
-            if self.match_identifier("OPTIONS") {
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::BigQuery)
+            ) {
+                if let Some(options_property) = self.parse_bigquery_options_property()? {
+                    table_properties.push(options_property);
+                }
+            } else if self.match_identifier("OPTIONS") {
                 let options = self.parse_options_list()?;
                 table_properties.push(Expression::Properties(Box::new(Properties {
                     expressions: options,
@@ -54521,6 +54556,151 @@ impl Parser {
         Ok(options)
     }
 
+    /// Parse BigQuery PARTITION BY property and return a typed AST node.
+    fn parse_bigquery_partition_by_property(&mut self) -> Result<Option<Expression>> {
+        let start = self.current;
+        let matched_partition = if self.match_token(TokenType::PartitionBy) {
+            true
+        } else if self.match_token(TokenType::Partition) {
+            self.match_token(TokenType::By)
+        } else {
+            false
+        };
+
+        if !matched_partition {
+            self.current = start;
+            return Ok(None);
+        }
+
+        let mut expressions = Vec::new();
+        while !self.is_at_end()
+            && !self.check(TokenType::Cluster)
+            && !self.check(TokenType::As)
+            && !self.check(TokenType::Semicolon)
+            && !self.check(TokenType::RParen)
+            && !self.check_identifier("OPTIONS")
+        {
+            match self.parse_expression() {
+                Ok(expr) => expressions.push(expr),
+                Err(_) => {
+                    // Fall back to generic/raw parsing if typed parsing can't consume this form.
+                    self.current = start;
+                    return Ok(None);
+                }
+            }
+
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+
+        if expressions.is_empty() {
+            self.current = start;
+            return Ok(None);
+        }
+
+        Ok(Some(Expression::PartitionByProperty(Box::new(
+            PartitionByProperty { expressions },
+        ))))
+    }
+
+    /// Parse BigQuery CLUSTER BY property and return a typed AST node.
+    fn parse_bigquery_cluster_by_property(&mut self) -> Result<Option<Expression>> {
+        let start = self.current;
+        if !self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
+            self.current = start;
+            return Ok(None);
+        }
+
+        let mut columns = Vec::new();
+        loop {
+            if let Some(Expression::Identifier(id)) = self.parse_identifier()? {
+                columns.push(id);
+            } else if self.is_identifier_or_keyword_token() {
+                let name = self.advance().text;
+                columns.push(Identifier {
+                    name,
+                    quoted: false,
+                    trailing_comments: Vec::new(),
+                    span: None,
+                });
+            } else {
+                // Fall back to generic/raw parsing if typed parsing can't consume this form.
+                self.current = start;
+                return Ok(None);
+            }
+
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+
+        if columns.is_empty() {
+            self.current = start;
+            return Ok(None);
+        }
+
+        Ok(Some(Expression::ClusterByColumnsProperty(Box::new(
+            ClusterByColumnsProperty { columns },
+        ))))
+    }
+
+    /// Parse BigQuery OPTIONS (...) clause into typed entries when possible.
+    /// Falls back to generic `Properties` when options are not simple key/value assignments.
+    fn parse_bigquery_options_property(&mut self) -> Result<Option<Expression>> {
+        let start = self.current;
+        if !self.match_identifier("OPTIONS") {
+            self.current = start;
+            return Ok(None);
+        }
+
+        let options = self.parse_options_list()?;
+        if options.is_empty() {
+            return Ok(Some(Expression::OptionsProperty(Box::new(
+                OptionsProperty {
+                    entries: Vec::new(),
+                },
+            ))));
+        }
+
+        let mut entries = Vec::new();
+        for option_expr in &options {
+            let Some(entry) = Self::option_entry_from_expression(option_expr) else {
+                return Ok(Some(Expression::Properties(Box::new(Properties {
+                    expressions: options,
+                }))));
+            };
+            entries.push(entry);
+        }
+
+        Ok(Some(Expression::OptionsProperty(Box::new(
+            OptionsProperty { entries },
+        ))))
+    }
+
+    fn option_entry_from_expression(expr: &Expression) -> Option<OptionEntry> {
+        let Expression::Eq(eq) = expr else {
+            return None;
+        };
+
+        let key = match &eq.left {
+            Expression::Column(col) if col.table.is_none() => col.name.clone(),
+            Expression::Identifier(id) => id.clone(),
+            Expression::Var(var) => Identifier {
+                name: var.this.clone(),
+                quoted: false,
+                trailing_comments: Vec::new(),
+                span: None,
+            },
+            _ => return None,
+        };
+
+        Some(OptionEntry {
+            key,
+            value: eq.right.clone(),
+        })
+    }
+
     /// parse_environment_list - Parses Databricks ENVIRONMENT list: (dependencies = '...', environment_version = '...')
     /// Parses key=value assignments where values can be string literals
     pub fn parse_environment_list(&mut self) -> Result<Vec<Expression>> {
@@ -55203,6 +55383,74 @@ mod tests {
         if let Expression::CreateTable(ct) = &result[0] {
             assert!(ct.temporary);
         }
+    }
+
+    #[test]
+    fn test_bigquery_create_table_properties_are_typed() {
+        use crate::DialectType;
+
+        let sql = "CREATE OR REPLACE TABLE `p1`.`d1`.`t1` PARTITION BY DATE_TRUNC(day, month) CLUSTER BY some_cluster_column OPTIONS(description='', labels=[('l1', 'v1'), ('l2', 'v2')]) AS SELECT CURRENT_DATE AS day, DATE_TRUNC(CURRENT_DATE(), month) AS month, 'c' AS some_cluster_column";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert!(
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::PartitionByProperty(_))),
+            "Expected typed PARTITION BY property"
+        );
+        assert!(
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::ClusterByColumnsProperty(_))),
+            "Expected typed CLUSTER BY property"
+        );
+        assert!(
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::OptionsProperty(_))),
+            "Expected typed OPTIONS property"
+        );
+        assert!(
+            !create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::Raw(_))),
+            "BigQuery table properties should not fall back to Raw"
+        );
+
+        let options = create
+            .properties
+            .iter()
+            .find_map(|p| match p {
+                Expression::OptionsProperty(o) => Some(o),
+                _ => None,
+            })
+            .expect("Expected OptionsProperty");
+        assert_eq!(options.entries.len(), 2);
+        assert_eq!(options.entries[0].key.name, "description");
+        assert_eq!(options.entries[1].key.name, "labels");
+    }
+
+    #[test]
+    fn test_bigquery_create_table_properties_roundtrip() {
+        use crate::DialectType;
+
+        let sql = "CREATE TABLE t1 PARTITION BY DATE_TRUNC(day, month) CLUSTER BY some_cluster_column OPTIONS(description='', labels=[('l1', 'v1')]) AS SELECT 1 AS day, 1 AS month, 'c' AS some_cluster_column";
+        let expected = "CREATE TABLE t1 PARTITION BY DATE_TRUNC(day, month) CLUSTER BY some_cluster_column OPTIONS (description='', labels=[('l1', 'v1')]) AS SELECT 1 AS day, 1 AS month, 'c' AS some_cluster_column";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, expected);
     }
 
     #[test]

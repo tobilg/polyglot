@@ -1,0 +1,2 @@
+# Exclude local/build artifacts from GitHub source archives.
+examples/c/polyglot_example export-ignore
