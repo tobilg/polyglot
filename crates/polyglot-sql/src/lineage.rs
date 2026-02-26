@@ -260,6 +260,7 @@ fn to_node_inner(
                     replace: None,
                     rename: None,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 source_info.expression.clone(),
             );
@@ -487,6 +488,7 @@ fn resolve_unqualified_column(
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         }),
         node.source.clone(),
     );
@@ -578,15 +580,19 @@ fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<E
                     format!("Cannot find column '{}' in query", name),
                     0,
                     0,
+                    0,
+                    0,
                 ))
             }
             ColumnRef::Index(idx) => select.expressions.get(*idx).cloned().ok_or_else(|| {
-                crate::error::Error::parse(format!("Column index {} out of range", idx), 0, 0)
+                crate::error::Error::parse(format!("Column index {} out of range", idx), 0, 0, 0, 0)
             }),
         }
     } else {
         Err(crate::error::Error::parse(
             "Expected SELECT expression for column lookup",
+            0,
+            0,
             0,
             0,
         ))
@@ -611,11 +617,15 @@ fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
                     format!("Cannot find column '{}' in set operation", name),
                     0,
                     0,
+                    0,
+                    0,
                 ));
             }
             _ => {
                 return Err(crate::error::Error::parse(
                     "Expected SELECT or set operation",
+                    0,
+                    0,
                     0,
                     0,
                 ))
@@ -715,6 +725,7 @@ fn make_table_column_node(table: &str, column: &str) -> LineageNode {
             table: Some(crate::expressions::Identifier::new(table.to_string())),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         }),
         Expression::Table(crate::expressions::TableRef::new(table)),
     );
@@ -746,6 +757,7 @@ fn make_table_column_node_from_source(
             table: Some(crate::expressions::Identifier::new(table_alias.to_string())),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         }),
         source.clone(),
     );

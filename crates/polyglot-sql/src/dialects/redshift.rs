@@ -123,6 +123,7 @@ impl DialectImpl for RedshiftDialect {
                     name: unit_str.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEADD".to_string(),

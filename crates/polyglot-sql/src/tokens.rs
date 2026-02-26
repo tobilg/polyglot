@@ -6,6 +6,8 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+#[cfg(feature = "bindings")]
+use ts_rs::TS;
 
 /// Parse a DollarString token text into (tag, content).
 /// If the text contains '\x00', the part before is the tag and after is content.
@@ -22,6 +24,7 @@ pub fn parse_dollar_string_token(text: &str) -> (Option<String>, String) {
 
 /// Represents a position in the source SQL
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Span {
     /// Starting byte offset
     pub start: usize,
@@ -1647,6 +1650,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated block comment",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -1689,6 +1694,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated hint comment",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -2273,6 +2280,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -2371,6 +2380,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated double-quoted string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -2405,6 +2416,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated triple-quoted string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -2431,6 +2444,8 @@ impl<'a> TokenizerState<'a> {
                     "Unterminated identifier",
                     self.line,
                     self.column,
+                    self.start,
+                    self.current,
                 ));
             }
             if self.peek() == end_quote {
@@ -2744,6 +2759,8 @@ impl<'a> TokenizerState<'a> {
                 format!("Unexpected character: '{}'", c),
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -2933,6 +2950,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -3009,6 +3028,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated double-quoted string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -3055,6 +3076,8 @@ impl<'a> TokenizerState<'a> {
                 "Unterminated raw string",
                 self.line,
                 self.column,
+                self.start,
+                self.current,
             ));
         }
 
@@ -3088,6 +3111,8 @@ impl<'a> TokenizerState<'a> {
             "Unterminated raw triple-quoted string",
             self.line,
             self.column,
+            self.start,
+            self.current,
         ))
     }
 

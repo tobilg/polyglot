@@ -337,6 +337,8 @@ impl std::str::FromStr for DialectType {
                 format!("Unknown dialect: {}", s),
                 0,
                 0,
+                0,
+                0,
             )),
         }
     }
@@ -591,6 +593,8 @@ where
                             "Join transformation returned non-join expression",
                             0,
                             0,
+                            0,
+                            0,
                         )),
                     }
                 })
@@ -726,6 +730,8 @@ where
                         Expression::Ordered(transformed) => Ok(*transformed),
                         _ => Err(crate::error::Error::parse(
                             "Ordered transformation returned non-Ordered expression",
+                            0,
+                            0,
                             0,
                             0,
                         )),
@@ -1740,6 +1746,8 @@ impl CustomDialectBuilder {
                 ),
                 0,
                 0,
+                0,
+                0,
             ));
         }
 
@@ -1773,11 +1781,13 @@ use std::str::FromStr;
 fn register_custom_dialect(config: CustomDialectConfig) -> Result<()> {
     let mut registry = CUSTOM_DIALECT_REGISTRY
         .write()
-        .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0))?;
+        .map_err(|e| crate::error::Error::parse(format!("Registry lock poisoned: {}", e), 0, 0, 0, 0))?;
 
     if registry.contains_key(&config.name) {
         return Err(crate::error::Error::parse(
             format!("Custom dialect '{}' is already registered", config.name),
+            0,
+            0,
             0,
             0,
         ));
@@ -2262,6 +2272,8 @@ impl Dialect {
                 "Cross-dialect transpilation not available in this build",
                 0,
                 0,
+                0,
+                0,
             ));
         }
 
@@ -2441,6 +2453,7 @@ impl Dialect {
                                                     use_bracket_syntax: f.use_bracket_syntax,
                                                     no_parens: f.no_parens,
                                                     quoted: f.quoted,
+                                                    span: None,
                                                 },
                                             )));
                                         }
@@ -2568,6 +2581,7 @@ impl Dialect {
                                     replace: None,
                                     rename: None,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })]
                             } else if let Some(ref this) = c.this {
                                 vec![this.clone()]
@@ -2738,6 +2752,7 @@ impl Dialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     start_expr.clone(),
                     end_expr.clone(),
@@ -2830,6 +2845,7 @@ impl Dialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     Expression::Cast(Box::new(Cast {
                         this: Expression::Column(Column {
@@ -2837,6 +2853,7 @@ impl Dialect {
                             table: None,
                             join_mark: false,
                             trailing_comments: vec![],
+                            span: None,
                         }),
                         to: DataType::Int {
                             length: None,
@@ -3044,6 +3061,7 @@ impl Dialect {
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 start_expr.clone(),
                 end_expr.clone(),
@@ -3128,6 +3146,7 @@ impl Dialect {
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 Expression::Cast(Box::new(Cast {
                     this: Expression::Column(Column {
@@ -3135,6 +3154,7 @@ impl Dialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     to: DataType::Int {
                         length: None,
@@ -3222,6 +3242,7 @@ impl Dialect {
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 start_expr.clone(),
                 end_expr.clone(),
@@ -3296,6 +3317,7 @@ impl Dialect {
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 Expression::Cast(Box::new(Cast {
                     this: Expression::Column(Column {
@@ -3303,6 +3325,7 @@ impl Dialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     to: DataType::Int {
                         length: None,
@@ -3354,6 +3377,7 @@ impl Dialect {
             replace: None,
             rename: None,
             trailing_comments: vec![],
+            span: None,
         });
         let array_agg = Expression::ArrayAgg(Box::new(AggFunc {
             this: star,
@@ -3744,6 +3768,7 @@ impl Dialect {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             })
                             .collect();
@@ -3961,6 +3986,7 @@ impl Dialect {
                                     replace: None,
                                     rename: None,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })];
                             new_select.from = Some(crate::expressions::From {
                                 expressions: vec![values_subquery],
@@ -4625,6 +4651,7 @@ impl Dialect {
                                                         table: Some(schema.clone()),
                                                         join_mark: false,
                                                         trailing_comments: vec![],
+                                                        span: None,
                                                     },
                                                 );
                                                 let unnest_expr = Expression::Unnest(Box::new(
@@ -10328,6 +10355,7 @@ impl Dialect {
                                     use_bracket_syntax: f.use_bracket_syntax,
                                     no_parens: f.no_parens,
                                     quoted: f.quoted,
+                                    span: None,
                                 })))
                             }
                             // TSQL JSON_QUERY/JSON_VALUE -> target-specific
@@ -10501,6 +10529,7 @@ impl Dialect {
                                                     table: None,
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
+                                                    span: None,
                                                 });
                                             let b =
                                                 Expression::Column(crate::expressions::Column {
@@ -10508,6 +10537,7 @@ impl Dialect {
                                                     table: None,
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
+                                                    span: None,
                                                 });
                                             let case_expr = Expression::Case(Box::new(
                                                 crate::expressions::Case {
@@ -16744,6 +16774,7 @@ impl Dialect {
                                             use_bracket_syntax: false,
                                             no_parens: true,
                                             quoted: false,
+                                            span: None,
                                         })))
                                     }
                                     DialectType::MySQL
@@ -16993,6 +17024,7 @@ impl Dialect {
                                                 table: None,
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             });
                                         // UNNEST(the_array) AS _u
                                         let unnest_expr = Expression::Unnest(Box::new(
@@ -18539,6 +18571,7 @@ impl Dialect {
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             });
                         }
                         Ok(Expression::Function(f))
@@ -21867,10 +21900,12 @@ impl Dialect {
                                         name: "TRUE".to_string(),
                                         quoted: false,
                                         trailing_comments: Vec::new(),
+                                        span: None,
                                     },
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 });
                                 let nvl = Expression::Function(Box::new(Function::new(
                                     "NVL".to_string(),
@@ -22618,6 +22653,7 @@ impl Dialect {
                                     replace: None,
                                     rename: None,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })],
                                 from: Some(crate::expressions::From {
                                     expressions: vec![Expression::Table(source_table)],
@@ -22660,6 +22696,7 @@ impl Dialect {
                                     replace: None,
                                     rename: None,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })],
                                 from: Some(crate::expressions::From {
                                     expressions: vec![Expression::Table(aliased_source)],
@@ -23872,6 +23909,7 @@ impl Dialect {
                                             table: None,
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
+                                            span: None,
                                         });
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATE_TRUNC".to_string(),
@@ -23955,6 +23993,7 @@ impl Dialect {
                                             table: None,
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
+                                            span: None,
                                         });
                                     let mut args = vec![expr_arg, unit_ident];
                                     if let Some(tz) = tz_arg {
@@ -24528,6 +24567,7 @@ impl Dialect {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 });
                                 let unnest_expr =
                                     Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
@@ -24949,6 +24989,7 @@ impl Dialect {
                     table: Some(Identifier::new(tbl.to_string())),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })
             } else {
                 Expression::Identifier(Identifier::new(name.to_string()))
@@ -26057,6 +26098,7 @@ impl Dialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 })
                 .collect();
@@ -29921,6 +29963,7 @@ impl Dialect {
                                 use_bracket_syntax: f.use_bracket_syntax,
                                 no_parens: f.no_parens,
                                 quoted: f.quoted,
+                                span: None,
                             })))
                         }
                     }
@@ -29942,6 +29985,7 @@ impl Dialect {
                             use_bracket_syntax: f.use_bracket_syntax,
                             no_parens: f.no_parens,
                             quoted: f.quoted,
+                            span: None,
                         })))
                     }
                 }
@@ -30315,6 +30359,7 @@ impl Dialect {
                 use_bracket_syntax: f.use_bracket_syntax,
                 no_parens: f.no_parens,
                 quoted: f.quoted,
+                span: None,
             }))),
         }
     }

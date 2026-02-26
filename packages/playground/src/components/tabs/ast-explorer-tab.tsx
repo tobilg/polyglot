@@ -5,7 +5,6 @@ import { DialectSelect } from "@/components/shared/dialect-select";
 import { SqlEditor } from "@/components/shared/sql-editor";
 import { JsonTree } from "@/components/shared/json-tree";
 import { ErrorDisplay } from "@/components/shared/error-display";
-import { useLocalStorage } from "@/hooks/use-local-storage";
 import { DEFAULT_AST_SQL } from "@/lib/constants";
 import { Play } from "lucide-react";
 
@@ -14,8 +13,8 @@ interface AstExplorerTabProps {
 }
 
 export function AstExplorerTab({ dialects }: AstExplorerTabProps) {
-  const [dialect, setDialect] = useLocalStorage("ast-dialect", "generic");
-  const [sql, setSql] = useLocalStorage("ast-sql", DEFAULT_AST_SQL);
+  const [dialect, setDialect] = useState("generic");
+  const [sql, setSql] = useState(DEFAULT_AST_SQL);
   const [ast, setAst] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
 

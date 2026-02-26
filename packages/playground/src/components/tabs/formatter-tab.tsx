@@ -4,12 +4,11 @@ import { Button } from "@/components/ui/button";
 import { SqlEditor } from "@/components/shared/sql-editor";
 import { SqlOutput } from "@/components/shared/sql-output";
 import { ErrorDisplay } from "@/components/shared/error-display";
-import { useLocalStorage } from "@/hooks/use-local-storage";
 import { DEFAULT_FORMAT_SQL } from "@/lib/constants";
 import { Play } from "lucide-react";
 
 export function FormatterTab() {
-  const [sql, setSql] = useLocalStorage("format-sql", DEFAULT_FORMAT_SQL);
+  const [sql, setSql] = useState(DEFAULT_FORMAT_SQL);
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 

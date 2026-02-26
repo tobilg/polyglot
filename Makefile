@@ -11,6 +11,7 @@
         generate-bindings copy-bindings cargo-build-release \
         build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
         develop-python test-python build-python typecheck-python \
+        python-docs-build python-docs-preview python-docs-deploy \
         bench-compare bench-rust bench-python bench-parse bench-parse-quick bench-parse-full \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
@@ -89,6 +90,8 @@ help:
 	@echo "  make test-python         - Run Python bindings pytest suite"
 	@echo "  make build-python        - Build Python wheels (maturin)"
 	@echo "  make typecheck-python    - Type-check Python package stubs"
+	@echo "  make python-docs-build   - Build Python API docs into packages/python-docs/dist"
+	@echo "  make python-docs-deploy  - Deploy Python API docs to Cloudflare Pages"
 	@echo "  make build-all           - Build everything"
 	@echo "  make fmt                 - Format all code (Rust + TypeScript SDK)"
 	@echo ""
@@ -453,6 +456,18 @@ documentation-preview:
 # Deploy to Cloudflare Pages
 documentation-deploy: documentation-build
 	cd packages/documentation && pnpm run deploy
+
+# Build Python API docs to packages/python-docs/dist (overwrite mode)
+python-docs-build:
+	cd packages/python-docs && pnpm run build
+
+# Preview Python API docs
+python-docs-preview: python-docs-build
+	cd packages/python-docs && pnpm run preview
+
+# Deploy Python API docs to Cloudflare Pages
+python-docs-deploy: python-docs-build
+	cd packages/python-docs && pnpm run deploy
 
 # =============================================================================
 # Playground

@@ -1,6 +1,9 @@
-import { useRef, useCallback } from "react";
+import { useMemo } from "react";
+import CodeMirror from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
+import { EditorView } from "@codemirror/view";
 import { cn } from "@/lib/utils";
-import { highlightJSON } from "@/lib/highlight";
+import { useEditorTheme } from "@/lib/codemirror-theme";
 
 interface SchemaEditorProps {
   value: string;
@@ -17,51 +20,40 @@ export function SchemaEditor({
   placeholder = "Enter JSON schema...",
   className,
 }: SchemaEditorProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLPreElement>(null);
+  const theme = useEditorTheme();
 
-  const syncScroll = useCallback(() => {
-    const ta = textareaRef.current;
-    const pre = highlightRef.current;
-    if (ta && pre) {
-      pre.scrollTop = ta.scrollTop;
-      pre.scrollLeft = ta.scrollLeft;
-    }
-  }, []);
-
-  const highlighted = highlightJSON(value) || "&nbsp;";
+  const extensions = useMemo(() => [json(), EditorView.lineWrapping], []);
 
   return (
-    <div className={cn("relative rounded-md border border-code-border bg-code-bg overflow-hidden", className)}>
+    <div
+      className={cn(
+        "relative rounded-md border border-code-border bg-code-bg overflow-hidden [&_.cm-editor]:!outline-none [&_.cm-editor.cm-focused]:ring-1 [&_.cm-editor.cm-focused]:ring-ring [&_.cm-editor]:rounded-md",
+        className,
+      )}
+    >
       {parseError && (
         <div className="absolute top-0 left-0 right-0 z-10 px-3 py-1.5 bg-red-950/90 border-b border-red-800 text-red-300 text-xs font-mono truncate">
           {parseError}
         </div>
       )}
-      <pre
-        ref={highlightRef}
-        aria-hidden
-        className={cn(
-          "absolute inset-0 m-0 overflow-hidden pointer-events-none p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words text-code-text",
-          parseError && "pt-10",
-        )}
-        dangerouslySetInnerHTML={{ __html: highlighted + "\n" }}
-      />
-      <textarea
-        ref={textareaRef}
+      <CodeMirror
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={syncScroll}
+        onChange={onChange}
         placeholder={placeholder}
-        spellCheck={false}
-        className={cn(
-          "relative w-full h-full resize-none bg-transparent p-3",
-          "font-mono text-sm leading-relaxed text-transparent caret-code-caret",
-          "whitespace-pre-wrap break-words",
-          "outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-md",
-          "placeholder:text-code-placeholder",
-          parseError && "pt-10",
-        )}
+        theme={theme}
+        extensions={extensions}
+        height="100%"
+        style={{ height: "100%", paddingTop: parseError ? "2rem" : undefined }}
+        basicSetup={{
+          lineNumbers: false,
+          foldGutter: false,
+          highlightActiveLine: false,
+          highlightActiveLineGutter: false,
+          indentOnInput: true,
+          bracketMatching: true,
+          closeBrackets: true,
+          autocompletion: false,
+        }}
       />
     </div>
   );

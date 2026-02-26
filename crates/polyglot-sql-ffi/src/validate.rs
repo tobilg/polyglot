@@ -61,17 +61,29 @@ fn to_validation_error(error: Error) -> ValidationError {
             message,
             line,
             column,
-        } => ValidationError::error(message, "E001").with_location(line, column),
+            start,
+            end,
+        } => ValidationError::error(message, "E001")
+            .with_location(line, column)
+            .with_span(Some(start), Some(end)),
         Error::Tokenize {
             message,
             line,
             column,
-        } => ValidationError::error(message, "E002").with_location(line, column),
+            start,
+            end,
+        } => ValidationError::error(message, "E002")
+            .with_location(line, column)
+            .with_span(Some(start), Some(end)),
         Error::Parse {
             message,
             line,
             column,
-        } => ValidationError::error(message, "E003").with_location(line, column),
+            start,
+            end,
+        } => ValidationError::error(message, "E003")
+            .with_location(line, column)
+            .with_span(Some(start), Some(end)),
         _ => ValidationError::error(error.to_string(), "E000"),
     }
 }

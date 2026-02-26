@@ -5,7 +5,6 @@ import { DialectSelect } from "@/components/shared/dialect-select";
 import { SqlEditor } from "@/components/shared/sql-editor";
 import { SqlOutput } from "@/components/shared/sql-output";
 import { ErrorDisplay } from "@/components/shared/error-display";
-import { useLocalStorage } from "@/hooks/use-local-storage";
 import { DEFAULT_TRANSPILE_SQL } from "@/lib/constants";
 import { ArrowRight, Play } from "lucide-react";
 
@@ -14,9 +13,9 @@ interface TranspileTabProps {
 }
 
 export function TranspileTab({ dialects }: TranspileTabProps) {
-  const [source, setSource] = useLocalStorage("transpile-source", "mysql");
-  const [target, setTarget] = useLocalStorage("transpile-target", "postgres");
-  const [sql, setSql] = useLocalStorage("transpile-sql", DEFAULT_TRANSPILE_SQL);
+  const [source, setSource] = useState("mysql");
+  const [target, setTarget] = useState("postgres");
+  const [sql, setSql] = useState(DEFAULT_TRANSPILE_SQL);
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 

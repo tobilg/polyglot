@@ -7,7 +7,7 @@ Polyglot parses, generates, transpiles, and formats SQL across 32+ database dial
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
 
-There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as the [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/) and [TypeScript API Docs](https://polyglot.gh.tobilg.com/).
+There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/), [TypeScript API Docs](https://polyglot.gh.tobilg.com/), and [Python API Docs](https://polyglot-python.gh.tobilg.com/).
 
 Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -165,7 +165,9 @@ polyglot/
 │   └── polyglot-sql-python/    # Python bindings (PyO3 + maturin, published on PyPI)
 ├── packages/
 │   ├── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
-│   └── playground/             # Playground for testing the SDK (React 19, Tailwind v4, Vite)
+│   ├── documentation/          # TypeScript API documentation site
+│   ├── playground/             # Playground for testing the SDK (React 19, Tailwind v4, Vite)
+│   └── python-docs/            # Python API documentation site (Cloudflare Pages)
 ├── examples/
 │   ├── rust/                   # Rust example
 │   ├── typescript/             # TypeScript SDK example
@@ -351,6 +353,8 @@ cargo +nightly fuzz run fuzz_transpile
 | `make typecheck-python` | Run Python bindings type-check |
 | `make documentation-build` | Build documentation site |
 | `make documentation-deploy` | Deploy documentation to Cloudflare Pages |
+| `make python-docs-build` | Build Python API docs site |
+| `make python-docs-deploy` | Deploy Python API docs to Cloudflare Pages |
 | `make playground-build` | Build playground |
 | `make playground-deploy` | Deploy playground to Cloudflare Pages |
 | `make clean` | Remove all build artifacts |

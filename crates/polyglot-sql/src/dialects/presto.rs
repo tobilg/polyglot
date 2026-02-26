@@ -264,6 +264,7 @@ impl PrestoDialect {
                         table: None,
                         join_mark: c.join_mark,
                         trailing_comments: c.trailing_comments,
+                        span: None,
                     })
                 } else {
                     Expression::Column(c)
@@ -275,6 +276,7 @@ impl PrestoDialect {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }),
             // Recursively walk common binary expression types
             Expression::And(mut op) => {

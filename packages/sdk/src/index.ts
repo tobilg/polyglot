@@ -62,6 +62,10 @@ export interface TranspileResult {
   errorLine?: number;
   /** 1-based column number where the error occurred */
   errorColumn?: number;
+  /** Start byte offset of the error range */
+  errorStart?: number;
+  /** End byte offset of the error range (exclusive) */
+  errorEnd?: number;
 }
 
 /**
@@ -75,6 +79,48 @@ export interface ParseResult {
   errorLine?: number;
   /** 1-based column number where the error occurred */
   errorColumn?: number;
+  /** Start byte offset of the error range */
+  errorStart?: number;
+  /** End byte offset of the error range (exclusive) */
+  errorEnd?: number;
+}
+
+/**
+ * Span information for a token, indicating its position in the source SQL.
+ */
+export interface SpanInfo {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+}
+
+/**
+ * A single token from the SQL token stream.
+ */
+export interface TokenInfo {
+  tokenType: string;
+  text: string;
+  span: SpanInfo;
+  comments: string[];
+  trailingComments: string[];
+}
+
+/**
+ * Result of a tokenize operation
+ */
+export interface TokenizeResult {
+  success: boolean;
+  tokens?: TokenInfo[];
+  error?: string;
+  /** 1-based line number where the error occurred */
+  errorLine?: number;
+  /** 1-based column number where the error occurred */
+  errorColumn?: number;
+  /** Start byte offset of the error range */
+  errorStart?: number;
+  /** End byte offset of the error range (exclusive) */
+  errorEnd?: number;
 }
 
 /**
@@ -107,6 +153,7 @@ type WasmBindings = typeof wasmModule & {
     options: FormatOptions,
   ) => unknown;
   get_dialects_value?: () => unknown;
+  tokenize_value?: (sql: string, dialect: string) => unknown;
 };
 
 const wasm = wasmModule as WasmBindings;
@@ -237,6 +284,43 @@ export function parse(
     return result;
   } catch (error) {
     return parseFailure('parse', error);
+  }
+}
+
+/**
+ * Tokenize SQL into a token stream.
+ *
+ * @param sql - The SQL string to tokenize
+ * @param dialect - The dialect to use for tokenization
+ * @returns The token stream
+ *
+ * @example
+ * ```typescript
+ * const result = tokenize("SELECT a, b FROM t", Dialect.PostgreSQL);
+ * if (result.success) {
+ *   for (const token of result.tokens!) {
+ *     console.log(token.tokenType, token.text, token.span);
+ *   }
+ * }
+ * ```
+ */
+export function tokenize(
+  sql: string,
+  dialect: Dialect = Dialect.Generic,
+): TokenizeResult {
+  try {
+    if (typeof wasm.tokenize_value === 'function') {
+      return decodeWasmPayload<TokenizeResult>(
+        wasm.tokenize_value(sql, dialect),
+      );
+    }
+    return JSON.parse(wasm.tokenize(sql, dialect)) as TokenizeResult;
+  } catch (error) {
+    return {
+      success: false,
+      tokens: undefined,
+      error: `WASM tokenize failed: ${errorMessage(error)}`,
+    };
   }
 }
 
@@ -396,6 +480,13 @@ export class Polyglot {
    */
   parse(sql: string, dialect: Dialect = Dialect.Generic): ParseResult {
     return parse(sql, dialect);
+  }
+
+  /**
+   * Tokenize SQL into a token stream.
+   */
+  tokenize(sql: string, dialect: Dialect = Dialect.Generic): TokenizeResult {
+    return tokenize(sql, dialect);
   }
 
   /**
@@ -580,6 +671,7 @@ export default {
   isInitialized,
   transpile,
   parse,
+  tokenize,
   generate,
   format,
   getDialects,

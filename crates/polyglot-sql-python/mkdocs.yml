@@ -1,0 +1,15 @@
+site_name: Polyglot SQL Python API
+site_description: Python bindings for the Polyglot SQL Rust engine.
+site_url: https://polyglot-sql-python-api.pages.dev
+repo_url: https://github.com/tobilg/polyglot
+repo_name: tobilg/polyglot
+
+theme:
+  name: mkdocs
+
+nav:
+  - Home: index.md
+  - API Reference: api.md
+
+plugins:
+  - search

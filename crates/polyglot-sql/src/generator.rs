@@ -3810,6 +3810,7 @@ impl Generator {
                         name: v.this.clone(),
                         quoted: true,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 }
                 self.write(&v.this);
@@ -13388,6 +13389,7 @@ impl Generator {
                         name: n.clone(),
                         quoted: true,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 }
                 // Strip underscore digit separators (e.g., 1_000_000 -> 1000000)
@@ -19014,6 +19016,7 @@ impl Generator {
                     use_bracket_syntax: f.use_bracket_syntax,
                     no_parens: f.no_parens,
                     quoted: f.quoted,
+                    span: None,
                 }))
             }
             _ => expr.clone(),

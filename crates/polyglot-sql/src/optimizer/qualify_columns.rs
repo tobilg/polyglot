@@ -2217,6 +2217,7 @@ fn create_qualified_column(name: &str, table: Option<&str>) -> Expression {
         table: table.map(Identifier::new),
         join_mark: false,
         trailing_comments: vec![],
+        span: None,
     })
 }
 
@@ -2301,6 +2302,7 @@ mod tests {
             table: Some(Identifier::new("t")),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         };
         assert!(is_star_column(&col));
 
@@ -2309,6 +2311,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         };
         assert!(!is_star_column(&col2));
     }
@@ -2328,6 +2331,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let aliased = create_alias(col, "total");
         let sql = gen(&aliased);
@@ -2555,6 +2559,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
@@ -2571,6 +2576,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
@@ -2587,6 +2593,7 @@ mod tests {
             table: Some(Identifier::new("my_table")),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
@@ -2651,6 +2658,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let expr = Expression::Alias(Box::new(Alias {
             this: inner,
@@ -2695,6 +2703,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
@@ -2784,6 +2793,7 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
             columns: vec![Identifier::new("from"), Identifier::new("normal")],
             materialized: None,
@@ -2814,12 +2824,14 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
             Expression::Column(Column {
                 name: Identifier::new("normal"),
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
         )));
         let result = quote_identifiers(expr, None);
@@ -2846,6 +2858,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
         let result = quote_identifiers(expr, None);
         if let Expression::Column(col) = &result {
@@ -2868,6 +2881,7 @@ mod tests {
             table: Some(Identifier::new("t")),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         }));
         select.from = Some(crate::expressions::From {
             expressions: vec![Expression::Table(TableRef::new("t"))],

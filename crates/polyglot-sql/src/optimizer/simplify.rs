@@ -1199,6 +1199,7 @@ mod tests {
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         })
     }
 

@@ -11,6 +11,7 @@ import {
   hasAggregates,
 } from '../ast/visitor/walker';
 import type { Expression } from '../generated/Expression';
+import type { Span } from '../generated/Span';
 import type { ValidationError, ValidationOptions } from './types';
 
 /**
@@ -42,11 +43,17 @@ function validateSelect(
   // Rule W001: SELECT * is discouraged
   const stars = findByType(select, 'star');
   if (stars.length > 0) {
+    const starData = getExprData(stars[0]) as { span?: Span | null } | null;
+    const span = starData?.span;
     errors.push({
       message:
         'SELECT * is discouraged; specify columns explicitly for better performance and maintainability',
       severity: 'warning',
       code: 'W001',
+      line: span?.line,
+      column: span?.column,
+      start: span?.start,
+      end: span?.end,
     });
   }
 
@@ -77,11 +84,26 @@ function validateSelect(
     });
 
     if (hasNonAggregateColumn && aggregateFunctions.length > 0) {
+      // Find the first non-aggregate column for span info
+      const firstNonAgg = selectCols.find((col) => {
+        const colType = getExprType(col);
+        if (colType === 'column' || colType === 'identifier') {
+          return getAggregateFunctions(col).length === 0;
+        }
+        return false;
+      });
+      const colSpan = firstNonAgg
+        ? (getExprData(firstNonAgg) as { span?: Span | null })?.span
+        : undefined;
       errors.push({
         message:
           'Mixing aggregate functions with non-aggregated columns without GROUP BY may cause errors in strict SQL mode',
         severity: 'warning',
         code: 'W002',
+        line: colSpan?.line,
+        column: colSpan?.column,
+        start: colSpan?.start,
+        end: colSpan?.end,
       });
     }
   }
@@ -99,10 +121,19 @@ function validateSelect(
 
   // Rule W004: LIMIT without ORDER BY
   if (selectData.limit && !selectData.order_by) {
+    // Try to get span from the limit expression
+    const limitExpr = selectData.limit as Expression | null;
+    const limitSpan = limitExpr
+      ? (getExprData(limitExpr) as { span?: Span | null })?.span
+      : undefined;
     errors.push({
       message: 'LIMIT without ORDER BY produces non-deterministic results',
       severity: 'warning',
       code: 'W004',
+      line: limitSpan?.line,
+      column: limitSpan?.column,
+      start: limitSpan?.start,
+      end: limitSpan?.end,
     });
   }
 

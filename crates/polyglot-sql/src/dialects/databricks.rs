@@ -440,6 +440,7 @@ impl DatabricksDialect {
                             name: "DAY".to_string(),
                             quoted: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         });
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATEADD".to_string(),
@@ -467,6 +468,7 @@ impl DatabricksDialect {
                         name: "DAY".to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                     Ok(Expression::Function(Box::new(Function::new(
                         "DATEDIFF".to_string(),
@@ -887,6 +889,7 @@ impl DatabricksDialect {
                         name: id.name.to_uppercase(),
                         quoted: id.quoted,
                         trailing_comments: id.trailing_comments.clone(),
+                        span: None,
                     });
                 }
                 Expression::Column(col) if col.table.is_none() => {
@@ -895,6 +898,7 @@ impl DatabricksDialect {
                         name: col.name.name.to_uppercase(),
                         quoted: col.name.quoted,
                         trailing_comments: col.name.trailing_comments.clone(),
+                        span: None,
                     });
                 }
                 _ => {}

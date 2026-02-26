@@ -35,6 +35,8 @@ pub fn transpile(
                         format!("Expected 1 statement, found {}", parsed.len()),
                         0,
                         0,
+                        0,
+                        0,
                     ));
                 }
                 dialect.generate_pretty(&parsed.remove(0))

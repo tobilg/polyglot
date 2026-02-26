@@ -111,6 +111,7 @@ pub fn normalize_identifier(identifier: Identifier, strategy: NormalizationStrat
         name: normalized_name,
         quoted: identifier.quoted,
         trailing_comments: identifier.trailing_comments,
+        span: None,
     }
 }
 
@@ -123,6 +124,7 @@ fn normalize_expression(expression: Expression, strategy: NormalizationStrategy)
             table: col.table.map(|t| normalize_identifier(t, strategy)),
             join_mark: col.join_mark,
             trailing_comments: col.trailing_comments,
+            span: None,
         }),
         Expression::Table(mut table) => {
             table.name = normalize_identifier(table.name, strategy);
@@ -397,6 +399,7 @@ mod tests {
             name: "FoO".to_string(),
             quoted: true,
             trailing_comments: vec![],
+            span: None,
         };
         let normalized = normalize_identifier(id, NormalizationStrategy::Lowercase);
         assert_eq!(normalized.name, "FoO"); // Preserved
@@ -409,6 +412,7 @@ mod tests {
             name: "FoO".to_string(),
             quoted: true,
             trailing_comments: vec![],
+            span: None,
         };
         let normalized = normalize_identifier(id, NormalizationStrategy::CaseInsensitive);
         assert_eq!(normalized.name, "foo"); // Lowercased
@@ -421,6 +425,7 @@ mod tests {
             name: "FoO".to_string(),
             quoted: false,
             trailing_comments: vec![],
+            span: None,
         };
         let normalized = normalize_identifier(id, NormalizationStrategy::CaseSensitive);
         assert_eq!(normalized.name, "FoO"); // Unchanged
@@ -433,6 +438,7 @@ mod tests {
             table: Some(Identifier::new("MyTable")),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
 
         let normalized = normalize_expression(col, NormalizationStrategy::Lowercase);

@@ -495,6 +495,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: vec![],
+                                    span: None,
                                 })
                             } else {
                                 expr.clone()
@@ -571,6 +572,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: vec![],
+                                span: None,
                             }),
                         }),
                         ..Select::new()
@@ -597,6 +599,7 @@ fn extract_window_from_condition(
         table: None,
         join_mark: false,
         trailing_comments: vec![],
+        span: None,
     });
 
     // Check if condition is a simple comparison with a window function on one side
@@ -918,6 +921,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
+                                        span: None,
                                     },
                                 ));
                             }
@@ -938,6 +942,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
+                                        span: None,
                                     },
                                 ));
                             }
@@ -1000,6 +1005,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: vec![],
+                                    span: None,
                                 }),
                                 right: Expression::Literal(Literal::Number("1".to_string())),
                                 left_comments: vec![],
@@ -2478,6 +2484,7 @@ fn try_convert_generate_date_array_with_name(
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 }),
                 interval: add_count,
                 unit: add_unit,
@@ -2550,6 +2557,7 @@ fn try_convert_generate_date_array_with_name(
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
+                    span: None,
                 })],
                 from: Some(From {
                     expressions: vec![Expression::Table(crate::expressions::TableRef::new(
@@ -2702,6 +2710,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
 
             let lower_right = Expression::Function(Box::new(crate::expressions::Function {
@@ -2712,6 +2721,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
 
             Ok(Expression::Like(Box::new(crate::expressions::LikeOp {
@@ -2893,6 +2903,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         table: None,
         join_mark: false,
         trailing_comments: vec![],
+        span: None,
     });
 
     let cast_value = Expression::Cast(Box::new(Cast {
@@ -3405,11 +3416,13 @@ fn wrap_unnest_alias_in_join_item(expr: &mut Expression) {
                 name: "_u".to_string(),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             };
             alias.column_aliases = vec![Identifier {
                 name: original_alias_name,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }];
         }
     }
@@ -4858,6 +4871,7 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
                     replace: None,
                     rename: None,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })];
                 select.from = Some(From {
                     expressions: vec![Expression::Subquery(Box::new(subquery))],
@@ -5120,6 +5134,7 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
             expressions: Vec::new(),
             with_ordinality: false,
@@ -5139,6 +5154,7 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
             original_name: None,
         }));
@@ -5410,6 +5426,7 @@ mod tests {
             table: Some(Identifier::new("users".to_string())),
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         });
 
         let result = unqualify_columns(col).unwrap();
@@ -5453,6 +5470,7 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             })],
             from: Some(From {
                 expressions: vec![Expression::Table(TableRef::new("t1"))],
@@ -5466,12 +5484,14 @@ mod tests {
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     right: Expression::Column(Column {
                         name: Identifier::new("y".to_string()),
                         table: None,
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }),
                     left_comments: vec![],
                     operator_comments: vec![],
@@ -5513,6 +5533,7 @@ mod tests {
                 table: None,
                 join_mark: false,
                 trailing_comments: vec![],
+                span: None,
             }),
             right: Expression::Literal(Literal::String("%test%".to_string())),
             escape: None,

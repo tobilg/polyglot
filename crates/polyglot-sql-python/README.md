@@ -128,11 +128,13 @@ uv run maturin develop
 uv run pytest
 uv run pyright python/polyglot_sql/
 uv run maturin build --release
+uv run --with mkdocs mkdocs build --strict --clean --config-file mkdocs.yml --site-dir ../../packages/python-docs/dist
 ```
 
 ## Links
 
 - Repository: https://github.com/tobilg/polyglot
 - Issues: https://github.com/tobilg/polyglot/issues
-- Docs: https://polyglot.gh.tobilg.com
+- Python API Docs: https://polyglot-sql-python-api.pages.dev
+- TypeScript API Docs: https://polyglot.gh.tobilg.com
 - Playground: https://polyglot-playground.gh.tobilg.com/

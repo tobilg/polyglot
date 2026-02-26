@@ -1,0 +1,14 @@
+{
+  "name": "@polyglot-sql/python-docs",
+  "version": "0.1.9",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "cd ../../crates/polyglot-sql-python && uv run --with mkdocs mkdocs build --strict --clean --config-file mkdocs.yml --site-dir ../../packages/python-docs/dist",
+    "preview": "npx serve dist",
+    "deploy": "pnpm run build && wrangler pages deploy dist"
+  },
+  "devDependencies": {
+    "wrangler": "^4.58.0"
+  }
+}

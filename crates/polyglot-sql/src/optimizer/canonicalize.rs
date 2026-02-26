@@ -178,6 +178,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 use_bracket_syntax: func.use_bracket_syntax,
                 no_parens: func.no_parens,
                 quoted: func.quoted,
+                span: None,
             }))
         }
 

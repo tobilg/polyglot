@@ -503,6 +503,7 @@ impl DialectImpl for DuckDBDialect {
                 use_bracket_syntax: false,
                 no_parens: true,
                 quoted: false,
+                span: None,
             }))),
 
             // ===== Return statement =====
@@ -566,6 +567,7 @@ impl DialectImpl for DuckDBDialect {
                                 name: unit_str.to_string(),
                                 quoted: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }),
                         ],
                     );
@@ -1074,6 +1076,7 @@ impl DialectImpl for DuckDBDialect {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }),
                     original_name: None,
                 })))
@@ -1109,6 +1112,7 @@ impl DialectImpl for DuckDBDialect {
                                                 table: Some(Identifier::new(parts[0])),
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             }))
                                         } else {
                                             Some(Expression::Column(Column {
@@ -1116,6 +1120,7 @@ impl DialectImpl for DuckDBDialect {
                                                 table: None,
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             }))
                                         }
                                     }
@@ -1617,6 +1622,7 @@ impl DuckDBDialect {
                                 name: Identifier::new("_u".to_string()),
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }),
                             not: false,
                             postfix_form: false,
@@ -5629,6 +5635,7 @@ impl DuckDBDialect {
                     name: k_ident.clone(),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 let right_key = Expression::Subscript(Box::new(crate::expressions::Subscript {
                     this: right.clone(),
@@ -5675,6 +5682,7 @@ impl DuckDBDialect {
                     name: x_ident.clone(),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 let x_value = Expression::Dot(Box::new(crate::expressions::DotAccess {
                     this: x_ref,
@@ -5845,6 +5853,7 @@ impl DuckDBDialect {
                     name: i_ident.clone(),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 let i_plus_one = Expression::Add(Box::new(BinaryOp {
                     left: i_ref,

@@ -640,6 +640,7 @@ impl SparkDialect {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 })))
             }
 

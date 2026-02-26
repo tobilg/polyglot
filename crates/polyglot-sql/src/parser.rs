@@ -2738,6 +2738,7 @@ impl Parser {
                             name: alias_text,
                             quoted: is_quoted,
                             trailing_comments: Vec::new(),
+                            span: None,
                         },
                         column_aliases: Vec::new(),
                         pre_alias_comments,
@@ -2882,6 +2883,7 @@ impl Parser {
                 replace: None,
                 rename: None,
                 trailing_comments: Vec::new(),
+                span: None,
             })]
         };
 
@@ -3112,6 +3114,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             })
         } else if self.check(TokenType::DAt) {
             // Snowflake stage reference: @stage_name or @"stage_name" or @namespace.stage/path
@@ -3204,6 +3207,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))
                 };
 
@@ -3232,6 +3236,7 @@ impl Parser {
                                     name: alias_name,
                                     quoted: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 });
                             }
                         }
@@ -3717,6 +3722,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     }));
                 }
 
@@ -3747,6 +3753,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     }));
                 }
 
@@ -3782,6 +3789,7 @@ impl Parser {
                             identifier_func: None,
                             changes: None,
                             version: None,
+                            span: None,
                         }));
                     }
                     // catalog.schema.table or catalog.schema.function()
@@ -3825,6 +3833,7 @@ impl Parser {
                             identifier_func: None,
                             changes: None,
                             version: None,
+                            span: None,
                         })
                     } else if self.match_token(TokenType::LParen) {
                         // catalog.schema.function() - table-valued function
@@ -3843,6 +3852,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         }))
                     } else {
                         // catalog.schema.table
@@ -3876,6 +3886,7 @@ impl Parser {
                             identifier_func: None,
                             changes: None,
                             version: None,
+                            span: None,
                         })
                     }
                 } else if self.match_token(TokenType::LParen) {
@@ -3895,6 +3906,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))
                 } else {
                     // schema.table
@@ -3928,6 +3940,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     })
                 }
             } else if self.match_token(TokenType::LParen) {
@@ -4044,6 +4057,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))
                 } else {
                     // Simple table function like UNNEST(), GAP_FILL(), etc.
@@ -4077,6 +4091,7 @@ impl Parser {
                                     name: alias_name,
                                     quoted: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             } else {
                                 None
@@ -4113,6 +4128,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         };
                         Expression::Function(Box::new(func))
                     }
@@ -4149,6 +4165,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 })
             }
         } else if self.check(TokenType::LBrace) {
@@ -4211,6 +4228,7 @@ impl Parser {
                 name: string_token.text.clone(),
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             };
             let trailing_comments = self.previous_trailing_comments();
             Expression::Table(TableRef {
@@ -4231,6 +4249,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             })
         } else {
             return Err(self.parse_error(format!(
@@ -4574,6 +4593,7 @@ impl Parser {
                     name: format!("INDEXED BY {}", index_name),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
         } else if self.check(TokenType::Not) && self.check_next_identifier("INDEXED") {
@@ -4584,6 +4604,7 @@ impl Parser {
                     name: "NOT INDEXED".to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
         }
@@ -4977,6 +4998,7 @@ impl Parser {
                     name: format!("INDEXED BY {}", index_name),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
         }
@@ -5018,6 +5040,7 @@ impl Parser {
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }),
                             alias,
                             column_aliases: t.column_aliases,
@@ -5030,6 +5053,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: t.trailing_comments,
+                            span: None,
                         })
                     };
                     alias_expr
@@ -5118,6 +5142,7 @@ impl Parser {
                             name: merged_name,
                             quoted: true,
                             trailing_comments: Vec::new(),
+                            span: None,
                         };
 
                         // Shift: schema becomes catalog, catalog becomes None or stays
@@ -5508,6 +5533,7 @@ impl Parser {
                 name,
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             });
         }
 
@@ -5530,6 +5556,7 @@ impl Parser {
                 name,
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             });
         }
 
@@ -5564,6 +5591,7 @@ impl Parser {
                     name,
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 };
             }
         }
@@ -5652,6 +5680,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
             return Ok(TableRef {
                 catalog: None,
@@ -5671,6 +5700,7 @@ impl Parser {
                 identifier_func: Some(Box::new(identifier_func)),
                 changes: None,
                 version: None,
+                span: None,
             });
         }
 
@@ -5702,6 +5732,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 })
             } else {
                 // BigQuery: handle x.* wildcard table reference (e.g., SELECT * FROM x.*)
@@ -5731,6 +5762,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     });
                 }
                 let table = self.parse_bigquery_table_part()?;
@@ -5762,6 +5794,7 @@ impl Parser {
                             identifier_func: None,
                             changes: None,
                             version: None,
+                            span: None,
                         });
                     }
                     let actual_table = self.parse_bigquery_table_part()?;
@@ -5784,6 +5817,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     })
                 } else {
                     let trailing_comments = self.previous_trailing_comments();
@@ -5805,6 +5839,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     })
                 }
             }
@@ -5828,6 +5863,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             })
         }
     }
@@ -6518,6 +6554,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else if self.match_token(TokenType::Cube) {
                 // CUBE (...)
@@ -6532,6 +6569,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else if self.match_token(TokenType::Rollup) {
                 // ROLLUP (...)
@@ -6546,6 +6584,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else {
                 self.parse_expression()?
@@ -6648,6 +6687,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else if self.match_token(TokenType::Cube) {
                 // CUBE (...)
@@ -6662,6 +6702,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else if self.match_token(TokenType::Rollup) {
                 // ROLLUP (...)
@@ -6676,6 +6717,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))
             } else if self.check(TokenType::LParen) {
                 // This could be a tuple like (x, y) or empty ()
@@ -6791,6 +6833,7 @@ impl Parser {
                                 name: name_text,
                                 quoted,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             };
                             let item = if self.match_token(TokenType::As) {
                                 let expr = self.parse_expression()?;
@@ -8647,6 +8690,7 @@ impl Parser {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 })
                 .collect();
@@ -8974,6 +9018,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }))));
         }
 
@@ -9007,6 +9052,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             }
         } else {
             let trailing_comments = self.previous_trailing_comments();
@@ -9028,6 +9074,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             }
         };
 
@@ -9321,6 +9368,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 }
             } else {
                 let trailing_comments = self.previous_trailing_comments();
@@ -9342,6 +9390,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 }
             };
             Some(Expression::Table(source_table))
@@ -9378,6 +9427,7 @@ impl Parser {
                             table: Some(col_name),
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         })
                     } else {
                         Expression::Identifier(col_name)
@@ -9509,6 +9559,7 @@ impl Parser {
                         table: Some(col_name),
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     Expression::Identifier(col_name)
@@ -9571,6 +9622,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             })));
         }
 
@@ -9648,6 +9700,7 @@ impl Parser {
                 identifier_func: None,
                 changes: None,
                 version: None,
+                span: None,
             }
         } else {
             TableRef::new(table_name.name)
@@ -9764,6 +9817,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 }
             } else {
                 TableRef {
@@ -9784,6 +9838,7 @@ impl Parser {
                     identifier_func: None,
                     changes: None,
                     version: None,
+                    span: None,
                 }
             }
         } else {
@@ -9829,6 +9884,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     }
                 } else {
                     TableRef {
@@ -9849,6 +9905,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     }
                 }
             } else {
@@ -9900,6 +9957,7 @@ impl Parser {
                         identifier_func: None,
                         changes: None,
                         version: None,
+                        span: None,
                     }
                 } else {
                     TableRef {
@@ -9920,6 +9978,7 @@ impl Parser {
                         changes: None,
                         version: None,
                         identifier_func: None,
+                        span: None,
                     }
                 }
             } else {
@@ -9984,6 +10043,7 @@ impl Parser {
                     name: format!("{}.{}", col_ident.name, part.name),
                     quoted: col_ident.quoted || part.quoted,
                     trailing_comments: Vec::new(),
+                    span: None,
                 };
             }
             self.expect(TokenType::Eq)?;
@@ -10873,6 +10933,7 @@ impl Parser {
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             })),
                         },
                     )));
@@ -10889,6 +10950,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }));
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -10922,6 +10984,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }));
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -11892,6 +11955,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             })
                             .collect()
@@ -11933,6 +11997,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             })
                             .collect()
@@ -11968,6 +12033,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             })
                             .collect()
@@ -13196,6 +13262,7 @@ impl Parser {
                     name: format!("{}.{}", name.name, sub.name),
                     quoted: name.quoted,
                     trailing_comments: sub.trailing_comments,
+                    span: None,
                 };
             }
         }
@@ -13426,6 +13493,7 @@ impl Parser {
                         name: sep,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     };
                 }
                 col_def
@@ -14529,6 +14597,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         })));
                     } else {
                         // Try to parse as column definition (name data_type) for Hive-style partitioned by
@@ -14830,6 +14899,7 @@ impl Parser {
                         name: s,
                         quoted: true,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     None
@@ -15395,6 +15465,7 @@ impl Parser {
                         name,
                         quoted,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 } else {
                     // Unknown ON clause, backtrack
@@ -17189,6 +17260,7 @@ impl Parser {
                         name: format!("{}.{}", old_name.name, field.name),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     };
                 }
                 self.expect(TokenType::To)?;
@@ -17204,6 +17276,7 @@ impl Parser {
                         name: format!("{}.{}", new_name.name, field.name),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     };
                 }
                 Ok(AlterTableAction::RenameColumn {
@@ -17846,6 +17919,7 @@ impl Parser {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })));
                 } else if self.match_identifier("RETENTION_PERIOD") {
                     self.expect(TokenType::Eq)?;
@@ -19566,6 +19640,7 @@ impl Parser {
                                 name: table_name.to_string(),
                                 quoted: id.quoted,
                                 trailing_comments: id.trailing_comments,
+                                span: None,
                             }));
                         } else {
                             from = Some(Expression::Identifier(id));
@@ -19698,6 +19773,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 })
                             })
                             .collect(),
@@ -19927,6 +20003,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 }),
                                 right: nested_value,
                                 left_comments: Vec::new(),
@@ -19940,6 +20017,7 @@ impl Parser {
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }));
                         }
                         // Consume optional comma between nested values
@@ -19998,6 +20076,7 @@ impl Parser {
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: Vec::new(),
+                                        span: None,
                                     }),
                                     right: val,
                                     left_comments: Vec::new(),
@@ -20011,6 +20090,7 @@ impl Parser {
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 }));
                             }
                         } else {
@@ -20109,6 +20189,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
         if self.check(TokenType::Number) {
@@ -20134,6 +20215,7 @@ impl Parser {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }));
                 }
                 return Ok(Expression::Column(Column {
@@ -20141,6 +20223,7 @@ impl Parser {
                     table: None,
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
             return Ok(Expression::Column(Column {
@@ -20148,6 +20231,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -20536,6 +20620,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -21876,6 +21961,7 @@ impl Parser {
                 name: Identifier::new(parts[1].clone()),
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }))
         } else {
             // For 3+ parts, create a Column with concatenated table parts
@@ -21886,6 +21972,7 @@ impl Parser {
                 name: Identifier::new(column_name),
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }))
         }
     }
@@ -22681,6 +22768,7 @@ impl Parser {
                                     name: token.text,
                                     quoted: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 }
                             } else {
                                 self.expect_identifier_with_quoted()?
@@ -22699,6 +22787,7 @@ impl Parser {
                                 name: token.text,
                                 quoted: false,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }
                         } else {
                             self.expect_identifier_with_quoted()?
@@ -22723,6 +22812,7 @@ impl Parser {
                         name: token.text,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }
                 } else {
                     self.expect_identifier_with_quoted()?
@@ -25820,6 +25910,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             });
 
             // Check if followed by operators that should be included in the ABS
@@ -26376,6 +26467,7 @@ impl Parser {
                             replace: None,
                             rename: None,
                             trailing_comments: Vec::new(),
+                            span: None,
                         })
                     });
                     return Ok(Expression::ApproxDistinct(Box::new(
@@ -26447,10 +26539,12 @@ impl Parser {
                                                 name: charset_name,
                                                 quoted: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             },
                                             table: None,
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
+                                            span: None,
                                         },
                                     )),
                                     expression: Box::new(literal),
@@ -26683,6 +26777,7 @@ impl Parser {
                                 replace: None,
                                 rename: None,
                                 trailing_comments: Vec::new(),
+                                span: None,
                             }),
                             right: pattern,
                             escape: None,
@@ -27350,6 +27445,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             })));
         }
 
@@ -27605,6 +27701,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
             return self.maybe_parse_over(func_expr);
         }
@@ -27625,6 +27722,7 @@ impl Parser {
                         name: token.text,
                         quoted: true,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                     return self.maybe_parse_subscript(ident);
                 }
@@ -27785,6 +27883,7 @@ impl Parser {
                         name: token.text,
                         quoted: true,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                     return self.maybe_parse_subscript(ident);
                 }
@@ -27849,6 +27948,7 @@ impl Parser {
                             replace: None,
                             rename: None,
                             trailing_comments: Vec::new(),
+                            span: None,
                         })
                     } else {
                         self.parse_expression()?
@@ -28025,6 +28125,7 @@ impl Parser {
                 table: Some(ident),
                 join_mark: false,
                 trailing_comments,
+                span: None,
             });
             // Handle Oracle/Redshift outer join marker (+) after column reference
             if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -28094,6 +28195,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28118,6 +28220,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28148,6 +28251,7 @@ impl Parser {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28197,6 +28301,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }));
                 return self.maybe_parse_subscript(func);
             } else {
@@ -28210,6 +28315,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: true,
                     quoted: false,
+                    span: None,
                 }));
                 return self.maybe_parse_subscript(func);
             }
@@ -28267,6 +28373,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: true, // These functions were called without parentheses
                     quoted: false,
+                    span: None,
                 }));
                 return self.maybe_parse_subscript(func);
             }
@@ -28384,6 +28491,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28405,6 +28513,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28430,6 +28539,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28452,6 +28562,7 @@ impl Parser {
                             table: Some(ident),
                             join_mark: true,
                             trailing_comments,
+                            span: None,
                         });
                         return self.maybe_parse_subscript(col);
                     } else {
@@ -28475,6 +28586,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         method: col_ident,
                         args,
@@ -28489,6 +28601,7 @@ impl Parser {
                     table: Some(ident),
                     join_mark: false,
                     trailing_comments,
+                    span: None,
                 });
                 return self.maybe_parse_subscript(col);
             }
@@ -28534,6 +28647,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments,
+                span: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -28591,6 +28705,7 @@ impl Parser {
                     table: Some(Identifier::new(name)),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
             return Ok(Expression::Column(crate::expressions::Column {
@@ -28598,6 +28713,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -28618,6 +28734,7 @@ impl Parser {
                     table: Some(Identifier::new(name)),
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
             return Ok(Expression::Column(crate::expressions::Column {
@@ -28625,6 +28742,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -28662,6 +28780,7 @@ impl Parser {
                     table: None,
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
         }
@@ -28762,6 +28881,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28777,6 +28897,7 @@ impl Parser {
                             table: None,
                             join_mark: false,
                             trailing_comments: Vec::new(),
+                            span: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28810,6 +28931,7 @@ impl Parser {
                     table: Some(Identifier::new(name)),
                     join_mark: false,
                     trailing_comments,
+                    span: None,
                 });
                 // Handle Oracle/Redshift outer join marker (+) after column reference
                 if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -28837,6 +28959,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments,
+                span: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -29106,6 +29229,7 @@ impl Parser {
                 table: Some(ident),
                 join_mark: false,
                 trailing_comments,
+                span: None,
             });
             // Handle Oracle/Redshift outer join marker (+) after column reference
             if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -29141,6 +29265,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 })));
             }
         }
@@ -29159,6 +29284,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments,
+                span: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -29494,6 +29620,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 } else {
                     self.expect(TokenType::RParen)?;
@@ -29602,6 +29729,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
                 self.expect(TokenType::RParen)?;
@@ -29745,6 +29873,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -29774,6 +29903,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "DATEADD") => {
@@ -29796,6 +29926,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 } else {
                     // BigQuery 2-arg syntax: DATE_ADD(date, interval)
@@ -29808,6 +29939,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -29840,6 +29972,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "RANDOM") => {
@@ -29932,6 +30065,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
                 let first = self.parse_expression()?;
@@ -29945,6 +30079,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
                 self.expect(TokenType::Comma)?;
@@ -30039,6 +30174,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
                 self.expect(TokenType::RParen)?;
@@ -30085,6 +30221,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "ARRAY_INTERSECT") => {
@@ -30142,6 +30279,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30157,6 +30295,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 } else if args.len() == 2 {
                     Ok(Some(Expression::Nvl(Box::new(
@@ -30175,6 +30314,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30198,6 +30338,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30225,6 +30366,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
 
@@ -30239,6 +30381,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
 
@@ -30269,6 +30412,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "CHAR") => {
@@ -30301,6 +30445,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30334,6 +30479,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30381,6 +30527,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30415,6 +30562,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "XMLCOMMENT") => {
@@ -30432,6 +30580,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "MATCH") => {
@@ -30460,6 +30609,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
 
@@ -30555,6 +30705,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted,
+                        span: None,
                     }))))
                 }
             }
@@ -30623,6 +30774,7 @@ impl Parser {
                                 use_bracket_syntax: false,
                                 no_parens: false,
                                 quoted: false,
+                                span: None,
                             }))));
                         }
                         self.current = saved;
@@ -30659,6 +30811,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 } else {
                     self.expect(TokenType::RParen)?;
@@ -30671,6 +30824,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30781,6 +30935,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
 
@@ -30827,6 +30982,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         }))))
                     }
                 } else {
@@ -30839,6 +30995,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))))
                 }
             }
@@ -30879,6 +31036,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::CastLike, "TRY_CAST") => {
@@ -30907,6 +31065,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }))));
                 }
                 let args = self.parse_expression_list()?;
@@ -30984,6 +31143,7 @@ impl Parser {
             use_bracket_syntax: false,
             no_parens: false,
             quoted: false,
+            span: None,
         }))
     }
 
@@ -31084,6 +31244,7 @@ impl Parser {
                         replace: None,
                         rename: None,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })]
                 } else if self.check(TokenType::RParen) {
                     Vec::new()
@@ -31253,6 +31414,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         })));
                     }
                     (Some(first_expr), false, false)
@@ -31343,6 +31505,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })))
                 }
             }
@@ -31375,6 +31538,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 })))
             }
 
@@ -31395,6 +31559,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })));
                 }
                 // Check if this is ARRAY((SELECT ...) LIMIT n) - BigQuery allows LIMIT outside the subquery parens
@@ -31462,6 +31627,7 @@ impl Parser {
                             use_bracket_syntax: false,
                             no_parens: false,
                             quoted: false,
+                            span: None,
                         })));
                     } else {
                         // Not a subquery, backtrack and parse as regular arguments
@@ -31484,6 +31650,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 })))
             }
 
@@ -31550,6 +31717,7 @@ impl Parser {
                                     use_bracket_syntax: false,
                                     no_parens: false,
                                     quoted: false,
+                                    span: None,
                                 }))
                             } else {
                                 return Err(self.parse_error(format!(
@@ -31612,6 +31780,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })))
                 } else {
                     // Check for IGNORE NULLS / RESPECT NULLS (BigQuery style)
@@ -31885,6 +32054,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })))
                 }
             }
@@ -32161,6 +32331,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })));
                 }
 
@@ -32267,6 +32438,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })))
                 } else {
                     // Single argument - use typed expression
@@ -32727,6 +32899,7 @@ impl Parser {
                         use_bracket_syntax: false,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     })))
                 }
             }
@@ -32935,6 +33108,7 @@ impl Parser {
                     name: alias_token.text.clone(),
                     quoted: alias_token.token_type == TokenType::QuotedIdentifier,
                     trailing_comments: Vec::new(),
+                    span: None,
                 };
                 return Expression::Alias(Box::new(crate::expressions::Alias {
                     this: expr,
@@ -33423,6 +33597,7 @@ impl Parser {
             name,
             quoted,
             trailing_comments: Vec::new(),
+            span: None,
         };
 
         // If DISTINCT was used, wrap the result to indicate it
@@ -33587,6 +33762,7 @@ impl Parser {
                         table: Some(first_ident),
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }));
                 }
             }
@@ -33596,6 +33772,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -33618,6 +33795,7 @@ impl Parser {
                         table: Some(first_ident),
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }));
                 }
             }
@@ -33627,6 +33805,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -33758,6 +33937,7 @@ impl Parser {
                         use_bracket_syntax: true,
                         no_parens: false,
                         quoted: false,
+                        span: None,
                     }));
                     continue;
                 }
@@ -35064,6 +35244,7 @@ impl Parser {
                     name: start_unit_name.clone(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })),
                 expressions: vec![precision],
             }))
@@ -35118,6 +35299,7 @@ impl Parser {
                     name: end_unit_name.clone(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })),
                 expressions: vec![precision],
             }))
@@ -37811,6 +37993,7 @@ impl Parser {
             replace,
             rename,
             trailing_comments: star_trailing_comments,
+            span: None,
         })
     }
 
@@ -37850,7 +38033,7 @@ impl Parser {
     /// Create a parse error with position from the current token
     fn parse_error(&self, message: impl Into<String>) -> Error {
         let span = self.peek().span;
-        Error::parse(message, span.line, span.column)
+        Error::parse(message, span.line, span.column, span.start, span.end)
     }
 
     /// Peek at current token
@@ -38731,6 +38914,7 @@ impl Parser {
             // sqlglot treats this as an identifier token and re-emits it quoted.
             quoted: true,
             trailing_comments: Vec::new(),
+            span: None,
         }
     }
 
@@ -38800,6 +38984,7 @@ impl Parser {
                 name: token.text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else if self.check(TokenType::LBrace)
             && matches!(
@@ -38818,6 +39003,7 @@ impl Parser {
                         name,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 }
             }
@@ -38856,6 +39042,7 @@ impl Parser {
                 name,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             });
         }
         if self.is_identifier_or_keyword_token() {
@@ -38865,6 +39052,7 @@ impl Parser {
                 name: token.text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else if self.check(TokenType::LBrace)
             && matches!(
@@ -38885,6 +39073,7 @@ impl Parser {
                         name,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 }
             }
@@ -39010,6 +39199,7 @@ impl Parser {
                 name: token.text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else {
             Err(self.parse_error(format!(
@@ -39040,6 +39230,7 @@ impl Parser {
                 name: token.text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else if self.check(TokenType::String)
             && matches!(
@@ -39053,6 +39244,7 @@ impl Parser {
                 name: token.text,
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else {
             Err(self.parse_error(format!(
@@ -39448,6 +39640,7 @@ impl Parser {
                 name,
                 quoted,
                 trailing_comments,
+                span: None,
             });
 
             if !self.match_token(TokenType::Comma) {
@@ -39512,6 +39705,7 @@ impl Parser {
                 name,
                 quoted: final_quoted,
                 trailing_comments,
+                span: None,
             });
 
             if !self.match_token(TokenType::Comma) {
@@ -39553,6 +39747,7 @@ impl Parser {
                 name: display_name,
                 quoted,
                 trailing_comments,
+                span: None,
             });
 
             if !self.match_token(TokenType::Comma) {
@@ -42158,6 +42353,7 @@ impl Parser {
                     name: token.text,
                     quoted: token.token_type == TokenType::QuotedIdentifier,
                     trailing_comments: Vec::new(),
+                    span: None,
                 };
                 result = Some(Expression::Dot(Box::new(DotAccess {
                     this: result.take().unwrap(),
@@ -42240,6 +42436,7 @@ impl Parser {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })));
                 }
                 // If it's already something else (like a literal), return as-is
@@ -43844,6 +44041,7 @@ impl Parser {
                 name: token.text,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
         Ok(None)
@@ -44192,6 +44390,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: true,
                     quoted: false,
+                    span: None,
                 }))));
             }
         }
@@ -44238,6 +44437,7 @@ impl Parser {
             use_bracket_syntax: false,
             no_parens: false,
             quoted: false,
+            span: None,
         }));
 
         // Check for OVER clause (window function)
@@ -44303,10 +44503,12 @@ impl Parser {
                 name: name.map(|n| n.name).unwrap_or_default(),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             },
             table: None,
             join_mark: false,
             trailing_comments: Vec::new(),
+            span: None,
         })))
     }
 
@@ -44939,6 +45141,7 @@ impl Parser {
                 name: text,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
 
@@ -44949,6 +45152,7 @@ impl Parser {
                 name: text,
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
 
@@ -44982,6 +45186,7 @@ impl Parser {
                 name: text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
         Ok(None)
@@ -45004,6 +45209,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))));
             }
             let args = self.parse_expression_list()?;
@@ -45032,6 +45238,7 @@ impl Parser {
                     use_bracket_syntax: false,
                     no_parens: false,
                     quoted: false,
+                    span: None,
                 }))));
             } else {
                 return Err(self.parse_error("IF function requires 2 or 3 arguments"));
@@ -45342,6 +45549,7 @@ impl Parser {
                     name: token.text.clone(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })))
             }
             _ => Ok(Some(Expression::Introducer(Box::new(Introducer {
@@ -45349,6 +45557,7 @@ impl Parser {
                     name: token.text.clone(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })),
                 expression: Box::new(literal),
             })))),
@@ -46039,6 +46248,7 @@ impl Parser {
                         name: token.text,
                         quoted,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 } else {
                     break;
@@ -46812,6 +47022,7 @@ impl Parser {
                         replace: None,
                         rename: None,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }));
                 } else
                 // Parse column list (optional)
@@ -46829,6 +47040,7 @@ impl Parser {
                                                 table: Some(table_ident),
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             })
                                         } else {
                                             col_expr
@@ -46892,6 +47104,7 @@ impl Parser {
                         replace: None,
                         rename: None,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }));
                 } else if self.match_token(TokenType::Set) {
                     // Parse col = value assignments manually
@@ -46911,6 +47124,7 @@ impl Parser {
                                                 table: Some(table_ident),
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
+                                                span: None,
                                             })
                                         } else {
                                             col_expr
@@ -47288,11 +47502,13 @@ impl Parser {
                 name: v.this,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             },
             _ => Identifier {
                 name: String::new(),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             },
         };
 
@@ -47305,6 +47521,7 @@ impl Parser {
                     name: token.text,
                     quoted: token.token_type == TokenType::QuotedIdentifier,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
             } else {
                 break;
@@ -47318,6 +47535,7 @@ impl Parser {
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else if parts.len() == 2 {
             Expression::Column(Column {
@@ -47325,6 +47543,7 @@ impl Parser {
                 table: Some(parts.remove(0)),
                 join_mark: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else {
             // For 3+ parts, build nested Dot expressions
@@ -48879,6 +49098,7 @@ impl Parser {
                 replace: None,
                 rename: None,
                 trailing_comments: Vec::new(),
+                span: None,
             }))),
         }
     }
@@ -49467,6 +49687,7 @@ impl Parser {
                 name: String::new(),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
         if self.match_text_seq(&["SQL", "SECURITY"]) {
@@ -49510,6 +49731,7 @@ impl Parser {
                 name,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else {
             return Err(self.parse_error("Expected cluster name after ON CLUSTER"));
@@ -49860,6 +50082,7 @@ impl Parser {
             name,
             quoted,
             trailing_comments: Vec::new(),
+            span: None,
         });
 
         if self.match_token(TokenType::LParen) {
@@ -50401,6 +50624,7 @@ impl Parser {
                 name: format!("ON {} {}", kind, action),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             }));
         }
 
@@ -50420,6 +50644,7 @@ impl Parser {
                     name: format!("MATCH {}", match_type),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 }));
             }
         }
@@ -51611,6 +51836,7 @@ impl Parser {
             replace,
             rename,
             trailing_comments: Vec::new(),
+            span: None,
         })))
     }
 
@@ -51623,6 +51849,7 @@ impl Parser {
                 name: token.text,
                 quoted,
                 trailing_comments: Vec::new(),
+                span: None,
             })
         } else {
             None
@@ -51649,6 +51876,7 @@ impl Parser {
                         name: token.text,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                 } else {
                     break;
@@ -51833,6 +52061,7 @@ impl Parser {
             replace,
             rename,
             trailing_comments: Vec::new(),
+            span: None,
         })))
     }
 
@@ -51995,6 +52224,7 @@ impl Parser {
                 name,
                 quoted: true,
                 trailing_comments: Vec::new(),
+                span: None,
             })))
         } else {
             Ok(None)
@@ -52271,6 +52501,7 @@ impl Parser {
             use_bracket_syntax: false,
             no_parens: false,
             quoted: false,
+            span: None,
         }));
 
         // Check for AS alias(col1 type1, col2 type2, ...)
@@ -52477,6 +52708,7 @@ impl Parser {
                         name: full_target,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })))
                 } else {
                     None
@@ -52504,6 +52736,7 @@ impl Parser {
                         name: hint_type,
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })),
                     expressions,
                     target,
@@ -52564,6 +52797,7 @@ impl Parser {
                     name: "PARTITIONS".to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })),
                 expressions: parts,
             })));
@@ -52625,6 +52859,7 @@ impl Parser {
                 name: text,
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
 
@@ -52781,6 +53016,7 @@ impl Parser {
             identifier_func: None,
             changes: None,
             version: None,
+            span: None,
         })))
     }
 
@@ -53196,6 +53432,7 @@ impl Parser {
                 name: String::new(),
                 quoted: false,
                 trailing_comments: Vec::new(),
+                span: None,
             })));
         }
         if self.match_text_seq(&["WITH", "TIME", "ZONE"]) {
@@ -54349,6 +54586,7 @@ impl Parser {
                     replace: None,
                     rename: None,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })];
                 select_struct.from = Some(From {
                     expressions: vec![from_table],

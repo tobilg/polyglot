@@ -15,6 +15,8 @@ pub enum Error {
         message: String,
         line: usize,
         column: usize,
+        start: usize,
+        end: usize,
     },
 
     /// Error during parsing
@@ -23,6 +25,8 @@ pub enum Error {
         message: String,
         line: usize,
         column: usize,
+        start: usize,
+        end: usize,
     },
 
     /// Error during SQL generation
@@ -39,6 +43,8 @@ pub enum Error {
         message: String,
         line: usize,
         column: usize,
+        start: usize,
+        end: usize,
     },
 
     /// Internal error (should not happen in normal usage)
@@ -48,20 +54,36 @@ pub enum Error {
 
 impl Error {
     /// Create a tokenization error
-    pub fn tokenize(message: impl Into<String>, line: usize, column: usize) -> Self {
+    pub fn tokenize(
+        message: impl Into<String>,
+        line: usize,
+        column: usize,
+        start: usize,
+        end: usize,
+    ) -> Self {
         Error::Tokenize {
             message: message.into(),
             line,
             column,
+            start,
+            end,
         }
     }
 
     /// Create a parse error with position information
-    pub fn parse(message: impl Into<String>, line: usize, column: usize) -> Self {
+    pub fn parse(
+        message: impl Into<String>,
+        line: usize,
+        column: usize,
+        start: usize,
+        end: usize,
+    ) -> Self {
         Error::Parse {
             message: message.into(),
             line,
             column,
+            start,
+            end,
         }
     }
 
@@ -85,6 +107,26 @@ impl Error {
         }
     }
 
+    /// Get the start byte offset if available
+    pub fn start(&self) -> Option<usize> {
+        match self {
+            Error::Tokenize { start, .. }
+            | Error::Parse { start, .. }
+            | Error::Syntax { start, .. } => Some(*start),
+            _ => None,
+        }
+    }
+
+    /// Get the end byte offset if available
+    pub fn end(&self) -> Option<usize> {
+        match self {
+            Error::Tokenize { end, .. }
+            | Error::Parse { end, .. }
+            | Error::Syntax { end, .. } => Some(*end),
+            _ => None,
+        }
+    }
+
     /// Create a generation error
     pub fn generate(message: impl Into<String>) -> Self {
         Error::Generate(message.into())
@@ -99,11 +141,19 @@ impl Error {
     }
 
     /// Create a syntax error
-    pub fn syntax(message: impl Into<String>, line: usize, column: usize) -> Self {
+    pub fn syntax(
+        message: impl Into<String>,
+        line: usize,
+        column: usize,
+        start: usize,
+        end: usize,
+    ) -> Self {
         Error::Syntax {
             message: message.into(),
             line,
             column,
+            start,
+            end,
         }
     }
 
@@ -136,6 +186,12 @@ pub struct ValidationError {
     pub severity: ValidationSeverity,
     /// Error code (e.g., "E001", "W001")
     pub code: String,
+    /// Start byte offset of the error range
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<usize>,
+    /// End byte offset of the error range (exclusive)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end: Option<usize>,
 }
 
 impl ValidationError {
@@ -147,6 +203,8 @@ impl ValidationError {
             column: None,
             severity: ValidationSeverity::Error,
             code: code.into(),
+            start: None,
+            end: None,
         }
     }
 
@@ -158,6 +216,8 @@ impl ValidationError {
             column: None,
             severity: ValidationSeverity::Warning,
             code: code.into(),
+            start: None,
+            end: None,
         }
     }
 
@@ -177,6 +237,13 @@ impl ValidationError {
     pub fn with_location(mut self, line: usize, column: usize) -> Self {
         self.line = Some(line);
         self.column = Some(column);
+        self
+    }
+
+    /// Set the start/end byte offsets
+    pub fn with_span(mut self, start: Option<usize>, end: Option<usize>) -> Self {
+        self.start = start;
+        self.end = end;
         self
     }
 }
@@ -225,9 +292,11 @@ mod tests {
 
     #[test]
     fn test_parse_error_has_position() {
-        let err = Error::parse("test message", 5, 10);
+        let err = Error::parse("test message", 5, 10, 20, 25);
         assert_eq!(err.line(), Some(5));
         assert_eq!(err.column(), Some(10));
+        assert_eq!(err.start(), Some(20));
+        assert_eq!(err.end(), Some(25));
         assert!(err.to_string().contains("line 5"));
         assert!(err.to_string().contains("column 10"));
         assert!(err.to_string().contains("test message"));
@@ -235,9 +304,11 @@ mod tests {
 
     #[test]
     fn test_tokenize_error_has_position() {
-        let err = Error::tokenize("bad token", 3, 7);
+        let err = Error::tokenize("bad token", 3, 7, 15, 20);
         assert_eq!(err.line(), Some(3));
         assert_eq!(err.column(), Some(7));
+        assert_eq!(err.start(), Some(15));
+        assert_eq!(err.end(), Some(20));
     }
 
     #[test]
@@ -245,6 +316,8 @@ mod tests {
         let err = Error::generate("gen error");
         assert_eq!(err.line(), None);
         assert_eq!(err.column(), None);
+        assert_eq!(err.start(), None);
+        assert_eq!(err.end(), None);
     }
 
     #[test]
@@ -266,5 +339,38 @@ mod tests {
             err
         );
         assert_eq!(err.line(), Some(1));
+    }
+
+    #[test]
+    fn test_parse_error_has_span_offsets() {
+        use crate::dialects::{Dialect, DialectType};
+        let d = Dialect::get(DialectType::Generic);
+        let result = d.parse("SELECT 1 + 2)");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.start().is_some(),
+            "Parse error should have start offset: {:?}",
+            err
+        );
+        assert!(
+            err.end().is_some(),
+            "Parse error should have end offset: {:?}",
+            err
+        );
+        // The ')' is at byte offset 12
+        assert_eq!(err.start(), Some(12));
+        assert_eq!(err.end(), Some(13));
+    }
+
+    #[test]
+    fn test_validation_error_with_span() {
+        let err = ValidationError::error("test", "E001")
+            .with_location(1, 5)
+            .with_span(Some(4), Some(10));
+        assert_eq!(err.start, Some(4));
+        assert_eq!(err.end, Some(10));
+        assert_eq!(err.line, Some(1));
+        assert_eq!(err.column, Some(5));
     }
 }

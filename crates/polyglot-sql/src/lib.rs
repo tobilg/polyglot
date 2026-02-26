@@ -433,6 +433,8 @@ pub fn parse_one(sql: &str, dialect: DialectType) -> Result<Expression> {
             format!("Expected 1 statement, found {}", expressions.len()),
             0,
             0,
+            0,
+            0,
         ));
     }
 
@@ -524,17 +526,29 @@ pub fn validate_with_options(
                     message,
                     line,
                     column,
-                } => ValidationError::error(message.clone(), "E001").with_location(*line, *column),
+                    start,
+                    end,
+                } => ValidationError::error(message.clone(), "E001")
+                    .with_location(*line, *column)
+                    .with_span(Some(*start), Some(*end)),
                 Error::Tokenize {
                     message,
                     line,
                     column,
-                } => ValidationError::error(message.clone(), "E002").with_location(*line, *column),
+                    start,
+                    end,
+                } => ValidationError::error(message.clone(), "E002")
+                    .with_location(*line, *column)
+                    .with_span(Some(*start), Some(*end)),
                 Error::Parse {
                     message,
                     line,
                     column,
-                } => ValidationError::error(message.clone(), "E003").with_location(*line, *column),
+                    start,
+                    end,
+                } => ValidationError::error(message.clone(), "E003")
+                    .with_location(*line, *column)
+                    .with_span(Some(*start), Some(*end)),
                 _ => ValidationError::error(e.to_string(), "E000"),
             };
             ValidationResult::with_errors(vec![error])
@@ -597,9 +611,9 @@ fn strict_syntax_error(sql: &str, dialect: &Dialect) -> Option<ValidationError> 
 /// A vector of transpiled SQL statements, or an error if a dialect name is unknown.
 pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<String>> {
     let read_dialect = Dialect::get_by_name(read)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read), 0, 0))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read), 0, 0, 0, 0))?;
     let write_dialect = Dialect::get_by_name(write)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write), 0, 0))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write), 0, 0, 0, 0))?;
     let generic_identity = read_dialect.dialect_type() == DialectType::Generic
         && write_dialect.dialect_type() == DialectType::Generic;
 
@@ -623,7 +637,7 @@ pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<Strin
 /// Supports both built-in and custom dialect names.
 pub fn parse_by_name(sql: &str, dialect: &str) -> Result<Vec<Expression>> {
     let d = Dialect::get_by_name(dialect)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0, 0, 0))?;
     d.parse(sql)
 }
 
@@ -632,7 +646,7 @@ pub fn parse_by_name(sql: &str, dialect: &str) -> Result<Vec<Expression>> {
 /// Supports both built-in and custom dialect names.
 pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String> {
     let d = Dialect::get_by_name(dialect)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0, 0, 0))?;
     d.generate(expression)
 }
 
@@ -650,7 +664,7 @@ pub fn format_with_options_by_name(
     options: &FormatGuardOptions,
 ) -> Result<Vec<String>> {
     let d = Dialect::get_by_name(dialect)
-        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0))?;
+        .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0, 0, 0))?;
     format_with_dialect(sql, &d, options)
 }
 

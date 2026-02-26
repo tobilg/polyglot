@@ -126,7 +126,7 @@ impl DialectImpl for BigQueryDialect {
             Expression::TryCast(c) => {
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0, 0, 0)),
                 };
                 Ok(Expression::SafeCast(Box::new(crate::expressions::Cast {
                     this: c.this,
@@ -359,6 +359,7 @@ impl DialectImpl for BigQueryDialect {
                     name: unit_str.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_DIFF".to_string(),
@@ -541,7 +542,7 @@ impl DialectImpl for BigQueryDialect {
                 }
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0, 0, 0)),
                 };
                 Ok(Expression::Cast(Box::new(crate::expressions::Cast {
                     this: c.this,
@@ -557,7 +558,7 @@ impl DialectImpl for BigQueryDialect {
             Expression::SafeCast(c) => {
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
-                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0)),
+                    _ => return Err(crate::error::Error::parse("Expected DataType", 0, 0, 0, 0)),
                 };
                 Ok(Expression::SafeCast(Box::new(crate::expressions::Cast {
                     this: c.this,
@@ -600,6 +601,7 @@ impl DialectImpl for BigQueryDialect {
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: Vec::new(),
+                                        span: None,
                                     });
                                     break;
                                 }
@@ -635,6 +637,7 @@ impl DialectImpl for BigQueryDialect {
                     table: None,
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 let where_clause = Where {
                     this: Expression::Eq(Box::new(BinaryOp {
@@ -946,6 +949,7 @@ impl BigQueryDialect {
                 use_bracket_syntax: false,
                 no_parens: false,
                 quoted: false,
+                span: None,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP in BigQuery
@@ -1265,6 +1269,7 @@ impl BigQueryDialect {
                     trailing_comments: f.trailing_comments,
                     quoted: f.quoted,
                     use_bracket_syntax: f.use_bracket_syntax,
+                    span: None,
                 })))
             }
 

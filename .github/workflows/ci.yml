@@ -335,13 +335,16 @@ jobs:
               print("No dist artifacts found")
               sys.exit(1)
 
+          wheel_re = re.compile(r"polyglot_sql-([^-]+)-.+\.whl$")
+          sdist_re = re.compile(r"polyglot_sql-([0-9A-Za-z.+_]+)\.tar\.gz$")
+
           bad = []
           for path in files:
               name = os.path.basename(path)
               if name.endswith(".whl"):
-                  m = re.match(r"polyglot_sql-([0-9A-Za-z\\.]+)-", name)
+                  m = wheel_re.fullmatch(name)
               elif name.endswith(".tar.gz"):
-                  m = re.match(r"polyglot_sql-([0-9A-Za-z\\.]+)\\.tar\\.gz", name)
+                  m = sdist_re.fullmatch(name)
               else:
                   continue
               if not m or m.group(1) != expected:
@@ -614,6 +617,46 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: packages/documentation
           command: pages deploy dist --project-name=polyglot-sql-api --branch main
+
+  deploy-python-docs:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [publish-pypi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build Python API documentation
+        run: |
+          cd crates/polyglot-sql-python
+          uv run --with mkdocs mkdocs build --strict --clean --config-file mkdocs.yml --site-dir ../../packages/python-docs/dist
+
+      - name: Verify generated documentation
+        run: |
+          test -f packages/python-docs/dist/index.html || { echo "Missing packages/python-docs/dist/index.html"; exit 1; }
+
+      - name: Validate Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "Missing CLOUDFLARE_API_TOKEN"; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "Missing CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: packages/python-docs
+          command: pages deploy dist --project-name=polyglot-sql-python-api --branch main
 
   deploy-playground:
     if: startsWith(github.ref, 'refs/tags/v')

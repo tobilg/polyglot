@@ -30,6 +30,7 @@
 //! (generic dialect) or [`Expression::sql_for()`] (specific dialect). The
 //! actual generation logic lives in the `generator` module.
 
+use crate::tokens::Span;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 #[cfg(feature = "bindings")]
@@ -1232,6 +1233,7 @@ impl Expression {
             table: None,
             join_mark: false,
             trailing_comments: Vec::new(),
+            span: None,
         })
     }
 
@@ -1242,6 +1244,7 @@ impl Expression {
             table: Some(Identifier::new(table)),
             join_mark: false,
             trailing_comments: Vec::new(),
+            span: None,
         })
     }
 
@@ -1273,6 +1276,7 @@ impl Expression {
             replace: None,
             rename: None,
             trailing_comments: Vec::new(),
+            span: None,
         })
     }
 
@@ -1434,6 +1438,9 @@ pub struct Identifier {
     pub quoted: bool,
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+    /// Source position span (populated during parsing, None for programmatically constructed nodes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
 }
 
 impl Identifier {
@@ -1442,6 +1449,7 @@ impl Identifier {
             name: name.into(),
             quoted: false,
             trailing_comments: Vec::new(),
+            span: None,
         }
     }
 
@@ -1450,6 +1458,7 @@ impl Identifier {
             name: name.into(),
             quoted: true,
             trailing_comments: Vec::new(),
+            span: None,
         }
     }
 
@@ -1458,11 +1467,18 @@ impl Identifier {
             name: String::new(),
             quoted: false,
             trailing_comments: Vec::new(),
+            span: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.name.is_empty()
+    }
+
+    /// Set the source span on this identifier
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 }
 
@@ -1494,6 +1510,9 @@ pub struct Column {
     /// Trailing comments that appeared after this column reference
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+    /// Source position span
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
 }
 
 impl fmt::Display for Column {
@@ -1564,6 +1583,9 @@ pub struct TableRef {
     /// Time travel version clause: FOR VERSION AS OF / FOR TIMESTAMP AS OF (Presto/Trino, BigQuery, Databricks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<Box<Version>>,
+    /// Source position span
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
 }
 
 impl TableRef {
@@ -1586,6 +1608,7 @@ impl TableRef {
             identifier_func: None,
             changes: None,
             version: None,
+            span: None,
         }
     }
 
@@ -1628,6 +1651,7 @@ impl TableRef {
             identifier_func: None,
             changes: None,
             version: None,
+            span: None,
         }
     }
 
@@ -1660,6 +1684,9 @@ pub struct Star {
     /// Trailing comments that appeared after the star
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trailing_comments: Vec<String>,
+    /// Source position span
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
 }
 
 /// Represent a complete SELECT statement.
@@ -2841,6 +2868,9 @@ pub struct Function {
     /// Whether the function name was quoted (e.g., `p.d.UdF` in BigQuery)
     #[serde(default)]
     pub quoted: bool,
+    /// Source position span
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
 }
 
 impl Default for Function {
@@ -2853,6 +2883,7 @@ impl Default for Function {
             use_bracket_syntax: false,
             no_parens: false,
             quoted: false,
+            span: None,
         }
     }
 }
@@ -2867,6 +2898,7 @@ impl Function {
             use_bracket_syntax: false,
             no_parens: false,
             quoted: false,
+            span: None,
         }
     }
 }

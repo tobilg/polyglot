@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   validate,
   validateWithSchema,
@@ -14,8 +14,8 @@ import { SqlEditor } from "@/components/shared/sql-editor";
 import { SchemaEditor } from "@/components/shared/schema-editor";
 import { ErrorDisplay } from "@/components/shared/error-display";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useLocalStorage } from "@/hooks/use-local-storage";
 import { DEFAULT_VALIDATE_SQL, DEFAULT_VALIDATE_SCHEMA } from "@/lib/constants";
+import { toCmDiagnostics } from "@/lib/diagnostics";
 import { Play, CheckCircle2 } from "lucide-react";
 
 interface ValidationError {
@@ -24,6 +24,8 @@ interface ValidationError {
   severity: "error" | "warning";
   line?: number;
   column?: number;
+  start?: number;
+  end?: number;
 }
 
 interface ValidationResult {
@@ -61,28 +63,29 @@ function groupErrors(errors: ValidationError[]): ErrorGroup[] {
 
 interface ValidationTabProps {
   dialects: string[];
+  mode: ValidateMode;
+  onModeChange: (mode: ValidateMode) => void;
 }
 
-export function ValidationTab({ dialects }: ValidationTabProps) {
-  const [mode, setMode] = useLocalStorage<ValidateMode>("validate-mode", "syntax");
-  const [dialect, setDialect] = useLocalStorage("validate-dialect", "generic");
-  const [sql, setSql] = useLocalStorage("validate-sql", DEFAULT_VALIDATE_SQL);
-  const [schemaJson, setSchemaJson] = useLocalStorage("validate-schema-json", DEFAULT_VALIDATE_SCHEMA);
-  const [checkTypes, setCheckTypes] = useLocalStorage("validate-check-types", false);
-  const [checkRefs, setCheckRefs] = useLocalStorage("validate-check-refs", false);
-  const [strict, setStrict] = useLocalStorage("validate-strict", true);
+export function ValidationTab({ dialects, mode, onModeChange }: ValidationTabProps) {
+  const [dialect, setDialect] = useState("generic");
+  const [sql, setSql] = useState(DEFAULT_VALIDATE_SQL);
+  const [schemaJson, setSchemaJson] = useState(DEFAULT_VALIDATE_SCHEMA);
+  const [checkTypes, setCheckTypes] = useState(false);
+  const [checkRefs, setCheckRefs] = useState(false);
+  const [strict, setStrict] = useState(true);
 
   const [result, setResult] = useState<{ data: ValidationResult; key: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [schemaParseError, setSchemaParseError] = useState<string | null>(null);
   const runCountRef = useRef(0);
 
-  // Clear results when mode changes
+  // Clear results when mode or sql changes
   useEffect(() => {
     setResult(null);
     setError(null);
     setSchemaParseError(null);
-  }, [mode]);
+  }, [mode, sql]);
 
   const handleValidate = useCallback(() => {
     setError(null);
@@ -128,12 +131,17 @@ export function ValidationTab({ dialects }: ValidationTabProps) {
   const warningCount = result?.data.errors.filter((e) => e.severity === "warning").length ?? 0;
   const grouped = result ? groupErrors(result.data.errors) : [];
 
+  const cmDiagnostics = useMemo(
+    () => (result ? toCmDiagnostics(sql, result.data.errors) : undefined),
+    [result, sql],
+  );
+
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 shrink-0">
         <TooltipProvider>
-          <Tabs value={mode} onValueChange={(v) => setMode(v as ValidateMode)}>
+          <Tabs value={mode} onValueChange={(v) => onModeChange(v as ValidateMode)}>
             <TabsList className="h-8">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -219,6 +227,7 @@ export function ValidationTab({ dialects }: ValidationTabProps) {
             onChange={setSql}
             placeholder="Enter SQL to validate..."
             className="flex-1 min-h-0"
+            diagnostics={cmDiagnostics}
           />
         </div>
 

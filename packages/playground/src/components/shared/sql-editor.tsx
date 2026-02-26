@@ -1,6 +1,10 @@
-import { useRef, useCallback } from "react";
+import { useMemo, useRef, useEffect } from "react";
+import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import { sql } from "@codemirror/lang-sql";
+import { lintGutter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
+import { EditorView } from "@codemirror/view";
 import { cn } from "@/lib/utils";
-import { highlightSQL } from "@/lib/highlight";
+import { useEditorTheme } from "@/lib/codemirror-theme";
 
 interface SqlEditorProps {
   value: string;
@@ -8,6 +12,7 @@ interface SqlEditorProps {
   placeholder?: string;
   className?: string;
   readOnly?: boolean;
+  diagnostics?: Diagnostic[];
 }
 
 export function SqlEditor({
@@ -16,45 +21,47 @@ export function SqlEditor({
   placeholder = "Enter SQL...",
   className,
   readOnly = false,
+  diagnostics,
 }: SqlEditorProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLPreElement>(null);
+  const theme = useEditorTheme();
+  const cmRef = useRef<ReactCodeMirrorRef>(null);
 
-  const syncScroll = useCallback(() => {
-    const ta = textareaRef.current;
-    const pre = highlightRef.current;
-    if (ta && pre) {
-      pre.scrollTop = ta.scrollTop;
-      pre.scrollLeft = ta.scrollLeft;
-    }
-  }, []);
+  const extensions = useMemo(() => [sql(), EditorView.lineWrapping, lintGutter()], []);
 
-  const highlighted = highlightSQL(value) || "&nbsp;";
+  // Push diagnostics into the editor view whenever they change
+  useEffect(() => {
+    const view = cmRef.current?.view;
+    if (!view) return;
+    view.dispatch(setDiagnostics(view.state, diagnostics ?? []));
+  }, [diagnostics]);
 
   return (
-    <div className={cn("relative rounded-md border border-code-border bg-code-bg overflow-hidden", className)}>
-      <pre
-        ref={highlightRef}
-        aria-hidden
-        className="absolute inset-0 m-0 overflow-hidden pointer-events-none p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap break-words text-code-text"
-        dangerouslySetInnerHTML={{ __html: highlighted + "\n" }}
-      />
-      <textarea
-        ref={textareaRef}
+    <div
+      className={cn(
+        "rounded-md border border-code-border bg-code-bg overflow-hidden [&_.cm-editor]:!outline-none [&_.cm-editor.cm-focused]:ring-1 [&_.cm-editor.cm-focused]:ring-ring [&_.cm-editor]:rounded-md",
+        className,
+      )}
+    >
+      <CodeMirror
+        ref={cmRef}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={syncScroll}
+        onChange={onChange}
         placeholder={placeholder}
         readOnly={readOnly}
-        spellCheck={false}
-        className={cn(
-          "relative w-full h-full resize-none bg-transparent p-3",
-          "font-mono text-sm leading-relaxed text-transparent caret-code-caret",
-          "whitespace-pre-wrap break-words",
-          "outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-md",
-          "placeholder:text-code-placeholder",
-          readOnly && "cursor-default",
-        )}
+        theme={theme}
+        extensions={extensions}
+        height="100%"
+        style={{ height: "100%" }}
+        basicSetup={{
+          lineNumbers: false,
+          foldGutter: false,
+          highlightActiveLine: false,
+          highlightActiveLineGutter: false,
+          indentOnInput: true,
+          bracketMatching: true,
+          closeBrackets: true,
+          autocompletion: false,
+        }}
       />
     </div>
   );

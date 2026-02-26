@@ -16,8 +16,8 @@ use polyglot_sql::{
     validate_with_schema as core_validate_with_schema,
     FormatGuardOptions as CoreFormatGuardOptions,
     SchemaValidationOptions as CoreSchemaValidationOptions,
-    ValidationOptions as CoreValidationOptions, ValidationResult as CoreValidationResult,
-    ValidationSchema as CoreValidationSchema,
+    Token, ValidationOptions as CoreValidationOptions,
+    ValidationResult as CoreValidationResult, ValidationSchema as CoreValidationSchema,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -40,6 +40,10 @@ pub struct TranspileResult {
     pub error_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_end: Option<usize>,
 }
 
 /// Result type for parse operations
@@ -53,6 +57,10 @@ pub struct ParseResult {
     pub error_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_end: Option<usize>,
 }
 
 /// Result type for parse operations with structured AST values.
@@ -66,6 +74,10 @@ pub struct ParseValueResult {
     pub error_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_end: Option<usize>,
 }
 
 fn serialize_result<T>(result: &T) -> String
@@ -126,6 +138,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 error: Some(format!("Invalid read dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             };
         }
     };
@@ -139,6 +153,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
                 error: Some(format!("Invalid write dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             };
         }
     };
@@ -151,6 +167,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
             error: None,
             error_line: None,
             error_column: None,
+            error_start: None,
+            error_end: None,
         },
         Err(e) => TranspileResult {
             success: false,
@@ -158,6 +176,8 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
+                error_start: e.start(),
+        error_end: e.end(),
         },
     }
 }
@@ -188,6 +208,8 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
                 error: None,
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             },
             Err(e) => ParseResult {
                 success: false,
@@ -195,6 +217,8 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
                 error: Some(format!("Failed to serialize AST: {}", e)),
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             },
         },
         None => ParseResult {
@@ -203,6 +227,8 @@ fn parse_internal(sql: &str, dialect: &str) -> ParseResult {
             error: result.error,
             error_line: result.error_line,
             error_column: result.error_column,
+            error_start: result.error_start,
+            error_end: result.error_end,
         },
     }
 }
@@ -226,6 +252,8 @@ fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             };
         }
     };
@@ -238,6 +266,8 @@ fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
             error: None,
             error_line: None,
             error_column: None,
+            error_start: None,
+            error_end: None,
         },
         Err(e) => ParseValueResult {
             success: false,
@@ -245,6 +275,8 @@ fn parse_value_internal(sql: &str, dialect: &str) -> ParseValueResult {
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
+                error_start: e.start(),
+        error_end: e.end(),
         },
     }
 }
@@ -279,6 +311,8 @@ pub fn generate_value(ast: JsValue, dialect: &str) -> JsValue {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             });
         }
     };
@@ -292,6 +326,8 @@ pub fn generate_value(ast: JsValue, dialect: &str) -> JsValue {
                 error: Some(format!("Invalid AST value: {}", e)),
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             });
         }
     };
@@ -310,6 +346,8 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
                 error: Some(format!("Invalid dialect: {}", e)),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             };
         }
     };
@@ -323,6 +361,8 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
                 error: Some(format!("Invalid AST JSON: {}", e)),
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             };
         }
     };
@@ -344,6 +384,8 @@ fn generate_from_expressions_with_dialect(
             error: None,
             error_line: None,
             error_column: None,
+            error_start: None,
+            error_end: None,
         },
         Err(e) => TranspileResult {
             success: false,
@@ -351,6 +393,8 @@ fn generate_from_expressions_with_dialect(
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
+                error_start: e.start(),
+        error_end: e.end(),
         },
     }
 }
@@ -480,6 +524,8 @@ pub fn format_sql_with_options(sql: &str, dialect: &str, options_json: &str) -> 
                 error: Some(format!("Invalid format options JSON: {}", e)),
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             });
         }
     };
@@ -502,6 +548,8 @@ pub fn format_sql_with_options_value(sql: &str, dialect: &str, options: JsValue)
                 error: Some(format!("Invalid format options object: {}", e)),
                 error_line: None,
                 error_column: None,
+                error_start: None,
+                error_end: None,
             });
         }
     };
@@ -524,6 +572,8 @@ fn format_sql_internal(
                 error: Some(e.to_string()),
                 error_line: e.line(),
                 error_column: e.column(),
+                        error_start: e.start(),
+            error_end: e.end(),
             };
         }
     };
@@ -540,6 +590,8 @@ fn format_sql_internal(
             error: None,
             error_line: None,
             error_column: None,
+            error_start: None,
+            error_end: None,
         },
         Err(e) => TranspileResult {
             success: false,
@@ -547,6 +599,93 @@ fn format_sql_internal(
             error: Some(e.to_string()),
             error_line: e.line(),
             error_column: e.column(),
+                error_start: e.start(),
+        error_end: e.end(),
+        },
+    }
+}
+
+// ============================================================================
+// Tokenize
+// ============================================================================
+
+/// Result type for tokenize operations.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenizeResult {
+    pub success: bool,
+    pub tokens: Option<Vec<Token>>,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_column: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_end: Option<usize>,
+}
+
+/// Tokenize SQL into a token stream (returned as JSON).
+///
+/// # Arguments
+/// * `sql` - The SQL string to tokenize
+/// * `dialect` - The dialect to use for tokenization
+///
+/// # Returns
+/// A JSON string containing the TokenizeResult
+#[wasm_bindgen]
+pub fn tokenize(sql: &str, dialect: &str) -> String {
+    set_panic_hook();
+
+    let result = tokenize_internal(sql, dialect);
+    serialize_result(&result)
+}
+
+/// Tokenize SQL and return a structured JS object.
+#[wasm_bindgen]
+pub fn tokenize_value(sql: &str, dialect: &str) -> JsValue {
+    set_panic_hook();
+
+    let result = tokenize_internal(sql, dialect);
+    serialize_result_value(&result)
+}
+
+fn tokenize_internal(sql: &str, dialect: &str) -> TokenizeResult {
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return TokenizeResult {
+                success: false,
+                tokens: None,
+                error: Some(format!("Invalid dialect: {}", e)),
+                error_line: e.line(),
+                error_column: e.column(),
+                error_start: e.start(),
+                error_end: e.end(),
+            };
+        }
+    };
+
+    let d = Dialect::get(dialect_type);
+    match d.tokenize(sql) {
+        Ok(tokens) => TokenizeResult {
+            success: true,
+            tokens: Some(tokens),
+            error: None,
+            error_line: None,
+            error_column: None,
+            error_start: None,
+            error_end: None,
+        },
+        Err(e) => TokenizeResult {
+            success: false,
+            tokens: None,
+            error: Some(e.to_string()),
+            error_line: e.line(),
+            error_column: e.column(),
+            error_start: e.start(),
+            error_end: e.end(),
         },
     }
 }

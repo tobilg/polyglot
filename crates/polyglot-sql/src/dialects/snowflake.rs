@@ -619,6 +619,7 @@ impl DialectImpl for SnowflakeDialect {
                     name: unit_str,
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEADD".to_string(),
@@ -633,6 +634,7 @@ impl DialectImpl for SnowflakeDialect {
                     name: unit_str,
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 // Negate using val * -1 format (matching Python sqlglot output)
                 let neg_expr = Expression::Mul(Box::new(crate::expressions::BinaryOp::new(
@@ -655,6 +657,7 @@ impl DialectImpl for SnowflakeDialect {
                     name: unit_str,
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEDIFF".to_string(),
@@ -976,6 +979,7 @@ impl DialectImpl for SnowflakeDialect {
                                     name: format!("WEEK({})", m),
                                     quoted: false,
                                     trailing_comments: Vec::new(),
+                                    span: None,
                                 }),
                                 transformed_this,
                             ],
@@ -1008,6 +1012,7 @@ impl DialectImpl for SnowflakeDialect {
                                             name: s.to_string(),
                                             quoted: false,
                                             trailing_comments: Vec::new(),
+                                            span: None,
                                         });
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATE_PART".to_string(),
@@ -1022,6 +1027,7 @@ impl DialectImpl for SnowflakeDialect {
                     name: field_name.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_PART".to_string(),
@@ -1444,6 +1450,7 @@ impl SnowflakeDialect {
                     name: s.clone(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })
             }
             // Handle Identifier (rare case)
@@ -1453,6 +1460,7 @@ impl SnowflakeDialect {
                         name: canonical.to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     // No mapping needed, keep original (Python sqlglot preserves case)
@@ -1466,6 +1474,7 @@ impl SnowflakeDialect {
                         name: canonical.to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     // No mapping needed, keep original (Python sqlglot preserves case)
@@ -1486,6 +1495,7 @@ impl SnowflakeDialect {
                         name: canonical.to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     expr
@@ -1497,6 +1507,7 @@ impl SnowflakeDialect {
                         name: canonical.to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     })
                 } else {
                     expr
@@ -1664,6 +1675,7 @@ impl SnowflakeDialect {
             use_bracket_syntax: f.use_bracket_syntax,
             no_parens: f.no_parens,
             quoted: f.quoted,
+            span: None,
         };
 
         let name_upper = f.name.to_uppercase();
@@ -1723,6 +1735,7 @@ impl SnowflakeDialect {
                 use_bracket_syntax: false,
                 no_parens: f.no_parens,
                 quoted: false,
+                span: None,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP (preserving parens style)
@@ -1734,6 +1747,7 @@ impl SnowflakeDialect {
                 use_bracket_syntax: false,
                 no_parens: f.no_parens,
                 quoted: false,
+                span: None,
             }))),
 
             // CURRENT_TIMESTAMP - always output with parens in Snowflake
@@ -1748,6 +1762,7 @@ impl SnowflakeDialect {
                     use_bracket_syntax: false,
                     no_parens: false, // Always output with parens
                     quoted: false,
+                    span: None,
                 })))
             }
 
@@ -2595,6 +2610,7 @@ impl SnowflakeDialect {
                 use_bracket_syntax: false,
                 no_parens: f.no_parens,
                 quoted: false,
+                span: None,
             }))),
 
             // LOCALTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
@@ -2606,6 +2622,7 @@ impl SnowflakeDialect {
                 use_bracket_syntax: false,
                 no_parens: f.no_parens,
                 quoted: false,
+                span: None,
             }))),
 
             // SPACE(n) -> REPEAT(' ', n) in Snowflake

@@ -140,6 +140,7 @@ pub fn col(name: &str) -> Expr {
             table: Some(builder_identifier(table)),
             join_mark: false,
             trailing_comments: Vec::new(),
+            span: None,
         }))
     } else {
         Expr(Expression::Column(Column {
@@ -147,6 +148,7 @@ pub fn col(name: &str) -> Expr {
             table: None,
             join_mark: false,
             trailing_comments: Vec::new(),
+            span: None,
         }))
     }
 }
@@ -2421,6 +2423,7 @@ impl MergeBuilder {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }),
                     right: val.0,
                     left_comments: Vec::new(),
@@ -2466,6 +2469,7 @@ impl MergeBuilder {
                         table: None,
                         join_mark: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     }),
                     right: val.0,
                     left_comments: Vec::new(),
@@ -2524,6 +2528,7 @@ impl MergeBuilder {
                     table: None,
                     join_mark: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 })
             })
             .collect();

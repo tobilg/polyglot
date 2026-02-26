@@ -181,6 +181,7 @@ fn wrap_table_in_subquery(table: TableRef, alias_name: &str) -> Expression {
             replace: None,
             rename: None,
             trailing_comments: Vec::new(),
+            span: None,
         }))
         .from(Expression::Table(table));
 

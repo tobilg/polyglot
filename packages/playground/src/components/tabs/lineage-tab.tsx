@@ -12,7 +12,6 @@ import { SqlEditor } from "@/components/shared/sql-editor";
 import { ErrorDisplay } from "@/components/shared/error-display";
 import { LineageTree } from "@/components/shared/lineage-tree";
 import { JsonTree } from "@/components/shared/json-tree";
-import { useLocalStorage } from "@/hooks/use-local-storage";
 import { DEFAULT_LINEAGE_SQL, DEFAULT_LINEAGE_COLUMN } from "@/lib/constants";
 import { Play, Braces, TreeDeciduous } from "lucide-react";
 
@@ -21,11 +20,11 @@ interface LineageTabProps {
 }
 
 export function LineageTab({ dialects }: LineageTabProps) {
-  const [dialect, setDialect] = useLocalStorage("lineage-dialect", "generic");
-  const [sql, setSql] = useLocalStorage("lineage-sql", DEFAULT_LINEAGE_SQL);
-  const [column, setColumn] = useLocalStorage("lineage-column", DEFAULT_LINEAGE_COLUMN);
-  const [trimSelects, setTrimSelects] = useLocalStorage("lineage-trim", false);
-  const [showJson, setShowJson] = useLocalStorage("lineage-show-json", false);
+  const [dialect, setDialect] = useState("generic");
+  const [sql, setSql] = useState(DEFAULT_LINEAGE_SQL);
+  const [column, setColumn] = useState(DEFAULT_LINEAGE_COLUMN);
+  const [trimSelects, setTrimSelects] = useState(false);
+  const [showJson, setShowJson] = useState(false);
 
   const [lineageResult, setLineageResult] = useState<{ data: LineageNode; key: number } | null>(null);
   const [sourceTables, setSourceTables] = useState<string[] | null>(null);

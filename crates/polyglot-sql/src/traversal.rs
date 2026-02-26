@@ -1374,10 +1374,12 @@ mod tests {
                 name: name.to_string(),
                 quoted: false,
                 trailing_comments: vec![],
+                span: None,
             },
             table: None,
             join_mark: false,
             trailing_comments: vec![],
+            span: None,
         })
     }
 
@@ -1561,6 +1563,7 @@ mod tests {
                         table: c.table.clone(),
                         join_mark: false,
                         trailing_comments: vec![],
+                        span: None,
                     }));
                 }
             }
@@ -1606,7 +1609,7 @@ mod tests {
         let result = super::transform_map(expr, &|e| {
             if let Expression::Column(ref c) = e {
                 if c.name.name == "a" {
-                    return Err(crate::error::Error::parse("test error", 0, 0));
+                    return Err(crate::error::Error::parse("test error", 0, 0, 0, 0));
                 }
             }
             Ok(e)

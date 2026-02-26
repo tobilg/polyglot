@@ -338,6 +338,7 @@ fn update_column_in_expression(
                         name: canonical.clone(),
                         quoted: table.quoted,
                         trailing_comments: table.trailing_comments.clone(),
+                        span: None,
                     });
                 }
             }

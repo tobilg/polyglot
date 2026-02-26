@@ -402,6 +402,7 @@ impl DialectImpl for TSQLDialect {
                     name: unit_str.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEDIFF".to_string(),
@@ -428,6 +429,7 @@ impl DialectImpl for TSQLDialect {
                     name: unit_str.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
+                    span: None,
                 });
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATEADD".to_string(),
@@ -948,6 +950,7 @@ impl TSQLDialect {
                         name: "DAY".to_string(),
                         quoted: false,
                         trailing_comments: Vec::new(),
+                        span: None,
                     });
                     Ok(Expression::Function(Box::new(Function::new(
                         "DATEADD".to_string(),
@@ -1104,6 +1107,7 @@ impl TSQLDialect {
                             name: output_name,
                             quoted: true, // Force quoting for TSQL bracket syntax
                             trailing_comments: Vec::new(),
+                            span: None,
                         },
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
@@ -1167,6 +1171,7 @@ impl TSQLDialect {
                         name: id.name.to_uppercase(),
                         quoted: id.quoted,
                         trailing_comments: id.trailing_comments.clone(),
+                        span: None,
                     });
                 }
                 Expression::Column(col) if col.table.is_none() => {
@@ -1174,6 +1179,7 @@ impl TSQLDialect {
                         name: col.name.name.to_uppercase(),
                         quoted: col.name.quoted,
                         trailing_comments: col.name.trailing_comments.clone(),
+                        span: None,
                     });
                 }
                 _ => {}

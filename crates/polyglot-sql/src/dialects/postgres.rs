@@ -756,6 +756,7 @@ impl DialectImpl for PostgresDialect {
                 use_bracket_syntax: false,
                 no_parens: true,
                 quoted: false,
+                span: None,
             }))),
 
             // CurrentUser -> CURRENT_USER (no parens)
@@ -773,6 +774,7 @@ impl DialectImpl for PostgresDialect {
                 use_bracket_syntax: false,
                 no_parens: true,
                 quoted: false,
+                span: None,
             }))),
 
             // ============================================
