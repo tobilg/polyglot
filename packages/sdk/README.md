@@ -532,7 +532,7 @@ if (!result.success) {
 Trace how columns flow through SQL queries, from source tables to the result set.
 
 ```typescript
-import { lineage, getSourceTables } from '@polyglot-sql/sdk';
+import { lineage, lineageWithSchema, getSourceTables } from '@polyglot-sql/sdk';
 
 // Trace a column through joins, CTEs, and subqueries
 const result = lineage('total', 'SELECT o.total FROM orders o JOIN users u ON o.user_id = u.id');
@@ -540,6 +540,19 @@ if (result.success) {
   console.log(result.lineage.name);        // 'total'
   console.log(result.lineage.downstream);  // source nodes
 }
+
+// Schema-aware lineage (same schema format as validateWithSchema)
+const schema = {
+  tables: [
+    { name: 'users', columns: [{ name: 'id', type: 'INT' }] },
+    { name: 'orders', columns: [{ name: 'user_id', type: 'INT' }] },
+  ],
+};
+const schemaLineage = lineageWithSchema(
+  'id',
+  'SELECT id FROM users u JOIN orders o ON u.id = o.user_id',
+  schema,
+);
 
 // Get all source tables that contribute to a column
 const tables = getSourceTables('total', 'SELECT o.total FROM orders o JOIN users u ON o.user_id = u.id');
@@ -625,6 +638,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | Function | Description |
 |----------|-------------|
 | `lineage(column, sql, dialect?, trimSelects?)` | Trace column lineage through a query |
+| `lineageWithSchema(column, sql, schema, dialect?, trimSelects?)` | Trace lineage with schema-based qualification |
 | `getSourceTables(column, sql, dialect?)` | Get source tables for a column |
 | `diff(source, target, dialect?, options?)` | Diff two SQL statements |
 | `hasChanges(edits)` | Check if diff has non-keep edits |

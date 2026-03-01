@@ -241,6 +241,14 @@ impl Scope {
         self.columns_cache.as_ref().unwrap()
     }
 
+    /// Collect projected output column names for this scope's query expression.
+    ///
+    /// This is intended for result schema style output columns (e.g. UNION
+    /// outputs), unlike [`Self::columns`], which returns raw referenced columns.
+    pub fn output_columns(&self) -> Vec<String> {
+        crate::ast_transforms::get_output_column_names(&self.expression)
+    }
+
     /// Get all source names in this scope
     pub fn source_names(&self) -> HashSet<String> {
         let mut names: HashSet<String> = self.sources.keys().cloned().collect();
@@ -1346,6 +1354,14 @@ mod tests {
         // The children are set operation scopes
         assert!(scope.union_scopes[0].is_union());
         assert!(scope.union_scopes[1].is_union());
+    }
+
+    #[test]
+    fn test_union_output_columns() {
+        let scope = parse_and_build_scope(
+            "SELECT id, name FROM customers UNION ALL SELECT id, name FROM employees",
+        );
+        assert_eq!(scope.output_columns(), vec!["id", "name"]);
     }
 
     #[test]

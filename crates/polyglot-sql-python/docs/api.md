@@ -22,6 +22,7 @@ format(...) -> str
 validate(sql: str, dialect: str = "generic") -> ValidationResult
 optimize(sql: str, dialect: str = "generic") -> str
 lineage(column: str, sql: str, dialect: str = "generic") -> dict[str, Any]
+lineage_with_schema(column: str, sql: str, schema: dict[str, Any], dialect: str = "generic") -> dict[str, Any]
 source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]
 diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict[str, Any]]
 dialects() -> list[str]

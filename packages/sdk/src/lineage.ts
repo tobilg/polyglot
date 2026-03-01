@@ -7,9 +7,11 @@
 
 import {
   lineage_sql as wasmLineage,
+  lineage_sql_with_schema as wasmLineageWithSchema,
   source_tables as wasmSourceTables,
 } from '../wasm/polyglot_sql_wasm.js';
 import type { Expression } from './generated/Expression';
+import type { Schema } from './validation/schema';
 
 /** A node in the column lineage tree */
 export interface LineageNode {
@@ -57,6 +59,32 @@ export function lineage(
   trimSelects: boolean = false,
 ): LineageResult {
   const resultJson = wasmLineage(sql, column, dialect, trimSelects);
+  return JSON.parse(resultJson) as LineageResult;
+}
+
+/**
+ * Trace the lineage of a column through a SQL query using schema metadata.
+ *
+ * @param column - Column name to trace
+ * @param sql - SQL string to analyze
+ * @param schema - ValidationSchema-compatible schema object
+ * @param dialect - Dialect for parsing/qualification (default: 'generic')
+ * @param trimSelects - Trim SELECT to only target column (default: false)
+ */
+export function lineageWithSchema(
+  column: string,
+  sql: string,
+  schema: Schema,
+  dialect: string = 'generic',
+  trimSelects: boolean = false,
+): LineageResult {
+  const resultJson = wasmLineageWithSchema(
+    sql,
+    column,
+    JSON.stringify(schema),
+    dialect,
+    trimSelects,
+  );
   return JSON.parse(resultJson) as LineageResult;
 }
 

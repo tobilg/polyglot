@@ -274,14 +274,14 @@
     {
       "sql": "SELECT 'a' || 'b'",
       "write": {
-        "mysql": "SELECT 'a' OR 'b'",
+        "mysql": "SELECT CONCAT('a', 'b')",
         "spark": "SELECT CONCAT('a', 'b')",
         "tsql": "SELECT 'a' + 'b'",
         "duckdb": "SELECT 'a' || 'b'",
         "postgresql": "SELECT 'a' || 'b'",
         "snowflake": "SELECT 'a' || 'b'"
       },
-      "description": "String concatenation operator: MySQL→OR, Spark→CONCAT, TSQL→+"
+      "description": "String concatenation operator: MySQL→CONCAT, Spark→CONCAT, TSQL→+"
     },
     {
       "sql": "SELECT x IS DISTINCT FROM y",

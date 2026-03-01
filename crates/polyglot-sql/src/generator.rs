@@ -3072,6 +3072,8 @@ impl Generator {
                 // In Solr, || is OR, not string concatenation (DPIPE_IS_STRING_CONCAT = False)
                 if self.config.dialect == Some(DialectType::Solr) {
                     self.generate_binary_op(op, "OR")
+                } else if self.config.dialect == Some(DialectType::MySQL) {
+                    self.generate_mysql_concat_from_concat(op)
                 } else {
                     self.generate_binary_op(op, "||")
                 }
@@ -17387,6 +17389,58 @@ impl Generator {
         Ok(())
     }
 
+    fn collect_concat_operands<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
+        if let Expression::Concat(op) = expr {
+            Self::collect_concat_operands(&op.left, out);
+            Self::collect_concat_operands(&op.right, out);
+        } else {
+            out.push(expr);
+        }
+    }
+
+    fn generate_mysql_concat_from_concat(&mut self, op: &BinaryOp) -> Result<()> {
+        let mut operands = Vec::new();
+        Self::collect_concat_operands(&op.left, &mut operands);
+        Self::collect_concat_operands(&op.right, &mut operands);
+
+        self.write_keyword("CONCAT");
+        self.write("(");
+        for (i, operand) in operands.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(operand)?;
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn collect_dpipe_operands<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
+        if let Expression::DPipe(dpipe) = expr {
+            Self::collect_dpipe_operands(&dpipe.this, out);
+            Self::collect_dpipe_operands(&dpipe.expression, out);
+        } else {
+            out.push(expr);
+        }
+    }
+
+    fn generate_mysql_concat_from_dpipe(&mut self, e: &DPipe) -> Result<()> {
+        let mut operands = Vec::new();
+        Self::collect_dpipe_operands(&e.this, &mut operands);
+        Self::collect_dpipe_operands(&e.expression, &mut operands);
+
+        self.write_keyword("CONCAT");
+        self.write("(");
+        for (i, operand) in operands.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(operand)?;
+        }
+        self.write(")");
+        Ok(())
+    }
+
     fn generate_substring(&mut self, f: &SubstringFunc) -> Result<()> {
         // Oracle uses SUBSTR; most others use SUBSTRING
         let is_oracle = matches!(self.config.dialect, Some(DialectType::Oracle));
@@ -26037,6 +26091,8 @@ impl Generator {
             self.write_keyword("OR");
             self.write(" ");
             self.generate_expression(&e.expression)?;
+        } else if self.config.dialect == Some(DialectType::MySQL) {
+            self.generate_mysql_concat_from_dpipe(e)?;
         } else {
             // String concatenation: this || expression
             self.generate_expression(&e.this)?;

@@ -165,10 +165,9 @@ impl DialectImpl for MySQLDialect {
                 })))
             }
 
-            // || (Concat operator) -> OR in MySQL
-            // MySQL uses || as OR by default (unless PIPES_AS_CONCAT mode is set)
-            // For identity preservation, we transform to OR
-            Expression::Concat(op) => Ok(Expression::Or(op)),
+            // Preserve semantic string concatenation expressions.
+            // MySQL generation renders these as CONCAT(...).
+            Expression::Concat(op) => Ok(Expression::Concat(op)),
 
             // RANDOM -> RAND in MySQL
             Expression::Random(_) => Ok(Expression::Rand(Box::new(crate::expressions::Rand {

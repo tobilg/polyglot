@@ -1228,6 +1228,18 @@ where
             b.high = transform_recursive(b.high, transform_fn)?;
             Expression::Between(b)
         }
+        Expression::IsNull(mut i) => {
+            i.this = transform_recursive(i.this, transform_fn)?;
+            Expression::IsNull(i)
+        }
+        Expression::IsTrue(mut i) => {
+            i.this = transform_recursive(i.this, transform_fn)?;
+            Expression::IsTrue(i)
+        }
+        Expression::IsFalse(mut i) => {
+            i.this = transform_recursive(i.this, transform_fn)?;
+            Expression::IsFalse(i)
+        }
 
         // ===== Like expressions =====
         Expression::Like(mut l) => {
@@ -5514,6 +5526,7 @@ impl Dialect {
                                 // GENERATE_SERIES: handled separately below
                                 | "JSON_EXTRACT" | "JSON_EXTRACT_SCALAR"
                                 | "JSON_QUERY" | "JSON_VALUE"
+                                | "JSON_SEARCH"
                                 | "JSON_EXTRACT_JSON" | "BSON_EXTRACT_BSON"
                                 | "TO_UNIX_TIMESTAMP" | "UNIX_TIMESTAMP"
                                 | "CURDATE" | "CURTIME"
@@ -10305,6 +10318,60 @@ impl Dialect {
                                         f.args,
                                     )))),
                                 }
+                            }
+                            // MySQL JSON_SEARCH(json_doc, mode, search[, escape_char[, path]]) -> DuckDB json_tree-based lookup
+                            "JSON_SEARCH"
+                                if matches!(target, DialectType::DuckDB)
+                                    && (3..=5).contains(&f.args.len()) =>
+                            {
+                                let args = &f.args;
+
+                                // Only rewrite deterministic modes and NULL/no escape-char variant.
+                                let mode = match &args[1] {
+                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                        s.to_ascii_lowercase()
+                                    }
+                                    _ => return Ok(Expression::Function(f)),
+                                };
+                                if mode != "one" && mode != "all" {
+                                    return Ok(Expression::Function(f));
+                                }
+                                if args.len() >= 4 && !matches!(&args[3], Expression::Null(_)) {
+                                    return Ok(Expression::Function(f));
+                                }
+
+                                let json_doc_sql = match Generator::sql(&args[0]) {
+                                    Ok(sql) => sql,
+                                    Err(_) => return Ok(Expression::Function(f)),
+                                };
+                                let search_sql = match Generator::sql(&args[2]) {
+                                    Ok(sql) => sql,
+                                    Err(_) => return Ok(Expression::Function(f)),
+                                };
+                                let path_sql = if args.len() == 5 {
+                                    match Generator::sql(&args[4]) {
+                                        Ok(sql) => sql,
+                                        Err(_) => return Ok(Expression::Function(f)),
+                                    }
+                                } else {
+                                    "'$'".to_string()
+                                };
+
+                                let rewrite_sql = if mode == "all" {
+                                    format!(
+                                        "(SELECT TO_JSON(LIST(__jt.fullkey)) FROM json_tree({}, {}) AS __jt WHERE __jt.atom = TO_JSON({}))",
+                                        json_doc_sql, path_sql, search_sql
+                                    )
+                                } else {
+                                    format!(
+                                        "(SELECT TO_JSON(__jt.fullkey) FROM json_tree({}, {}) AS __jt WHERE __jt.atom = TO_JSON({}) ORDER BY __jt.id LIMIT 1)",
+                                        json_doc_sql, path_sql, search_sql
+                                    )
+                                };
+
+                                Ok(Expression::Raw(crate::expressions::Raw {
+                                    sql: rewrite_sql,
+                                }))
                             }
                             // SingleStore JSON_EXTRACT_JSON(json, key1, key2, ...) -> JSON_EXTRACT(json, '$.key1.key2' or '$.key1[key2]')
                             // BSON_EXTRACT_BSON(json, key1, ...) -> JSONB_EXTRACT(json, '$.key1')

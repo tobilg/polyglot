@@ -24176,7 +24176,9 @@ impl Parser {
     fn parse_or(&mut self) -> Result<Expression> {
         let mut left = self.parse_xor()?;
 
-        while self.check(TokenType::Or) {
+        while self.check(TokenType::Or)
+            || (self.dpipe_is_logical_or() && self.check(TokenType::DPipe))
+        {
             let mut all_comments = self.previous_trailing_comments();
             // Also capture leading comments on the OR token (comments on a separate line before OR)
             all_comments.extend(self.current_leading_comments());
@@ -24217,6 +24219,14 @@ impl Parser {
         }
 
         Ok(Self::maybe_rebalance_boolean_chain(left, false))
+    }
+
+    /// Whether `||` should be parsed as logical OR for the active dialect.
+    fn dpipe_is_logical_or(&self) -> bool {
+        matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::MySQL | crate::dialects::DialectType::Solr)
+        )
     }
 
     /// Parse XOR expressions (MySQL logical XOR)
@@ -25473,7 +25483,7 @@ impl Parser {
                     operator_comments,
                     trailing_comments,
                 }))
-            } else if self.match_token(TokenType::DPipe) {
+            } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
                 let operator_comments = self.previous_trailing_comments();
                 let right = self.parse_at_time_zone()?;
                 let trailing_comments = self.previous_trailing_comments();
@@ -25586,7 +25596,7 @@ impl Parser {
                     operator_comments,
                     trailing_comments,
                 }))
-            } else if self.match_token(TokenType::DPipe) {
+            } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
                 let operator_comments = self.previous_trailing_comments();
                 let right = self.parse_at_time_zone()?;
                 let trailing_comments = self.previous_trailing_comments();

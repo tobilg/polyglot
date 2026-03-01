@@ -108,6 +108,7 @@ typedef struct {
 - `polyglot_validate(sql, dialect)`
 - `polyglot_optimize(sql, dialect)` (full optimizer pipeline)
 - `polyglot_lineage(column_name, sql, dialect)`
+- `polyglot_lineage_with_schema(column_name, sql, schema_json, dialect)` (`ValidationSchema` JSON)
 - `polyglot_source_tables(column_name, sql, dialect)`
 - `polyglot_diff(sql1, sql2, dialect)`
 - `polyglot_dialect_list()`
@@ -163,6 +164,7 @@ polyglot_result_t r = polyglot_format_with_options(sql, "generic", opts);
 - `polyglot_format_with_options`: JSON array of SQL strings
 - `polyglot_optimize`: JSON array of SQL strings
 - `polyglot_lineage`: JSON `LineageNode`
+- `polyglot_lineage_with_schema`: JSON `LineageNode`
 - `polyglot_source_tables`: JSON array of source table names
 - `polyglot_diff`: JSON array of diff edits
 - `polyglot_dialect_list`: JSON array of dialect names

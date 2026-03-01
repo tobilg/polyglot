@@ -7,9 +7,11 @@
 
 use crate::dialects::DialectType;
 use crate::expressions::Expression;
+use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
+use crate::schema::Schema;
 use crate::scope::{build_scope, Scope};
 use crate::traversal::ExpressionWalk;
-use crate::Result;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -111,6 +113,54 @@ enum ColumnRef<'a> {
 /// let node = lineage("c", &expr, None, false).unwrap();
 /// ```
 pub fn lineage(
+    column: &str,
+    sql: &Expression,
+    dialect: Option<DialectType>,
+    trim_selects: bool,
+) -> Result<LineageNode> {
+    lineage_from_expression(column, sql, dialect, trim_selects)
+}
+
+/// Build the lineage graph for a column in a SQL query using optional schema metadata.
+///
+/// When `schema` is provided, the query is first qualified with
+/// `optimizer::qualify_columns`, allowing more accurate lineage for unqualified or
+/// ambiguous column references.
+///
+/// # Arguments
+/// * `column` - The column name to trace lineage for
+/// * `sql` - The SQL expression (SELECT, UNION, etc.)
+/// * `schema` - Optional schema used for qualification
+/// * `dialect` - Optional dialect for qualification and lineage handling
+/// * `trim_selects` - If true, trim the source SELECT to only include the target column
+///
+/// # Returns
+/// The root lineage node for the specified column
+pub fn lineage_with_schema(
+    column: &str,
+    sql: &Expression,
+    schema: Option<&dyn Schema>,
+    dialect: Option<DialectType>,
+    trim_selects: bool,
+) -> Result<LineageNode> {
+    let qualified_expression = if let Some(schema) = schema {
+        let options = if let Some(dialect_type) = dialect.or_else(|| schema.dialect()) {
+            QualifyColumnsOptions::new().with_dialect(dialect_type)
+        } else {
+            QualifyColumnsOptions::new()
+        };
+
+        qualify_columns(sql.clone(), schema, &options).map_err(|e| {
+            Error::internal(format!("Lineage qualification failed with schema: {}", e))
+        })?
+    } else {
+        sql.clone()
+    };
+
+    lineage_from_expression(column, &qualified_expression, dialect, trim_selects)
+}
+
+fn lineage_from_expression(
     column: &str,
     sql: &Expression,
     dialect: Option<DialectType>,
@@ -1658,6 +1708,9 @@ fn collect_column_refs(expr: &Expression, refs: &mut Vec<SimpleColumnRef>) {
 mod tests {
     use super::*;
     use crate::dialects::{Dialect, DialectType};
+    use crate::expressions::DataType;
+    use crate::optimizer::annotate_types::annotate_types;
+    use crate::schema::{MappingSchema, Schema};
 
     fn parse(sql: &str) -> Expression {
         let dialect = Dialect::get(DialectType::Generic);
@@ -1743,6 +1796,62 @@ mod tests {
             "Expected t.a, got: {:?}",
             names
         );
+    }
+
+    #[test]
+    fn test_lineage_with_schema_qualifies_root_expression_issue_40() {
+        let query = "SELECT name FROM users";
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse(query)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table("users", &[("name".into(), DataType::Text)], None)
+            .expect("schema setup");
+
+        let node_without_schema = lineage("name", &expr, Some(DialectType::BigQuery), false)
+            .expect("lineage without schema");
+        let root_without_schema = annotate_types(
+            &node_without_schema.expression,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+        );
+        assert_eq!(
+            root_without_schema, None,
+            "Expected unresolved root type without schema-aware lineage qualification"
+        );
+
+        let node_with_schema = lineage_with_schema(
+            "name",
+            &expr,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+            false,
+        )
+        .expect("lineage with schema");
+        let root_with_schema = annotate_types(
+            &node_with_schema.expression,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+        );
+
+        assert_eq!(root_with_schema, Some(DataType::Text));
+    }
+
+    #[test]
+    fn test_lineage_with_schema_none_matches_lineage() {
+        let expr = parse("SELECT a FROM t");
+        let baseline = lineage("a", &expr, None, false).expect("lineage baseline");
+        let with_none =
+            lineage_with_schema("a", &expr, None, None, false).expect("lineage_with_schema");
+
+        assert_eq!(with_none.name, baseline.name);
+        assert_eq!(with_none.downstream_names(), baseline.downstream_names());
     }
 
     #[test]

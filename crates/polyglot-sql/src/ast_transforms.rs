@@ -263,6 +263,54 @@ pub fn get_column_names(expr: &Expression) -> Vec<String> {
         .collect()
 }
 
+/// Collect projected output column names from a query expression.
+///
+/// This follows sqlglot-style query semantics:
+/// - For `SELECT`, returns names from the projection list.
+/// - For set operations (`UNION`/`INTERSECT`/`EXCEPT`), uses the left-most branch.
+/// - For `Subquery`, unwraps and evaluates the inner query.
+///
+/// Unlike [`get_column_names`], this does not return every referenced column in
+/// the AST and is suitable for result-schema style output names.
+pub fn get_output_column_names(expr: &Expression) -> Vec<String> {
+    output_column_names_from_query(expr)
+}
+
+fn output_column_names_from_query(expr: &Expression) -> Vec<String> {
+    match expr {
+        Expression::Select(select) => select_output_column_names(select),
+        Expression::Union(union) => output_column_names_from_query(&union.left),
+        Expression::Intersect(intersect) => output_column_names_from_query(&intersect.left),
+        Expression::Except(except) => output_column_names_from_query(&except.left),
+        Expression::Subquery(subquery) => output_column_names_from_query(&subquery.this),
+        _ => Vec::new(),
+    }
+}
+
+fn select_output_column_names(select: &Select) -> Vec<String> {
+    let mut names = Vec::new();
+    for expr in &select.expressions {
+        if let Some(name) = expression_output_name(expr) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn expression_output_name(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Alias(alias) => Some(alias.alias.name.clone()),
+        Expression::Column(col) => Some(col.name.name.clone()),
+        Expression::Star(_) => Some("*".to_string()),
+        Expression::Identifier(id) => Some(id.name.clone()),
+        Expression::Aliases(aliases) => aliases.expressions.iter().find_map(|e| match e {
+            Expression::Identifier(id) => Some(id.name.clone()),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 /// Collect all table names (as `String`) referenced in the expression tree.
 pub fn get_table_names(expr: &Expression) -> Vec<String> {
     fn collect_cte_aliases(with_clause: &With, aliases: &mut HashSet<String>) {
@@ -507,6 +555,44 @@ mod tests {
         assert!(names.contains(&"a".to_string()));
         assert!(names.contains(&"b".to_string()));
         assert!(names.contains(&"c".to_string()));
+    }
+
+    #[test]
+    fn test_get_output_column_names_select() {
+        let expr = parse_one("SELECT a, b AS c, 1 FROM t");
+        let names = get_output_column_names(&expr);
+        assert_eq!(names, vec!["a".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn test_get_output_column_names_union_left_projection() {
+        let expr =
+            parse_one("SELECT id, name FROM customers UNION ALL SELECT id, name FROM employees");
+        let names = get_output_column_names(&expr);
+        assert_eq!(names, vec!["id".to_string(), "name".to_string()]);
+    }
+
+    #[test]
+    fn test_get_output_column_names_union_uses_left_aliases() {
+        let expr = parse_one("SELECT id AS c1, name AS c2 FROM t1 UNION SELECT x, y FROM t2");
+        let names = get_output_column_names(&expr);
+        assert_eq!(names, vec!["c1".to_string(), "c2".to_string()]);
+    }
+
+    #[test]
+    fn test_get_column_names_union_still_returns_all_references() {
+        let expr =
+            parse_one("SELECT id, name FROM customers UNION ALL SELECT id, name FROM employees");
+        let names = get_column_names(&expr);
+        assert_eq!(
+            names,
+            vec![
+                "id".to_string(),
+                "name".to_string(),
+                "id".to_string(),
+                "name".to_string()
+            ]
+        );
     }
 
     #[test]

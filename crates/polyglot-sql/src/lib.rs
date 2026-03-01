@@ -40,10 +40,10 @@ use serde::{Deserialize, Serialize};
 
 pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
-    get_identifiers, get_literals, get_subqueries, get_table_names, get_window_functions,
-    node_count, qualify_columns, remove_limit_offset, remove_nodes, remove_select_columns,
-    remove_where, rename_columns, rename_tables, replace_by_type, replace_nodes, set_distinct,
-    set_limit, set_offset,
+    get_identifiers, get_literals, get_output_column_names, get_subqueries, get_table_names,
+    get_window_functions, node_count, qualify_columns, remove_limit_offset, remove_nodes,
+    remove_select_columns, remove_where, rename_columns, rename_tables, replace_by_type,
+    replace_nodes, set_distinct, set_limit, set_offset,
 };
 pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
 pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
@@ -164,8 +164,9 @@ pub use traversal::{
 };
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
 pub use validation::{
-    validate_with_schema, SchemaColumn, SchemaColumnReference, SchemaForeignKey, SchemaTable,
-    SchemaTableReference, SchemaValidationOptions, ValidationSchema,
+    mapping_schema_from_validation_schema, validate_with_schema, SchemaColumn,
+    SchemaColumnReference, SchemaForeignKey, SchemaTable, SchemaTableReference,
+    SchemaValidationOptions, ValidationSchema,
 };
 
 const DEFAULT_FORMAT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB

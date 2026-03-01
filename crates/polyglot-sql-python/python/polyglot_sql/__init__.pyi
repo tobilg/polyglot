@@ -77,6 +77,13 @@ def optimize(sql: str, dialect: str = "generic") -> str: ...
 
 def lineage(column: str, sql: str, dialect: str = "generic") -> dict[str, Any]: ...
 
+def lineage_with_schema(
+    column: str,
+    sql: str,
+    schema: dict[str, Any],
+    dialect: str = "generic",
+) -> dict[str, Any]: ...
+
 
 def source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]: ...
 

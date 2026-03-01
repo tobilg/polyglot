@@ -605,6 +605,15 @@ fn build_resolver_schema(schema: &ValidationSchema) -> MappingSchema {
     mapping
 }
 
+/// Build a `MappingSchema` from a `ValidationSchema` payload.
+///
+/// This is useful for APIs that already accept `ValidationSchema`-shaped input
+/// (for example JSON wrappers) and need to run schema-aware lineage or other
+/// resolver-based analysis.
+pub fn mapping_schema_from_validation_schema(schema: &ValidationSchema) -> MappingSchema {
+    build_resolver_schema(schema)
+}
+
 fn collect_cte_aliases(expr: &Expression) -> HashSet<String> {
     let mut aliases = HashSet::new();
 

@@ -469,6 +469,43 @@ mod string_functions {
         );
     }
 
+    #[test]
+    fn test_postgres_dpipe_to_mysql_concat_issue_43() {
+        let result = transpile(
+            "SELECT 'A' || 'B'",
+            DialectType::PostgreSQL,
+            DialectType::MySQL,
+        );
+        assert_eq!(
+            result, "SELECT CONCAT('A', 'B')",
+            "PostgreSQL || should transpile to MySQL CONCAT: got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_mysql_dpipe_identity_is_or_issue_43() {
+        let result = transpile("SELECT 'A' || 'B'", DialectType::MySQL, DialectType::MySQL);
+        assert_eq!(
+            result, "SELECT 'A' OR 'B'",
+            "MySQL identity should treat || as OR: got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_generate_mysql_from_postgres_concat_ast_issue_43() {
+        let ast = polyglot_sql::parse("SELECT 'A' || 'B'", DialectType::PostgreSQL).expect("parse");
+        let mysql = Dialect::get(DialectType::MySQL);
+        let sql = mysql.generate(&ast[0]).expect("generate");
+
+        assert_eq!(
+            sql, "SELECT CONCAT('A', 'B')",
+            "MySQL generate should render semantic concat as CONCAT: got {}",
+            sql
+        );
+    }
+
     // UPPER/LOWER should be universal
     #[test]
     fn test_upper_lower_preserved() {
@@ -555,6 +592,44 @@ mod date_functions {
                 result
             );
         }
+    }
+}
+
+// ============================================================================
+// JSON Functions Transpilation Tests
+// ============================================================================
+
+mod json_functions {
+    use super::*;
+
+    #[test]
+    fn test_json_search_mysql_to_duckdb_issue_42() {
+        let sql = "SELECT JSON_SEARCH(meta, 'one', 'admin', NULL, '$.tags') IS NOT NULL FROM users";
+        let result = transpile(sql, DialectType::MySQL, DialectType::DuckDB);
+        let upper = result.to_uppercase();
+
+        assert!(
+            !upper.contains("JSON_SEARCH("),
+            "DuckDB transpilation should rewrite JSON_SEARCH: got {}",
+            result
+        );
+        assert!(
+            upper.contains("JSON_TREE("),
+            "DuckDB transpilation should use JSON_TREE lookup: got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_json_search_mysql_identity_preserved() {
+        let sql = "SELECT JSON_SEARCH(meta, 'one', 'admin', NULL, '$.tags') FROM users";
+        let result = transpile(sql, DialectType::MySQL, DialectType::MySQL);
+
+        assert!(
+            result.to_uppercase().contains("JSON_SEARCH("),
+            "MySQL identity transpilation should preserve JSON_SEARCH: got {}",
+            result
+        );
     }
 }
 

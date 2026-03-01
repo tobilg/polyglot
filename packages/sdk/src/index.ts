@@ -637,7 +637,7 @@ export type {
 // Re-export validation module
 export { ValidationSeverity, validate } from './validation';
 // Re-export lineage module
-export { getSourceTables, lineage } from './lineage';
+export { getSourceTables, lineage, lineageWithSchema } from './lineage';
 export type { LineageNode, LineageResult, SourceTablesResult } from './lineage';
 // Re-export diff module
 export { changesOnly, diff, hasChanges } from './diff';
@@ -661,7 +661,7 @@ export type {
 export { validateWithSchema } from './validation/schema-validator';
 
 // Import new modules for default export
-import { lineage, getSourceTables } from './lineage';
+import { lineage, lineageWithSchema, getSourceTables } from './lineage';
 import { diff, hasChanges, changesOnly } from './diff';
 import { plan } from './planner';
 
@@ -677,6 +677,7 @@ export default {
   getDialects,
   getVersion,
   lineage,
+  lineageWithSchema,
   getSourceTables,
   diff,
   hasChanges,

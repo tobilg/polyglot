@@ -1,9 +1,10 @@
 use polyglot_sql_ffi::{
     polyglot_dialect_count, polyglot_dialect_list, polyglot_diff, polyglot_format,
     polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
-    polyglot_free_validation_result, polyglot_generate, polyglot_lineage, polyglot_optimize,
-    polyglot_parse, polyglot_parse_one, polyglot_source_tables, polyglot_transpile,
-    polyglot_validate, polyglot_version, PolyglotResult, PolyglotValidationResult,
+    polyglot_free_validation_result, polyglot_generate, polyglot_lineage,
+    polyglot_lineage_with_schema, polyglot_optimize, polyglot_parse, polyglot_parse_one,
+    polyglot_source_tables, polyglot_transpile, polyglot_validate, polyglot_version,
+    PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
 use std::ffi::{CStr, CString};
@@ -132,6 +133,15 @@ fn test_null_pointer_inputs_on_other_apis() {
     let (status, _, _) = consume_result(polyglot_source_tables(
         column.as_ptr(),
         ptr::null(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(status, 5);
+
+    let schema_json = c(r#"{"tables":[]}"#);
+    let (status, _, _) = consume_result(polyglot_lineage_with_schema(
+        column.as_ptr(),
+        ptr::null(),
+        schema_json.as_ptr(),
         dialect.as_ptr(),
     ));
     assert_eq!(status, 5);
@@ -299,6 +309,39 @@ fn test_source_tables() {
     let tables: Vec<String> =
         serde_json::from_str(&data.expect("missing source tables")).expect("invalid json");
     assert!(tables.iter().any(|t| t.eq_ignore_ascii_case("orders")));
+}
+
+#[test]
+fn test_lineage_with_schema_resolves_ambiguous_column() {
+    let column = c("id");
+    let sql = c("SELECT id FROM users u JOIN orders o ON u.id = o.user_id");
+    let dialect = c("generic");
+    let schema = c(r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "TEXT"}]
+                },
+                {
+                    "name": "orders",
+                    "columns": [{"name": "order_id", "type": "INT"}, {"name": "user_id", "type": "INT"}]
+                }
+            ]
+        }"#);
+    let (status, data, error) = consume_result(polyglot_lineage_with_schema(
+        column.as_ptr(),
+        sql.as_ptr(),
+        schema.as_ptr(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let node: Value = serde_json::from_str(&data.expect("missing lineage")).expect("invalid json");
+    let payload = node.to_string();
+    assert!(
+        payload.contains("u.id"),
+        "expected qualified lineage edge u.id, got: {}",
+        payload
+    );
 }
 
 #[test]

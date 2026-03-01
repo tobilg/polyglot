@@ -24,6 +24,7 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate::validate, m)?)?;
     m.add_function(wrap_pyfunction!(optimize::optimize, m)?)?;
     m.add_function(wrap_pyfunction!(lineage::lineage, m)?)?;
+    m.add_function(wrap_pyfunction!(lineage::lineage_with_schema, m)?)?;
     m.add_function(wrap_pyfunction!(lineage::source_tables, m)?)?;
     m.add_function(wrap_pyfunction!(diff::diff, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;

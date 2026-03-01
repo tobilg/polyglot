@@ -12,6 +12,7 @@ use polyglot_sql::{
     expressions::Expression,
     format as core_format, format_with_options as core_format_with_options,
     lineage::{self, LineageNode},
+    mapping_schema_from_validation_schema,
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
     FormatGuardOptions as CoreFormatGuardOptions,
@@ -964,6 +965,92 @@ fn lineage_internal(sql: &str, column: &str, dialect: &str, trim_selects: bool) 
     };
 
     match lineage::lineage(column, &expr, dialect_opt, trim_selects) {
+        Ok(node) => LineageResult {
+            success: true,
+            lineage: Some(node),
+            error: None,
+        },
+        Err(e) => LineageResult {
+            success: false,
+            lineage: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Trace column lineage through a SQL query using schema metadata.
+///
+/// # Arguments
+/// * `sql` - SQL string to analyze
+/// * `column` - Column name to trace
+/// * `schema_json` - Schema JSON matching `ValidationSchema`
+/// * `dialect` - Dialect for parsing/qualification
+/// * `trim_selects` - Trim SELECT to only target column
+///
+/// # Returns
+/// JSON string containing LineageResult
+#[wasm_bindgen]
+pub fn lineage_sql_with_schema(
+    sql: &str,
+    column: &str,
+    schema_json: &str,
+    dialect: &str,
+    trim_selects: bool,
+) -> String {
+    set_panic_hook();
+
+    let result = lineage_with_schema_internal(sql, column, schema_json, dialect, trim_selects);
+    serde_json::to_string(&result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"success":false,"error":"Serialization error: {}"}}"#,
+            e
+        )
+    })
+}
+
+fn lineage_with_schema_internal(
+    sql: &str,
+    column: &str,
+    schema_json: &str,
+    dialect: &str,
+    trim_selects: bool,
+) -> LineageResult {
+    let (expr, dialect_type) = match parse_first(sql, dialect) {
+        Ok(v) => v,
+        Err(e) => {
+            return LineageResult {
+                success: false,
+                lineage: None,
+                error: Some(e),
+            };
+        }
+    };
+
+    let validation_schema = match serde_json::from_str::<CoreValidationSchema>(schema_json) {
+        Ok(schema) => schema,
+        Err(e) => {
+            return LineageResult {
+                success: false,
+                lineage: None,
+                error: Some(format!("Invalid schema JSON: {}", e)),
+            };
+        }
+    };
+
+    let mapping_schema = mapping_schema_from_validation_schema(&validation_schema);
+    let dialect_opt = if dialect_type == DialectType::Generic {
+        None
+    } else {
+        Some(dialect_type)
+    };
+
+    match lineage::lineage_with_schema(
+        column,
+        &expr,
+        Some(&mapping_schema),
+        dialect_opt,
+        trim_selects,
+    ) {
         Ok(node) => LineageResult {
             success: true,
             lineage: Some(node),
@@ -2233,6 +2320,38 @@ mod tests {
     fn test_lineage_invalid_dialect() {
         let result = lineage_sql("SELECT a FROM t", "a", "invalid_dialect", false);
         assert!(result.contains("\"success\":false"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_lineage_with_schema_resolves_ambiguous_column() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "users",
+                    "columns": [
+                        {"name": "id", "type": "INT"},
+                        {"name": "name", "type": "TEXT"}
+                    ]
+                },
+                {
+                    "name": "orders",
+                    "columns": [
+                        {"name": "order_id", "type": "INT"},
+                        {"name": "user_id", "type": "INT"}
+                    ]
+                }
+            ]
+        }"#;
+
+        let sql = "SELECT id FROM users u JOIN orders o ON u.id = o.user_id";
+        let result = lineage_sql_with_schema(sql, "id", schema, "generic", false);
+
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(
+            result.contains("\"name\":\"u.id\""),
+            "Expected qualified downstream lineage with schema: {}",
+            result
+        );
     }
 
     #[test]

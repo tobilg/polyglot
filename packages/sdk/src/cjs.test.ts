@@ -247,6 +247,34 @@ describe('CJS build', () => {
       expect(result.lineage).toBeDefined();
     });
 
+    it('lineageWithSchema resolves ambiguous unqualified columns', () => {
+      const schema = {
+        tables: [
+          {
+            name: 'users',
+            columns: [
+              { name: 'id', type: 'INT' },
+              { name: 'name', type: 'TEXT' },
+            ],
+          },
+          {
+            name: 'orders',
+            columns: [
+              { name: 'order_id', type: 'INT' },
+              { name: 'user_id', type: 'INT' },
+            ],
+          },
+        ],
+      };
+      const result = p.lineageWithSchema(
+        'id',
+        'SELECT id FROM users u JOIN orders o ON u.id = o.user_id',
+        schema,
+      );
+      expect(result.success).toBe(true);
+      expect(JSON.stringify(result.lineage)).toContain('u.id');
+    });
+
     it('getSourceTables returns source tables', () => {
       const result = p.getSourceTables('total', 'SELECT o.total FROM orders o');
       expect(result.success).toBe(true);
