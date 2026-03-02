@@ -14,7 +14,7 @@
         "import": "./dist/index.d.ts",
         "require": "./dist/index.d.cts"
       },
-      "browser": "./dist/index.js",
+      "browser": "./dist/index.browser.js",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
@@ -31,11 +31,12 @@
     "build:bindings": "cd ../.. && make generate-bindings",
     "build:wasm": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm",
     "build:esm": "vite build",
+    "build:browser": "vite build --config vite.config.browser.ts",
     "build:cjs": "vite build --config vite.config.cjs.ts && cp dist/index.d.ts dist/index.d.cts",
     "build:umd": "vite build --config vite.config.umd.ts",
     "build:dialect": "vite build --config vite.config.dialect.ts",
     "build:dialects": "for d in postgresql mysql bigquery snowflake duckdb tsql clickhouse; do POLYGLOT_DIALECT=$d pnpm run build:dialect; done",
-    "build": "pnpm run build:esm && pnpm run build:cjs && pnpm run build:umd",
+    "build": "pnpm run build:esm && pnpm run build:cjs && pnpm run build:browser && pnpm run build:umd",
     "build:all": "pnpm run build && pnpm run build:dialects",
     "test": "vitest run",
     "test:watch": "vitest",

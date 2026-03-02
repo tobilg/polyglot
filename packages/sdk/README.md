@@ -782,6 +782,24 @@ For browser use without a bundler:
 
 ## CommonJS (CJS) Usage
 
+### Next.js, webpack, Turbopack (browser build)
+
+When bundling for the browser, these tools use the `browser` export, which is a build that avoids top-level await and `import.meta.url`. **You must call `await init()` before using any API**:
+
+```typescript
+import { init, transpile, format, Dialect } from '@polyglot-sql/sdk';
+
+async function Example() {
+  await init();  // Required for browser/bundler builds
+  const result = transpile('SELECT IFNULL(a, b)', Dialect.MySQL, Dialect.PostgreSQL);
+  console.log(result.sql?.[0]);
+}
+```
+
+If you see `Dialect` or other exports as `undefined`, or errors about `require("fs")`, ensure you're awaiting `init()` before use.
+
+### Node.js (CJS)
+
 For Node.js projects using `require()`, the SDK ships a CJS build. Since WASM cannot be loaded synchronously, you must call `init()` before using any other function:
 
 ```javascript
@@ -816,7 +834,7 @@ await init();
 console.log(isInitialized()); // true
 ```
 
-> **Note:** The ESM build (`import`) auto-initializes via top-level `await`, so `init()` is not required there. The CJS build requires it because `require()` is synchronous.
+> **Note:** The ESM build for Node (`import`) auto-initializes via top-level `await`, so `init()` is not required there. The CJS and browser builds (Next.js, webpack, etc.) require `await init()` before use.
 
 ## License
 

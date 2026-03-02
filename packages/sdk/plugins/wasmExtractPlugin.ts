@@ -5,6 +5,8 @@ type WasmExtractPluginOptions = {
   wasmRelativePath: string;
   extractWasm: boolean;
   injectNodeCompat?: boolean;
+  /** When true, keep WASM as base64 data URL in bundle (no import.meta.url). Use for browser builds. */
+  keepDataUrl?: boolean;
 };
 
 const NODE_FILE_FETCH_COMPAT = [
@@ -23,7 +25,7 @@ const NODE_FILE_FETCH_COMPAT = [
 const DATA_URL_REGEX = /(=\s*)(['"])data:application\/wasm;base64,([A-Za-z0-9+/=]+)\2/;
 
 export function wasmExtractPlugin(options: WasmExtractPluginOptions): Plugin {
-  const { wasmFilename, wasmRelativePath, extractWasm } = options;
+  const { wasmFilename, wasmRelativePath, extractWasm, keepDataUrl } = options;
   const injectNodeCompat = options.injectNodeCompat ?? true;
   let wroteWasm = false;
 
@@ -41,7 +43,7 @@ export function wasmExtractPlugin(options: WasmExtractPluginOptions): Plugin {
           continue;
         }
 
-        if (extractWasm && !wroteWasm) {
+        if (extractWasm && !keepDataUrl && !wroteWasm) {
           const wasmBytes = Buffer.from(match[3], 'base64');
           this.emitFile({
             type: 'asset',
@@ -51,10 +53,12 @@ export function wasmExtractPlugin(options: WasmExtractPluginOptions): Plugin {
           wroteWasm = true;
         }
 
-        item.code = item.code.replace(
-          DATA_URL_REGEX,
-          `$1new URL("${wasmRelativePath}",import.meta.url).href`
-        );
+        if (!keepDataUrl) {
+          item.code = item.code.replace(
+            DATA_URL_REGEX,
+            `$1new URL("${wasmRelativePath}",import.meta.url).href`
+          );
+        }
 
         if (injectNodeCompat && !item.code.includes('globalThis.process.versions?.node')) {
           item.code = `${NODE_FILE_FETCH_COMPAT}\n${item.code}`;
