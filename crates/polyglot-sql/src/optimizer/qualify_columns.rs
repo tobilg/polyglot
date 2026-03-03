@@ -468,6 +468,12 @@ fn qualify_single_column(
     if let Some(table) = &col.table {
         let table_name = &table.name;
         if !scope.sources.contains_key(table_name) {
+            // Allow correlated references: if the table exists in the schema
+            // but not in the current scope, it may be referencing an outer scope
+            // (e.g., in a correlated scalar subquery).
+            if resolver.table_exists_in_schema(table_name) {
+                return Ok(());
+            }
             return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
         }
 
@@ -2465,6 +2471,58 @@ mod tests {
         assert!(sql.contains("GROUP BY"));
         assert!(sql.contains("t.a"));
         assert!(sql.contains("t.b"));
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_scalar_subquery() {
+        let expr =
+            parse("SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("id".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(sql.contains("t1.id"), "outer column should be qualified: {sql}");
+        assert!(sql.contains("t2.id"), "inner column should be qualified: {sql}");
+    }
+
+    #[test]
+    fn test_qualify_columns_rejects_unknown_table() {
+        let expr = parse("SELECT id FROM t1 WHERE nonexistent.col = 1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result = qualify_columns(expr, &schema, &QualifyColumnsOptions::new());
+        assert!(
+            result.is_err(),
+            "should reject reference to table not in scope or schema"
+        );
     }
 
     // ======================================================================

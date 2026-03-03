@@ -105,6 +105,12 @@ impl<'a> Resolver<'a> {
         self.get_table(column_name).map(Identifier::new)
     }
 
+    /// Check if a table exists in the schema (not necessarily in the current scope).
+    /// Used to detect correlated references to outer scope tables.
+    pub fn table_exists_in_schema(&self, table_name: &str) -> bool {
+        self.schema.column_names(table_name).is_ok()
+    }
+
     /// Get all available columns across all sources in this scope
     pub fn all_columns(&mut self) -> &HashSet<String> {
         if self.all_columns_cache.is_none() {

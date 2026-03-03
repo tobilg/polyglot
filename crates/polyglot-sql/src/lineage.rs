@@ -1844,6 +1844,49 @@ mod tests {
     }
 
     #[test]
+    fn test_lineage_with_schema_correlated_scalar_subquery() {
+        let query =
+            "SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1";
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse(query)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table(
+                "t1",
+                &[("id".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("id".into(), DataType::BigInt { length: None }),
+                    ("val".into(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "id",
+            &expr,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+            false,
+        )
+        .expect("lineage_with_schema should handle correlated scalar subqueries");
+
+        assert_eq!(node.name, "id");
+    }
+
+    #[test]
     fn test_lineage_with_schema_none_matches_lineage() {
         let expr = parse("SELECT a FROM t");
         let baseline = lineage("a", &expr, None, false).expect("lineage baseline");
