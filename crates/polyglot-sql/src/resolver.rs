@@ -54,6 +54,8 @@ pub struct Resolver<'a> {
     unambiguous_columns_cache: Option<HashMap<String, String>>,
     /// Cached set of all available columns
     all_columns_cache: Option<HashSet<String>>,
+    /// Columns disambiguated by JOIN USING: column_name -> table_name
+    using_column_tables: HashMap<String, String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -67,7 +69,16 @@ impl<'a> Resolver<'a> {
             source_columns_cache: HashMap::new(),
             unambiguous_columns_cache: None,
             all_columns_cache: None,
+            using_column_tables: HashMap::new(),
         }
+    }
+
+    /// Register a USING column with its resolved table.
+    /// This allows ambiguous columns from JOIN USING to be resolved.
+    pub fn add_using_column(&mut self, column_name: String, table_name: String) {
+        self.using_column_tables.insert(column_name, table_name);
+        // Invalidate caches since USING changes resolution
+        self.unambiguous_columns_cache = None;
     }
 
     /// Get the table for a column name.
@@ -80,6 +91,11 @@ impl<'a> Resolver<'a> {
         // If we found a table, return it
         if table_name.is_some() {
             return table_name;
+        }
+
+        // Check if this column was disambiguated by a JOIN USING clause
+        if let Some(table) = self.using_column_tables.get(column_name) {
+            return Some(table.clone());
         }
 
         // If schema inference is enabled and exactly one source has no schema,

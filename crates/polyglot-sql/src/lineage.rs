@@ -1887,6 +1887,45 @@ mod tests {
     }
 
     #[test]
+    fn test_lineage_with_schema_join_using() {
+        let query = "SELECT a FROM t1 JOIN t2 USING(a)";
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse(query)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table(
+                "t1",
+                &[("a".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[("a".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "a",
+            &expr,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+            false,
+        )
+        .expect("lineage_with_schema should handle JOIN USING");
+
+        assert_eq!(node.name, "a");
+    }
+
+    #[test]
     fn test_lineage_with_schema_none_matches_lineage() {
         let expr = parse("SELECT a FROM t");
         let baseline = lineage("a", &expr, None, false).expect("lineage baseline");
