@@ -276,6 +276,20 @@ impl<'a> TypeAnnotator<'a> {
                 integer_spelling: false,
             },
         );
+        self.function_return_types.insert(
+            "DATE_FORMAT".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "FORMAT_DATE".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
 
         // Math functions
         self.function_return_types.insert(
@@ -292,12 +306,27 @@ impl<'a> TypeAnnotator<'a> {
                 scale: None,
             },
         );
-        self.function_return_types
-            .insert("FLOOR".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("CEIL".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("CEILING".to_string(), DataType::BigInt { length: None });
+        self.function_return_types.insert(
+            "FLOOR".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "CEIL".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
+        self.function_return_types.insert(
+            "CEILING".to_string(),
+            DataType::Double {
+                precision: None,
+                scale: None,
+            },
+        );
         self.function_return_types.insert(
             "SQRT".to_string(),
             DataType::Double {
@@ -544,7 +573,9 @@ impl<'a> TypeAnnotator<'a> {
             | Expression::Lpad(_)
             | Expression::Rpad(_)
             | Expression::ConcatWs(_)
-            | Expression::Overlay(_) => Some(DataType::VarChar {
+            | Expression::Overlay(_)
+            | Expression::DateFormat(_)
+            | Expression::FormatDate(_) => Some(DataType::VarChar {
                 length: None,
                 parenthesized_length: false,
             }),
@@ -568,9 +599,11 @@ impl<'a> TypeAnnotator<'a> {
                 precision: None,
                 scale: None,
             }),
-            Expression::Floor(_) | Expression::Ceil(_) | Expression::Sign(_) => {
-                Some(DataType::BigInt { length: None })
-            }
+            Expression::Floor(_) | Expression::Ceil(_) => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
+            Expression::Sign(_) => Some(DataType::BigInt { length: None }),
 
             // Greatest/Least - coerce argument types
             Expression::Greatest(v) | Expression::Least(v) => self.coerce_arg_types(&v.expressions),
