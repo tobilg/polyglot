@@ -10,7 +10,7 @@
 //! Based on the Python implementation in `sqlglot/optimizer/resolver.py`.
 
 use crate::dialects::DialectType;
-use crate::expressions::{Expression, Identifier};
+use crate::expressions::{Expression, Identifier, TableRef};
 use crate::schema::Schema;
 use crate::scope::{Scope, SourceInfo};
 use std::collections::{HashMap, HashSet};
@@ -170,8 +170,10 @@ impl<'a> Resolver<'a> {
     fn extract_columns_from_source(&self, source_info: &SourceInfo) -> ResolverResult<Vec<String>> {
         let columns = match &source_info.expression {
             Expression::Table(table) => {
-                // For tables, try to get columns from schema
-                let table_name = table.name.name.clone();
+                // For tables, try to get columns from schema.
+                // Build the fully qualified name (catalog.schema.table) to
+                // match how MappingSchema stores hierarchical keys.
+                let table_name = qualified_table_name(table);
                 match self.schema.column_names(&table_name) {
                     Ok(cols) => cols,
                     Err(_) => Vec::new(), // Schema might not have this table
@@ -407,6 +409,19 @@ pub fn resolve_column(
 pub fn is_column_ambiguous(scope: &Scope, schema: &dyn Schema, column_name: &str) -> bool {
     let mut resolver = Resolver::new(scope, schema, true);
     resolver.is_ambiguous(column_name)
+}
+
+/// Build the fully qualified table name (catalog.schema.table) from a TableRef.
+fn qualified_table_name(table: &TableRef) -> String {
+    let mut parts = Vec::new();
+    if let Some(catalog) = &table.catalog {
+        parts.push(catalog.name.clone());
+    }
+    if let Some(schema) = &table.schema {
+        parts.push(schema.name.clone());
+    }
+    parts.push(table.name.name.clone());
+    parts.join(".")
 }
 
 #[cfg(test)]

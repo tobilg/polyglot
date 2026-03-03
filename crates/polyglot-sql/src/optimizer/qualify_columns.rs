@@ -2589,6 +2589,29 @@ mod tests {
     }
 
     #[test]
+    fn test_qualify_columns_qualified_table_name() {
+        let expr = parse("SELECT a FROM raw.t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "raw.t1",
+                &[("a".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("t1.a"),
+            "column should be qualified with table name: {sql}"
+        );
+    }
+
+    #[test]
     fn test_qualify_columns_correlated_scalar_subquery() {
         let expr =
             parse("SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1");
