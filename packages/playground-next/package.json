@@ -1,0 +1,23 @@
+{
+  "name": "@polyglot-sql/playground-next",
+  "version": "0.1.11",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter playground-shared run dev\" \"next dev\"",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "playground-shared": "workspace:*",
+    "next": "^16.1.6",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "@types/node": "^22.8.6",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.7.0"
+  }
+}

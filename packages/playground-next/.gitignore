@@ -1,0 +1,17 @@
+# Next.js
+.next/
+out/
+
+# Build
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Debug
+npm-debug.log*
+.pnpm-debug.log*
+
+# Local env
+.env*.local
