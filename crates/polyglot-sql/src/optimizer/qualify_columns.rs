@@ -222,6 +222,54 @@ pub fn validate_qualify_columns(expression: &Expression) -> QualifyColumnsResult
     Ok(())
 }
 
+/// Collect USING column names from JOIN clauses and register each with the
+/// resolver, mapping them to the first FROM-clause source that contains them.
+fn register_using_columns(select: &Select, resolver: &mut Resolver) {
+    let using_cols: Vec<String> = select
+        .joins
+        .iter()
+        .flat_map(|j| j.using.iter().map(|id| id.name.clone()))
+        .collect();
+
+    if using_cols.is_empty() {
+        return;
+    }
+
+    // Collect source names from the FROM clause (left side of joins) in order.
+    let from_sources: Vec<String> = select
+        .from
+        .as_ref()
+        .map(|f| {
+            f.expressions
+                .iter()
+                .filter_map(|expr| match expr {
+                    Expression::Table(t) => Some(
+                        t.alias
+                            .as_ref()
+                            .map(|a| a.name.clone())
+                            .unwrap_or_else(|| t.name.name.clone()),
+                    ),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for col_name in using_cols {
+        // Find the first FROM-clause source that contains this column.
+        let table = from_sources.iter().find_map(|source| {
+            resolver
+                .get_source_columns(source)
+                .ok()
+                .filter(|cols| cols.contains(&col_name))
+                .map(|_| source.clone())
+        });
+        if let Some(table_name) = table {
+            resolver.add_using_column(col_name, table_name);
+        }
+    }
+}
+
 /// Qualify columns in a scope by adding table qualifiers
 fn qualify_columns_in_scope(
     select: &mut Select,
@@ -229,6 +277,11 @@ fn qualify_columns_in_scope(
     resolver: &mut Resolver,
     allow_partial: bool,
 ) -> QualifyColumnsResult<()> {
+    // Register JOIN USING columns so the resolver can disambiguate them.
+    // USING columns exist in both joined tables; resolve each to a FROM-clause
+    // source (the left side of the join).
+    register_using_columns(select, resolver);
+
     for expr in &mut select.expressions {
         qualify_columns_in_expression(expr, scope, resolver, allow_partial)?;
     }
@@ -468,6 +521,12 @@ fn qualify_single_column(
     if let Some(table) = &col.table {
         let table_name = &table.name;
         if !scope.sources.contains_key(table_name) {
+            // Allow correlated references: if the table exists in the schema
+            // but not in the current scope, it may be referencing an outer scope
+            // (e.g., in a correlated scalar subquery).
+            if resolver.table_exists_in_schema(table_name) {
+                return Ok(());
+            }
             return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
         }
 
@@ -2465,6 +2524,143 @@ mod tests {
         assert!(sql.contains("GROUP BY"));
         assert!(sql.contains("t.a"));
         assert!(sql.contains("t.b"));
+    }
+
+    #[test]
+    fn test_qualify_columns_join_using() {
+        let expr = parse("SELECT a FROM t1 JOIN t2 USING(a)");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("a".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[("a".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        // The USING column should be qualified with the left (FROM) table
+        assert!(sql.contains("t1.a"), "USING column should resolve to FROM table: {sql}");
+    }
+
+    #[test]
+    fn test_qualify_columns_join_using_multiple_columns() {
+        let expr = parse("SELECT a, b FROM t1 JOIN t2 USING(a, b)");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(sql.contains("t1.a"), "USING column 'a' should resolve: {sql}");
+        assert!(sql.contains("t1.b"), "USING column 'b' should resolve: {sql}");
+    }
+
+    #[test]
+    fn test_qualify_columns_qualified_table_name() {
+        let expr = parse("SELECT a FROM raw.t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "raw.t1",
+                &[("a".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("t1.a"),
+            "column should be qualified with table name: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_scalar_subquery() {
+        let expr =
+            parse("SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("id".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(sql.contains("t1.id"), "outer column should be qualified: {sql}");
+        assert!(sql.contains("t2.id"), "inner column should be qualified: {sql}");
+    }
+
+    #[test]
+    fn test_qualify_columns_rejects_unknown_table() {
+        let expr = parse("SELECT id FROM t1 WHERE nonexistent.col = 1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result = qualify_columns(expr, &schema, &QualifyColumnsOptions::new());
+        assert!(
+            result.is_err(),
+            "should reject reference to table not in scope or schema"
+        );
     }
 
     // ======================================================================

@@ -10,7 +10,7 @@
 //! Based on the Python implementation in `sqlglot/optimizer/resolver.py`.
 
 use crate::dialects::DialectType;
-use crate::expressions::{Expression, Identifier};
+use crate::expressions::{Expression, Identifier, TableRef};
 use crate::schema::Schema;
 use crate::scope::{Scope, SourceInfo};
 use std::collections::{HashMap, HashSet};
@@ -54,6 +54,8 @@ pub struct Resolver<'a> {
     unambiguous_columns_cache: Option<HashMap<String, String>>,
     /// Cached set of all available columns
     all_columns_cache: Option<HashSet<String>>,
+    /// Columns disambiguated by JOIN USING: column_name -> table_name
+    using_column_tables: HashMap<String, String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -67,7 +69,16 @@ impl<'a> Resolver<'a> {
             source_columns_cache: HashMap::new(),
             unambiguous_columns_cache: None,
             all_columns_cache: None,
+            using_column_tables: HashMap::new(),
         }
+    }
+
+    /// Register a USING column with its resolved table.
+    /// This allows ambiguous columns from JOIN USING to be resolved.
+    pub fn add_using_column(&mut self, column_name: String, table_name: String) {
+        self.using_column_tables.insert(column_name, table_name);
+        // Invalidate caches since USING changes resolution
+        self.unambiguous_columns_cache = None;
     }
 
     /// Get the table for a column name.
@@ -80,6 +91,11 @@ impl<'a> Resolver<'a> {
         // If we found a table, return it
         if table_name.is_some() {
             return table_name;
+        }
+
+        // Check if this column was disambiguated by a JOIN USING clause
+        if let Some(table) = self.using_column_tables.get(column_name) {
+            return Some(table.clone());
         }
 
         // If schema inference is enabled and exactly one source has no schema,
@@ -103,6 +119,12 @@ impl<'a> Resolver<'a> {
     /// Get the table for a column, returning an Identifier
     pub fn get_table_identifier(&mut self, column_name: &str) -> Option<Identifier> {
         self.get_table(column_name).map(Identifier::new)
+    }
+
+    /// Check if a table exists in the schema (not necessarily in the current scope).
+    /// Used to detect correlated references to outer scope tables.
+    pub fn table_exists_in_schema(&self, table_name: &str) -> bool {
+        self.schema.column_names(table_name).is_ok()
     }
 
     /// Get all available columns across all sources in this scope
@@ -148,8 +170,10 @@ impl<'a> Resolver<'a> {
     fn extract_columns_from_source(&self, source_info: &SourceInfo) -> ResolverResult<Vec<String>> {
         let columns = match &source_info.expression {
             Expression::Table(table) => {
-                // For tables, try to get columns from schema
-                let table_name = table.name.name.clone();
+                // For tables, try to get columns from schema.
+                // Build the fully qualified name (catalog.schema.table) to
+                // match how MappingSchema stores hierarchical keys.
+                let table_name = qualified_table_name(table);
                 match self.schema.column_names(&table_name) {
                     Ok(cols) => cols,
                     Err(_) => Vec::new(), // Schema might not have this table
@@ -385,6 +409,19 @@ pub fn resolve_column(
 pub fn is_column_ambiguous(scope: &Scope, schema: &dyn Schema, column_name: &str) -> bool {
     let mut resolver = Resolver::new(scope, schema, true);
     resolver.is_ambiguous(column_name)
+}
+
+/// Build the fully qualified table name (catalog.schema.table) from a TableRef.
+fn qualified_table_name(table: &TableRef) -> String {
+    let mut parts = Vec::new();
+    if let Some(catalog) = &table.catalog {
+        parts.push(catalog.name.clone());
+    }
+    if let Some(schema) = &table.schema {
+        parts.push(schema.name.clone());
+    }
+    parts.push(table.name.name.clone());
+    parts.join(".")
 }
 
 #[cfg(test)]
