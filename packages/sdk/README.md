@@ -818,6 +818,113 @@ console.log(isInitialized()); // true
 
 > **Note:** The ESM build (`import`) auto-initializes via top-level `await`, so `init()` is not required there. The CJS build requires it because `require()` is synchronous.
 
+## Bundler Configuration
+
+The ESM build uses **top-level `await`** (ES2022) and **`new URL("...", import.meta.url)`** for WASM loading. Both are web standards supported by all modern bundlers, but some require explicit configuration.
+
+### Vite
+
+Vite works out of the box with `vite-plugin-wasm`. This is the setup used by the [Polyglot Playground](https://github.com/tobilg/polyglot):
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite';
+import wasm from 'vite-plugin-wasm';
+
+export default defineConfig({
+  plugins: [wasm()],
+  build: {
+    target: 'esnext', // required for top-level await
+  },
+  optimizeDeps: {
+    exclude: ['@polyglot-sql/sdk'], // prevent esbuild from pre-bundling WASM
+  },
+});
+```
+
+### Next.js
+
+Next.js requires enabling WebAssembly experiments in the webpack config:
+
+```javascript
+// next.config.js
+module.exports = {
+  webpack: (config) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      topLevelAwait: true,
+      layers: true,
+    };
+    return config;
+  },
+};
+```
+
+For **production SSR builds**, Next.js may emit `.wasm` files at a different path than where it tries to load them. A common workaround is to add a plugin that fixes the output path:
+
+```javascript
+// next.config.js
+class WasmChunksFixPlugin {
+  apply(compiler) {
+    compiler.hooks.thisCompilation.tap('WasmChunksFixPlugin', (compilation) => {
+      compilation.hooks.processAssets.tap(
+        { name: 'WasmChunksFixPlugin' },
+        (assets) =>
+          Object.entries(assets).forEach(([pathname, source]) => {
+            if (!pathname.match(/\.wasm$/)) return;
+            compilation.deleteAsset(pathname);
+            const name = pathname.split('/')[1];
+            const info = compilation.assetsInfo.get(pathname);
+            compilation.emitAsset(name, source, info);
+          })
+      );
+    });
+  }
+}
+
+module.exports = {
+  webpack: (config, { isServer, dev }) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      topLevelAwait: true,
+      layers: true,
+    };
+    if (!dev && isServer) {
+      config.output.webassemblyModuleFilename = 'chunks/[id].wasm';
+      config.plugins.push(new WasmChunksFixPlugin());
+    }
+    return config;
+  },
+};
+```
+
+### webpack 5 (standalone)
+
+Enable the required experiments in your webpack config:
+
+```javascript
+// webpack.config.js
+module.exports = {
+  experiments: {
+    asyncWebAssembly: true,
+    topLevelAwait: true,
+  },
+  // ...
+};
+```
+
+`topLevelAwait` is enabled by default since webpack 5.83.0. `asyncWebAssembly` must be set explicitly.
+
+### Troubleshooting
+
+If you see `undefined` exports (e.g., `Dialect` is `undefined`) or errors about `require("fs")`:
+
+1. Make sure `asyncWebAssembly` and `topLevelAwait` experiments are enabled in your bundler config
+2. Ensure the bundler is resolving the ESM build (the `"import"` or `"browser"` export condition), not the CJS build which uses Node.js APIs
+3. For SSR frameworks (Next.js, Nuxt), check that the `.wasm` file is correctly included in the server build output
+
 ## License
 
 [MIT](../../LICENSE)

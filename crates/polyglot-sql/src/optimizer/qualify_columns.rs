@@ -8,8 +8,8 @@
 use crate::dialects::transform_recursive;
 use crate::dialects::DialectType;
 use crate::expressions::{
-    Alias, Column, Expression, Identifier, Join, LateralView, Literal, Over, Paren, Select,
-    TableRef, With,
+    Alias, BinaryOp, Column, Expression, Identifier, Join, LateralView, Literal, Over, Paren,
+    Select, TableRef, VarArgFunc, With,
 };
 use crate::resolver::{Resolver, ResolverError};
 use crate::schema::Schema;
@@ -136,33 +136,55 @@ pub fn qualify_columns(
                 let scope = build_scope(&scope_expr);
                 let mut resolver = Resolver::new(&scope, schema, infer_schema);
 
-                if let Err(err) = qualify_columns_in_scope(
-                    &mut select,
-                    &scope,
-                    &mut resolver,
-                    options.allow_partial_qualification,
-                ) {
-                    *first_error.borrow_mut() = Some(err);
+                // 1. Expand USING → ON before column qualification
+                let column_tables = if first_error.borrow().is_none() {
+                    match expand_using(&mut select, &scope, &mut resolver) {
+                        Ok(ct) => ct,
+                        Err(err) => {
+                            *first_error.borrow_mut() = Some(err);
+                            HashMap::new()
+                        }
+                    }
+                } else {
+                    HashMap::new()
+                };
+
+                // 2. Qualify columns (add table qualifiers)
+                if first_error.borrow().is_none() {
+                    if let Err(err) = qualify_columns_in_scope(
+                        &mut select,
+                        &scope,
+                        &mut resolver,
+                        options.allow_partial_qualification,
+                    ) {
+                        *first_error.borrow_mut() = Some(err);
+                    }
                 }
 
+                // 3. Expand alias references
                 if first_error.borrow().is_none() && options.expand_alias_refs {
                     if let Err(err) = expand_alias_refs(&mut select, &mut resolver, dialect) {
                         *first_error.borrow_mut() = Some(err);
                     }
                 }
 
+                // 4. Expand star expressions (with USING deduplication)
                 if first_error.borrow().is_none() && options.expand_stars {
-                    if let Err(err) = expand_stars(&mut select, &scope, &mut resolver) {
+                    if let Err(err) =
+                        expand_stars(&mut select, &scope, &mut resolver, &column_tables)
+                    {
                         *first_error.borrow_mut() = Some(err);
                     }
                 }
 
+                // 5. Qualify outputs
                 if first_error.borrow().is_none() {
                     if let Err(err) = qualify_outputs_select(&mut select) {
                         *first_error.borrow_mut() = Some(err);
                     }
                 }
 
+                // 6. Expand GROUP BY positional refs
                 if first_error.borrow().is_none() {
                     if let Err(err) = expand_group_by(&mut select, dialect) {
                         *first_error.borrow_mut() = Some(err);
@@ -222,51 +244,278 @@ pub fn validate_qualify_columns(expression: &Expression) -> QualifyColumnsResult
     Ok(())
 }
 
-/// Collect USING column names from JOIN clauses and register each with the
-/// resolver, mapping them to the first FROM-clause source that contains them.
-fn register_using_columns(select: &Select, resolver: &mut Resolver) {
-    let using_cols: Vec<String> = select
+/// Get the alias or table name from a table expression in FROM/JOIN context.
+fn get_source_name(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::Table(t) => Some(
+            t.alias
+                .as_ref()
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| t.name.name.clone()),
+        ),
+        Expression::Subquery(sq) => sq.alias.as_ref().map(|a| a.name.clone()),
+        _ => None,
+    }
+}
+
+/// Get ordered source names from a SELECT's FROM + JOIN clauses.
+/// FROM tables come first, then JOIN tables in declaration order.
+fn get_ordered_source_names(select: &Select) -> Vec<String> {
+    let mut ordered = Vec::new();
+    if let Some(from) = &select.from {
+        for expr in &from.expressions {
+            if let Some(name) = get_source_name(expr) {
+                ordered.push(name);
+            }
+        }
+    }
+    for join in &select.joins {
+        if let Some(name) = get_source_name(&join.this) {
+            ordered.push(name);
+        }
+    }
+    ordered
+}
+
+/// Create a COALESCE expression over qualified columns from the given tables.
+fn make_coalesce(column_name: &str, tables: &[String]) -> Expression {
+    let args: Vec<Expression> = tables
+        .iter()
+        .map(|t| Expression::qualified_column(t.as_str(), column_name))
+        .collect();
+    Expression::Coalesce(Box::new(VarArgFunc {
+        expressions: args,
+        original_name: None,
+    }))
+}
+
+/// Expand JOIN USING clauses into ON conditions and track which columns
+/// participate in USING joins for later COALESCE rewriting.
+///
+/// Returns a mapping from column name → ordered list of table names that
+/// participate in USING for that column.
+fn expand_using(
+    select: &mut Select,
+    _scope: &Scope,
+    resolver: &mut Resolver,
+) -> QualifyColumnsResult<HashMap<String, Vec<String>>> {
+    // columns: column_name → first source that owns it (first-seen-wins)
+    let mut columns: HashMap<String, String> = HashMap::new();
+
+    // column_tables: column_name → ordered list of tables that participate in USING
+    let mut column_tables: HashMap<String, Vec<String>> = HashMap::new();
+
+    // Get non-join source names from FROM clause
+    let join_names: HashSet<String> = select
         .joins
         .iter()
-        .flat_map(|j| j.using.iter().map(|id| id.name.clone()))
+        .filter_map(|j| get_source_name(&j.this))
         .collect();
 
-    if using_cols.is_empty() {
-        return;
+    let all_ordered = get_ordered_source_names(select);
+    let mut ordered: Vec<String> = all_ordered
+        .iter()
+        .filter(|name| !join_names.contains(name.as_str()))
+        .cloned()
+        .collect();
+
+    if join_names.is_empty() {
+        return Ok(column_tables);
     }
 
-    // Collect source names from the FROM clause (left side of joins) in order.
-    let from_sources: Vec<String> = select
-        .from
-        .as_ref()
-        .map(|f| {
-            f.expressions
-                .iter()
-                .filter_map(|expr| match expr {
-                    Expression::Table(t) => Some(
-                        t.alias
-                            .as_ref()
-                            .map(|a| a.name.clone())
-                            .unwrap_or_else(|| t.name.name.clone()),
-                    ),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    for col_name in using_cols {
-        // Find the first FROM-clause source that contains this column.
-        let table = from_sources.iter().find_map(|source| {
-            resolver
-                .get_source_columns(source)
-                .ok()
-                .filter(|cols| cols.contains(&col_name))
-                .map(|_| source.clone())
-        });
-        if let Some(table_name) = table {
-            resolver.add_using_column(col_name, table_name);
+    // Helper closure to update columns map from a source
+    fn update_source_columns(
+        source_name: &str,
+        columns: &mut HashMap<String, String>,
+        resolver: &mut Resolver,
+    ) {
+        if let Ok(source_cols) = resolver.get_source_columns(source_name) {
+            for col_name in source_cols {
+                columns.entry(col_name).or_insert_with(|| source_name.to_string());
+            }
         }
+    }
+
+    // Pre-populate columns from FROM (base) sources
+    for source_name in &ordered {
+        update_source_columns(source_name, &mut columns, resolver);
+    }
+
+    for i in 0..select.joins.len() {
+        // Get source_table (most recently seen non-join table)
+        let source_table = ordered.last().cloned().unwrap_or_default();
+        if !source_table.is_empty() {
+            update_source_columns(&source_table, &mut columns, resolver);
+        }
+
+        // Get join_table name and append to ordered
+        let join_table = get_source_name(&select.joins[i].this).unwrap_or_default();
+        ordered.push(join_table.clone());
+
+        // Skip if no USING clause
+        if select.joins[i].using.is_empty() {
+            continue;
+        }
+
+        let _join_columns: Vec<String> = resolver
+            .get_source_columns(&join_table)
+            .unwrap_or_default();
+
+        let using_identifiers: Vec<String> = select.joins[i]
+            .using
+            .iter()
+            .map(|id| id.name.clone())
+            .collect();
+
+        let using_count = using_identifiers.len();
+        let is_semi_or_anti = matches!(
+            select.joins[i].kind,
+            crate::expressions::JoinKind::Semi
+                | crate::expressions::JoinKind::Anti
+                | crate::expressions::JoinKind::LeftSemi
+                | crate::expressions::JoinKind::LeftAnti
+                | crate::expressions::JoinKind::RightSemi
+                | crate::expressions::JoinKind::RightAnti
+        );
+
+        let mut conditions: Vec<Expression> = Vec::new();
+
+        for identifier in &using_identifiers {
+            let table = columns
+                .get(identifier)
+                .cloned()
+                .unwrap_or_else(|| source_table.clone());
+
+            // Build LHS of the equality
+            let lhs = if i == 0 || using_count == 1 {
+                // Simple qualified column for first join or single USING column
+                Expression::qualified_column(table.as_str(), identifier.as_str())
+            } else {
+                // For subsequent joins with multiple USING columns,
+                // COALESCE over all previous sources that have this column
+                let coalesce_cols: Vec<String> = ordered[..ordered.len() - 1]
+                    .iter()
+                    .filter(|t| {
+                        resolver
+                            .get_source_columns(t)
+                            .unwrap_or_default()
+                            .contains(identifier)
+                    })
+                    .cloned()
+                    .collect();
+
+                if coalesce_cols.len() > 1 {
+                    make_coalesce(identifier, &coalesce_cols)
+                } else {
+                    Expression::qualified_column(table.as_str(), identifier.as_str())
+                }
+            };
+
+            // Build RHS: qualified column from join table
+            let rhs = Expression::qualified_column(join_table.as_str(), identifier.as_str());
+
+            conditions.push(Expression::Eq(Box::new(BinaryOp::new(lhs, rhs))));
+
+            // Track tables for COALESCE rewriting (skip for semi/anti joins)
+            if !is_semi_or_anti {
+                let tables = column_tables
+                    .entry(identifier.clone())
+                    .or_insert_with(Vec::new);
+                if !tables.contains(&table) {
+                    tables.push(table.clone());
+                }
+                if !tables.contains(&join_table) {
+                    tables.push(join_table.clone());
+                }
+            }
+        }
+
+        // Combine conditions with AND (left fold)
+        let on_condition = conditions
+            .into_iter()
+            .reduce(|acc, cond| Expression::And(Box::new(BinaryOp::new(acc, cond))))
+            .expect("at least one USING column");
+
+        // Set ON condition and clear USING
+        select.joins[i].on = Some(on_condition);
+        select.joins[i].using = vec![];
+    }
+
+    // Phase 2: Rewrite unqualified USING column references to COALESCE
+    if !column_tables.is_empty() {
+        // Rewrite select.expressions (projections)
+        let mut new_expressions = Vec::with_capacity(select.expressions.len());
+        for expr in &select.expressions {
+            match expr {
+                Expression::Column(col) if col.table.is_none() && column_tables.contains_key(&col.name.name) => {
+                    let tables = &column_tables[&col.name.name];
+                    let coalesce = make_coalesce(&col.name.name, tables);
+                    // Wrap in alias to preserve column name in projections
+                    new_expressions.push(Expression::Alias(Box::new(Alias {
+                        this: coalesce,
+                        alias: Identifier::new(&col.name.name),
+                        column_aliases: vec![],
+                        pre_alias_comments: vec![],
+                        trailing_comments: vec![],
+                    })));
+                }
+                _ => {
+                    let mut rewritten = expr.clone();
+                    rewrite_using_columns_in_expression(&mut rewritten, &column_tables);
+                    new_expressions.push(rewritten);
+                }
+            }
+        }
+        select.expressions = new_expressions;
+
+        // Rewrite WHERE
+        if let Some(where_clause) = &mut select.where_clause {
+            rewrite_using_columns_in_expression(&mut where_clause.this, &column_tables);
+        }
+
+        // Rewrite GROUP BY
+        if let Some(group_by) = &mut select.group_by {
+            for expr in &mut group_by.expressions {
+                rewrite_using_columns_in_expression(expr, &column_tables);
+            }
+        }
+
+        // Rewrite HAVING
+        if let Some(having) = &mut select.having {
+            rewrite_using_columns_in_expression(&mut having.this, &column_tables);
+        }
+
+        // Rewrite QUALIFY
+        if let Some(qualify) = &mut select.qualify {
+            rewrite_using_columns_in_expression(&mut qualify.this, &column_tables);
+        }
+
+        // Rewrite ORDER BY
+        if let Some(order_by) = &mut select.order_by {
+            for ordered in &mut order_by.expressions {
+                rewrite_using_columns_in_expression(&mut ordered.this, &column_tables);
+            }
+        }
+    }
+
+    Ok(column_tables)
+}
+
+/// Recursively replace unqualified USING column references with COALESCE.
+fn rewrite_using_columns_in_expression(
+    expr: &mut Expression,
+    column_tables: &HashMap<String, Vec<String>>,
+) {
+    let transformed = transform_recursive(expr.clone(), &|node| match node {
+        Expression::Column(col) if col.table.is_none() && column_tables.contains_key(&col.name.name) => {
+            let tables = &column_tables[&col.name.name];
+            Ok(make_coalesce(&col.name.name, tables))
+        }
+        other => Ok(other),
+    });
+
+    if let Ok(next) = transformed {
+        *expr = next;
     }
 }
 
@@ -277,11 +526,6 @@ fn qualify_columns_in_scope(
     resolver: &mut Resolver,
     allow_partial: bool,
 ) -> QualifyColumnsResult<()> {
-    // Register JOIN USING columns so the resolver can disambiguate them.
-    // USING columns exist in both joined tables; resolve each to a FROM-clause
-    // source (the left side of the join).
-    register_using_columns(select, resolver);
-
     for expr in &mut select.expressions {
         qualify_columns_in_expression(expr, scope, resolver, allow_partial)?;
     }
@@ -376,32 +620,59 @@ fn expand_group_by(select: &mut Select, _dialect: Option<DialectType>) -> Qualif
     Ok(())
 }
 
-/// Expand star expressions to explicit column lists.
+/// Expand star expressions to explicit column lists, with USING deduplication.
 ///
 /// For example:
 /// `SELECT * FROM users`
 /// becomes:
 /// `SELECT users.id, users.name, users.email FROM users`
+///
+/// With USING joins, USING columns appear once as COALESCE and are
+/// deduplicated across sources.
 fn expand_stars(
     select: &mut Select,
-    scope: &Scope,
+    _scope: &Scope,
     resolver: &mut Resolver,
+    column_tables: &HashMap<String, Vec<String>>,
 ) -> QualifyColumnsResult<()> {
     let mut new_selections: Vec<Expression> = Vec::new();
     let mut has_star = false;
+    let mut coalesced_columns: HashSet<String> = HashSet::new();
+
+    // Use ordered source names (not unordered HashMap keys)
+    let ordered_sources = get_ordered_source_names(select);
 
     for expr in &select.expressions {
         match expr {
             Expression::Star(_) => {
                 has_star = true;
-                for source_name in scope.sources.keys() {
+                for source_name in &ordered_sources {
                     if let Ok(columns) = resolver.get_source_columns(source_name) {
                         if columns.contains(&"*".to_string()) || columns.is_empty() {
                             return Ok(());
                         }
-                        for col_name in columns {
+                        for col_name in &columns {
+                            if coalesced_columns.contains(col_name) {
+                                // Already emitted as COALESCE, skip
+                                continue;
+                            }
+                            if let Some(tables) = column_tables.get(col_name) {
+                                if tables.contains(source_name) {
+                                    // Emit COALESCE and mark as coalesced
+                                    coalesced_columns.insert(col_name.clone());
+                                    let coalesce = make_coalesce(col_name, tables);
+                                    new_selections.push(Expression::Alias(Box::new(Alias {
+                                        this: coalesce,
+                                        alias: Identifier::new(col_name),
+                                        column_aliases: vec![],
+                                        pre_alias_comments: vec![],
+                                        trailing_comments: vec![],
+                                    })));
+                                    continue;
+                                }
+                            }
                             new_selections
-                                .push(create_qualified_column(&col_name, Some(source_name)));
+                                .push(create_qualified_column(col_name, Some(source_name)));
                         }
                     }
                 }
@@ -410,16 +681,33 @@ fn expand_stars(
                 has_star = true;
                 if let Some(table) = &col.table {
                     let table_name = &table.name;
-                    if !scope.sources.contains_key(table_name) {
+                    if !ordered_sources.contains(table_name) {
                         return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
                     }
                     if let Ok(columns) = resolver.get_source_columns(table_name) {
                         if columns.contains(&"*".to_string()) || columns.is_empty() {
                             return Ok(());
                         }
-                        for col_name in columns {
+                        for col_name in &columns {
+                            if coalesced_columns.contains(col_name) {
+                                continue;
+                            }
+                            if let Some(tables) = column_tables.get(col_name) {
+                                if tables.contains(table_name) {
+                                    coalesced_columns.insert(col_name.clone());
+                                    let coalesce = make_coalesce(col_name, tables);
+                                    new_selections.push(Expression::Alias(Box::new(Alias {
+                                        this: coalesce,
+                                        alias: Identifier::new(col_name),
+                                        column_aliases: vec![],
+                                        pre_alias_comments: vec![],
+                                        trailing_comments: vec![],
+                                    })));
+                                    continue;
+                                }
+                            }
                             new_selections
-                                .push(create_qualified_column(&col_name, Some(table_name)));
+                                .push(create_qualified_column(col_name, Some(table_name)));
                         }
                     }
                 }
@@ -2526,22 +2814,33 @@ mod tests {
         assert!(sql.contains("t.b"));
     }
 
+    // ======================================================================
+    // USING expansion tests
+    // ======================================================================
+
     #[test]
-    fn test_qualify_columns_join_using() {
-        let expr = parse("SELECT a FROM t1 JOIN t2 USING(a)");
+    fn test_expand_using_simple() {
+        // Already-qualified column: USING→ON rewrite but no COALESCE needed
+        let expr = parse("SELECT x.b FROM x JOIN y USING (b)");
 
         let mut schema = MappingSchema::new();
         schema
             .add_table(
-                "t1",
-                &[("a".to_string(), DataType::BigInt { length: None })],
+                "x",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                ],
                 None,
             )
             .expect("schema setup");
         schema
             .add_table(
-                "t2",
-                &[("a".to_string(), DataType::BigInt { length: None })],
+                "y",
+                &[
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
                 None,
             )
             .expect("schema setup");
@@ -2550,18 +2849,28 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        // The USING column should be qualified with the left (FROM) table
-        assert!(sql.contains("t1.a"), "USING column should resolve to FROM table: {sql}");
+        // USING should be replaced with ON
+        assert!(
+            !sql.contains("USING"),
+            "USING should be replaced with ON: {sql}"
+        );
+        assert!(
+            sql.contains("ON x.b = y.b"),
+            "ON condition should be x.b = y.b: {sql}"
+        );
+        // x.b in SELECT should remain as-is (already qualified)
+        assert!(sql.contains("SELECT x.b"), "SELECT should keep x.b: {sql}");
     }
 
     #[test]
-    fn test_qualify_columns_join_using_multiple_columns() {
-        let expr = parse("SELECT a, b FROM t1 JOIN t2 USING(a, b)");
+    fn test_expand_using_unqualified_coalesce() {
+        // Unqualified USING column in SELECT should become COALESCE
+        let expr = parse("SELECT b FROM x JOIN y USING(b)");
 
         let mut schema = MappingSchema::new();
         schema
             .add_table(
-                "t1",
+                "x",
                 &[
                     ("a".to_string(), DataType::BigInt { length: None }),
                     ("b".to_string(), DataType::BigInt { length: None }),
@@ -2571,10 +2880,10 @@ mod tests {
             .expect("schema setup");
         schema
             .add_table(
-                "t2",
+                "y",
                 &[
-                    ("a".to_string(), DataType::BigInt { length: None }),
                     ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
                 ],
                 None,
             )
@@ -2584,8 +2893,213 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        assert!(sql.contains("t1.a"), "USING column 'a' should resolve: {sql}");
-        assert!(sql.contains("t1.b"), "USING column 'b' should resolve: {sql}");
+        assert!(
+            sql.contains("COALESCE(x.b, y.b)"),
+            "Unqualified USING column should become COALESCE: {sql}"
+        );
+        assert!(
+            sql.contains("AS b"),
+            "COALESCE should be aliased as 'b': {sql}"
+        );
+        assert!(
+            sql.contains("ON x.b = y.b"),
+            "ON condition should be generated: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_using_with_where() {
+        // USING column in WHERE should become COALESCE
+        let expr = parse("SELECT b FROM x JOIN y USING(b) WHERE b = 1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "x",
+                &[("b".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "y",
+                &[("b".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("WHERE COALESCE(x.b, y.b)"),
+            "WHERE should use COALESCE for USING column: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_using_multi_join() {
+        // Three-way join with same USING column
+        let expr = parse("SELECT b FROM x JOIN y USING(b) JOIN z USING(b)");
+
+        let mut schema = MappingSchema::new();
+        for table in &["x", "y", "z"] {
+            schema
+                .add_table(
+                    table,
+                    &[("b".to_string(), DataType::BigInt { length: None })],
+                    None,
+                )
+                .expect("schema setup");
+        }
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        // SELECT should have 3-table COALESCE
+        assert!(
+            sql.contains("COALESCE(x.b, y.b, z.b)"),
+            "Should have 3-table COALESCE: {sql}"
+        );
+        // First join: simple ON
+        assert!(
+            sql.contains("ON x.b = y.b"),
+            "First join ON condition: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_using_multi_column() {
+        // Two USING columns
+        let expr = parse("SELECT b, c FROM y JOIN z USING(b, c)");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "y",
+                &[
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "z",
+                &[
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("COALESCE(y.b, z.b)"),
+            "column 'b' should get COALESCE: {sql}"
+        );
+        assert!(
+            sql.contains("COALESCE(y.c, z.c)"),
+            "column 'c' should get COALESCE: {sql}"
+        );
+        // ON should have both conditions ANDed
+        assert!(
+            sql.contains("y.b = z.b") && sql.contains("y.c = z.c"),
+            "ON should have both equality conditions: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_using_star() {
+        // SELECT * should deduplicate USING columns
+        let expr = parse("SELECT * FROM x JOIN y USING(b)");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "x",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "y",
+                &[
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        // b should appear once as COALESCE
+        assert!(
+            sql.contains("COALESCE(x.b, y.b) AS b"),
+            "USING column should be COALESCE in star expansion: {sql}"
+        );
+        // a and c should be normal qualified columns
+        assert!(sql.contains("x.a"), "non-USING column a from x: {sql}");
+        assert!(sql.contains("y.c"), "non-USING column c from y: {sql}");
+        // b should only appear once (not duplicated from both tables)
+        let coalesce_count = sql.matches("COALESCE").count();
+        assert_eq!(
+            coalesce_count, 1,
+            "b should appear only once as COALESCE: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_expand_using_table_star() {
+        // table.* with USING column
+        let expr = parse("SELECT x.* FROM x JOIN y USING(b)");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "x",
+                &[
+                    ("a".to_string(), DataType::BigInt { length: None }),
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "y",
+                &[
+                    ("b".to_string(), DataType::BigInt { length: None }),
+                    ("c".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        // b should become COALESCE (since x participates in USING for b)
+        assert!(
+            sql.contains("COALESCE(x.b, y.b)"),
+            "USING column from x.* should become COALESCE: {sql}"
+        );
+        assert!(sql.contains("x.a"), "non-USING column a: {sql}");
     }
 
     #[test]

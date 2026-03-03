@@ -292,12 +292,27 @@ impl<'a> TypeAnnotator<'a> {
                 scale: None,
             },
         );
-        self.function_return_types
-            .insert("FLOOR".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("CEIL".to_string(), DataType::BigInt { length: None });
-        self.function_return_types
-            .insert("CEILING".to_string(), DataType::BigInt { length: None });
+        self.function_return_types.insert(
+            "DATE_FORMAT".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "FORMAT_DATE".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
+        self.function_return_types.insert(
+            "TIME_TO_STR".to_string(),
+            DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+        );
         self.function_return_types.insert(
             "SQRT".to_string(),
             DataType::Double {
@@ -568,9 +583,15 @@ impl<'a> TypeAnnotator<'a> {
                 precision: None,
                 scale: None,
             }),
-            Expression::Floor(_) | Expression::Ceil(_) | Expression::Sign(_) => {
-                Some(DataType::BigInt { length: None })
-            }
+            Expression::Floor(f) => self.annotate_math_function(&f.this),
+            Expression::Ceil(f) => self.annotate_math_function(&f.this),
+            Expression::Sign(s) => self.annotate(&s.this),
+            Expression::DateFormat(_)
+            | Expression::FormatDate(_)
+            | Expression::TimeToStr(_) => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
 
             // Greatest/Least - coerce argument types
             Expression::Greatest(v) | Expression::Least(v) => self.coerce_arg_types(&v.expressions),
@@ -689,6 +710,22 @@ impl<'a> TypeAnnotator<'a> {
 
             // Other expressions - unknown
             _ => None,
+        }
+    }
+
+    /// Annotate math functions like FLOOR/CEIL that return Double for integer inputs
+    /// and preserve the input type otherwise (matching sqlglot's _annotate_math_functions).
+    fn annotate_math_function(&mut self, arg: &Expression) -> Option<DataType> {
+        let input_type = self.annotate(arg)?;
+        match input_type {
+            DataType::TinyInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::Int { .. }
+            | DataType::BigInt { .. } => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
+            other => Some(other),
         }
     }
 
@@ -1600,5 +1637,184 @@ mod tests {
             cluster_by: None,
         }));
         assert_eq!(annotator.annotate(&union), None);
+    }
+
+    #[test]
+    fn test_floor_ceil_input_dependent_types() {
+        use crate::expressions::{CeilFunc, FloorFunc};
+
+        let mut annotator = TypeAnnotator::new(None, None);
+
+        // FLOOR/CEIL with integer literal → Double (integers get promoted)
+        let floor_int = Expression::Floor(Box::new(FloorFunc {
+            this: make_int_literal(42),
+            scale: None,
+            to: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&floor_int),
+            Some(DataType::Double {
+                precision: None,
+                scale: None,
+            })
+        );
+
+        let ceil_int = Expression::Ceil(Box::new(CeilFunc {
+            this: make_int_literal(42),
+            decimals: None,
+            to: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&ceil_int),
+            Some(DataType::Double {
+                precision: None,
+                scale: None,
+            })
+        );
+
+        // FLOOR with float literal → Double (literals are always Double)
+        let floor_float = Expression::Floor(Box::new(FloorFunc {
+            this: make_float_literal(3.14),
+            scale: None,
+            to: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&floor_float),
+            Some(DataType::Double {
+                precision: None,
+                scale: None,
+            })
+        );
+
+        // FLOOR via Function("FLOOR") path → falls through to arg-based inference
+        let floor_fn =
+            Expression::Function(Box::new(Function::new("FLOOR", vec![make_int_literal(1)])));
+        assert_eq!(
+            annotator.annotate(&floor_fn),
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_sign_preserves_input_type() {
+        use crate::expressions::UnaryFunc;
+
+        let mut annotator = TypeAnnotator::new(None, None);
+
+        // SIGN with integer literal → Int (preserves input type)
+        let sign_int = Expression::Sign(Box::new(UnaryFunc {
+            this: make_int_literal(42),
+            original_name: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&sign_int),
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+
+        // SIGN with float literal → Double (preserves input type)
+        let sign_float = Expression::Sign(Box::new(UnaryFunc {
+            this: make_float_literal(3.14),
+            original_name: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&sign_float),
+            Some(DataType::Double {
+                precision: None,
+                scale: None,
+            })
+        );
+
+        // SIGN with a CAST to INT → Int (preserves input type)
+        let sign_cast = Expression::Sign(Box::new(UnaryFunc {
+            this: Expression::Cast(Box::new(Cast {
+                this: make_int_literal(42),
+                to: DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                },
+                format: None,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                default: None,
+            })),
+            original_name: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&sign_cast),
+            Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_date_format_types() {
+        use crate::expressions::{DateFormatFunc, TimeToStr};
+
+        let mut annotator = TypeAnnotator::new(None, None);
+
+        // DateFormat → VarChar
+        let date_fmt = Expression::DateFormat(Box::new(DateFormatFunc {
+            this: make_string_literal("2024-01-01"),
+            format: make_string_literal("%Y-%m-%d"),
+        }));
+        assert_eq!(
+            annotator.annotate(&date_fmt),
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
+
+        // FormatDate → VarChar
+        let format_date = Expression::FormatDate(Box::new(DateFormatFunc {
+            this: make_string_literal("2024-01-01"),
+            format: make_string_literal("%Y-%m-%d"),
+        }));
+        assert_eq!(
+            annotator.annotate(&format_date),
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
+
+        // TimeToStr → VarChar
+        let time_to_str = Expression::TimeToStr(Box::new(TimeToStr {
+            this: Box::new(make_string_literal("2024-01-01")),
+            format: "%Y-%m-%d".to_string(),
+            culture: None,
+            zone: None,
+        }));
+        assert_eq!(
+            annotator.annotate(&time_to_str),
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
+
+        // DATE_FORMAT via Function path → VarChar (uses function_return_types)
+        let date_fmt_fn = Expression::Function(Box::new(Function::new(
+            "DATE_FORMAT",
+            vec![
+                make_string_literal("2024-01-01"),
+                make_string_literal("%Y-%m-%d"),
+            ],
+        )));
+        assert_eq!(
+            annotator.annotate(&date_fmt_fn),
+            Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
     }
 }
