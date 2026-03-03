@@ -134,8 +134,8 @@ importers:
   packages/playground-shared:
     dependencies:
       '@polyglot-sql/sdk':
-        specifier: workspace:*
-        version: link:../sdk
+        specifier: ^0.1.11
+        version: 0.1.11
     devDependencies:
       rimraf:
         specifier: ^3.0.2
@@ -843,6 +843,10 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
+
+  '@polyglot-sql/sdk@0.1.11':
+    resolution: {integrity: sha512-NayLLl09aLlpNNlT+axtcHvRGGnPbvia/e9Gb4OdaXF0O+cHxBJEQg+quiog+PRb/ZrCyiGtLu6pqk/A9zVgKg==}
+    engines: {node: '>=22', pnpm: '>=10'}
 
   '@poppinss/colors@4.1.6':
     resolution: {integrity: sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg==}
@@ -3605,6 +3609,8 @@ snapshots:
 
   '@next/swc-win32-x64-msvc@16.1.6':
     optional: true
+
+  '@polyglot-sql/sdk@0.1.11': {}
 
   '@poppinss/colors@4.1.6':
     dependencies:
