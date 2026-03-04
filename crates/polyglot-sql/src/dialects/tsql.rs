@@ -116,6 +116,7 @@ impl DialectImpl for TSQLDialect {
                                             column_aliases: Vec::new(),
                                             pre_alias_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }))
                                     }
                                     Expression::Identifier(ident)
@@ -127,6 +128,7 @@ impl DialectImpl for TSQLDialect {
                                             column_aliases: Vec::new(),
                                             pre_alias_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }))
                                     }
                                     _ => Expression::Eq(op),
@@ -165,7 +167,9 @@ impl DialectImpl for TSQLDialect {
                             left_comments: vec![],
                             operator_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         })),
+                        inferred_type: None,
                     })))
                 } else {
                     // a IS TRUE -> a = 1
@@ -175,6 +179,7 @@ impl DialectImpl for TSQLDialect {
                         left_comments: vec![],
                         operator_comments: vec![],
                         trailing_comments: vec![],
+                        inferred_type: None,
                     })))
                 }
             }
@@ -190,7 +195,9 @@ impl DialectImpl for TSQLDialect {
                             left_comments: vec![],
                             operator_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         })),
+                        inferred_type: None,
                     })))
                 } else {
                     // a IS FALSE -> a = 0
@@ -200,6 +207,7 @@ impl DialectImpl for TSQLDialect {
                         left_comments: vec![],
                         operator_comments: vec![],
                         trailing_comments: vec![],
+                        inferred_type: None,
                     })))
                 }
             }
@@ -211,6 +219,7 @@ impl DialectImpl for TSQLDialect {
                 in_expr.not = false;
                 Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
                     this: Expression::In(in_expr),
+                    inferred_type: None,
                 })))
             }
 
@@ -263,6 +272,7 @@ impl DialectImpl for TSQLDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier,
+                    inferred_type: None,
                 })))
             }
 
@@ -372,6 +382,7 @@ impl DialectImpl for TSQLDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -771,6 +782,7 @@ impl TSQLDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                     }
                 }
@@ -1112,6 +1124,7 @@ impl TSQLDialect {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     // No output name, leave as-is (shouldn't happen for valid expressions)

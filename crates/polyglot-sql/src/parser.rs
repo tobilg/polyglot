@@ -655,6 +655,13 @@ impl Parser {
                 continue;
             }
 
+            // After parsing a statement, the next token must be a semicolon or EOF.
+            // If not, there are unconsumed tokens which indicates a parse error.
+            // This matches Python sqlglot's behavior (parser.py line 1826-1827).
+            if !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                return Err(self.parse_error("Invalid expression / Unexpected token"));
+            }
+
             // Consume optional semicolons (ClickHouse allows multiple like `;;`)
             while self.match_token(TokenType::Semicolon) {}
 
@@ -1131,6 +1138,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     // Check for set operations after the parenthesized query
                     let result = self.parse_set_operation(subquery)?;
@@ -1158,6 +1166,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     // Check for set operations after the outer parenthesized query
                     let result = self.parse_set_operation(subquery)?;
@@ -1171,6 +1180,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments,
                             trailing_comments,
+                            inferred_type: None,
                         })))
                     } else {
                         // Check for LIMIT/OFFSET after parenthesized expression
@@ -1201,6 +1211,7 @@ impl Parser {
                                 column_aliases,
                                 pre_alias_comments,
                                 trailing_comments,
+                                inferred_type: None,
                             })))
                         } else {
                             let alias = self.expect_identifier_or_keyword_with_quoted()?;
@@ -1211,6 +1222,7 @@ impl Parser {
                                 column_aliases: Vec::new(),
                                 pre_alias_comments,
                                 trailing_comments,
+                                inferred_type: None,
                             })))
                         }
                     } else {
@@ -1248,6 +1260,7 @@ impl Parser {
                             column_aliases,
                             pre_alias_comments,
                             trailing_comments,
+                            inferred_type: None,
                         })))
                     } else {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
@@ -1261,6 +1274,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments,
                             trailing_comments,
+                            inferred_type: None,
                         })))
                     }
                 } else if (self.check(TokenType::Var) && !self.check_keyword())
@@ -1276,6 +1290,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments,
                         trailing_comments,
+                        inferred_type: None,
                     })))
                 } else if !pre_alias_comments.is_empty() {
                     // Wrap in Annotated to preserve trailing comments for expressions without aliases
@@ -2459,6 +2474,7 @@ impl Parser {
                                         left,
                                         Expression::Null(Null),
                                     ))),
+                                    inferred_type: None,
                                 }))
                             } else {
                                 Expression::Is(Box::new(BinaryOp::new(
@@ -2471,6 +2487,7 @@ impl Parser {
                             star_expr = if not {
                                 Expression::Not(Box::new(UnaryOp {
                                     this: Expression::Is(Box::new(BinaryOp::new(left, right))),
+                                    inferred_type: None,
                                 }))
                             } else {
                                 Expression::Is(Box::new(BinaryOp::new(left, right)))
@@ -2641,6 +2658,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: all_trailing,
+                            inferred_type: None,
                         }))
                     } else {
                         // Not a simple identifier, fall through to normal alias handling
@@ -2675,6 +2693,7 @@ impl Parser {
                             column_aliases,
                             pre_alias_comments,
                             trailing_comments,
+                            inferred_type: None,
                         }))
                     } else {
                         // Allow keywords as aliases (e.g., SELECT 1 AS filter)
@@ -2696,6 +2715,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments,
                             trailing_comments,
+                            inferred_type: None,
                         }))
                     }
                 } else if ((self.check(TokenType::Var) && !self.check_keyword()) || self.check(TokenType::QuotedIdentifier) || self.can_be_alias_keyword() || self.is_command_keyword_as_alias() || self.check(TokenType::Overlaps)
@@ -2743,6 +2763,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments,
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 } else if !pre_alias_comments.is_empty() {
                     // Only wrap in Annotated if the expression doesn't already handle trailing comments.
@@ -3149,6 +3170,7 @@ impl Parser {
                         distribute_by: None,
                         sort_by: None,
                         cluster_by: None,
+                        inferred_type: None,
                     }))
                 } else {
                     // LATERAL (table_function()) - parenthesized non-subquery
@@ -3167,6 +3189,7 @@ impl Parser {
                         distribute_by: None,
                         sort_by: None,
                         cluster_by: None,
+                        inferred_type: None,
                     }))
                 }
             } else {
@@ -3208,6 +3231,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))
                 };
 
@@ -3337,6 +3361,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: self.previous_trailing_comments(),
+                    inferred_type: None,
                 }))
             } else if self.check(TokenType::Select)
                 || self.check(TokenType::With)
@@ -3370,6 +3395,7 @@ impl Parser {
                         distribute_by: None,
                         sort_by: None,
                         cluster_by: None,
+                        inferred_type: None,
                     }));
                     self.parse_set_operation(left)?
                 } else {
@@ -3388,6 +3414,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: trailing,
+                    inferred_type: None,
                 }))
             } else if self.check(TokenType::LParen) {
                 // Nested parens like ((SELECT ...)) or ((x))
@@ -3513,6 +3540,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: true, // ORDER BY was inside the parens
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else if self.check(TokenType::Limit) || self.check(TokenType::Offset) {
                     // LIMIT/OFFSET without ORDER BY
@@ -3546,6 +3574,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: true, // LIMIT/OFFSET was inside the parens
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     result
@@ -3611,6 +3640,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: self.previous_trailing_comments(),
+                    inferred_type: None,
                 }))
             }
         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() || self.can_be_alias_keyword()
@@ -3677,6 +3707,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: all_comments,
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })));
                     }
                     _ => {
@@ -3687,6 +3718,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: all_comments,
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -3853,6 +3885,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         }))
                     } else {
                         // catalog.schema.table
@@ -3907,6 +3940,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))
                 } else {
                     // schema.table
@@ -4058,6 +4092,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))
                 } else {
                     // Simple table function like UNNEST(), GAP_FILL(), etc.
@@ -4129,6 +4164,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         };
                         Expression::Function(Box::new(func))
                     }
@@ -4257,6 +4293,10 @@ impl Parser {
                 self.peek().token_type
             )));
         };
+
+        // Postgres supports a wildcard (table) suffix operator, which is a no-op in this context.
+        // e.g., FROM t1* means "include inherited tables". Matches Python sqlglot behavior.
+        self.match_token(TokenType::Star);
 
         // Check for Snowflake CHANGES clause: CHANGES (INFORMATION => ...) AT|BEFORE (...) END (...)
         // Must be checked before time travel since CHANGES includes its own AT/BEFORE clauses
@@ -4651,6 +4691,7 @@ impl Parser {
                     column_aliases,
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
             } else {
                 let alias_ident_parsed = self.expect_identifier_or_alias_keyword_with_quoted()?;
@@ -4752,6 +4793,7 @@ impl Parser {
                                 column_aliases: aliases,
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                         };
                     }
@@ -4801,6 +4843,7 @@ impl Parser {
                             column_aliases: default_column_aliases,
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                     };
                 }
@@ -4910,6 +4953,7 @@ impl Parser {
                     column_aliases,
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })),
             };
         }
@@ -5041,11 +5085,13 @@ impl Parser {
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
+                                inferred_type: None,
                             }),
                             alias,
                             column_aliases: t.column_aliases,
                             pre_alias_comments: Vec::new(),
                             trailing_comments: t.trailing_comments,
+                            inferred_type: None,
                         }))
                     } else {
                         Expression::Column(Column {
@@ -5054,6 +5100,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: t.trailing_comments,
                             span: None,
+                            inferred_type: None,
                         })
                     };
                     alias_expr
@@ -5681,6 +5728,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
             return Ok(TableRef {
                 catalog: None,
@@ -5984,6 +6032,7 @@ impl Parser {
                                     column_aliases: Vec::new(),
                                     pre_alias_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }))
                             } else {
                                 expr
@@ -6022,6 +6071,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     table
@@ -6555,6 +6605,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Cube) {
                 // CUBE (...)
@@ -6570,6 +6621,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Rollup) {
                 // ROLLUP (...)
@@ -6585,6 +6637,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else {
                 self.parse_expression()?
@@ -6688,6 +6741,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Cube) {
                 // CUBE (...)
@@ -6703,6 +6757,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Rollup) {
                 // ROLLUP (...)
@@ -6718,6 +6773,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))
             } else if self.check(TokenType::LParen) {
                 // This could be a tuple like (x, y) or empty ()
@@ -6844,6 +6900,7 @@ impl Parser {
                                     column_aliases: Vec::new(),
                                     pre_alias_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }))
                             } else {
                                 Expression::Identifier(name_id)
@@ -7020,6 +7077,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             } else {
                 Ok(Expression::Subquery(Box::new(Subquery {
@@ -7035,6 +7093,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
         } else {
@@ -8691,6 +8750,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     })
                 })
                 .collect();
@@ -8794,6 +8854,7 @@ impl Parser {
                     distribute_by: None,
                     sort_by: None,
                     cluster_by: None,
+                    inferred_type: None,
                 })))
             } else if self.check(TokenType::LParen) {
                 // Nested parentheses like ((SELECT ...))
@@ -8821,6 +8882,7 @@ impl Parser {
                     distribute_by: None,
                     sort_by: None,
                     cluster_by: None,
+                    inferred_type: None,
                 })))
             } else {
                 Err(self.parse_error("Expected SELECT or ( after ("))
@@ -9019,6 +9081,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))));
         }
 
@@ -9428,6 +9491,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         })
                     } else {
                         Expression::Identifier(col_name)
@@ -9440,6 +9504,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })));
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -9560,6 +9625,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     })
                 } else {
                     Expression::Identifier(col_name)
@@ -9572,6 +9638,7 @@ impl Parser {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })));
                 if !self.match_token(TokenType::Comma) {
                     break;
@@ -9623,6 +9690,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             })));
         }
 
@@ -10934,6 +11002,7 @@ impl Parser {
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
+                                inferred_type: None,
                             })),
                         },
                     )));
@@ -10951,6 +11020,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }));
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -10985,6 +11055,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }));
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -11978,6 +12049,7 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 })
                             })
                             .collect()
@@ -12020,6 +12092,7 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 })
                             })
                             .collect()
@@ -12056,6 +12129,7 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 })
                             })
                             .collect()
@@ -14665,6 +14739,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         })));
                     } else {
                         // Try to parse as column definition (name data_type) for Hive-style partitioned by
@@ -15175,6 +15250,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     self.parse_expression()?
@@ -17987,6 +18063,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     })));
                 } else if self.match_identifier("RETENTION_PERIOD") {
                     self.expect(TokenType::Eq)?;
@@ -19841,6 +19918,7 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 })
                             })
                             .collect(),
@@ -20071,11 +20149,13 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 }),
                                 right: nested_value,
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })));
                         } else {
                             // Just a keyword/value without =
@@ -20085,6 +20165,7 @@ impl Parser {
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
+                                inferred_type: None,
                             }));
                         }
                         // Consume optional comma between nested values
@@ -20124,6 +20205,7 @@ impl Parser {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })));
                             } else {
                                 // Just a string without =
@@ -20144,11 +20226,13 @@ impl Parser {
                                         join_mark: false,
                                         trailing_comments: Vec::new(),
                                         span: None,
+                                        inferred_type: None,
                                     }),
                                     right: val,
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })));
                             } else {
                                 // Just an identifier without =
@@ -20158,6 +20242,7 @@ impl Parser {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 }));
                             }
                         } else {
@@ -20257,6 +20342,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
         if self.check(TokenType::Number) {
@@ -20283,6 +20369,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }));
                 }
                 return Ok(Expression::Column(Column {
@@ -20291,6 +20378,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 }));
             }
             return Ok(Expression::Column(Column {
@@ -20299,6 +20387,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -20688,6 +20777,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -22029,6 +22119,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }))
         } else {
             // For 3+ parts, create a Column with concatenated table parts
@@ -22040,6 +22131,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }))
         }
     }
@@ -24215,6 +24307,7 @@ impl Parser {
                 left_comments,
                 operator_comments,
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
         }
 
@@ -24293,6 +24386,7 @@ impl Parser {
                 left_comments,
                 operator_comments,
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
         }
 
@@ -24505,6 +24599,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::Neq) {
@@ -24543,6 +24638,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::Lt) {
@@ -24581,6 +24677,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::Lte) {
@@ -24619,6 +24716,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::Gt) {
@@ -24657,6 +24755,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::Gte) {
@@ -24695,6 +24794,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments,
+                        inferred_type: None,
                     }))
                 }
             } else if self.match_token(TokenType::NullsafeEq) {
@@ -24707,6 +24807,7 @@ impl Parser {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if self.check_identifier("SOUNDS") && self.check_next(TokenType::Like) {
                 // MySQL SOUNDS LIKE: expr SOUNDS LIKE expr -> SOUNDEX(expr) = SOUNDEX(expr)
@@ -24745,6 +24846,7 @@ impl Parser {
                     right,
                     escape,
                     quantifier,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::ILike) {
                 // Check for ANY/ALL/SOME quantifier
@@ -24768,6 +24870,7 @@ impl Parser {
                     right,
                     escape,
                     quantifier,
+                    inferred_type: None,
                 }))
             } else if self.check_identifier("SIMILAR") && self.check_next(TokenType::To) {
                 // SIMILAR TO operator (PostgreSQL/Redshift regex-like pattern matching)
@@ -24821,6 +24924,7 @@ impl Parser {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 }));
                 Expression::Not(Box::new(UnaryOp::new(like_expr)))
             } else if self.match_token(TokenType::NotILike) {
@@ -24836,6 +24940,7 @@ impl Parser {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 }));
                 Expression::Not(Box::new(UnaryOp::new(ilike_expr)))
             } else if self.match_token(TokenType::NotRLike) {
@@ -24882,6 +24987,7 @@ impl Parser {
                             double_colon_syntax: true,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }))
                     } else {
                         expr
@@ -25069,6 +25175,7 @@ impl Parser {
                         right,
                         escape,
                         quantifier: None,
+                        inferred_type: None,
                     }));
                     Expression::Not(Box::new(UnaryOp::new(like_expr)))
                 } else if self.match_token(TokenType::ILike) {
@@ -25083,6 +25190,7 @@ impl Parser {
                         right,
                         escape,
                         quantifier: None,
+                        inferred_type: None,
                     }));
                     Expression::Not(Box::new(UnaryOp::new(ilike_expr)))
                 } else if self.check_identifier("SIMILAR") && self.check_next(TokenType::To) {
@@ -25295,6 +25403,7 @@ impl Parser {
                     original_name: Some("?".to_string()),
                     this: left,
                     expression: right,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::HashDash) {
                 // PostgreSQL JSONB delete at path operator (#-)
@@ -25322,6 +25431,7 @@ impl Parser {
                     original_name: Some("^@".to_string()),
                     this: left,
                     expression: right,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::LrArrow) {
                 // PostgreSQL distance operator (<->)
@@ -25448,6 +25558,7 @@ impl Parser {
                     this: left,
                     expression: right,
                     original_name: None,
+                    inferred_type: None,
                 }))
             } else {
                 return Ok(left);
@@ -25471,6 +25582,7 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Dash) {
                 let operator_comments = self.previous_trailing_comments();
@@ -25482,6 +25594,7 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
                 let operator_comments = self.previous_trailing_comments();
@@ -25493,12 +25606,14 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::DQMark) {
                 let right = self.parse_at_time_zone()?;
                 Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
                     expressions: vec![left, right],
                     original_name: None,
+                    inferred_type: None,
                 }))
             } else {
                 return Ok(left);
@@ -25584,6 +25699,7 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Dash) {
                 let operator_comments = self.previous_trailing_comments();
@@ -25595,6 +25711,7 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
                 let operator_comments = self.previous_trailing_comments();
@@ -25606,12 +25723,14 @@ impl Parser {
                     left_comments,
                     operator_comments,
                     trailing_comments,
+                    inferred_type: None,
                 }))
             } else if self.match_token(TokenType::DQMark) {
                 let right = self.parse_at_time_zone()?;
                 Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
                     expressions: vec![left, right],
                     original_name: None,
+                    inferred_type: None,
                 }))
             } else {
                 return Ok(left);
@@ -25692,6 +25811,7 @@ impl Parser {
                     this: left,
                     expression: right,
                     original_name: None,
+                    inferred_type: None,
                 }))
             } else {
                 return Ok(left);
@@ -25713,6 +25833,7 @@ impl Parser {
                     original_name: Some("**".to_string()),
                     this: left,
                     expression: right,
+                    inferred_type: None,
                 }));
             } else if matches!(
                 self.config.dialect,
@@ -25726,6 +25847,7 @@ impl Parser {
                     original_name: None,
                     this: left,
                     expression: right,
+                    inferred_type: None,
                 }));
             } else {
                 return Ok(left);
@@ -25808,6 +25930,7 @@ impl Parser {
             return Ok(Some(Expression::ParseJson(Box::new(UnaryFunc {
                 this: value,
                 original_name: None,
+                inferred_type: None,
             }))));
         }
 
@@ -25819,6 +25942,7 @@ impl Parser {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))))
     }
 
@@ -25922,6 +26046,7 @@ impl Parser {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))))
     }
 
@@ -25988,6 +26113,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             });
 
             // Check if followed by operators that should be included in the ABS
@@ -26110,6 +26236,7 @@ impl Parser {
                     double_colon_syntax: true,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
             }
         }
@@ -26557,6 +26684,7 @@ impl Parser {
                             ignore_nulls: None,
                             having_max: None,
                             limit: None,
+                            inferred_type: None,
                         },
                     )));
                 }
@@ -26622,6 +26750,7 @@ impl Parser {
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
                                             span: None,
+                                            inferred_type: None,
                                         },
                                     )),
                                     expression: Box::new(literal),
@@ -26859,6 +26988,7 @@ impl Parser {
                             right: pattern,
                             escape: None,
                             quantifier: None,
+                            inferred_type: None,
                         }))
                     } else {
                         // {*} or {* EXCLUDE ...}
@@ -26947,6 +27077,7 @@ impl Parser {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: self.previous_trailing_comments(),
+                    inferred_type: None,
                 })));
             }
 
@@ -27084,6 +27215,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: true,
                         trailing_comments: self.previous_trailing_comments(),
+                        inferred_type: None,
                     }))
                 } else {
                     Expression::Subquery(Box::new(Subquery {
@@ -27099,6 +27231,7 @@ impl Parser {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: self.previous_trailing_comments(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -27154,6 +27287,7 @@ impl Parser {
                             distribute_by: None,
                             sort_by: None,
                             cluster_by: None,
+                            inferred_type: None,
                         }))
                     } else {
                         set_result
@@ -27257,6 +27391,7 @@ impl Parser {
                             distribute_by: None,
                             sort_by: None,
                             cluster_by: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -27523,6 +27658,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             })));
         }
 
@@ -27551,6 +27687,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
                 return Ok(Expression::Literal(Literal::Date(str_token.text)));
@@ -27601,6 +27738,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
                 // Dialect-specific: keep as Literal::Timestamp for dialect transforms
@@ -27674,6 +27812,7 @@ impl Parser {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
 
@@ -27733,6 +27872,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
 
@@ -27779,6 +27919,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
             return self.maybe_parse_over(func_expr);
         }
@@ -27878,6 +28019,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))
             } else {
                 Expression::Literal(Literal::Number(token.text))
@@ -28085,6 +28227,7 @@ impl Parser {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         return self.maybe_parse_subscript(cast_expr);
                     } else if name_upper == "ARRAY" {
@@ -28109,6 +28252,7 @@ impl Parser {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         return self.maybe_parse_subscript(cast_expr);
                     }
@@ -28129,6 +28273,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     return self.maybe_parse_subscript(cast_expr);
                 }
@@ -28203,6 +28348,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments,
                 span: None,
+                inferred_type: None,
             });
             // Handle Oracle/Redshift outer join marker (+) after column reference
             if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -28249,6 +28395,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })));
             }
         }
@@ -28273,6 +28420,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28298,6 +28446,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28329,6 +28478,7 @@ impl Parser {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
             return self.maybe_parse_over(func);
         }
@@ -28379,6 +28529,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }));
                 return self.maybe_parse_subscript(func);
             } else {
@@ -28393,6 +28544,7 @@ impl Parser {
                     no_parens: true,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }));
                 return self.maybe_parse_subscript(func);
             }
@@ -28424,6 +28576,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })));
             }
         }
@@ -28451,6 +28604,7 @@ impl Parser {
                     no_parens: true, // These functions were called without parentheses
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }));
                 return self.maybe_parse_subscript(func);
             }
@@ -28569,6 +28723,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28591,6 +28746,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28617,6 +28773,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28640,6 +28797,7 @@ impl Parser {
                             join_mark: true,
                             trailing_comments,
                             span: None,
+                            inferred_type: None,
                         });
                         return self.maybe_parse_subscript(col);
                     } else {
@@ -28664,6 +28822,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         method: col_ident,
                         args,
@@ -28679,6 +28838,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments,
                     span: None,
+                    inferred_type: None,
                 });
                 return self.maybe_parse_subscript(col);
             }
@@ -28725,6 +28885,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments,
                 span: None,
+                inferred_type: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -28783,6 +28944,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 }));
             }
             return Ok(Expression::Column(crate::expressions::Column {
@@ -28791,6 +28953,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -28812,6 +28975,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 }));
             }
             return Ok(Expression::Column(crate::expressions::Column {
@@ -28820,6 +28984,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -28858,6 +29023,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 }));
             }
         }
@@ -28959,6 +29125,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -28975,6 +29142,7 @@ impl Parser {
                             join_mark: false,
                             trailing_comments: Vec::new(),
                             span: None,
+                            inferred_type: None,
                         }),
                         field: Identifier::new(field_name),
                     }));
@@ -29009,6 +29177,7 @@ impl Parser {
                     join_mark: false,
                     trailing_comments,
                     span: None,
+                    inferred_type: None,
                 });
                 // Handle Oracle/Redshift outer join marker (+) after column reference
                 if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -29037,6 +29206,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments,
                 span: None,
+                inferred_type: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -29307,6 +29477,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments,
                 span: None,
+                inferred_type: None,
             });
             // Handle Oracle/Redshift outer join marker (+) after column reference
             if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
@@ -29343,6 +29514,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 })));
             }
         }
@@ -29362,6 +29534,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments,
                 span: None,
+                inferred_type: None,
             });
             return self.maybe_parse_subscript(col);
         }
@@ -29448,6 +29621,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }))
                     } else {
                         this
@@ -29487,6 +29661,7 @@ impl Parser {
                                 column_aliases: Vec::new(),
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }))
                         } else {
                             arg
@@ -29517,6 +29692,7 @@ impl Parser {
                     having_max: None,
                     name: Some(name.to_string()),
                     limit: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Binary, "STARTS_WITH")
@@ -29529,6 +29705,7 @@ impl Parser {
                     original_name: None,
                     this,
                     expression,
+                    inferred_type: None,
                 };
                 let expr = match spec.canonical_name {
                     "STARTS_WITH" => Expression::StartsWith(Box::new(func)),
@@ -29546,6 +29723,7 @@ impl Parser {
                     original_name: None,
                     this,
                     expression,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Binary, "MAP_FROM_ARRAYS")
@@ -29559,6 +29737,7 @@ impl Parser {
                     original_name: None,
                     this,
                     expression,
+                    inferred_type: None,
                 };
                 let expr = match spec.canonical_name {
                     "MAP_FROM_ARRAYS" => Expression::MapFromArrays(Box::new(func)),
@@ -29580,16 +29759,19 @@ impl Parser {
                         original_name: None,
                         this,
                         expression,
+                        inferred_type: None,
                     })),
                     "MOD" => Expression::ModFunc(Box::new(BinaryFunc {
                         original_name: None,
                         this,
                         expression,
+                        inferred_type: None,
                     })),
                     "POW" => Expression::Power(Box::new(BinaryFunc {
                         original_name: None,
                         this,
                         expression,
+                        inferred_type: None,
                     })),
                     _ => unreachable!("binary scalar parse kind already matched in caller"),
                 };
@@ -29616,6 +29798,7 @@ impl Parser {
                     original_name: None,
                     this,
                     expression,
+                    inferred_type: None,
                 };
                 let expr = match spec.canonical_name {
                     "ADD_MONTHS" => Expression::AddMonths(Box::new(func)),
@@ -29640,6 +29823,7 @@ impl Parser {
                     original_name: None,
                     this,
                     expression,
+                    inferred_type: None,
                 };
                 let expr = match spec.canonical_name {
                     "ARRAY_CONTAINS" => Expression::ArrayContains(Box::new(func)),
@@ -29698,6 +29882,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 } else {
                     self.expect(TokenType::RParen)?;
@@ -29737,6 +29922,7 @@ impl Parser {
                         original_name: Some("ATAN".to_string()),
                         this,
                         expression,
+                        inferred_type: None,
                     }))));
                 }
                 self.expect(TokenType::RParen)?;
@@ -29807,6 +29993,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
                 self.expect(TokenType::RParen)?;
@@ -29951,6 +30138,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -29981,6 +30169,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "DATEADD") => {
@@ -30004,6 +30193,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 } else {
                     // BigQuery 2-arg syntax: DATE_ADD(date, interval)
@@ -30017,6 +30207,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30050,6 +30241,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "RANDOM") => {
@@ -30143,6 +30335,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
                 let first = self.parse_expression()?;
@@ -30157,6 +30350,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
                 self.expect(TokenType::Comma)?;
@@ -30252,6 +30446,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
                 self.expect(TokenType::RParen)?;
@@ -30299,6 +30494,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "ARRAY_INTERSECT") => {
@@ -30310,6 +30506,7 @@ impl Parser {
                 Ok(Some(Expression::ArrayIntersect(Box::new(VarArgFunc {
                     expressions,
                     original_name: Some(name.to_string()),
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "CURRENT_SCHEMAS") => {
@@ -30334,6 +30531,7 @@ impl Parser {
                     crate::expressions::VarArgFunc {
                         original_name: None,
                         expressions: args,
+                        inferred_type: None,
                     },
                 ))))
             }
@@ -30345,6 +30543,7 @@ impl Parser {
                         crate::expressions::VarArgFunc {
                             original_name: Some("IFNULL".to_string()),
                             expressions: args,
+                            inferred_type: None,
                         },
                     ))))
                 } else {
@@ -30357,6 +30556,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30373,6 +30573,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 } else if args.len() == 2 {
                     Ok(Some(Expression::Nvl(Box::new(
@@ -30380,6 +30581,7 @@ impl Parser {
                             original_name: Some("NVL".to_string()),
                             this: args[0].clone(),
                             expression: args[1].clone(),
+                            inferred_type: None,
                         },
                     ))))
                 } else {
@@ -30392,6 +30594,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30416,6 +30619,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30444,6 +30648,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
 
@@ -30459,6 +30664,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
 
@@ -30490,6 +30696,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "CHAR") => {
@@ -30523,6 +30730,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30557,6 +30765,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30605,6 +30814,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30621,6 +30831,7 @@ impl Parser {
                                 column_aliases: Vec::new(),
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })));
                         } else {
                             attrs.push(expr);
@@ -30640,6 +30851,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "XMLCOMMENT") => {
@@ -30658,6 +30870,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "MATCH") => {
@@ -30687,6 +30900,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
 
@@ -30783,6 +30997,7 @@ impl Parser {
                         no_parens: false,
                         quoted,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -30852,6 +31067,7 @@ impl Parser {
                                 no_parens: false,
                                 quoted: false,
                                 span: None,
+                                inferred_type: None,
                             }))));
                         }
                         self.current = saved;
@@ -30871,6 +31087,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))))
                 } else if self.match_token(TokenType::Comma) {
                     let mut args = vec![this];
@@ -30889,6 +31106,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 } else {
                     self.expect(TokenType::RParen)?;
@@ -30902,6 +31120,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -31013,6 +31232,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
 
@@ -31060,6 +31280,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         }))))
                     }
                 } else {
@@ -31073,6 +31294,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))))
                 }
             }
@@ -31114,6 +31336,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::CastLike, "TRY_CAST") => {
@@ -31128,6 +31351,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))))
             }
             (crate::function_registry::TypedParseKind::Conditional, "IF") => {
@@ -31143,6 +31367,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }))));
                 }
                 let args = self.parse_expression_list()?;
@@ -31221,6 +31446,7 @@ impl Parser {
             no_parens: false,
             quoted: false,
             span: None,
+            inferred_type: None,
         }))
     }
 
@@ -31238,6 +31464,7 @@ impl Parser {
             order_by: Vec::new(),
             limit: None,
             ignore_nulls: None,
+            inferred_type: None,
         }))
     }
 
@@ -31399,6 +31626,7 @@ impl Parser {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })));
         }
 
@@ -31468,6 +31696,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }))
                     } else {
                         first_expr
@@ -31492,6 +31721,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         })));
                     }
                     (Some(first_expr), false, false)
@@ -31572,6 +31802,7 @@ impl Parser {
                         order_by,
                         limit,
                         ignore_nulls: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function {
@@ -31583,6 +31814,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })))
                 }
             }
@@ -31616,6 +31848,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -31637,6 +31870,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })));
                 }
                 // Check if this is ARRAY((SELECT ...) LIMIT n) - BigQuery allows LIMIT outside the subquery parens
@@ -31694,6 +31928,7 @@ impl Parser {
                             distribute_by: None,
                             sort_by: None,
                             cluster_by: None,
+                            inferred_type: None,
                         }));
 
                         return Ok(Expression::Function(Box::new(Function {
@@ -31705,6 +31940,7 @@ impl Parser {
                             no_parens: false,
                             quoted: false,
                             span: None,
+                            inferred_type: None,
                         })));
                     } else {
                         // Not a subquery, backtrack and parse as regular arguments
@@ -31728,6 +31964,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -31777,6 +32014,7 @@ impl Parser {
                         having_max: None,
                         name: Some(name.to_string()),
                         limit: None,
+                        inferred_type: None,
                     };
                     return Ok(match upper_name {
                         "MODE" => Expression::Mode(Box::new(agg)),
@@ -31795,6 +32033,7 @@ impl Parser {
                                     no_parens: false,
                                     quoted: false,
                                     span: None,
+                                    inferred_type: None,
                                 }))
                             } else {
                                 return Err(self.parse_error(format!(
@@ -31831,6 +32070,7 @@ impl Parser {
                                 having_max: None,
                                 name: Some(name.to_string()),
                                 limit: None,
+                                inferred_type: None,
                             };
                             return Ok(match upper_name {
                                 "FIRST" => Expression::First(Box::new(agg)),
@@ -31858,6 +32098,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })))
                 } else {
                     // Check for IGNORE NULLS / RESPECT NULLS (BigQuery style)
@@ -31938,6 +32179,7 @@ impl Parser {
                         having_max,
                         name: Some(name.to_string()),
                         limit,
+                        inferred_type: None,
                     };
                     Ok(match upper_name {
                         "SUM" => Expression::Sum(Box::new(agg)),
@@ -32132,6 +32374,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })))
                 }
             }
@@ -32409,6 +32652,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })));
                 }
 
@@ -32516,6 +32760,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })))
                 } else {
                     // Single argument - use typed expression
@@ -32977,6 +33222,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     })))
                 }
             }
@@ -33106,6 +33352,7 @@ impl Parser {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 }));
 
                 let within = Expression::WithinGroup(Box::new(WithinGroup {
@@ -33124,6 +33371,7 @@ impl Parser {
                         order_by: Vec::new(),
                         limit: None,
                         ignore_nulls: None,
+                        inferred_type: None,
                     })));
                 }
 
@@ -33153,6 +33401,7 @@ impl Parser {
                 order_by,
                 limit: agg_limit,
                 ignore_nulls,
+                inferred_type: None,
             })))
         } else {
             let mut func = Function::new(name.to_string(), args);
@@ -33193,6 +33442,7 @@ impl Parser {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
             }
         }
@@ -33422,6 +33672,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     arg
@@ -33520,6 +33771,7 @@ impl Parser {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })));
             } else {
                 args.push(expr);
@@ -33612,6 +33864,7 @@ impl Parser {
                 this: expr,
                 over,
                 keep,
+                inferred_type: None,
             })))
         } else if keep.is_some() {
             // KEEP without OVER - still a window-like construct
@@ -33626,6 +33879,7 @@ impl Parser {
                     alias: None,
                 },
                 keep,
+                inferred_type: None,
             })))
         } else {
             Ok(expr)
@@ -33729,6 +33983,7 @@ impl Parser {
                 let token = self.advance();
                 return Ok(Expression::Neg(Box::new(UnaryOp {
                     this: Expression::Literal(Literal::Number(token.text)),
+                    inferred_type: None,
                 })));
             }
             // Not a negative number, backtrack
@@ -33771,6 +34026,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })));
             }
             return Ok(Expression::Literal(Literal::Number(token.text)));
@@ -33840,6 +34096,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }));
                 }
             }
@@ -33850,6 +34107,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -33873,6 +34131,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }));
                 }
             }
@@ -33883,6 +34142,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }));
         }
 
@@ -34015,6 +34275,7 @@ impl Parser {
                         no_parens: false,
                         quoted: false,
                         span: None,
+                        inferred_type: None,
                     }));
                     continue;
                 }
@@ -34420,6 +34681,7 @@ impl Parser {
                         double_colon_syntax: true,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                 }
             } else if self.match_token(TokenType::ColonGt) {
@@ -34432,6 +34694,7 @@ impl Parser {
                     double_colon_syntax: false, // Use :> syntax in generator
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
             } else if self.match_token(TokenType::NColonGt) {
                 // SingleStore !:> try cast operator: expr !:> type
@@ -34443,6 +34706,7 @@ impl Parser {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
             } else if self.match_token(TokenType::QDColon) {
                 // Databricks ?:: try cast operator: expr?::type
@@ -34454,6 +34718,7 @@ impl Parser {
                     double_colon_syntax: true, // Uses :: style syntax
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
             } else if self.check(TokenType::Arrow)
                 && !matches!(
@@ -35553,6 +35818,7 @@ impl Parser {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
             }
             whens.push((condition, result));
@@ -35571,6 +35837,7 @@ impl Parser {
             whens,
             else_,
             comments: case_comments,
+            inferred_type: None,
         })))
     }
 
@@ -35681,6 +35948,7 @@ impl Parser {
                 double_colon_syntax: false,
                 format,
                 default: None,
+                inferred_type: None,
             })));
         }
 
@@ -35720,6 +35988,7 @@ impl Parser {
             double_colon_syntax: false,
             format,
             default,
+            inferred_type: None,
         })))
     }
 
@@ -35748,6 +36017,7 @@ impl Parser {
             double_colon_syntax: false,
             format,
             default: None,
+            inferred_type: None,
         })))
     }
 
@@ -35776,6 +36046,7 @@ impl Parser {
             double_colon_syntax: false,
             format,
             default: None,
+            inferred_type: None,
         })))
     }
 
@@ -38199,6 +38470,7 @@ impl Parser {
                 lateral: false,
                 modifiers_inside: false,
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))
         } else {
             inner
@@ -39408,6 +39680,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     // ClickHouse: if followed by an operator, the alias is part of a bigger expression
                     // e.g., blockSize() AS bs < 1000 means (blockSize() AS bs) < 1000
@@ -39908,6 +40181,7 @@ impl Parser {
                     column_aliases,
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))));
             }
         }
@@ -39924,6 +40198,7 @@ impl Parser {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))));
         }
 
@@ -40530,6 +40805,7 @@ impl Parser {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })));
                 if !self.match_token(TokenType::Comma) {
                     break;
@@ -41209,6 +41485,7 @@ impl Parser {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))
         } else {
             this_expr
@@ -41441,6 +41718,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })));
                 } else {
                     this = Some(left);
@@ -42473,6 +42751,7 @@ impl Parser {
                         double_colon_syntax: true,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
             }
@@ -42514,6 +42793,7 @@ impl Parser {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     })));
                 }
                 // If it's already something else (like a literal), return as-is
@@ -42953,6 +43233,7 @@ impl Parser {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))));
         }
 
@@ -42966,6 +43247,7 @@ impl Parser {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))));
         }
 
@@ -42977,6 +43259,7 @@ impl Parser {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))))
     }
 
@@ -44428,6 +44711,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })));
                 } else {
                     args.push(expr);
@@ -44468,6 +44752,7 @@ impl Parser {
                     no_parens: true,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))));
             }
         }
@@ -44515,6 +44800,7 @@ impl Parser {
             no_parens: false,
             quoted: false,
             span: None,
+            inferred_type: None,
         }));
 
         // Check for OVER clause (window function)
@@ -44586,6 +44872,7 @@ impl Parser {
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
+            inferred_type: None,
         })))
     }
 
@@ -45287,6 +45574,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))));
             }
             let args = self.parse_expression_list()?;
@@ -45316,6 +45604,7 @@ impl Parser {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 }))));
             } else {
                 return Err(self.parse_error("IF function requires 2 or 3 arguments"));
@@ -45426,7 +45715,7 @@ impl Parser {
                     let in_result = self.parse_in_with_expr(Some(left_expr))?;
                     if let Some(in_expr) = in_result {
                         return Ok(Some(if negate {
-                            Expression::Not(Box::new(UnaryOp { this: in_expr }))
+                            Expression::Not(Box::new(UnaryOp { this: in_expr, inferred_type: None }))
                         } else {
                             in_expr
                         }));
@@ -46851,6 +47140,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                 }
             }
@@ -46865,6 +47155,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                 }
             }
@@ -46894,6 +47185,7 @@ impl Parser {
                 lateral: false,
                 modifiers_inside: false,
                 trailing_comments: trailing,
+                inferred_type: None,
             };
             // Parse optional alias: (SELECT ...) AS y(col1, col2)
             if self.match_token(TokenType::As) {
@@ -46946,6 +47238,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                     }
                 }
@@ -46960,6 +47253,7 @@ impl Parser {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                     }
                 }
@@ -47118,6 +47412,7 @@ impl Parser {
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
+                                                inferred_type: None,
                                             })
                                         } else {
                                             col_expr
@@ -47202,6 +47497,7 @@ impl Parser {
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
+                                                inferred_type: None,
                                             })
                                         } else {
                                             col_expr
@@ -47226,6 +47522,7 @@ impl Parser {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 assignments.push(assignment);
                             }
@@ -47511,6 +47808,7 @@ impl Parser {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))));
         }
 
@@ -47550,6 +47848,7 @@ impl Parser {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))))
         } else {
             Ok(None)
@@ -47613,6 +47912,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             })
         } else if parts.len() == 2 {
             Expression::Column(Column {
@@ -47621,6 +47921,7 @@ impl Parser {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             })
         } else {
             // For 3+ parts, build nested Dot expressions
@@ -47776,6 +48077,7 @@ impl Parser {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     },
                 ))));
             }
@@ -48320,6 +48622,7 @@ impl Parser {
                 distribute_by: None,
                 sort_by: None,
                 cluster_by: None,
+                inferred_type: None,
             }))));
         }
 
@@ -50261,9 +50564,10 @@ impl Parser {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 }));
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: like })))
+                    Some(Expression::Not(Box::new(UnaryOp { this: like, inferred_type: None })))
                 } else {
                     Some(like)
                 };
@@ -50281,9 +50585,10 @@ impl Parser {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 }));
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: ilike })))
+                    Some(Expression::Not(Box::new(UnaryOp { this: ilike, inferred_type: None })))
                 } else {
                     Some(ilike)
                 };
@@ -50296,7 +50601,7 @@ impl Parser {
             let in_result = self.parse_in_with_expr(this.clone())?;
             if let Some(in_expr) = in_result {
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: in_expr })))
+                    Some(Expression::Not(Box::new(UnaryOp { this: in_expr, inferred_type: None })))
                 } else {
                     Some(in_expr)
                 };
@@ -50322,8 +50627,9 @@ impl Parser {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
-                return Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null }))));
+                return Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null, inferred_type: None }))));
             }
         }
 
@@ -50463,9 +50769,10 @@ impl Parser {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null, inferred_type: None }))))
             } else {
                 Ok(Some(is_null))
             };
@@ -50479,9 +50786,10 @@ impl Parser {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_true }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_true, inferred_type: None }))))
             } else {
                 Ok(Some(is_true))
             };
@@ -50495,9 +50803,10 @@ impl Parser {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_false }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_false, inferred_type: None }))))
             } else {
                 Ok(Some(is_false))
             };
@@ -50552,6 +50861,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     Expression::NullSafeNeq(Box::new(BinaryOp {
@@ -50560,6 +50870,7 @@ impl Parser {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
                 return Ok(Some(expr));
@@ -50920,6 +51231,7 @@ impl Parser {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))
             } else {
                 expr
@@ -51573,6 +51885,7 @@ impl Parser {
                     distribute_by: None,
                     sort_by: None,
                     cluster_by: None,
+                    inferred_type: None,
                 })))
             } else {
                 // Not a subquery, retreat and parse as expression in parens
@@ -51667,6 +51980,7 @@ impl Parser {
                         double_colon_syntax: true,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     func
@@ -51998,6 +52312,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     });
                 } else {
                     break;
@@ -52069,6 +52384,7 @@ impl Parser {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     expr
@@ -52350,6 +52666,7 @@ impl Parser {
             distribute_by: None,
             sort_by: None,
             cluster_by: None,
+            inferred_type: None,
         }))))
     }
 
@@ -52579,6 +52896,7 @@ impl Parser {
             no_parens: false,
             quoted: false,
             span: None,
+            inferred_type: None,
         }));
 
         // Check for AS alias(col1 type1, col2 type2, ...)
@@ -53454,6 +53772,7 @@ impl Parser {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))));
                         }
                     }
@@ -54098,6 +54417,7 @@ impl Parser {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })));
             }
 

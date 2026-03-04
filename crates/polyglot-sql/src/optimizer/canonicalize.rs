@@ -104,6 +104,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }));
             add_text_to_concat(result)
         }
@@ -118,6 +119,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Or(bin) => {
@@ -129,12 +131,13 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
 
         Expression::Not(un) => {
             let inner = ensure_bools(canonicalize_recursive(un.this, dialect));
-            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner }))
+            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner, inferred_type: None }))
         }
 
         // Comparison operations - check for date coercion
@@ -159,6 +162,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 double_colon_syntax: cast.double_colon_syntax,
                 format: cast.format,
                 default: cast.default,
+                inferred_type: None,
             }));
             remove_redundant_casts(result)
         }
@@ -179,6 +183,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 no_parens: func.no_parens,
                 quoted: func.quoted,
                 span: None,
+                inferred_type: None,
             }))
         }
 
@@ -196,6 +201,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 order_by: agg.order_by,
                 limit: agg.limit,
                 ignore_nulls: agg.ignore_nulls,
+                inferred_type: None,
             }))
         }
 
@@ -208,6 +214,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 column_aliases: alias.column_aliases,
                 pre_alias_comments: alias.pre_alias_comments,
                 trailing_comments: alias.trailing_comments,
+                inferred_type: None,
             }))
         }
 
@@ -239,6 +246,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 whens,
                 else_,
                 comments: Vec::new(),
+                inferred_type: None,
             }))
         }
 
@@ -292,6 +300,7 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
                 lateral: subquery.lateral,
                 modifiers_inside: subquery.modifiers_inside,
                 trailing_comments: subquery.trailing_comments,
+                inferred_type: None,
             }))
         }
 
@@ -457,6 +466,7 @@ where
         left_comments: bin.left_comments,
         operator_comments: bin.operator_comments,
         trailing_comments: bin.trailing_comments,
+        inferred_type: None,
     }))
 }
 
@@ -478,6 +488,7 @@ where
         left_comments: bin.left_comments,
         operator_comments: bin.operator_comments,
         trailing_comments: bin.trailing_comments,
+        inferred_type: None,
     }))
 }
 

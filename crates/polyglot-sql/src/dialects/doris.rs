@@ -60,6 +60,7 @@ impl DialectImpl for DorisDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -70,6 +71,7 @@ impl DialectImpl for DorisDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -123,6 +125,7 @@ impl DorisDialect {
             "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NOW is native in Doris
@@ -289,6 +292,7 @@ impl DorisDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -299,6 +303,7 @@ impl DorisDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

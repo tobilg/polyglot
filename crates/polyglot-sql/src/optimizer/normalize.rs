@@ -377,6 +377,7 @@ fn make_and(left: Expression, right: Expression) -> Expression {
         left_comments: vec![],
         operator_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     }))
 }
 
@@ -388,6 +389,7 @@ fn make_or(left: Expression, right: Expression) -> Expression {
         left_comments: vec![],
         operator_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     }))
 }
 

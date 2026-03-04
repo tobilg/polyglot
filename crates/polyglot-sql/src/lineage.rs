@@ -7,6 +7,7 @@
 
 use crate::dialects::DialectType;
 use crate::expressions::Expression;
+use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
 use crate::schema::Schema;
 use crate::scope::{build_scope, Scope};
@@ -143,7 +144,7 @@ pub fn lineage_with_schema(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    let qualified_expression = if let Some(schema) = schema {
+    let mut qualified_expression = if let Some(schema) = schema {
         let options = if let Some(dialect_type) = dialect.or_else(|| schema.dialect()) {
             QualifyColumnsOptions::new().with_dialect(dialect_type)
         } else {
@@ -156,6 +157,9 @@ pub fn lineage_with_schema(
     } else {
         sql.clone()
     };
+
+    // Annotate types in-place so lineage nodes carry type information
+    annotate_types(&mut qualified_expression, schema, dialect);
 
     lineage_from_expression(column, &qualified_expression, dialect, trim_selects)
 }
@@ -539,6 +543,7 @@ fn resolve_unqualified_column(
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         }),
         node.source.clone(),
     );
@@ -776,6 +781,7 @@ fn make_table_column_node(table: &str, column: &str) -> LineageNode {
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         }),
         Expression::Table(crate::expressions::TableRef::new(table)),
     );
@@ -808,6 +814,7 @@ fn make_table_column_node_from_source(
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         }),
         source.clone(),
     );
@@ -1816,13 +1823,10 @@ mod tests {
 
         let node_without_schema = lineage("name", &expr, Some(DialectType::BigQuery), false)
             .expect("lineage without schema");
-        let root_without_schema = annotate_types(
-            &node_without_schema.expression,
-            Some(&schema),
-            Some(DialectType::BigQuery),
-        );
+        let mut expr_without = node_without_schema.expression.clone();
+        annotate_types(&mut expr_without, Some(&schema), Some(DialectType::BigQuery));
         assert_eq!(
-            root_without_schema, None,
+            expr_without.inferred_type(), None,
             "Expected unresolved root type without schema-aware lineage qualification"
         );
 
@@ -1834,13 +1838,10 @@ mod tests {
             false,
         )
         .expect("lineage with schema");
-        let root_with_schema = annotate_types(
-            &node_with_schema.expression,
-            Some(&schema),
-            Some(DialectType::BigQuery),
-        );
+        let mut expr_with = node_with_schema.expression.clone();
+        annotate_types(&mut expr_with, Some(&schema), Some(DialectType::BigQuery));
 
-        assert_eq!(root_with_schema, Some(DataType::Text));
+        assert_eq!(expr_with.inferred_type(), Some(&DataType::Text));
     }
 
     #[test]

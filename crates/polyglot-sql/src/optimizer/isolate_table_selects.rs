@@ -199,6 +199,7 @@ fn wrap_table_in_subquery(table: TableRef, alias_name: &str) -> Expression {
         lateral: false,
         modifiers_inside: false,
         trailing_comments: Vec::new(),
+        inferred_type: None,
     }))
 }
 

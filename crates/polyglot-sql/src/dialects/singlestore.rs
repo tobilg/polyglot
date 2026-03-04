@@ -60,6 +60,7 @@ impl DialectImpl for SingleStoreDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     Ok(Expression::Collation(Box::new(CollationExpr {
                         this: double_cast,
@@ -91,6 +92,7 @@ impl DialectImpl for SingleStoreDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -101,6 +103,7 @@ impl DialectImpl for SingleStoreDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -121,6 +124,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let date_format = Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -136,6 +140,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -153,6 +158,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let date_format = Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -168,6 +174,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -185,6 +192,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let date_format = Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -200,6 +208,7 @@ impl DialectImpl for SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -232,6 +241,7 @@ impl SingleStoreDialect {
             "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NOW is native in SingleStore - preserve as function
@@ -365,6 +375,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -404,6 +415,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 // DATE_FORMAT(... :> TIME(6), '%k')
                 let date_format = Expression::Function(Box::new(Function::new(
@@ -421,6 +433,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -438,6 +451,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 // DATE_FORMAT(... :> TIME(6), '%i')
                 let date_format = Expression::Function(Box::new(Function::new(
@@ -455,6 +469,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -472,6 +487,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 // DATE_FORMAT(... :> TIME(6), '%s')
                 let date_format = Expression::Function(Box::new(Function::new(
@@ -489,6 +505,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -506,6 +523,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 // DATE_FORMAT(... :> TIME(6), '%f')
                 let date_format = Expression::Function(Box::new(Function::new(
@@ -523,6 +541,7 @@ impl SingleStoreDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -567,6 +586,7 @@ impl SingleStoreDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -577,6 +597,7 @@ impl SingleStoreDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

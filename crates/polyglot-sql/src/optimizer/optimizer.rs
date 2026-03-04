@@ -250,10 +250,9 @@ fn apply_rule(
         OptimizationRule::MergeSubqueries => merge_subqueries(expression, config.isolate_tables),
         OptimizationRule::EliminateCtes => eliminate_ctes(expression),
         OptimizationRule::AnnotateTypes => {
-            // annotate_types is used for type inference, not expression transformation
-            // For now, just return the expression unchanged
-            let _ = annotate_types(&expression, config.schema, config.dialect);
-            expression
+            let mut expr = expression;
+            annotate_types(&mut expr, config.schema, config.dialect);
+            expr
         }
         OptimizationRule::Canonicalize => canonicalize(expression, config.dialect),
         OptimizationRule::Simplify => simplify(expression, config.dialect),

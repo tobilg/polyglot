@@ -65,11 +65,30 @@ export function lineage(
 /**
  * Trace the lineage of a column through a SQL query using schema metadata.
  *
+ * When a schema is provided, columns are fully qualified and type-annotated.
+ * Each `LineageNode.expression` will have its `inferred_type` field populated
+ * with the resolved SQL data type. Use `ast.getInferredType(node.expression)`
+ * to read it.
+ *
  * @param column - Column name to trace
  * @param sql - SQL string to analyze
  * @param schema - ValidationSchema-compatible schema object
  * @param dialect - Dialect for parsing/qualification (default: 'generic')
  * @param trimSelects - Trim SELECT to only target column (default: false)
+ *
+ * @example
+ * ```typescript
+ * import { lineageWithSchema, ast } from '@polyglot-sql/sdk';
+ *
+ * const result = lineageWithSchema("name", "SELECT name FROM users", {
+ *   tables: { users: { name: "TEXT", id: "INT" } }
+ * });
+ *
+ * if (result.success) {
+ *   const dt = ast.getInferredType(result.lineage!.expression);
+ *   // dt => { data_type: "text" }
+ * }
+ * ```
  */
 export function lineageWithSchema(
   column: string,

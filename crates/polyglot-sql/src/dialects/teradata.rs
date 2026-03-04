@@ -103,12 +103,14 @@ impl DialectImpl for TeradataDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in Teradata
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -130,6 +132,7 @@ impl DialectImpl for TeradataDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -140,6 +143,7 @@ impl DialectImpl for TeradataDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -176,18 +180,21 @@ impl TeradataDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP
@@ -305,6 +312,7 @@ impl TeradataDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -315,6 +323,7 @@ impl TeradataDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

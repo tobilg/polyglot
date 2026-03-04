@@ -1229,6 +1229,236 @@ impl Expression {
         Expression::Literal(Literal::Number(f.to_string()))
     }
 
+    /// Get the inferred type annotation, if present.
+    ///
+    /// For value-producing expressions with an `inferred_type` field, returns
+    /// the stored type. For literals and boolean constants, computes the type
+    /// on the fly from the variant. For DDL/clause expressions, returns `None`.
+    pub fn inferred_type(&self) -> Option<&DataType> {
+        match self {
+            // Structs with inferred_type field
+            Expression::And(op) | Expression::Or(op) | Expression::Add(op) | Expression::Sub(op)
+            | Expression::Mul(op) | Expression::Div(op) | Expression::Mod(op)
+            | Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op) | Expression::Lte(op)
+            | Expression::Gt(op) | Expression::Gte(op) | Expression::Concat(op)
+            | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op) | Expression::BitwiseXor(op)
+            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
+            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
+            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op)
+                => op.inferred_type.as_ref(),
+
+            Expression::Not(op) | Expression::Neg(op) | Expression::BitwiseNot(op)
+                => op.inferred_type.as_ref(),
+
+            Expression::Like(op) | Expression::ILike(op)
+                => op.inferred_type.as_ref(),
+
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c)
+                => c.inferred_type.as_ref(),
+
+            Expression::Column(c) => c.inferred_type.as_ref(),
+            Expression::Function(f) => f.inferred_type.as_ref(),
+            Expression::AggregateFunction(f) => f.inferred_type.as_ref(),
+            Expression::WindowFunction(f) => f.inferred_type.as_ref(),
+            Expression::Case(c) => c.inferred_type.as_ref(),
+            Expression::Subquery(s) => s.inferred_type.as_ref(),
+            Expression::Alias(a) => a.inferred_type.as_ref(),
+
+            // UnaryFunc variants
+            Expression::Upper(f) | Expression::Lower(f) | Expression::Length(f)
+            | Expression::LTrim(f) | Expression::RTrim(f) | Expression::Reverse(f)
+            | Expression::Abs(f) | Expression::Sqrt(f) | Expression::Cbrt(f)
+            | Expression::Ln(f) | Expression::Exp(f) | Expression::Sign(f)
+            | Expression::Date(f) | Expression::Time(f) | Expression::Initcap(f)
+            | Expression::Ascii(f) | Expression::Chr(f) | Expression::Soundex(f)
+            | Expression::ByteLength(f) | Expression::Hex(f) | Expression::LowerHex(f)
+            | Expression::Unicode(f) | Expression::Typeof(f) | Expression::Explode(f)
+            | Expression::ExplodeOuter(f) | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f) | Expression::MapValues(f) | Expression::ArrayLength(f)
+            | Expression::ArraySize(f) | Expression::Cardinality(f) | Expression::ArrayReverse(f)
+            | Expression::ArrayDistinct(f) | Expression::ArrayFlatten(f)
+            | Expression::ArrayCompact(f) | Expression::ToArray(f)
+            | Expression::JsonArrayLength(f) | Expression::JsonKeys(f) | Expression::JsonType(f)
+            | Expression::ParseJson(f) | Expression::ToJson(f) | Expression::Radians(f)
+            | Expression::Degrees(f) | Expression::Sin(f) | Expression::Cos(f)
+            | Expression::Tan(f) | Expression::Asin(f) | Expression::Acos(f)
+            | Expression::Atan(f) | Expression::IsNan(f) | Expression::IsInf(f)
+            | Expression::Year(f) | Expression::Month(f) | Expression::Day(f)
+            | Expression::Hour(f) | Expression::Minute(f) | Expression::Second(f)
+            | Expression::DayOfWeek(f) | Expression::DayOfWeekIso(f)
+            | Expression::DayOfMonth(f) | Expression::DayOfYear(f)
+            | Expression::WeekOfYear(f) | Expression::Quarter(f)
+            | Expression::Epoch(f) | Expression::EpochMs(f)
+            | Expression::BitwiseCount(f)
+            | Expression::DateFromUnixDate(f) | Expression::UnixDate(f)
+            | Expression::UnixSeconds(f) | Expression::UnixMillis(f) | Expression::UnixMicros(f)
+            | Expression::TimeStrToDate(f) | Expression::DateToDi(f) | Expression::DiToDate(f)
+            | Expression::TsOrDiToDi(f) | Expression::TsOrDsToDatetime(f)
+            | Expression::TsOrDsToTimestamp(f) | Expression::YearOfWeek(f)
+            | Expression::YearOfWeekIso(f) | Expression::SHA(f) | Expression::SHA1Digest(f)
+            | Expression::TimeToUnix(f) | Expression::TimeStrToUnix(f)
+                => f.inferred_type.as_ref(),
+
+            // BinaryFunc variants
+            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
+            | Expression::Nvl(f) | Expression::Contains(f) | Expression::StartsWith(f)
+            | Expression::EndsWith(f) | Expression::Levenshtein(f) | Expression::ModFunc(f)
+            | Expression::IntDiv(f) | Expression::Atan2(f) | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f) | Expression::NextDay(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f) | Expression::StarMap(f)
+            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f) | Expression::JsonMergePatch(f)
+                => f.inferred_type.as_ref(),
+
+            // VarArgFunc variants
+            Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f)
+            | Expression::ArrayConcat(f) | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f) | Expression::MapConcat(f) | Expression::JsonArray(f)
+                => f.inferred_type.as_ref(),
+
+            // AggFunc variants
+            Expression::Sum(f) | Expression::Avg(f) | Expression::Min(f) | Expression::Max(f)
+            | Expression::ArrayAgg(f) | Expression::CountIf(f)
+            | Expression::Stddev(f) | Expression::StddevPop(f) | Expression::StddevSamp(f)
+            | Expression::Variance(f) | Expression::VarPop(f) | Expression::VarSamp(f)
+            | Expression::Median(f) | Expression::Mode(f) | Expression::First(f)
+            | Expression::Last(f) | Expression::AnyValue(f) | Expression::ApproxDistinct(f)
+            | Expression::ApproxCountDistinct(f) | Expression::LogicalAnd(f)
+            | Expression::LogicalOr(f) | Expression::Skewness(f)
+            | Expression::ArrayConcatAgg(f) | Expression::ArrayUniqueAgg(f)
+            | Expression::BoolXorAgg(f)
+            | Expression::BitwiseAndAgg(f) | Expression::BitwiseOrAgg(f)
+            | Expression::BitwiseXorAgg(f)
+                => f.inferred_type.as_ref(),
+
+            // Everything else: no inferred_type field
+            _ => None,
+        }
+    }
+
+    /// Set the inferred type annotation on this expression.
+    ///
+    /// Only has an effect on value-producing expressions with an `inferred_type`
+    /// field. For other expression types, this is a no-op.
+    pub fn set_inferred_type(&mut self, dt: DataType) {
+        match self {
+            Expression::And(op) | Expression::Or(op) | Expression::Add(op) | Expression::Sub(op)
+            | Expression::Mul(op) | Expression::Div(op) | Expression::Mod(op)
+            | Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op) | Expression::Lte(op)
+            | Expression::Gt(op) | Expression::Gte(op) | Expression::Concat(op)
+            | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op) | Expression::BitwiseXor(op)
+            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
+            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
+            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op)
+                => op.inferred_type = Some(dt),
+
+            Expression::Not(op) | Expression::Neg(op) | Expression::BitwiseNot(op)
+                => op.inferred_type = Some(dt),
+
+            Expression::Like(op) | Expression::ILike(op)
+                => op.inferred_type = Some(dt),
+
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c)
+                => c.inferred_type = Some(dt),
+
+            Expression::Column(c) => c.inferred_type = Some(dt),
+            Expression::Function(f) => f.inferred_type = Some(dt),
+            Expression::AggregateFunction(f) => f.inferred_type = Some(dt),
+            Expression::WindowFunction(f) => f.inferred_type = Some(dt),
+            Expression::Case(c) => c.inferred_type = Some(dt),
+            Expression::Subquery(s) => s.inferred_type = Some(dt),
+            Expression::Alias(a) => a.inferred_type = Some(dt),
+
+            // UnaryFunc variants
+            Expression::Upper(f) | Expression::Lower(f) | Expression::Length(f)
+            | Expression::LTrim(f) | Expression::RTrim(f) | Expression::Reverse(f)
+            | Expression::Abs(f) | Expression::Sqrt(f) | Expression::Cbrt(f)
+            | Expression::Ln(f) | Expression::Exp(f) | Expression::Sign(f)
+            | Expression::Date(f) | Expression::Time(f) | Expression::Initcap(f)
+            | Expression::Ascii(f) | Expression::Chr(f) | Expression::Soundex(f)
+            | Expression::ByteLength(f) | Expression::Hex(f) | Expression::LowerHex(f)
+            | Expression::Unicode(f) | Expression::Typeof(f) | Expression::Explode(f)
+            | Expression::ExplodeOuter(f) | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f) | Expression::MapValues(f) | Expression::ArrayLength(f)
+            | Expression::ArraySize(f) | Expression::Cardinality(f) | Expression::ArrayReverse(f)
+            | Expression::ArrayDistinct(f) | Expression::ArrayFlatten(f)
+            | Expression::ArrayCompact(f) | Expression::ToArray(f)
+            | Expression::JsonArrayLength(f) | Expression::JsonKeys(f) | Expression::JsonType(f)
+            | Expression::ParseJson(f) | Expression::ToJson(f) | Expression::Radians(f)
+            | Expression::Degrees(f) | Expression::Sin(f) | Expression::Cos(f)
+            | Expression::Tan(f) | Expression::Asin(f) | Expression::Acos(f)
+            | Expression::Atan(f) | Expression::IsNan(f) | Expression::IsInf(f)
+            | Expression::Year(f) | Expression::Month(f) | Expression::Day(f)
+            | Expression::Hour(f) | Expression::Minute(f) | Expression::Second(f)
+            | Expression::DayOfWeek(f) | Expression::DayOfWeekIso(f)
+            | Expression::DayOfMonth(f) | Expression::DayOfYear(f)
+            | Expression::WeekOfYear(f) | Expression::Quarter(f)
+            | Expression::Epoch(f) | Expression::EpochMs(f)
+            | Expression::BitwiseCount(f)
+            | Expression::DateFromUnixDate(f) | Expression::UnixDate(f)
+            | Expression::UnixSeconds(f) | Expression::UnixMillis(f) | Expression::UnixMicros(f)
+            | Expression::TimeStrToDate(f) | Expression::DateToDi(f) | Expression::DiToDate(f)
+            | Expression::TsOrDiToDi(f) | Expression::TsOrDsToDatetime(f)
+            | Expression::TsOrDsToTimestamp(f) | Expression::YearOfWeek(f)
+            | Expression::YearOfWeekIso(f) | Expression::SHA(f) | Expression::SHA1Digest(f)
+            | Expression::TimeToUnix(f) | Expression::TimeStrToUnix(f)
+                => f.inferred_type = Some(dt),
+
+            // BinaryFunc variants
+            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
+            | Expression::Nvl(f) | Expression::Contains(f) | Expression::StartsWith(f)
+            | Expression::EndsWith(f) | Expression::Levenshtein(f) | Expression::ModFunc(f)
+            | Expression::IntDiv(f) | Expression::Atan2(f) | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f) | Expression::NextDay(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f) | Expression::StarMap(f)
+            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f) | Expression::JsonMergePatch(f)
+                => f.inferred_type = Some(dt),
+
+            // VarArgFunc variants
+            Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f)
+            | Expression::ArrayConcat(f) | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f) | Expression::MapConcat(f) | Expression::JsonArray(f)
+                => f.inferred_type = Some(dt),
+
+            // AggFunc variants
+            Expression::Sum(f) | Expression::Avg(f) | Expression::Min(f) | Expression::Max(f)
+            | Expression::ArrayAgg(f) | Expression::CountIf(f)
+            | Expression::Stddev(f) | Expression::StddevPop(f) | Expression::StddevSamp(f)
+            | Expression::Variance(f) | Expression::VarPop(f) | Expression::VarSamp(f)
+            | Expression::Median(f) | Expression::Mode(f) | Expression::First(f)
+            | Expression::Last(f) | Expression::AnyValue(f) | Expression::ApproxDistinct(f)
+            | Expression::ApproxCountDistinct(f) | Expression::LogicalAnd(f)
+            | Expression::LogicalOr(f) | Expression::Skewness(f)
+            | Expression::ArrayConcatAgg(f) | Expression::ArrayUniqueAgg(f)
+            | Expression::BoolXorAgg(f)
+            | Expression::BitwiseAndAgg(f) | Expression::BitwiseOrAgg(f)
+            | Expression::BitwiseXorAgg(f)
+                => f.inferred_type = Some(dt),
+
+            // Expressions without inferred_type field - no-op
+            _ => {}
+        }
+    }
+
     /// Create an unqualified column reference (e.g. `name`).
     pub fn column(name: impl Into<String>) -> Self {
         Expression::Column(Column {
@@ -1237,6 +1467,7 @@ impl Expression {
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
+            inferred_type: None,
         })
     }
 
@@ -1248,6 +1479,7 @@ impl Expression {
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
+            inferred_type: None,
         })
     }
 
@@ -1516,6 +1748,9 @@ pub struct Column {
     /// Source position span
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl fmt::Display for Column {
@@ -2120,6 +2355,9 @@ pub struct Subquery {
     /// Trailing comments after the closing paren
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// Pipe operator expression: query |> transform
@@ -2575,6 +2813,9 @@ pub struct Alias {
     /// Trailing comments that appeared after the alias
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl Alias {
@@ -2586,6 +2827,7 @@ impl Alias {
             column_aliases: Vec::new(),
             pre_alias_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         }
     }
 
@@ -2597,6 +2839,7 @@ impl Alias {
             column_aliases,
             pre_alias_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         }
     }
 }
@@ -2625,6 +2868,9 @@ pub struct Cast {
     /// DEFAULT value ON CONVERSION ERROR (Oracle): CAST(x AS type DEFAULT val ON CONVERSION ERROR)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub default: Option<Box<Expression>>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 ///// COLLATE expression: expr COLLATE 'collation_name' or expr COLLATE collation_name
@@ -2659,6 +2905,9 @@ pub struct Case {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// Represent a binary operation (two operands separated by an operator).
@@ -2682,6 +2931,9 @@ pub struct BinaryOp {
     /// Comments after the right operand
     #[serde(default)]
     pub trailing_comments: Vec<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl BinaryOp {
@@ -2692,6 +2944,7 @@ impl BinaryOp {
             left_comments: Vec::new(),
             operator_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         }
     }
 }
@@ -2708,6 +2961,9 @@ pub struct LikeOp {
     /// Quantifier: ANY, ALL, or SOME
     #[serde(default)]
     pub quantifier: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl LikeOp {
@@ -2717,6 +2973,7 @@ impl LikeOp {
             right,
             escape: None,
             quantifier: None,
+            inferred_type: None,
         }
     }
 
@@ -2726,6 +2983,7 @@ impl LikeOp {
             right,
             escape: Some(escape),
             quantifier: None,
+            inferred_type: None,
         }
     }
 }
@@ -2738,11 +2996,14 @@ impl LikeOp {
 pub struct UnaryOp {
     /// The operand expression.
     pub this: Expression,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl UnaryOp {
     pub fn new(this: Expression) -> Self {
-        Self { this }
+        Self { this, inferred_type: None }
     }
 }
 
@@ -2874,6 +3135,9 @@ pub struct Function {
     /// Source position span
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl Default for Function {
@@ -2887,6 +3151,7 @@ impl Default for Function {
             no_parens: false,
             quoted: false,
             span: None,
+            inferred_type: None,
         }
     }
 }
@@ -2902,6 +3167,7 @@ impl Function {
             no_parens: false,
             quoted: false,
             span: None,
+            inferred_type: None,
         }
     }
 }
@@ -2932,6 +3198,9 @@ pub struct AggregateFunction {
     /// IGNORE NULLS / RESPECT NULLS
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore_nulls: Option<bool>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// Represent a window function call with its OVER clause.
@@ -2950,6 +3219,9 @@ pub struct WindowFunction {
     /// Oracle KEEP clause: KEEP (DENSE_RANK FIRST|LAST ORDER BY ...)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep: Option<Keep>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// Oracle KEEP clause for aggregate functions
@@ -4076,6 +4348,9 @@ pub struct UnaryFunc {
     /// Original function name for round-trip preservation (e.g., CHAR_LENGTH vs LENGTH)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub original_name: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 impl UnaryFunc {
@@ -4084,6 +4359,7 @@ impl UnaryFunc {
         Self {
             this,
             original_name: None,
+            inferred_type: None,
         }
     }
 
@@ -4092,6 +4368,7 @@ impl UnaryFunc {
         Self {
             this,
             original_name: Some(name),
+            inferred_type: None,
         }
     }
 }
@@ -4119,6 +4396,9 @@ pub struct BinaryFunc {
     /// Original function name for round-trip preservation (e.g., NVL vs IFNULL)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub original_name: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// Variable argument function
@@ -4129,6 +4409,9 @@ pub struct VarArgFunc {
     /// Original function name for round-trip preservation (e.g., COALESCE vs IFNULL)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub original_name: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// CONCAT_WS function
@@ -4455,6 +4738,9 @@ pub struct AggFunc {
     /// LIMIT inside aggregate (e.g., ARRAY_AGG(x ORDER BY y LIMIT 2))
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub limit: Option<Box<Expression>>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// COUNT function with optional star

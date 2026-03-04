@@ -317,6 +317,7 @@ pub fn default_selection(is_agg: bool) -> Expression {
                 order_by: Vec::new(),
                 limit: None,
                 ignore_nulls: None,
+                inferred_type: None,
             })),
             alias: Identifier {
                 name: "_".to_string(),
@@ -327,6 +328,7 @@ pub fn default_selection(is_agg: bool) -> Expression {
             column_aliases: vec![],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }))
     } else {
         // 1 AS _
@@ -341,6 +343,7 @@ pub fn default_selection(is_agg: bool) -> Expression {
             column_aliases: vec![],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }))
     }
 }

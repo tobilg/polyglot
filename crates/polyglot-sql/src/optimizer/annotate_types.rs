@@ -713,6 +713,190 @@ impl<'a> TypeAnnotator<'a> {
         }
     }
 
+    /// Annotate types in-place on the expression tree (bottom-up).
+    ///
+    /// First recurses into children, then computes this node's type using the
+    /// read-only `annotate` method, and finally stores the result via
+    /// `set_inferred_type`.
+    pub fn annotate_in_place(&mut self, expr: &mut Expression) {
+        // 1. Recurse into children (bottom-up)
+        self.annotate_children_in_place(expr);
+
+        // 2. Compute this node's type using the read-only method
+        //    (children already have their types set, but `annotate` re-derives
+        //    from structure, which is fine since the structure hasn't changed)
+        let dt = self.annotate(expr);
+
+        // 3. Store on the node
+        if let Some(data_type) = dt {
+            expr.set_inferred_type(data_type);
+        }
+    }
+
+    /// Recursively annotate children of an expression in-place.
+    fn annotate_children_in_place(&mut self, expr: &mut Expression) {
+        match expr {
+            // Binary operations
+            Expression::And(op) | Expression::Or(op) | Expression::Add(op) | Expression::Sub(op)
+            | Expression::Mul(op) | Expression::Div(op) | Expression::Mod(op)
+            | Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op) | Expression::Lte(op)
+            | Expression::Gt(op) | Expression::Gte(op) | Expression::Concat(op)
+            | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op) | Expression::BitwiseXor(op)
+            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
+            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
+            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op) => {
+                self.annotate_in_place(&mut op.left);
+                self.annotate_in_place(&mut op.right);
+            }
+
+            // Like operations
+            Expression::Like(op) | Expression::ILike(op) => {
+                self.annotate_in_place(&mut op.left);
+                self.annotate_in_place(&mut op.right);
+            }
+
+            // Unary operations
+            Expression::Not(op) | Expression::Neg(op) | Expression::BitwiseNot(op) => {
+                self.annotate_in_place(&mut op.this);
+            }
+
+            // Cast
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => {
+                self.annotate_in_place(&mut c.this);
+            }
+
+            // Case
+            Expression::Case(c) => {
+                if let Some(ref mut operand) = c.operand {
+                    self.annotate_in_place(operand);
+                }
+                for (cond, then_expr) in &mut c.whens {
+                    self.annotate_in_place(cond);
+                    self.annotate_in_place(then_expr);
+                }
+                if let Some(ref mut else_expr) = c.else_ {
+                    self.annotate_in_place(else_expr);
+                }
+            }
+
+            // Alias
+            Expression::Alias(a) => {
+                self.annotate_in_place(&mut a.this);
+            }
+
+            // Column - leaf node, no children to recurse
+            Expression::Column(_) => {}
+
+            // Function
+            Expression::Function(f) => {
+                for arg in &mut f.args {
+                    self.annotate_in_place(arg);
+                }
+            }
+
+            // AggregateFunction
+            Expression::AggregateFunction(f) => {
+                for arg in &mut f.args {
+                    self.annotate_in_place(arg);
+                }
+            }
+
+            // WindowFunction
+            Expression::WindowFunction(w) => {
+                self.annotate_in_place(&mut w.this);
+            }
+
+            // Subquery
+            Expression::Subquery(s) => {
+                self.annotate_in_place(&mut s.this);
+            }
+
+            // UnaryFunc variants
+            Expression::Upper(f) | Expression::Lower(f) | Expression::Length(f)
+            | Expression::LTrim(f) | Expression::RTrim(f) | Expression::Reverse(f)
+            | Expression::Abs(f) | Expression::Sqrt(f) | Expression::Cbrt(f)
+            | Expression::Ln(f) | Expression::Exp(f) | Expression::Sign(f)
+            | Expression::Date(f) | Expression::Time(f) | Expression::Explode(f)
+            | Expression::ExplodeOuter(f) | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f) | Expression::MapValues(f) | Expression::ArrayLength(f)
+            | Expression::ArraySize(f) | Expression::Cardinality(f)
+            | Expression::ArrayReverse(f) | Expression::ArrayDistinct(f)
+            | Expression::ArrayFlatten(f) | Expression::ArrayCompact(f)
+            | Expression::ToArray(f) | Expression::JsonArrayLength(f)
+            | Expression::JsonKeys(f) | Expression::JsonType(f)
+            | Expression::ParseJson(f) | Expression::ToJson(f)
+            | Expression::Year(f) | Expression::Month(f) | Expression::Day(f)
+            | Expression::Hour(f) | Expression::Minute(f) | Expression::Second(f)
+            | Expression::Initcap(f) | Expression::Ascii(f) | Expression::Chr(f)
+            | Expression::Soundex(f) | Expression::ByteLength(f) | Expression::Hex(f)
+            | Expression::LowerHex(f) | Expression::Unicode(f) | Expression::Typeof(f)
+            | Expression::BitwiseCount(f) | Expression::Epoch(f) | Expression::EpochMs(f)
+            | Expression::Radians(f) | Expression::Degrees(f)
+            | Expression::Sin(f) | Expression::Cos(f) | Expression::Tan(f)
+            | Expression::Asin(f) | Expression::Acos(f) | Expression::Atan(f)
+            | Expression::IsNan(f) | Expression::IsInf(f) => {
+                self.annotate_in_place(&mut f.this);
+            }
+
+            // BinaryFunc variants
+            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
+            | Expression::Nvl(f) | Expression::Contains(f) | Expression::StartsWith(f)
+            | Expression::EndsWith(f) | Expression::Levenshtein(f) | Expression::ModFunc(f)
+            | Expression::IntDiv(f) | Expression::Atan2(f) | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f) | Expression::NextDay(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f) | Expression::StarMap(f)
+            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f) | Expression::JsonMergePatch(f) => {
+                self.annotate_in_place(&mut f.this);
+                self.annotate_in_place(&mut f.expression);
+            }
+
+            // VarArgFunc variants
+            Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f)
+            | Expression::ArrayConcat(f) | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f) | Expression::MapConcat(f) | Expression::JsonArray(f) => {
+                for e in &mut f.expressions {
+                    self.annotate_in_place(e);
+                }
+            }
+
+            // AggFunc variants
+            Expression::Sum(f) | Expression::Avg(f) | Expression::Min(f) | Expression::Max(f)
+            | Expression::ArrayAgg(f) | Expression::CountIf(f)
+            | Expression::Stddev(f) | Expression::StddevPop(f) | Expression::StddevSamp(f)
+            | Expression::Variance(f) | Expression::VarPop(f) | Expression::VarSamp(f)
+            | Expression::Median(f) | Expression::Mode(f) | Expression::First(f)
+            | Expression::Last(f) | Expression::AnyValue(f) | Expression::ApproxDistinct(f)
+            | Expression::ApproxCountDistinct(f) | Expression::LogicalAnd(f)
+            | Expression::LogicalOr(f) | Expression::Skewness(f)
+            | Expression::ArrayConcatAgg(f) | Expression::ArrayUniqueAgg(f)
+            | Expression::BoolXorAgg(f)
+            | Expression::BitwiseAndAgg(f) | Expression::BitwiseOrAgg(f)
+            | Expression::BitwiseXorAgg(f) => {
+                self.annotate_in_place(&mut f.this);
+            }
+
+            // Select - recurse into expressions
+            Expression::Select(s) => {
+                for e in &mut s.expressions {
+                    self.annotate_in_place(e);
+                }
+            }
+
+            // Everything else - no children to recurse or not value-producing
+            _ => {}
+        }
+    }
+
     /// Annotate math functions like FLOOR/CEIL that return Double for integer inputs
     /// and preserve the input type otherwise (matching sqlglot's _annotate_math_functions).
     fn annotate_math_function(&mut self, arg: &Expression) -> Option<DataType> {
@@ -1080,14 +1264,18 @@ impl<'a> TypeAnnotator<'a> {
     }
 }
 
-/// Convenience function to annotate types in an expression tree
+/// Annotate types in-place on the expression tree.
+///
+/// Walks the AST bottom-up and sets `inferred_type` on each value-producing
+/// node. After this call, `expr.inferred_type()` (and the same on any child
+/// node) returns the inferred type.
 pub fn annotate_types(
-    expr: &Expression,
+    expr: &mut Expression,
     schema: Option<&dyn Schema>,
     dialect: Option<DialectType>,
-) -> Option<DataType> {
+) {
     let mut annotator = TypeAnnotator::new(schema, dialect);
-    annotator.annotate(expr)
+    annotator.annotate_in_place(expr);
 }
 
 #[cfg(test)]
@@ -1237,6 +1425,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
         assert_eq!(
             annotator.annotate(&cast),
@@ -1577,6 +1766,7 @@ mod tests {
         let explode = Expression::Explode(Box::new(crate::expressions::UnaryFunc {
             this: arr,
             original_name: None,
+            inferred_type: None,
         }));
         assert_eq!(
             annotator.annotate(&explode),
@@ -1708,6 +1898,7 @@ mod tests {
         let sign_int = Expression::Sign(Box::new(UnaryFunc {
             this: make_int_literal(42),
             original_name: None,
+            inferred_type: None,
         }));
         assert_eq!(
             annotator.annotate(&sign_int),
@@ -1721,6 +1912,7 @@ mod tests {
         let sign_float = Expression::Sign(Box::new(UnaryFunc {
             this: make_float_literal(3.14),
             original_name: None,
+            inferred_type: None,
         }));
         assert_eq!(
             annotator.annotate(&sign_float),
@@ -1742,8 +1934,10 @@ mod tests {
                 trailing_comments: Vec::new(),
                 double_colon_syntax: false,
                 default: None,
+                inferred_type: None,
             })),
             original_name: None,
+            inferred_type: None,
         }));
         assert_eq!(
             annotator.annotate(&sign_cast),
@@ -1816,5 +2010,178 @@ mod tests {
                 parenthesized_length: false,
             })
         );
+    }
+
+    // ===== In-place annotation tests (Step 9) =====
+
+    #[test]
+    fn test_annotate_in_place_sets_type_on_root() {
+        // Literals don't have inferred_type field, so test with a BinaryOp
+        let mut expr = Expression::Add(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_int_literal(2),
+        )));
+        annotate_types(&mut expr, None, None);
+        assert_eq!(
+            expr.inferred_type(),
+            Some(&DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_annotate_in_place_sets_types_on_children() {
+        // (a + b) + (c - d) where all are ints
+        // This tests that inner BinaryOp children also get annotated
+        let inner_add = Expression::Add(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_float_literal(2.5),
+        )));
+        let inner_sub = Expression::Sub(Box::new(BinaryOp::new(
+            make_int_literal(3),
+            make_int_literal(4),
+        )));
+        let mut expr = Expression::Add(Box::new(BinaryOp::new(inner_add, inner_sub)));
+        annotate_types(&mut expr, None, None);
+
+        // Root (Add) should be Double (wider of Double and Int)
+        assert_eq!(
+            expr.inferred_type(),
+            Some(&DataType::Double {
+                precision: None,
+                scale: None,
+            })
+        );
+
+        // Children should also have types
+        if let Expression::Add(op) = &expr {
+            // Left child (1 + 2.5) should be Double
+            assert_eq!(
+                op.left.inferred_type(),
+                Some(&DataType::Double {
+                    precision: None,
+                    scale: None,
+                })
+            );
+            // Right child (3 - 4) should be Int
+            assert_eq!(
+                op.right.inferred_type(),
+                Some(&DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                })
+            );
+        } else {
+            panic!("Expected Add expression");
+        }
+    }
+
+    #[test]
+    fn test_annotate_in_place_comparison() {
+        let mut expr = Expression::Eq(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_int_literal(2),
+        )));
+        annotate_types(&mut expr, None, None);
+        assert_eq!(expr.inferred_type(), Some(&DataType::Boolean));
+    }
+
+    #[test]
+    fn test_annotate_in_place_cast() {
+        let mut expr = Expression::Cast(Box::new(Cast {
+            this: make_int_literal(42),
+            to: DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            },
+            trailing_comments: vec![],
+            double_colon_syntax: false,
+            format: None,
+            default: None,
+            inferred_type: None,
+        }));
+        annotate_types(&mut expr, None, None);
+        assert_eq!(
+            expr.inferred_type(),
+            Some(&DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_annotate_in_place_nested_expression() {
+        // (1 + 2) > 0  -> should be Boolean at root, Int for the Add
+        let add = Expression::Add(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_int_literal(2),
+        )));
+        let mut expr = Expression::Gt(Box::new(BinaryOp::new(add, make_int_literal(0))));
+        annotate_types(&mut expr, None, None);
+
+        assert_eq!(expr.inferred_type(), Some(&DataType::Boolean));
+
+        // The left child (Add) should be Int
+        if let Expression::Gt(op) = &expr {
+            assert_eq!(
+                op.left.inferred_type(),
+                Some(&DataType::Int {
+                    length: None,
+                    integer_spelling: false,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_annotate_in_place_parsed_sql() {
+        use crate::parser::Parser;
+        let mut expr = Parser::parse_sql("SELECT 1 + 2.0, 'hello', TRUE")
+            .expect("parse failed")[0]
+            .clone();
+        annotate_types(&mut expr, None, None);
+
+        // The expression tree should have types annotated throughout
+        // We can't easily inspect deep inside a parsed Select, but at minimum
+        // the root Select itself won't have a type (it's not value-producing)
+        assert!(expr.inferred_type().is_none());
+    }
+
+    #[test]
+    fn test_inferred_type_json_roundtrip() {
+        let mut expr = Expression::Add(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_int_literal(2),
+        )));
+        annotate_types(&mut expr, None, None);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&expr).expect("serialize failed");
+        // The JSON should contain the inferred_type
+        assert!(json.contains("inferred_type"));
+
+        // Deserialize back
+        let deserialized: Expression = serde_json::from_str(&json).expect("deserialize failed");
+        assert_eq!(
+            deserialized.inferred_type(),
+            Some(&DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_inferred_type_none_not_serialized() {
+        // When inferred_type is None, it should not appear in JSON
+        let expr = Expression::Add(Box::new(BinaryOp::new(
+            make_int_literal(1),
+            make_int_literal(2),
+        )));
+        let json = serde_json::to_string(&expr).expect("serialize failed");
+        assert!(!json.contains("inferred_type"));
     }
 }

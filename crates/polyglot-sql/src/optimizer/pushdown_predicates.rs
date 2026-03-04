@@ -436,6 +436,7 @@ fn make_or(left: Expression, right: Expression) -> Expression {
         left_comments: vec![],
         operator_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     }))
 }
 
@@ -483,6 +484,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Or(bin) => {
@@ -494,6 +496,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Eq(bin) => {
@@ -505,6 +508,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Neq(bin) => {
@@ -516,6 +520,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Lt(bin) => {
@@ -527,6 +532,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Gt(bin) => {
@@ -538,6 +544,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Lte(bin) => {
@@ -549,6 +556,7 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Gte(bin) => {
@@ -560,11 +568,12 @@ fn replace_aliases_recursive(
                 left_comments: bin.left_comments,
                 operator_comments: bin.operator_comments,
                 trailing_comments: bin.trailing_comments,
+                inferred_type: None,
             }))
         }
         Expression::Not(un) => {
             let inner = replace_aliases_recursive(un.this, aliases);
-            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner }))
+            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner, inferred_type: None }))
         }
         Expression::Paren(paren) => {
             let inner = replace_aliases_recursive(paren.this, aliases);

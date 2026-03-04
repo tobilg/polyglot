@@ -163,12 +163,14 @@ impl DialectImpl for DuckDBDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in DuckDB
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -236,6 +238,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -259,6 +262,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -282,6 +286,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -343,6 +348,7 @@ impl DialectImpl for DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))],
             )))),
 
@@ -356,6 +362,7 @@ impl DialectImpl for DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))],
             )))),
 
@@ -504,6 +511,7 @@ impl DialectImpl for DuckDBDialect {
                 no_parens: true,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // ===== Return statement =====
@@ -618,6 +626,7 @@ impl DialectImpl for DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     scale.clone()
@@ -642,6 +651,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let floored = Expression::Function(Box::new(Function::new(
                     "FLOOR".to_string(),
@@ -653,6 +663,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ROUND".to_string(),
@@ -679,6 +690,7 @@ impl DialectImpl for DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     scale.clone()
@@ -703,6 +715,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let ceiled = Expression::Function(Box::new(Function::new(
                     "CEIL".to_string(),
@@ -714,6 +727,7 @@ impl DialectImpl for DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ROUND".to_string(),
@@ -801,6 +815,7 @@ impl DialectImpl for DuckDBDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // CAST(x AS DECIMAL) -> CAST(x AS DECIMAL(18, 3)) in DuckDB (default precision)
@@ -847,6 +862,7 @@ impl DialectImpl for DuckDBDialect {
                                 this: e,
                                 over: over.clone(),
                                 keep: None,
+                                inferred_type: None,
                             }))
                         });
                         let new_whens = case
@@ -862,6 +878,7 @@ impl DialectImpl for DuckDBDialect {
                                                 this: inner,
                                                 over: over.clone(),
                                                 keep: None,
+                                                inferred_type: None,
                                             }));
                                         Expression::Function(Box::new(Function::new(
                                             "ISNAN".to_string(),
@@ -881,12 +898,14 @@ impl DialectImpl for DuckDBDialect {
                             whens: new_whens,
                             else_: new_else,
                             comments: Vec::new(),
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(Expression::WindowFunction(Box::new(WindowFunction {
                             this: Expression::Case(Box::new(case)),
                             over: wf.over,
                             keep: wf.keep,
+                            inferred_type: None,
                         })))
                     }
                 } else {
@@ -980,6 +999,7 @@ impl DialectImpl for DuckDBDialect {
                     i.not = false;
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
                         this: Expression::In(i),
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::In(i))
@@ -1012,6 +1032,7 @@ impl DialectImpl for DuckDBDialect {
                                 order_by: wg.order_by,
                                 limit: None,
                                 ignore_nulls: None,
+                                inferred_type: None,
                             },
                         )))
                     }
@@ -1032,6 +1053,7 @@ impl DialectImpl for DuckDBDialect {
                                 order_by: wg.order_by,
                                 limit: None,
                                 ignore_nulls: None,
+                                inferred_type: None,
                             },
                         )))
                     }
@@ -1056,6 +1078,7 @@ impl DialectImpl for DuckDBDialect {
                                     order_by: wg.order_by,
                                     limit: None,
                                     ignore_nulls: None,
+                                    inferred_type: None,
                                 },
                             ))),
                             _ => Ok(Expression::WithinGroup(wg)),
@@ -1077,8 +1100,10 @@ impl DialectImpl for DuckDBDialect {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }),
                     original_name: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1113,6 +1138,7 @@ impl DialectImpl for DuckDBDialect {
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             Some(Expression::Column(Column {
@@ -1121,6 +1147,7 @@ impl DialectImpl for DuckDBDialect {
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
+                                                inferred_type: None,
                                             }))
                                         }
                                     }
@@ -1134,6 +1161,7 @@ impl DialectImpl for DuckDBDialect {
                                         column_aliases: Vec::new(),
                                         pre_alias_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }))
                                 } else {
                                     e
@@ -1247,6 +1275,7 @@ impl DialectImpl for DuckDBDialect {
                 whens: vec![(f.condition, f.true_value)],
                 else_: f.false_value,
                 comments: Vec::new(),
+                inferred_type: None,
             }))),
 
             // VAR_SAMP -> VARIANCE in DuckDB
@@ -1267,6 +1296,7 @@ impl DialectImpl for DuckDBDialect {
                     whens: vec![(condition, f.true_value)],
                     else_: Some(f.false_value),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -1340,6 +1370,7 @@ impl DuckDBDialect {
                             lateral: false,
                             modifiers_inside: false,
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })))
                     } else {
                         Err(crate::error::Error::Generate(
@@ -1596,18 +1627,21 @@ impl DuckDBDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ARRAY_COMPACT(arr) -> LIST_FILTER(arr, _u -> NOT _u IS NULL)
@@ -1623,10 +1657,12 @@ impl DuckDBDialect {
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
+                                inferred_type: None,
                             }),
                             not: false,
                             postfix_form: false,
                         })),
+                        inferred_type: None,
                     })),
                     colon: false,
                     parameter_types: Vec::new(),
@@ -1773,6 +1809,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "REPEAT".to_string(),
@@ -1796,6 +1833,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -1834,6 +1872,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2006,6 +2045,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -2022,6 +2062,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -2112,6 +2153,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -2126,6 +2168,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -2213,6 +2256,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2280,6 +2324,7 @@ impl DuckDBDialect {
                     whens: vec![(cond, true_val)],
                     else_: Some(false_val),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "SKEW" => Ok(Expression::Function(Box::new(Function::new(
@@ -2316,10 +2361,12 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(x),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "REGR_VALY" if f.args.len() == 2 => {
@@ -2344,10 +2391,12 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(y),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "BOOLNOT" if f.args.len() == 1 => {
@@ -2362,6 +2411,7 @@ impl DuckDBDialect {
                         this: rounded,
                         trailing_comments: Vec::new(),
                     })),
+                    inferred_type: None,
                 })))
             }
             "BITMAP_BIT_POSITION" if f.args.len() == 1 => {
@@ -2375,6 +2425,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::Sub(Box::new(BinaryOp {
                             left: n.clone(),
@@ -2382,13 +2433,16 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(Expression::Abs(Box::new(UnaryFunc {
                         this: n,
                         original_name: None,
+                        inferred_type: None,
                     }))),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Mod(Box::new(BinaryOp {
                     left: Expression::Paren(Box::new(Paren {
@@ -2399,6 +2453,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             // GREATEST/LEAST - pass through (null-wrapping is handled by source dialect transforms)
@@ -2406,10 +2461,12 @@ impl DuckDBDialect {
             "GREATEST_IGNORE_NULLS" => Ok(Expression::Greatest(Box::new(VarArgFunc {
                 expressions: f.args,
                 original_name: None,
+                inferred_type: None,
             }))),
             "LEAST_IGNORE_NULLS" => Ok(Expression::Least(Box::new(VarArgFunc {
                 expressions: f.args,
                 original_name: None,
+                inferred_type: None,
             }))),
             "PARSE_JSON" => Ok(Expression::Function(Box::new(Function::new(
                 "JSON".to_string(),
@@ -2459,6 +2516,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_DOUBLE" | "TRY_TO_NUMBER" | "TRY_TO_NUMERIC" | "TRY_TO_DECIMAL"
@@ -2475,6 +2533,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_TIME" if f.args.len() == 1 => {
@@ -2489,6 +2548,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_TIME" if f.args.len() == 2 => {
@@ -2508,6 +2568,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_TIMESTAMP" if f.args.len() == 1 => {
@@ -2522,6 +2583,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_TIMESTAMP" if f.args.len() == 2 => {
@@ -2541,6 +2603,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TRY_TO_DATE" if f.args.len() == 1 => {
@@ -2552,6 +2615,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "DAYOFWEEKISO" | "DAYOFWEEK_ISO" => Ok(Expression::Function(Box::new(Function::new(
@@ -2610,6 +2674,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
@@ -2620,17 +2685,20 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         right: s,
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     let base_time = Expression::Cast(Box::new(Cast {
                         this: Expression::Literal(Literal::String("00:00:00".to_string())),
@@ -2642,6 +2710,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     Ok(Expression::Add(Box::new(BinaryOp {
                         left: base_time,
@@ -2658,6 +2727,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 }
             }
@@ -2677,6 +2747,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
@@ -2687,17 +2758,20 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         right: s,
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     right: Expression::Paren(Box::new(Paren {
                         this: Expression::Div(Box::new(BinaryOp {
@@ -2706,12 +2780,14 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         trailing_comments: Vec::new(),
                     })),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let base_time = Expression::Cast(Box::new(Cast {
                     this: Expression::Literal(Literal::String("00:00:00".to_string())),
@@ -2723,6 +2799,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Add(Box::new(BinaryOp {
                     left: base_time,
@@ -2739,6 +2816,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "TIMESTAMP_FROM_PARTS" | "TIMESTAMPFROMPARTS" if f.args.len() == 6 => {
@@ -2759,6 +2837,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "TIMESTAMP_LTZ_FROM_PARTS" if f.args.len() == 6 => {
@@ -2775,6 +2854,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TIMESTAMP_TZ_FROM_PARTS" if f.args.len() == 8 => {
@@ -2810,6 +2890,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -2824,6 +2905,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -2841,11 +2923,13 @@ impl DuckDBDialect {
                                 not: false,
                                 postfix_form: false,
                             })),
+                            inferred_type: None,
                         })),
                         b,
                     )],
                     else_: Some(c),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "EQUAL_NULL" if f.args.len() == 2 => {
@@ -2858,6 +2942,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "EDITDISTANCE" if f.args.len() == 3 => {
@@ -2886,16 +2971,19 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let least = Expression::Least(Box::new(VarArgFunc {
                     expressions: vec![lev, max_dist],
                     original_name: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Case(Box::new(Case {
                     operand: None,
                     whens: vec![(null_check, Expression::Null(crate::expressions::Null))],
                     else_: Some(least),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "EDITDISTANCE" => Ok(Expression::Function(Box::new(Function::new(
@@ -2924,6 +3012,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "BITOR" if f.args.len() == 2 => {
@@ -2948,6 +3037,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "BITXOR" if f.args.len() == 2 => {
@@ -2958,6 +3048,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "BITNOT" if f.args.len() == 1 => {
@@ -2968,6 +3059,7 @@ impl DuckDBDialect {
                             this: arg,
                             trailing_comments: Vec::new(),
                         })),
+                        inferred_type: None,
                     },
                 )))
             }
@@ -2995,6 +3087,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     let shift = Expression::BitwiseLeftShift(Box::new(BinaryOp {
                         left: cast_to_bit,
@@ -3002,6 +3095,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     Ok(Expression::Cast(Box::new(Cast {
                         this: shift,
@@ -3012,6 +3106,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::BitwiseLeftShift(Box::new(BinaryOp {
@@ -3024,11 +3119,13 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                         right: b,
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 }
             }
@@ -3056,6 +3153,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     let shift = Expression::BitwiseRightShift(Box::new(BinaryOp {
                         left: cast_to_bit,
@@ -3063,6 +3161,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     Ok(Expression::Cast(Box::new(Cast {
                         this: shift,
@@ -3073,6 +3172,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::BitwiseRightShift(Box::new(BinaryOp {
@@ -3085,11 +3185,13 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                         right: b,
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 }
             }
@@ -3134,6 +3236,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             right: Expression::Not(Box::new(crate::expressions::UnaryOp {
                                 this: Expression::IsNull(Box::new(crate::expressions::IsNull {
@@ -3141,10 +3244,12 @@ impl DuckDBDialect {
                                     not: false,
                                     postfix_form: false,
                                 })),
+                                inferred_type: None,
                             })),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::number(0),
                     )],
@@ -3154,8 +3259,10 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "DIV0NULL" if f.args.len() == 2 => {
@@ -3172,6 +3279,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             right: Expression::IsNull(Box::new(crate::expressions::IsNull {
                                 this: b.clone(),
@@ -3181,6 +3289,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::number(0),
                     )],
@@ -3190,8 +3299,10 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "ZEROIFNULL" if f.args.len() == 1 => {
@@ -3208,6 +3319,7 @@ impl DuckDBDialect {
                     )],
                     else_: Some(x),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "NULLIFZERO" if f.args.len() == 1 => {
@@ -3221,11 +3333,13 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::Null(crate::expressions::Null),
                     )],
                     else_: Some(x),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
             "TO_DOUBLE" if f.args.len() == 1 => {
@@ -3240,6 +3354,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "DATE" if f.args.len() == 1 => {
@@ -3251,6 +3366,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "DATE" if f.args.len() == 2 => {
@@ -3267,6 +3383,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "SYSDATE" => Ok(Expression::AtTimeZone(Box::new(
@@ -3297,6 +3414,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::AtTimeZone(Box::new(
                     crate::expressions::AtTimeZone {
@@ -3322,6 +3440,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::AtTimeZone(Box::new(
                     crate::expressions::AtTimeZone {
@@ -3357,6 +3476,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }))],
                             ))),
                             zone: Expression::Literal(Literal::String("UTC".to_string())),
@@ -3383,6 +3503,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TO_TIME" if f.args.len() == 2 => {
@@ -3402,6 +3523,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             "TO_DATE" if f.args.len() == 2 => {
@@ -3418,6 +3540,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             // LAST_DAY with 2 args handled by comprehensive handler below
@@ -3436,6 +3559,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::Div(Box::new(BinaryOp {
                             left: x,
@@ -3443,10 +3567,12 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(Expression::Null(crate::expressions::Null)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -3484,6 +3610,7 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                         arg,
                     ],
@@ -3502,6 +3629,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -3562,6 +3690,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     trailing_comments: Vec::new(),
                 })))
@@ -3593,6 +3722,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     trailing_comments: Vec::new(),
                 })))
@@ -3613,9 +3743,9 @@ impl DuckDBDialect {
                 )));
                 // (ra AND (NOT rb)) OR ((NOT ra) AND rb)
                 let not_rb =
-                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: rb.clone() }));
+                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: rb.clone(), inferred_type: None }));
                 let not_ra =
-                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: ra.clone() }));
+                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: ra.clone(), inferred_type: None }));
                 let left_and = Expression::And(Box::new(BinaryOp {
                     left: ra,
                     right: Expression::Paren(Box::new(Paren {
@@ -3625,6 +3755,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let right_and = Expression::And(Box::new(BinaryOp {
                     left: Expression::Paren(Box::new(Paren {
@@ -3635,6 +3766,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Or(Box::new(BinaryOp {
                     left: Expression::Paren(Box::new(Paren {
@@ -3648,6 +3780,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -3675,6 +3808,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }))
                     };
                     whens.push((condition, result));
@@ -3687,6 +3821,7 @@ impl DuckDBDialect {
                     whens,
                     else_: else_expr,
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -3700,6 +3835,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let upper_text = Expression::Upper(Box::new(UnaryFunc::new(cast_text)));
                 Ok(Expression::Case(Box::new(Case {
@@ -3712,6 +3848,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             Expression::Boolean(crate::expressions::BooleanLiteral { value: true }),
                         ),
@@ -3722,6 +3859,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             Expression::Boolean(crate::expressions::BooleanLiteral {
                                 value: false,
@@ -3735,8 +3873,10 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -3750,6 +3890,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let upper_text = Expression::Upper(Box::new(UnaryFunc::new(cast_text)));
                 Ok(Expression::Case(Box::new(Case {
@@ -3762,6 +3903,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             Expression::Boolean(crate::expressions::BooleanLiteral { value: true }),
                         ),
@@ -3772,6 +3914,7 @@ impl DuckDBDialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             Expression::Boolean(crate::expressions::BooleanLiteral {
                                 value: false,
@@ -3790,6 +3933,7 @@ impl DuckDBDialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))],
                                 ))),
                                 right: Expression::Function(Box::new(Function::new(
@@ -3803,11 +3947,13 @@ impl DuckDBDialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))],
                                 ))),
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             })),
                             Expression::Function(Box::new(Function::new(
                                 "ERROR".to_string(),
@@ -3825,8 +3971,10 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -3993,6 +4141,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let regexp_replace = Expression::Function(Box::new(Function::new(
                     "REGEXP_REPLACE".to_string(),
@@ -4028,12 +4177,14 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                     to: DataType::Date,
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -4199,6 +4350,7 @@ impl DuckDBDialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })),
                         ],
                     ))))
@@ -4231,6 +4383,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     scale.clone()
@@ -4255,6 +4408,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let floored = Expression::Function(Box::new(Function::new(
                     "FLOOR".to_string(),
@@ -4266,6 +4420,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ROUND".to_string(),
@@ -4293,6 +4448,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     scale.clone()
@@ -4317,6 +4473,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let ceiled = Expression::Function(Box::new(Function::new(
                     "CEIL".to_string(),
@@ -4328,6 +4485,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "ROUND".to_string(),
@@ -4357,6 +4515,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                     _ => date_expr_raw,
                 };
@@ -4411,6 +4570,7 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }))],
                     )))
                 } else if is_negative || is_null {
@@ -4442,6 +4602,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let case_expr = Expression::Case(Box::new(Case {
@@ -4456,6 +4617,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         Expression::Function(Box::new(Function::new(
                             "LAST_DAY".to_string(),
@@ -4464,6 +4626,7 @@ impl DuckDBDialect {
                     )],
                     else_: Some(date_plus_interval),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 // Wrap in CAST if date had explicit type
@@ -4475,6 +4638,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(case_expr)
@@ -4551,6 +4715,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     if is_date_type {
                         Ok(Expression::Cast(Box::new(Cast {
@@ -4560,6 +4725,7 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(bucket_plus)
@@ -4608,6 +4774,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let month_interval = Expression::Interval(Box::new(Interval {
                     this: Some(Expression::Paren(Box::new(Paren {
@@ -4626,6 +4793,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let day_interval = Expression::Interval(Box::new(Interval {
                     this: Some(Expression::Paren(Box::new(Paren {
@@ -4645,11 +4813,13 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     right: day_interval,
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 Ok(Expression::Cast(Box::new(Cast {
@@ -4659,6 +4829,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -4785,6 +4956,7 @@ impl DuckDBDialect {
                         ],
                         else_: None,
                         comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -4805,6 +4977,7 @@ impl DuckDBDialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         })),
                                         trailing_comments: Vec::new(),
                                     })),
@@ -4812,6 +4985,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
@@ -4819,6 +4993,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         trailing_comments: Vec::new(),
                     })),
@@ -4826,6 +5001,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let result = Expression::Add(Box::new(BinaryOp {
@@ -4843,6 +5019,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 Ok(Expression::Cast(Box::new(Cast {
@@ -4852,6 +5029,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -4976,6 +5154,7 @@ impl DuckDBDialect {
                         ],
                         else_: None,
                         comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -4996,6 +5175,7 @@ impl DuckDBDialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         })),
                                         trailing_comments: Vec::new(),
                                     })),
@@ -5003,6 +5183,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
@@ -5010,6 +5191,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         trailing_comments: Vec::new(),
                     })),
@@ -5017,6 +5199,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let result = Expression::Sub(Box::new(BinaryOp {
@@ -5034,6 +5217,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 Ok(Expression::Cast(Box::new(Cast {
@@ -5043,6 +5227,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -5091,6 +5276,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                         let make_date = Expression::Function(Box::new(Function::new(
                             "MAKE_DATE".to_string(),
@@ -5116,6 +5302,7 @@ impl DuckDBDialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 trailing_comments: Vec::new(),
                             })),
@@ -5123,6 +5310,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                         let result = Expression::Add(Box::new(BinaryOp {
                             left: date,
@@ -5139,6 +5327,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                         Ok(Expression::Cast(Box::new(Cast {
                             this: result,
@@ -5147,6 +5336,7 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -5192,12 +5382,14 @@ impl DuckDBDialect {
                                 alias: None,
                             },
                             keep: None,
+                            inferred_type: None,
                         },
                     )),
                     right: Expression::number(1),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let modded = Expression::Mod(Box::new(BinaryOp {
@@ -5209,6 +5401,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 if is_signed {
@@ -5219,6 +5412,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     let signed_val = Expression::Sub(Box::new(BinaryOp {
                         left: modded.clone(),
@@ -5226,6 +5420,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     Ok(Expression::Paren(Box::new(Paren {
                         this: Expression::Case(Box::new(Case {
@@ -5233,6 +5428,7 @@ impl DuckDBDialect {
                             whens: vec![(cond, signed_val)],
                             else_: Some(modded),
                             comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         trailing_comments: Vec::new(),
                     })))
@@ -5302,11 +5498,13 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     right: Expression::number(1),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 // Check if gen is RANDOM() (function) or a literal seed
@@ -5332,6 +5530,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
                         let paren_modded = Expression::Paren(Box::new(Paren {
                             this: modded,
@@ -5343,6 +5542,7 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }))
                     }
                 };
@@ -5360,10 +5560,12 @@ impl DuckDBDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })),
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))],
                 )));
 
@@ -5374,6 +5576,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -5399,6 +5602,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     let paren_modded = Expression::Paren(Box::new(Paren {
                         this: modded,
@@ -5410,6 +5614,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -5446,6 +5651,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     let u2 = make_seed_random(seed_plus_1);
                     (u1, u2)
@@ -5458,11 +5664,13 @@ impl DuckDBDialect {
                         Expression::Literal(Literal::Number("1e-10".to_string())),
                     ],
                     original_name: None,
+                    inferred_type: None,
                 }));
 
                 // SQRT(-2 * LN(GREATEST(u1, 1e-10)))
                 let neg2 = Expression::Neg(Box::new(crate::expressions::UnaryOp {
                     this: Expression::number(2),
+                    inferred_type: None,
                 }));
                 let ln_greatest =
                     Expression::Function(Box::new(Function::new("LN".to_string(), vec![greatest])));
@@ -5472,6 +5680,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let sqrt_part = Expression::Function(Box::new(Function::new(
                     "SQRT".to_string(),
@@ -5486,6 +5695,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let two_pi_u2 = Expression::Mul(Box::new(BinaryOp {
                     left: two_pi,
@@ -5493,6 +5703,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let cos_part = Expression::Function(Box::new(Function::new(
                     "COS".to_string(),
@@ -5506,6 +5717,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let inner = Expression::Mul(Box::new(BinaryOp {
                     left: stddev_times_sqrt,
@@ -5513,6 +5725,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let paren_inner = Expression::Paren(Box::new(Paren {
                     this: inner,
@@ -5526,6 +5739,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -5609,6 +5823,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let list_concat = Expression::Function(Box::new(Function::new(
@@ -5636,6 +5851,7 @@ impl DuckDBDialect {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 });
                 let right_key = Expression::Subscript(Box::new(crate::expressions::Subscript {
                     this: right.clone(),
@@ -5648,6 +5864,7 @@ impl DuckDBDialect {
                 let key_value = Expression::Coalesce(Box::new(VarArgFunc {
                     expressions: vec![right_key, left_key],
                     original_name: None,
+                    inferred_type: None,
                 }));
                 let struct_pack = Expression::Function(Box::new(Function::new(
                     "STRUCT_PACK".to_string(),
@@ -5683,6 +5900,7 @@ impl DuckDBDialect {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 });
                 let x_value = Expression::Dot(Box::new(crate::expressions::DotAccess {
                     this: x_ref,
@@ -5697,6 +5915,7 @@ impl DuckDBDialect {
                     parameters: vec![x_ident],
                     body: Expression::Not(Box::new(crate::expressions::UnaryOp {
                         this: x_value_is_null,
+                        inferred_type: None,
                     })),
                     colon: false,
                     parameter_types: Vec::new(),
@@ -5716,6 +5935,7 @@ impl DuckDBDialect {
                     whens: vec![(null_cond, Expression::Null(crate::expressions::Null))],
                     else_: Some(merged_map),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -5778,6 +5998,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
                 let and_expr = |left: Expression, right: Expression| {
@@ -5787,6 +6008,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
                 let or_expr = |left: Expression, right: Expression| {
@@ -5796,6 +6018,7 @@ impl DuckDBDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -5833,12 +6056,14 @@ impl DuckDBDialect {
                     let greatest_len = Expression::Greatest(Box::new(VarArgFunc {
                         expressions: args.iter().cloned().map(length_of).collect(),
                         original_name: None,
+                        inferred_type: None,
                     }));
                     Expression::Case(Box::new(Case {
                         operand: None,
                         whens: vec![(length_null_cond, Expression::Null(crate::expressions::Null))],
                         else_: Some(greatest_len),
                         comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 };
 
@@ -5854,6 +6079,7 @@ impl DuckDBDialect {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 });
                 let i_plus_one = Expression::Add(Box::new(BinaryOp {
                     left: i_ref,
@@ -5861,6 +6087,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let empty_array = Expression::Array(Box::new(crate::expressions::Array {
                     expressions: vec![],
@@ -5873,6 +6100,7 @@ impl DuckDBDialect {
                             let coalesced = Expression::Coalesce(Box::new(VarArgFunc {
                                 expressions: vec![a.clone(), empty_array.clone()],
                                 original_name: None,
+                                inferred_type: None,
                             }));
                             let item =
                                 Expression::Subscript(Box::new(crate::expressions::Subscript {
@@ -5902,6 +6130,7 @@ impl DuckDBDialect {
                     ],
                     else_: Some(zipped_result),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -6059,6 +6288,7 @@ impl DuckDBDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
             "EPOCH_MILLISECOND" | "EPOCH_MILLISECONDS" => Ok(Expression::Function(Box::new(
                 Function::new("EPOCH_MS".to_string(), vec![date_expr]),
@@ -6091,6 +6321,7 @@ impl DuckDBDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
             "WEEKISO" => Ok(Expression::Cast(Box::new(Cast {
                 this: Expression::Function(Box::new(Function::new(
@@ -6108,6 +6339,7 @@ impl DuckDBDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
             "NANOSECOND" | "NANOSECONDS" | "NS" => Ok(Expression::Cast(Box::new(Cast {
                 this: Expression::Function(Box::new(Function::new(
@@ -6122,6 +6354,7 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                         Expression::Literal(Literal::String("%n".to_string())),
                     ],
@@ -6131,6 +6364,7 @@ impl DuckDBDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
             "DAYOFMONTH" => Ok(Expression::Extract(Box::new(
                 crate::expressions::ExtractFunc {
@@ -6190,6 +6424,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))],
             )));
             return Ok(Expression::Function(Box::new(Function::new(
@@ -6200,6 +6435,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))],
             ))));
         }
@@ -6220,6 +6456,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })),
             ),
             "QUARTER" | "QTR" => (
@@ -6230,6 +6467,7 @@ impl DuckDBDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })),
             ),
             _ => (IntervalUnit::Day, amount),
@@ -6246,6 +6484,7 @@ impl DuckDBDialect {
             left_comments: Vec::new(),
             operator_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         })))
     }
 
@@ -6273,6 +6512,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))],
             )));
             let epoch_start = Expression::Function(Box::new(Function::new(
@@ -6286,6 +6526,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))],
             )));
             return Ok(Expression::Sub(Box::new(BinaryOp {
@@ -6294,6 +6535,7 @@ impl DuckDBDialect {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             })));
         }
         if unit_name == "WEEK" || unit_name == "WK" {
@@ -6308,6 +6550,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                 ],
             )));
@@ -6322,6 +6565,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                 ],
             )));
@@ -6343,6 +6587,7 @@ impl DuckDBDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })),
                 _ => e,
             }
@@ -6392,6 +6637,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -6408,6 +6654,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -6441,10 +6688,12 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(x),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -6471,10 +6720,12 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                     )],
                     else_: Some(y),
                     comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -6490,6 +6741,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -6506,6 +6758,7 @@ impl DuckDBDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))],
                 ))))
             }
@@ -6523,12 +6776,14 @@ impl DuckDBDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }))],
                     ))),
                     right: Expression::number(1),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 

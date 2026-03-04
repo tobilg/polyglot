@@ -16,6 +16,7 @@
 
 // Core APIs
 export {
+  annotateTypes,
   ast,
   Dialect,
   format,
@@ -29,12 +30,13 @@ export {
   parse,
   transpile,
 } from './index';
-export type { FormatOptions, ParseResult, TranspileResult } from './index';
+export type { AnnotateTypesResult, FormatOptions, ParseResult, TranspileResult } from './index';
 
 // AST: Type guards & Visitors
 export {
   findAll,
   getColumns,
+  getInferredType,
   isColumn,
   isFunction,
   isLiteral,

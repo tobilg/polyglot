@@ -1,3 +1,4 @@
+mod annotate_types;
 mod dialects;
 mod diff;
 mod errors;
@@ -28,6 +29,7 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lineage::source_tables, m)?)?;
     m.add_function(wrap_pyfunction!(diff::diff, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(annotate_types::annotate_types, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::dialects, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::version, m)?)?;
 

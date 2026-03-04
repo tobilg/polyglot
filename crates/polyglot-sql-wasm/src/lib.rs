@@ -1124,6 +1124,115 @@ fn source_tables_internal(sql: &str, column: &str, dialect: &str) -> SourceTable
 }
 
 // ============================================================================
+// Type Annotation WASM functions
+// ============================================================================
+
+/// Annotate types on a parsed SQL AST in-place.
+///
+/// Parses the given SQL, runs type annotation (and optionally uses a schema
+/// for column type resolution), and returns the AST with `inferred_type`
+/// fields populated on value-producing nodes.
+///
+/// # Arguments
+/// * `sql` - SQL string to parse
+/// * `dialect` - Dialect for parsing
+/// * `schema_json` - Optional JSON schema (same format as `lineage_sql_with_schema`)
+///
+/// # Returns
+/// JSON string containing `ParseValueResult` with annotated AST
+#[wasm_bindgen]
+pub fn annotate_types(sql: &str, dialect: &str, schema_json: &str) -> String {
+    set_panic_hook();
+
+    let result = annotate_types_internal(sql, dialect, schema_json);
+    serialize_result(&result)
+}
+
+/// Annotate types on a parsed SQL AST, returning a JsValue.
+#[wasm_bindgen]
+pub fn annotate_types_value(sql: &str, dialect: &str, schema_json: &str) -> JsValue {
+    set_panic_hook();
+
+    let result = annotate_types_internal(sql, dialect, schema_json);
+    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+    result
+        .serialize(&serializer)
+        .unwrap_or(JsValue::from_str("serialization error"))
+}
+
+fn annotate_types_internal(
+    sql: &str,
+    dialect: &str,
+    schema_json: &str,
+) -> ParseValueResult {
+    let dialect_type = match dialect.parse::<DialectType>() {
+        Ok(d) => d,
+        Err(e) => {
+            return ParseValueResult {
+                success: false,
+                ast: None,
+                error: Some(format!("Invalid dialect: {}", e)),
+                error_line: None,
+                error_column: None,
+                error_start: None,
+                error_end: None,
+            };
+        }
+    };
+
+    let d = Dialect::get(dialect_type);
+    let mut exprs = match d.parse(sql) {
+        Ok(e) => e,
+        Err(e) => {
+            return ParseValueResult {
+                success: false,
+                ast: None,
+                error: Some(e.to_string()),
+                error_line: None,
+                error_column: None,
+                error_start: None,
+                error_end: None,
+            };
+        }
+    };
+
+    let dialect_opt = if dialect_type == DialectType::Generic {
+        None
+    } else {
+        Some(dialect_type)
+    };
+
+    // Parse schema if provided
+    let schema = if !schema_json.is_empty() {
+        match serde_json::from_str::<CoreValidationSchema>(schema_json) {
+            Ok(vs) => Some(mapping_schema_from_validation_schema(&vs)),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    // Annotate types on each expression
+    for expr in &mut exprs {
+        polyglot_sql::annotate_types(
+            expr,
+            schema.as_ref().map(|s| s as &dyn polyglot_sql::Schema),
+            dialect_opt,
+        );
+    }
+
+    ParseValueResult {
+        success: true,
+        ast: Some(exprs),
+        error: None,
+        error_line: None,
+        error_column: None,
+        error_start: None,
+        error_end: None,
+    }
+}
+
+// ============================================================================
 // Diff WASM functions
 // ============================================================================
 

@@ -52,12 +52,14 @@ impl DialectImpl for RedshiftDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL is native in Redshift, but we standardize to COALESCE for consistency
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // TryCast -> TRY_CAST (Redshift supports TRY_CAST via CONVERT)
@@ -76,6 +78,7 @@ impl DialectImpl for RedshiftDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -86,6 +89,7 @@ impl DialectImpl for RedshiftDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -148,6 +152,7 @@ impl DialectImpl for RedshiftDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // SELECT TOP n -> SELECT ... LIMIT n in Redshift (PostgreSQL-style)
@@ -183,18 +188,21 @@ impl RedshiftDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE (supports 2+ args)
             "NVL" if f.args.len() >= 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GETDATE is native to Redshift
@@ -496,6 +504,7 @@ impl RedshiftDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -518,6 +527,7 @@ impl RedshiftDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -528,6 +538,7 @@ impl RedshiftDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

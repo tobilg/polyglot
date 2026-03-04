@@ -90,12 +90,14 @@ impl DialectImpl for HiveDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE (NVL is actually supported in Hive, but COALESCE is standard)
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // TryCast -> CAST is now handled by the generator (dialects without TRY_CAST output CAST)
@@ -113,6 +115,7 @@ impl DialectImpl for HiveDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier,
+                    inferred_type: None,
                 })))
             }
 
@@ -167,18 +170,21 @@ impl HiveDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE (NVL is supported but COALESCE is standard)
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GROUP_CONCAT -> Not directly supported in Hive
@@ -503,6 +509,7 @@ impl HiveDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 Ok(Expression::Function(Box::new(Function::new(

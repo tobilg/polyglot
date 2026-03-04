@@ -21,7 +21,7 @@ use crate::function_catalog::{
     HashMapFunctionCatalog,
 };
 use crate::function_registry::canonical_typed_function_name_upper;
-use crate::optimizer::annotate_types;
+use crate::optimizer::annotate_types::annotate_types;
 use crate::resolver::Resolver;
 use crate::schema::{MappingSchema, Schema as SqlSchema, SchemaError, SchemaResult, TABLE_PARTS};
 use crate::scope::{build_scope, walk_in_scope};
@@ -1342,7 +1342,9 @@ fn infer_expression_type_family(
         schema_map,
         context,
     };
-    if let Some(data_type) = annotate_types(expr, Some(&inference_schema), None) {
+    let mut expr_clone = expr.clone();
+    annotate_types(&mut expr_clone, Some(&inference_schema), None);
+    if let Some(data_type) = expr_clone.inferred_type() {
         let family = data_type_family(&data_type);
         if family != TypeFamily::Unknown {
             return family;

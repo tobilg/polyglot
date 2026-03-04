@@ -1,3 +1,4 @@
+mod annotate_types;
 mod dialects;
 mod diff;
 mod format;
@@ -14,6 +15,7 @@ mod validate;
 
 pub use types::{PolyglotResult, PolyglotValidationResult};
 
+pub use annotate_types::polyglot_annotate_types;
 pub use dialects::{polyglot_dialect_count, polyglot_dialect_list, polyglot_version};
 pub use diff::polyglot_diff;
 pub use format::{polyglot_format, polyglot_format_with_options};

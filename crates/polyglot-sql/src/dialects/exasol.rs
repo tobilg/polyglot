@@ -72,11 +72,13 @@ impl DialectImpl for ExasolDialect {
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Bitwise operations → BIT_* functions
@@ -161,6 +163,7 @@ impl ExasolDialect {
                 Ok(Expression::Coalesce(Box::new(VarArgFunc {
                     original_name: None,
                     expressions: f.args,
+                    inferred_type: None,
                 })))
             }
 

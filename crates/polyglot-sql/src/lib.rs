@@ -796,6 +796,23 @@ mod format_tests {
     }
 
     #[test]
+    fn issue57_invalid_ternary_returns_error() {
+        // https://github.com/tobilg/polyglot/issues/57
+        // Invalid SQL with ternary operator should return an error, not garbled output.
+        let sql = "SELECT x > 0 ? 1 : 0 FROM t";
+
+        let parse_result = parse(sql, DialectType::PostgreSQL);
+        assert!(parse_result.is_err(), "Expected parse error for invalid ternary SQL, got: {:?}", parse_result);
+
+        let format_result = format(sql, DialectType::PostgreSQL);
+        assert!(format_result.is_err(), "Expected format error for invalid ternary SQL, got: {:?}", format_result);
+
+        let transpile_result = transpile(sql, DialectType::PostgreSQL, DialectType::PostgreSQL);
+        assert!(transpile_result.is_err(), "Expected transpile error for invalid ternary SQL, got: {:?}", transpile_result);
+    }
+
+
+    #[test]
     fn format_default_guard_rejects_deep_union_chain_before_parse() {
         let base = "SELECT col0, col1 FROM t";
         let mut sql = base.to_string();

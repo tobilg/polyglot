@@ -7,6 +7,7 @@
  * These helpers provide runtime utilities for working with this format.
  */
 
+import type { DataType } from '../generated/DataType';
 import type { Expression } from '../generated/Expression';
 
 /**
@@ -109,4 +110,34 @@ export function isExpressionValue(value: unknown): value is Expression {
  */
 export function makeExpr(type: string, data: unknown): Expression {
   return { [type]: data } as Expression;
+}
+
+/**
+ * Get the inferred data type from an Expression, if it has been type-annotated.
+ *
+ * After calling `annotateTypes()`, value-producing expressions (columns, operators,
+ * functions, casts, etc.) carry an `inferred_type` field with their resolved SQL type.
+ *
+ * @example
+ * ```typescript
+ * const result = annotateTypes("SELECT 1 + 2", Dialect.Generic);
+ * if (result.success) {
+ *   const addExpr = result.ast![0]; // the SELECT
+ *   // Navigate to the "1 + 2" expression and check its type:
+ *   const dt = getInferredType(someExpr);
+ *   // dt => { data_type: "int", length: null, integer_spelling: false }
+ * }
+ * ```
+ *
+ * @returns The inferred DataType, or `undefined` if not annotated or not a value-producing expression.
+ */
+export function getInferredType(expr: Expression): DataType | undefined {
+  const data = getExprData(expr);
+  if (data && typeof data === 'object' && 'inferred_type' in data) {
+    const it = (data as Record<string, unknown>)['inferred_type'];
+    if (it != null) {
+      return it as DataType;
+    }
+  }
+  return undefined;
 }

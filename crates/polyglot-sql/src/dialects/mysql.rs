@@ -162,6 +162,7 @@ impl DialectImpl for MySQLDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier,
+                    inferred_type: None,
                 })))
             }
 
@@ -367,9 +368,11 @@ impl DialectImpl for MySQLDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
                     this: null_safe_eq,
+                    inferred_type: None,
                 })))
             }
 
@@ -464,6 +467,7 @@ impl DialectImpl for MySQLDialect {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))),
 
             // SHOW SLAVE STATUS -> SHOW REPLICA STATUS
@@ -679,6 +683,7 @@ impl MySQLDialect {
             double_colon_syntax: cast.double_colon_syntax,
             format: cast.format,
             default: cast.default,
+            inferred_type: None,
         }
     }
 
@@ -706,6 +711,7 @@ impl MySQLDialect {
                     original_name: None,
                     this: first,
                     expression: second,
+                    inferred_type: None,
                 })))
             }
 
@@ -978,6 +984,7 @@ impl MySQLDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1028,6 +1035,7 @@ impl MySQLDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 

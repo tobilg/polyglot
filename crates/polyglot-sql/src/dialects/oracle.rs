@@ -69,6 +69,7 @@ impl DialectImpl for OracleDialect {
                     original_name: None,
                     this: first,
                     expression: second,
+                    inferred_type: None,
                 })))
             }
 
@@ -90,6 +91,7 @@ impl DialectImpl for OracleDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier,
+                    inferred_type: None,
                 })))
             }
 
@@ -146,6 +148,7 @@ impl OracleDialect {
                     original_name: None,
                     this: first,
                     expression: second,
+                    inferred_type: None,
                 })))
             }
 
@@ -158,6 +161,7 @@ impl OracleDialect {
                     original_name: None,
                     this: first,
                     expression: second,
+                    inferred_type: None,
                 })))
             }
 
@@ -170,6 +174,7 @@ impl OracleDialect {
                     original_name: None,
                     this: first,
                     expression: second,
+                    inferred_type: None,
                 })))
             }
 

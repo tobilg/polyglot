@@ -124,6 +124,7 @@ impl DialectImpl for SnowflakeDialect {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::All(Box::new(
                     crate::expressions::QuantifiedExpr {
@@ -148,6 +149,7 @@ impl DialectImpl for SnowflakeDialect {
                 };
                 Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
                     this: Expression::In(Box::new(in_without_not)),
+                    inferred_type: None,
                 })))
             }
 
@@ -160,12 +162,14 @@ impl DialectImpl for SnowflakeDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE (both work in Snowflake, but COALESCE is standard)
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -212,6 +216,7 @@ impl DialectImpl for SnowflakeDialect {
                             trailing_comments: c.trailing_comments,
                             format: c.format,
                             default: c.default,
+                            inferred_type: None,
                         })))
                     }
                 }
@@ -228,6 +233,7 @@ impl DialectImpl for SnowflakeDialect {
                     trailing_comments: c.trailing_comments,
                     format: c.format,
                     default: c.default,
+                    inferred_type: None,
                 })))
             }
 
@@ -253,6 +259,7 @@ impl DialectImpl for SnowflakeDialect {
                     trailing_comments: c.trailing_comments,
                     format: c.format,
                     default: c.default,
+                    inferred_type: None,
                 })))
             }
 
@@ -268,6 +275,7 @@ impl DialectImpl for SnowflakeDialect {
                 trailing_comments: Vec::new(),
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // DATE '...' -> CAST('...' AS DATE)
@@ -278,6 +286,7 @@ impl DialectImpl for SnowflakeDialect {
                 trailing_comments: Vec::new(),
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // TIME '...' -> CAST('...' AS TIME)
@@ -291,6 +300,7 @@ impl DialectImpl for SnowflakeDialect {
                 trailing_comments: Vec::new(),
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // DATETIME '...' -> CAST('...' AS DATETIME)
@@ -303,6 +313,7 @@ impl DialectImpl for SnowflakeDialect {
                 trailing_comments: Vec::new(),
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // ===== Pattern matching =====
@@ -362,6 +373,7 @@ impl DialectImpl for SnowflakeDialect {
                     ],
                     pre_alias_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 })))
             }
 
@@ -641,6 +653,7 @@ impl DialectImpl for SnowflakeDialect {
                     f.interval,
                     Expression::Neg(Box::new(crate::expressions::UnaryOp {
                         this: Expression::number(1),
+                        inferred_type: None,
                     })),
                 )));
                 Ok(Expression::Function(Box::new(Function::new(
@@ -1676,6 +1689,7 @@ impl SnowflakeDialect {
             no_parens: f.no_parens,
             quoted: f.quoted,
             span: None,
+            inferred_type: None,
         };
 
         let name_upper = f.name.to_uppercase();
@@ -1684,12 +1698,14 @@ impl SnowflakeDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE (both work in Snowflake, but COALESCE is standard per SQLGlot)
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL2 is native to Snowflake
@@ -1736,6 +1752,7 @@ impl SnowflakeDialect {
                 no_parens: f.no_parens,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP (preserving parens style)
@@ -1748,6 +1765,7 @@ impl SnowflakeDialect {
                 no_parens: f.no_parens,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // CURRENT_TIMESTAMP - always output with parens in Snowflake
@@ -1763,6 +1781,7 @@ impl SnowflakeDialect {
                     no_parens: false, // Always output with parens
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1782,6 +1801,7 @@ impl SnowflakeDialect {
                                 trailing_comments: Vec::new(),
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                     }
@@ -1812,6 +1832,7 @@ impl SnowflakeDialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -1849,6 +1870,7 @@ impl SnowflakeDialect {
                                 trailing_comments: vec![],
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                         Expression::Literal(Literal::String(s)) if Self::looks_like_epoch(s) => {
@@ -2008,6 +2030,7 @@ impl SnowflakeDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                     }
                 }
@@ -2176,6 +2199,7 @@ impl SnowflakeDialect {
                         original_name: None,
                         this: x,
                         expression: Expression::number(2),
+                        inferred_type: None,
                     },
                 )))
             }
@@ -2190,6 +2214,7 @@ impl SnowflakeDialect {
                         original_name: None,
                         this: x,
                         expression: y,
+                        inferred_type: None,
                     },
                 )))
             }
@@ -2205,6 +2230,7 @@ impl SnowflakeDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -2284,6 +2310,7 @@ impl SnowflakeDialect {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2298,6 +2325,7 @@ impl SnowflakeDialect {
                     right,
                     escape,
                     quantifier: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2468,6 +2496,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2483,6 +2512,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2498,6 +2528,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2611,6 +2642,7 @@ impl SnowflakeDialect {
                 no_parens: f.no_parens,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // LOCALTIMESTAMP -> CURRENT_TIMESTAMP (preserving parens style)
@@ -2623,6 +2655,7 @@ impl SnowflakeDialect {
                 no_parens: f.no_parens,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // SPACE(n) -> REPEAT(' ', n) in Snowflake
@@ -2851,6 +2884,7 @@ impl SnowflakeDialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -2873,6 +2907,7 @@ impl SnowflakeDialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -2893,6 +2928,7 @@ impl SnowflakeDialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -2913,6 +2949,7 @@ impl SnowflakeDialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -2952,6 +2989,7 @@ impl SnowflakeDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     true_value: Expression::Div(Box::new(BinaryOp {
                         left: x,
@@ -2959,6 +2997,7 @@ impl SnowflakeDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                     false_value: Some(Expression::Null(crate::expressions::Null)),
                     original_name: Some("IFF".to_string()),
@@ -2977,6 +3016,7 @@ impl SnowflakeDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -2999,6 +3039,7 @@ impl SnowflakeDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })),
                     ],
                 ))))
@@ -3030,6 +3071,7 @@ impl SnowflakeDialect {
                                 not: false,
                                 postfix_form: false,
                             })),
+                            inferred_type: None,
                         })),
                     ))),
                     true_value: Expression::number(0),
@@ -3107,6 +3149,7 @@ impl SnowflakeDialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })));
                     }
                 }
@@ -3138,6 +3181,7 @@ impl SnowflakeDialect {
                                 trailing_comments: Vec::new(),
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                     }
@@ -3167,6 +3211,7 @@ impl SnowflakeDialect {
                                 trailing_comments: Vec::new(),
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                     }
@@ -3236,6 +3281,7 @@ impl SnowflakeDialect {
                         original_name: None,
                         this,
                         expression: expr,
+                        inferred_type: None,
                     },
                 )))
             }
@@ -3433,6 +3479,7 @@ impl SnowflakeDialect {
                         trailing_comments: Vec::new(),
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     Expression::Column(col)
@@ -3451,6 +3498,7 @@ impl SnowflakeDialect {
                         trailing_comments: Vec::new(),
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 } else {
                     Expression::Identifier(id)
@@ -3587,6 +3635,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -3602,6 +3651,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -3618,6 +3668,7 @@ impl SnowflakeDialect {
                         order_by: Vec::new(),
                         limit: None,
                         ignore_nulls: None,
+                        inferred_type: None,
                     },
                 )))
             }
@@ -3634,6 +3685,7 @@ impl SnowflakeDialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

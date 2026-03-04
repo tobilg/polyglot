@@ -370,7 +370,7 @@ impl Simplifier {
             return inner_not.this.clone();
         }
 
-        Expression::Not(Box::new(UnaryOp { this: inner }))
+        Expression::Not(Box::new(UnaryOp { this: inner, inferred_type: None }))
     }
 
     /// Simplify addition (constant folding)
@@ -494,7 +494,7 @@ impl Simplifier {
             return Expression::Literal(Literal::Number((-n).to_string()));
         }
 
-        Expression::Neg(Box::new(UnaryOp { this: inner }))
+        Expression::Neg(Box::new(UnaryOp { this: inner, inferred_type: None }))
     }
 
     /// Simplify comparison operations (constant folding)
@@ -570,6 +570,7 @@ impl Simplifier {
             whens: new_whens,
             else_: case.else_.map(|e| self.simplify_once(e)),
             comments: Vec::new(),
+            inferred_type: None,
         }))
     }
 
@@ -1200,6 +1201,7 @@ mod tests {
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         })
     }
 

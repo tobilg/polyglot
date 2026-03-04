@@ -7,6 +7,8 @@
 
 // Import the WASM module - synchronously initialized on import via bundler target
 import * as wasmModule from '../wasm/polyglot_sql_wasm.js';
+import type { Expression } from './generated/Expression';
+import type { Schema as ValidationSchema } from './validation/schema-validator';
 
 /**
  * Supported SQL dialects
@@ -154,6 +156,8 @@ type WasmBindings = typeof wasmModule & {
   ) => unknown;
   get_dialects_value?: () => unknown;
   tokenize_value?: (sql: string, dialect: string) => unknown;
+  annotate_types?: (sql: string, dialect: string, schema_json: string) => string;
+  annotate_types_value?: (sql: string, dialect: string, schema_json: string) => unknown;
 };
 
 const wasm = wasmModule as WasmBindings;
@@ -446,6 +450,81 @@ export function getVersion(): string {
 }
 
 /**
+ * Result of an annotateTypes operation
+ */
+export interface AnnotateTypesResult {
+  success: boolean;
+  /** The AST with `inferred_type` fields populated on value-producing nodes */
+  ast?: Expression[];
+  error?: string;
+}
+
+/**
+ * Parse SQL and annotate the AST with inferred type information.
+ *
+ * Parses the given SQL and runs bottom-up type inference, populating the
+ * `inferred_type` field on value-producing AST nodes (columns, operators,
+ * functions, casts, etc.). Use `ast.getInferredType(expr)` to read the
+ * inferred type from any expression node.
+ *
+ * @param sql - The SQL string to parse and annotate
+ * @param dialect - The dialect to use for parsing (default: Generic)
+ * @param schema - Optional schema for column type resolution
+ *
+ * @example
+ * ```typescript
+ * import { annotateTypes, ast, Dialect } from '@polyglot-sql/sdk';
+ *
+ * const result = annotateTypes(
+ *   "SELECT a + b FROM t",
+ *   Dialect.PostgreSQL,
+ *   { tables: { t: { a: "INT", b: "DOUBLE" } } }
+ * );
+ *
+ * if (result.success) {
+ *   // Walk the AST and inspect inferred types
+ *   ast.walk(result.ast![0], (node) => {
+ *     const dt = ast.getInferredType(node);
+ *     if (dt) {
+ *       console.log(ast.getExprType(node), "=>", dt);
+ *     }
+ *   });
+ * }
+ * ```
+ */
+export function annotateTypes(
+  sql: string,
+  dialect: Dialect = Dialect.Generic,
+  schema?: ValidationSchema,
+): AnnotateTypesResult {
+  try {
+    const schemaJson = schema ? JSON.stringify(schema) : '';
+
+    if (typeof wasm.annotate_types_value === 'function') {
+      return decodeWasmPayload<AnnotateTypesResult>(
+        wasm.annotate_types_value(sql, dialect, schemaJson),
+      );
+    }
+
+    if (typeof wasm.annotate_types === 'function') {
+      return JSON.parse(
+        wasm.annotate_types(sql, dialect, schemaJson),
+      ) as AnnotateTypesResult;
+    }
+
+    return {
+      success: false,
+      error: 'annotate_types not available in this WASM build',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: `WASM annotate_types failed: ${errorMessage(error)}`,
+    };
+  }
+}
+
+/**
  * Main Polyglot class for object-oriented usage.
  */
 export class Polyglot {
@@ -528,6 +607,17 @@ export class Polyglot {
   getVersion(): string {
     return getVersion();
   }
+
+  /**
+   * Parse SQL and annotate the AST with inferred type information.
+   */
+  annotateTypes(
+    sql: string,
+    dialect: Dialect = Dialect.Generic,
+    schema?: ValidationSchema,
+  ): AnnotateTypesResult {
+    return annotateTypes(sql, dialect, schema);
+  }
 }
 
 // Re-export AST module (types, guards, helpers, visitor — excluding old builders)
@@ -536,6 +626,7 @@ export * as ast from './ast';
 export {
   findAll,
   getColumns,
+  getInferredType,
   isColumn,
   isFunction,
   isLiteral,
@@ -674,6 +765,7 @@ export default {
   tokenize,
   generate,
   format,
+  annotateTypes,
   getDialects,
   getVersion,
   lineage,

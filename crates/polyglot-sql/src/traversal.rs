@@ -1380,6 +1380,7 @@ mod tests {
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         })
     }
 
@@ -1397,6 +1398,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let nodes: Vec<_> = expr.dfs().collect();
@@ -1416,6 +1418,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let column = expr.find(is_column);
@@ -1437,6 +1440,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let columns = expr.find_all(is_column);
@@ -1453,6 +1457,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         assert!(expr.contains(is_column));
@@ -1472,6 +1477,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let expr = Expression::Eq(Box::new(BinaryOp {
@@ -1480,6 +1486,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         assert_eq!(expr.count(is_column), 2);
@@ -1500,6 +1507,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         assert_eq!(expr.tree_depth(), 1);
 
@@ -1510,6 +1518,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let outer = Expression::Eq(Box::new(BinaryOp {
             left: make_column("a"),
@@ -1517,6 +1526,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         assert_eq!(outer.tree_depth(), 2);
     }
@@ -1531,6 +1541,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let ctx = TreeContext::build(&expr);
@@ -1564,6 +1575,7 @@ mod tests {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }));
                 }
             }
@@ -1644,6 +1656,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let children = expr.children();
         assert_eq!(children.len(), 2);
@@ -1713,6 +1726,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // Find the column child and get its parent
@@ -1762,6 +1776,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let col = expr.find(is_column).unwrap();
@@ -1779,6 +1794,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let outer = Expression::Eq(Box::new(BinaryOp {
             left: make_column("b"),
@@ -1786,6 +1802,7 @@ mod tests {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let ctx = TreeContext::build(&outer);

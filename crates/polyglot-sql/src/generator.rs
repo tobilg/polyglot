@@ -2169,6 +2169,7 @@ impl Generator {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             })),
 
             // Identifier: add alias from identifier name
@@ -2178,6 +2179,7 @@ impl Generator {
                 column_aliases: Vec::new(),
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             })),
 
             // Subquery: recursively process and add alias if inner returns a named column
@@ -19060,6 +19062,7 @@ impl Generator {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })));
                     } else {
                         new_args.push(arg.clone());
@@ -19074,6 +19077,7 @@ impl Generator {
                     no_parens: f.no_parens,
                     quoted: f.quoted,
                     span: None,
+                    inferred_type: None,
                 }))
             }
             _ => expr.clone(),
@@ -25252,6 +25256,7 @@ impl Generator {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     Expression::Year(Box::new(UnaryFunc::new(wrapped)))
                 }
@@ -25267,6 +25272,7 @@ impl Generator {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     Expression::Function(Box::new(Function::new("YEAR".to_string(), vec![wrapped])))
                 }
@@ -27448,6 +27454,7 @@ impl Generator {
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 }));
                 return Some(Expression::Paren(Box::new(Paren {
                     this: mul,

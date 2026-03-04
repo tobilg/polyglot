@@ -479,6 +479,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                             column_aliases: vec![],
                             pre_alias_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         }));
 
                     // For the outer SELECT, replace aliased expressions with just the alias reference
@@ -496,6 +497,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                                     join_mark: false,
                                     trailing_comments: vec![],
                                     span: None,
+                                    inferred_type: None,
                                 })
                             } else {
                                 expr.clone()
@@ -519,6 +521,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: vec![],
+                        inferred_type: None,
                     };
 
                     // Create the outer SELECT with alias-resolved expressions and WHERE _w <op> value
@@ -540,6 +543,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                         column_aliases: vec![],
                         pre_alias_comments: vec![],
                         trailing_comments: vec![],
+                        inferred_type: None,
                     }));
 
                     let original_exprs = select.expressions.clone();
@@ -559,6 +563,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: vec![],
+                        inferred_type: None,
                     };
 
                     let outer_select = Select {
@@ -573,6 +578,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                                 join_mark: false,
                                 trailing_comments: vec![],
                                 span: None,
+                                inferred_type: None,
                             }),
                         }),
                         ..Select::new()
@@ -600,6 +606,7 @@ fn extract_window_from_condition(
         join_mark: false,
         trailing_comments: vec![],
         span: None,
+        inferred_type: None,
     });
 
     // Check if condition is a simple comparison with a window function on one side
@@ -862,6 +869,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                                 "0".to_string(),
                                             ))),
                                             comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         new_exprs.push(crate::expressions::Ordered {
                                             this: null_check,
@@ -903,6 +911,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                 alias: None,
                             },
                             keep: None,
+                            inferred_type: None,
                         }));
 
                     // Build aliased inner expressions and outer column references
@@ -922,6 +931,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
+                                        inferred_type: None,
                                     },
                                 ));
                             }
@@ -934,6 +944,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                         column_aliases: vec![],
                                         pre_alias_comments: vec![],
                                         trailing_comments: vec![],
+                                        inferred_type: None,
                                     },
                                 )));
                                 outer_select_exprs.push(Expression::Column(
@@ -943,6 +954,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
+                                        inferred_type: None,
                                     },
                                 ));
                             }
@@ -962,6 +974,7 @@ pub fn eliminate_distinct_on_for_dialect(
                             column_aliases: vec![],
                             pre_alias_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         }));
                     inner_aliased_exprs.push(row_number_alias_expr);
 
@@ -989,6 +1002,7 @@ pub fn eliminate_distinct_on_for_dialect(
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: vec![],
+                        inferred_type: None,
                     };
 
                     // Create outer SELECT with WHERE _row_number = 1
@@ -1006,11 +1020,13 @@ pub fn eliminate_distinct_on_for_dialect(
                                     join_mark: false,
                                     trailing_comments: vec![],
                                     span: None,
+                                    inferred_type: None,
                                 }),
                                 right: Expression::Literal(Literal::Number("1".to_string())),
                                 left_comments: vec![],
                                 operator_comments: vec![],
                                 trailing_comments: vec![],
+                                inferred_type: None,
                             })),
                         }),
                         ..Select::new()
@@ -1068,6 +1084,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                                     lateral: false,
                                     modifiers_inside: false,
                                     trailing_comments: vec![],
+                                    inferred_type: None,
                                 })),
                                 not: false,
                             }));
@@ -1104,6 +1121,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                                     lateral: false,
                                     modifiers_inside: false,
                                     trailing_comments: vec![],
+                                    inferred_type: None,
                                 })),
                                 not: true,
                             }));
@@ -1131,6 +1149,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                             left_comments: vec![],
                             operator_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         }))
                     })
                     .unwrap();
@@ -1143,6 +1162,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                             left_comments: vec![],
                             operator_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         })),
                     }),
                     None => Some(Where { this: combined }),
@@ -1217,6 +1237,7 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                         }));
 
                         let not_exists = Expression::Not(Box::new(crate::expressions::UnaryOp {
+                            inferred_type: None,
                             this: Expression::Exists(Box::new(Exists {
                                 this: Expression::Subquery(Box::new(Subquery {
                                     this: anti_subquery,
@@ -1231,6 +1252,7 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                                     lateral: false,
                                     modifiers_inside: false,
                                     trailing_comments: vec![],
+                                    inferred_type: None,
                                 })),
                                 not: false,
                             })),
@@ -1245,6 +1267,7 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                                     left_comments: vec![],
                                     operator_comments: vec![],
                                     trailing_comments: vec![],
+                                    inferred_type: None,
                                 })),
                                 None => not_exists,
                             },
@@ -1657,6 +1680,7 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
                             left_comments: vec![],
                             operator_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         }))
                     });
 
@@ -1703,6 +1727,7 @@ pub fn eliminate_join_marks(expr: Expression) -> Result<Expression> {
                         left_comments: vec![],
                         operator_comments: vec![],
                         trailing_comments: vec![],
+                        inferred_type: None,
                     }))
                 });
                 select.where_clause = combined.map(|c| Where { this: c });
@@ -2034,6 +2059,7 @@ fn wrap_neq_zero(expr: Expression) -> Expression {
         left_comments: vec![],
         operator_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     }))
 }
 
@@ -2052,6 +2078,7 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
                 left_comments: op.left_comments.clone(),
                 operator_comments: op.operator_comments.clone(),
                 trailing_comments: op.trailing_comments.clone(),
+                inferred_type: None,
             };
             Expression::And(Box::new(new_op))
         }
@@ -2062,12 +2089,14 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
                 left_comments: op.left_comments.clone(),
                 operator_comments: op.operator_comments.clone(),
                 trailing_comments: op.trailing_comments.clone(),
+                inferred_type: None,
             };
             Expression::Or(Box::new(new_op))
         }
         // For NOT, recursively process the inner expression
         Expression::Not(op) => Expression::Not(Box::new(crate::expressions::UnaryOp {
             this: ensure_bool_condition(op.this.clone()),
+            inferred_type: None,
         })),
         // For Paren, recurse into inner expression
         Expression::Paren(paren) => Expression::Paren(Box::new(crate::expressions::Paren {
@@ -2083,6 +2112,7 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 })),
                 trailing_comments: vec![],
             }))
@@ -2095,6 +2125,7 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 })),
                 trailing_comments: vec![],
             }))
@@ -2418,6 +2449,7 @@ fn try_convert_generate_date_array_with_name(
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))
                         } else {
                             unreachable!()
@@ -2431,6 +2463,7 @@ fn try_convert_generate_date_array_with_name(
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                 }
             };
@@ -2443,6 +2476,7 @@ fn try_convert_generate_date_array_with_name(
                     column_aliases: vec![],
                     pre_alias_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 }))],
                 ..Select::new()
             };
@@ -2485,6 +2519,7 @@ fn try_convert_generate_date_array_with_name(
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 }),
                 interval: add_count,
                 unit: add_unit,
@@ -2497,6 +2532,7 @@ fn try_convert_generate_date_array_with_name(
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }));
 
             let recursive_select = Select {
@@ -2513,6 +2549,7 @@ fn try_convert_generate_date_array_with_name(
                         left_comments: vec![],
                         operator_comments: vec![],
                         trailing_comments: vec![],
+                        inferred_type: None,
                     })),
                 }),
                 ..Select::new()
@@ -2558,6 +2595,7 @@ fn try_convert_generate_date_array_with_name(
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 })],
                 from: Some(From {
                     expressions: vec![Expression::Table(crate::expressions::TableRef::new(
@@ -2580,6 +2618,7 @@ fn try_convert_generate_date_array_with_name(
                 lateral: false,
                 modifiers_inside: false,
                 trailing_comments: vec![],
+                inferred_type: None,
             }));
 
             return Some((cte, replacement));
@@ -2604,6 +2643,7 @@ fn try_convert_generate_date_array_with_name(
                 column_aliases: alias.column_aliases.clone(),
                 pre_alias_comments: alias.pre_alias_comments.clone(),
                 trailing_comments: alias.trailing_comments.clone(),
+                inferred_type: None,
             }));
             return Some((cte, new_alias));
         }
@@ -2711,6 +2751,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
 
             let lower_right = Expression::Function(Box::new(crate::expressions::Function {
@@ -2722,6 +2763,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }));
 
             Ok(Expression::Like(Box::new(crate::expressions::LikeOp {
@@ -2729,6 +2771,7 @@ pub fn no_ilike_sql(expr: Expression) -> Result<Expression> {
                 right: lower_right,
                 escape: ilike.escape,
                 quantifier: ilike.quantifier,
+                inferred_type: None,
             })))
         }
         other => Ok(other),
@@ -2808,6 +2851,7 @@ pub fn unnest_generate_series(expr: Expression) -> Result<Expression> {
                     column_aliases: vec![],
                     pre_alias_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 })));
             }
             Ok(expr)
@@ -2904,6 +2948,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         join_mark: false,
         trailing_comments: vec![],
         span: None,
+        inferred_type: None,
     });
 
     let cast_value = Expression::Cast(Box::new(Cast {
@@ -2913,6 +2958,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         double_colon_syntax: false,
         format: None,
         default: None,
+        inferred_type: None,
     }));
 
     let gen_series_expr = Expression::GenerateSeries(Box::new(gs));
@@ -2924,6 +2970,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         column_aliases: vec![Identifier::new("value".to_string())],
         pre_alias_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     }));
 
     let mut inner_select = Select::new();
@@ -2947,6 +2994,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         lateral: false,
         modifiers_inside: false,
         trailing_comments: vec![],
+        inferred_type: None,
     }));
 
     // Wrap in alias AS _unnested_generate_series
@@ -2956,6 +3004,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
         column_aliases: vec![],
         pre_alias_comments: vec![],
         trailing_comments: vec![],
+        inferred_type: None,
     })))
 }
 
@@ -3085,6 +3134,7 @@ pub fn pushdown_cte_column_names(expr: Expression) -> Result<Expression> {
                                                 column_aliases: Vec::new(),
                                                 pre_alias_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }))
                                         }
                                     }
@@ -3568,6 +3618,7 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                                 column_aliases: Vec::new(),
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
 
                             // UNNEST(x) AS col_name
@@ -3584,6 +3635,7 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                                 column_aliases: Vec::new(),
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
 
                             new_expressions.push(pos_alias);
@@ -3619,6 +3671,7 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
 
                         // UNNEST(x) AS col
@@ -3635,6 +3688,7 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }));
 
                         new_expressions.push(pos_alias);
@@ -3706,6 +3760,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     let unnest = Expression::Unnest(Box::new(UnnestFunc {
                         this: arg,
@@ -3720,6 +3775,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                         column_aliases: Vec::new(),
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
 
                     let mut inner_select = Select::new();
@@ -3738,6 +3794,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                         lateral: false,
                         modifiers_inside: false,
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     new_expressions.push(subquery);
                     _changed = true;
@@ -3769,6 +3826,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let unnest = Expression::Unnest(Box::new(UnnestFunc {
                     this: arg,
@@ -3783,6 +3841,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 let mut inner_select = Select::new();
@@ -3801,6 +3860,7 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 new_expressions.push(subquery);
                 _changed = true;
@@ -3974,6 +4034,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             ],
             pre_alias_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         }));
 
         select.joins.push(Join {
@@ -4019,6 +4080,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             ],
             pre_alias_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         }));
 
         select.joins.push(Join {
@@ -4788,6 +4850,7 @@ fn make_unnest_subquery(unnest: UnnestFunc, alias: Option<Identifier>) -> Expres
         lateral: false,
         modifiers_inside: false,
         trailing_comments: Vec::new(),
+        inferred_type: None,
     };
 
     Expression::Subquery(Box::new(subquery))
@@ -4861,6 +4924,7 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
                     sort_by: None,
                     cluster_by: None,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 };
 
                 // Build SELECT * FROM (UNION) AS _l_0 ORDER BY ... LIMIT ...
@@ -4926,6 +4990,7 @@ pub fn expand_like_any(expr: Expression) -> Result<Expression> {
                             right: val,
                             escape: op.escape.clone(),
                             quantifier: None,
+                            inferred_type: None,
                         }));
                         result = Some(match result {
                             None => like,
@@ -4949,6 +5014,7 @@ pub fn expand_like_any(expr: Expression) -> Result<Expression> {
                             right: val,
                             escape: op.escape.clone(),
                             quantifier: None,
+                            inferred_type: None,
                         }));
                         result = Some(match result {
                             None => ilike,
@@ -4990,6 +5056,7 @@ pub fn qualify_derived_table_outputs(expr: Expression) -> Result<Expression> {
                             column_aliases: Vec::new(),
                             pre_alias_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         }))
                     }
                     // Already aliased or star or other -> keep as is
@@ -5135,6 +5202,7 @@ mod tests {
                 join_mark: false,
                 trailing_comments: vec![],
                 span: None,
+                inferred_type: None,
             }),
             expressions: Vec::new(),
             with_ordinality: false,
@@ -5155,8 +5223,10 @@ mod tests {
                 join_mark: false,
                 trailing_comments: vec![],
                 span: None,
+                inferred_type: None,
             }),
             original_name: None,
+            inferred_type: None,
         }));
 
         let result = explode_to_unnest(explode).unwrap();
@@ -5294,6 +5364,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = remove_precision_parameterized_types(cast_expr).unwrap();
@@ -5323,6 +5394,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = remove_precision_parameterized_types(cast_expr).unwrap();
@@ -5354,6 +5426,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let transformed = remove_precision_parameterized_types(cast).unwrap();
@@ -5377,6 +5450,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = epoch_cast_to_ts(cast_expr).unwrap();
@@ -5404,6 +5478,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = epoch_cast_to_ts(cast_expr).unwrap();
@@ -5427,6 +5502,7 @@ mod tests {
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         });
 
         let result = unqualify_columns(col).unwrap();
@@ -5471,6 +5547,7 @@ mod tests {
                 join_mark: false,
                 trailing_comments: vec![],
                 span: None,
+                inferred_type: None,
             })],
             from: Some(From {
                 expressions: vec![Expression::Table(TableRef::new("t1"))],
@@ -5485,6 +5562,7 @@ mod tests {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     right: Expression::Column(Column {
                         name: Identifier::new("y".to_string()),
@@ -5492,10 +5570,12 @@ mod tests {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 }))),
                 using: vec![],
                 use_inner_keyword: false,
@@ -5534,10 +5614,12 @@ mod tests {
                 join_mark: false,
                 trailing_comments: vec![],
                 span: None,
+                inferred_type: None,
             }),
             right: Expression::Literal(Literal::String("%test%".to_string())),
             escape: None,
             quantifier: None,
+            inferred_type: None,
         }));
 
         let result = no_ilike_sql(ilike_expr).unwrap();
@@ -5572,6 +5654,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = no_trycast_sql(trycast_expr).unwrap();
@@ -5591,6 +5674,7 @@ mod tests {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
 
         let result = no_safe_cast_sql(safe_cast_expr).unwrap();

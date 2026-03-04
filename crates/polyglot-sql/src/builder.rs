@@ -141,6 +141,7 @@ pub fn col(name: &str) -> Expr {
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
+            inferred_type: None,
         }))
     } else {
         Expr(Expression::Column(Column {
@@ -149,6 +150,7 @@ pub fn col(name: &str) -> Expr {
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
+            inferred_type: None,
         }))
     }
 }
@@ -255,6 +257,7 @@ pub fn cast(expr: Expr, to: &str) -> Expr {
         double_colon_syntax: false,
         format: None,
         default: None,
+        inferred_type: None,
     })))
 }
 
@@ -293,6 +296,7 @@ pub fn alias(expr: Expr, name: &str) -> Expr {
         column_aliases: Vec::new(),
         pre_alias_comments: Vec::new(),
         trailing_comments: Vec::new(),
+        inferred_type: None,
     })))
 }
 
@@ -395,6 +399,7 @@ pub fn sum(expr: Expr) -> Expr {
         ignore_nulls: None,
         having_max: None,
         limit: None,
+        inferred_type: None,
     })))
 }
 
@@ -409,6 +414,7 @@ pub fn avg(expr: Expr) -> Expr {
         ignore_nulls: None,
         having_max: None,
         limit: None,
+        inferred_type: None,
     })))
 }
 
@@ -423,6 +429,7 @@ pub fn min_(expr: Expr) -> Expr {
         ignore_nulls: None,
         having_max: None,
         limit: None,
+        inferred_type: None,
     })))
 }
 
@@ -437,6 +444,7 @@ pub fn max_(expr: Expr) -> Expr {
         ignore_nulls: None,
         having_max: None,
         limit: None,
+        inferred_type: None,
     })))
 }
 
@@ -451,6 +459,7 @@ pub fn approx_distinct(expr: Expr) -> Expr {
         ignore_nulls: None,
         having_max: None,
         limit: None,
+        inferred_type: None,
     })))
 }
 
@@ -537,6 +546,7 @@ pub fn coalesce(exprs: impl IntoIterator<Item = Expr>) -> Expr {
     Expr(Expression::Coalesce(Box::new(VarArgFunc {
         expressions: exprs.into_iter().map(|e| e.0).collect(),
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -546,6 +556,7 @@ pub fn null_if(expr1: Expr, expr2: Expr) -> Expr {
         this: expr1.0,
         expression: expr2.0,
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -555,6 +566,7 @@ pub fn if_null(expr: Expr, fallback: Expr) -> Expr {
         this: expr.0,
         expression: fallback.0,
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -597,6 +609,7 @@ pub fn power(base: Expr, exponent: Expr) -> Expr {
         this: base.0,
         expression: exponent.0,
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -625,6 +638,7 @@ pub fn greatest(exprs: impl IntoIterator<Item = Expr>) -> Expr {
     Expr(Expression::Greatest(Box::new(VarArgFunc {
         expressions: exprs.into_iter().map(|e| e.0).collect(),
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -633,6 +647,7 @@ pub fn least(exprs: impl IntoIterator<Item = Expr>) -> Expr {
     Expr(Expression::Least(Box::new(VarArgFunc {
         expressions: exprs.into_iter().map(|e| e.0).collect(),
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -1023,6 +1038,7 @@ impl Expr {
             left_comments: Vec::new(),
             operator_comments: Vec::new(),
             trailing_comments: Vec::new(),
+            inferred_type: None,
         })))
     }
 
@@ -1035,6 +1051,7 @@ impl Expr {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }),
         )))))
     }
@@ -1072,6 +1089,7 @@ impl Expr {
             right: pattern.0,
             escape: None,
             quantifier: None,
+            inferred_type: None,
         })))
     }
 
@@ -1124,6 +1142,7 @@ impl Expr {
             right: pattern.0,
             escape: None,
             quantifier: None,
+            inferred_type: None,
         })))
     }
 
@@ -1886,6 +1905,7 @@ impl CaseBuilder {
             whens: self.whens,
             else_: self.else_,
             comments: Vec::new(),
+            inferred_type: None,
         }))
     }
 }
@@ -1935,6 +1955,7 @@ pub fn subquery_expr(expr: Expression, alias_name: &str) -> Expr {
         lateral: false,
         modifiers_inside: true,
         trailing_comments: Vec::new(),
+        inferred_type: None,
     })))
 }
 
@@ -2361,6 +2382,7 @@ fn binary_op(left: Expression, right: Expression) -> BinaryOp {
         left_comments: Vec::new(),
         operator_comments: Vec::new(),
         trailing_comments: Vec::new(),
+        inferred_type: None,
     }
 }
 
@@ -2424,11 +2446,13 @@ impl MergeBuilder {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }),
                     right: val.0,
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))
             })
             .collect();
@@ -2470,11 +2494,13 @@ impl MergeBuilder {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     }),
                     right: val.0,
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))
             })
             .collect();
@@ -2529,6 +2555,7 @@ impl MergeBuilder {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 })
             })
             .collect();

@@ -14,6 +14,7 @@ export {
   type ExpressionType,
   getExprData,
   getExprType,
+  getInferredType,
   isExpressionValue,
   makeExpr,
 } from './helpers';

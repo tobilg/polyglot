@@ -129,6 +129,7 @@ impl DialectImpl for FabricDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
 
                     // Create new AT TIME ZONE with DATETIMEOFFSET
@@ -148,6 +149,7 @@ impl DialectImpl for FabricDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
             }
@@ -163,6 +165,7 @@ impl DialectImpl for FabricDialect {
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }));
 
             // Build: ROUND(column * 1e6, 0)
@@ -182,6 +185,7 @@ impl DialectImpl for FabricDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }));
 
             // Build: CAST('1970-01-01' AS DATETIME2(6))
@@ -194,6 +198,7 @@ impl DialectImpl for FabricDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }));
 
             // Build: DATEADD(MICROSECONDS, cast_to_bigint, epoch_start)
@@ -222,6 +227,7 @@ impl DialectImpl for FabricDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
 
                 // Build: ROUND(column * 1e6, 0)
@@ -241,6 +247,7 @@ impl DialectImpl for FabricDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
 
                 // Build: CAST('1970-01-01' AS DATETIME2(6))
@@ -253,6 +260,7 @@ impl DialectImpl for FabricDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
 
                 // Build: DATEADD(MICROSECONDS, cast_to_bigint, epoch_start)

@@ -86,12 +86,14 @@ impl DialectImpl for DatabricksDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in Databricks
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // TryCast is native in Databricks
@@ -154,7 +156,7 @@ impl DialectImpl for DatabricksDialect {
                     }
                     other => other,
                 };
-                let neg_val = Expression::Neg(Box::new(crate::expressions::UnaryOp { this: val }));
+                let neg_val = Expression::Neg(Box::new(crate::expressions::UnaryOp { this: val, inferred_type: None }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_ADD".to_string(),
                     vec![f.this, neg_val],
@@ -175,18 +177,21 @@ impl DatabricksDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ROW -> STRUCT (no auto-naming for cross-dialect conversion)
@@ -607,6 +612,7 @@ impl DatabricksDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 };
 
@@ -780,6 +786,7 @@ impl DatabricksDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -810,6 +817,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 // Create outer cast: CAST(inner_cast AS TIMESTAMP)
                 Ok(Expression::Cast(Box::new(Cast {
@@ -822,6 +830,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             // DATE 'value'::TYPE -> CAST(CAST('value' AS TYPE) AS DATE)
@@ -833,6 +842,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: inner_cast,
@@ -841,6 +851,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             // TIME 'value'::TYPE -> CAST(CAST('value' AS TYPE) AS TIME)
@@ -852,6 +863,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: inner_cast,
@@ -863,6 +875,7 @@ impl DatabricksDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
             // For all other cases, pass through the Cast unchanged

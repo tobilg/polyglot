@@ -125,6 +125,7 @@ fn normalize_expression(expression: Expression, strategy: NormalizationStrategy)
             join_mark: col.join_mark,
             trailing_comments: col.trailing_comments,
             span: None,
+            inferred_type: None,
         }),
         Expression::Table(mut table) => {
             table.name = normalize_identifier(table.name, strategy);
@@ -439,6 +440,7 @@ mod tests {
             join_mark: false,
             trailing_comments: vec![],
             span: None,
+            inferred_type: None,
         });
 
         let normalized = normalize_expression(col, NormalizationStrategy::Lowercase);

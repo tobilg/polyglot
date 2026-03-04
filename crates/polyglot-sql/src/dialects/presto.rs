@@ -50,12 +50,14 @@ impl DialectImpl for PrestoDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in Presto
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // TryCast stays as TryCast (Presto supports TRY_CAST)
@@ -73,6 +75,7 @@ impl DialectImpl for PrestoDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier.clone(),
+                    inferred_type: None,
                 })))
             }
 
@@ -202,6 +205,7 @@ impl DialectImpl for PrestoDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                 }
                 Ok(Expression::Div(op))
@@ -219,6 +223,7 @@ impl DialectImpl for PrestoDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }));
                 let div_expr = Expression::Div(Box::new(BinaryOp::new(cast_x, f.expression)));
                 Ok(Expression::Cast(Box::new(Cast {
@@ -231,6 +236,7 @@ impl DialectImpl for PrestoDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -265,6 +271,7 @@ impl PrestoDialect {
                         join_mark: c.join_mark,
                         trailing_comments: c.trailing_comments,
                         span: None,
+                        inferred_type: None,
                     })
                 } else {
                     Expression::Column(c)
@@ -277,6 +284,7 @@ impl PrestoDialect {
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
+                inferred_type: None,
             }),
             // Recursively walk common binary expression types
             Expression::And(mut op) => {
@@ -489,18 +497,21 @@ impl PrestoDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
@@ -651,6 +662,7 @@ impl PrestoDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     // With format: use DATE_PARSE
@@ -674,6 +686,7 @@ impl PrestoDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -840,6 +853,7 @@ impl PrestoDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "TO_UNIXTIME".to_string(),
@@ -859,6 +873,7 @@ impl PrestoDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let unixtime = Expression::Function(Box::new(Function::new(
                             "TO_UNIXTIME".to_string(),
@@ -870,6 +885,7 @@ impl PrestoDialect {
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
+                            inferred_type: None,
                         })))
                     }
                     _ => Ok(Expression::Function(Box::new(f))),
@@ -915,6 +931,7 @@ impl PrestoDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -925,6 +942,7 @@ impl PrestoDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1001,6 +1019,7 @@ impl PrestoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1014,6 +1033,7 @@ impl PrestoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 })))
             }
 

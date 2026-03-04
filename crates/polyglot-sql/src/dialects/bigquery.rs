@@ -137,6 +137,7 @@ impl DialectImpl for BigQueryDialect {
                     double_colon_syntax: c.double_colon_syntax,
                     format: c.format,
                     default: c.default,
+                    inferred_type: None,
                 })))
             }
 
@@ -150,6 +151,7 @@ impl DialectImpl for BigQueryDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier,
+                    inferred_type: None,
                 })))
             }
 
@@ -330,6 +332,7 @@ impl DialectImpl for BigQueryDialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "TIMESTAMP_SECONDS".to_string(),
@@ -553,6 +556,7 @@ impl DialectImpl for BigQueryDialect {
                     double_colon_syntax: c.double_colon_syntax,
                     format: c.format,
                     default: c.default,
+                    inferred_type: None,
                 })))
             }
 
@@ -569,6 +573,7 @@ impl DialectImpl for BigQueryDialect {
                     double_colon_syntax: c.double_colon_syntax,
                     format: c.format,
                     default: c.default,
+                    inferred_type: None,
                 })))
             }
 
@@ -604,6 +609,7 @@ impl DialectImpl for BigQueryDialect {
                                         join_mark: false,
                                         trailing_comments: Vec::new(),
                                         span: None,
+                                        inferred_type: None,
                                     });
                                     break;
                                 }
@@ -633,6 +639,7 @@ impl DialectImpl for BigQueryDialect {
                     column_aliases: Vec::new(),
                     pre_alias_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let col_ref = Expression::Column(Column {
                     name: Identifier::new("_col"),
@@ -640,6 +647,7 @@ impl DialectImpl for BigQueryDialect {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 });
                 let where_clause = Where {
                     this: Expression::Eq(Box::new(BinaryOp {
@@ -648,6 +656,7 @@ impl DialectImpl for BigQueryDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })),
                 };
                 let inner_select = Expression::Select(Box::new(Select {
@@ -906,18 +915,21 @@ impl BigQueryDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GROUP_CONCAT -> STRING_AGG in BigQuery
@@ -952,6 +964,7 @@ impl BigQueryDialect {
                 no_parens: false,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // NOW -> CURRENT_TIMESTAMP in BigQuery
@@ -1272,6 +1285,7 @@ impl BigQueryDialect {
                     quoted: f.quoted,
                     use_bracket_syntax: f.use_bracket_syntax,
                     span: None,
+                    inferred_type: None,
                 })))
             }
 

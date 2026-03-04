@@ -142,12 +142,14 @@ impl DialectImpl for PostgresDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in PostgreSQL
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -276,6 +278,7 @@ impl DialectImpl for PostgresDialect {
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Boolean(BooleanLiteral { value: false }))
@@ -294,6 +297,7 @@ impl DialectImpl for PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -324,6 +328,7 @@ impl DialectImpl for PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -342,6 +347,7 @@ impl DialectImpl for PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -363,6 +369,7 @@ impl DialectImpl for PostgresDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 };
 
@@ -375,6 +382,7 @@ impl DialectImpl for PostgresDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }))
                 };
 
@@ -598,6 +606,7 @@ impl DialectImpl for PostgresDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -608,6 +617,7 @@ impl DialectImpl for PostgresDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -705,6 +715,7 @@ impl DialectImpl for PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let minus_day = Expression::Sub(Box::new(BinaryOp {
                     left: plus_month,
@@ -718,6 +729,7 @@ impl DialectImpl for PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Cast(Box::new(Cast {
                     this: minus_day,
@@ -726,6 +738,7 @@ impl DialectImpl for PostgresDialect {
                     double_colon_syntax: true, // Use PostgreSQL :: syntax
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -757,6 +770,7 @@ impl DialectImpl for PostgresDialect {
                 no_parens: true,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // CurrentUser -> CURRENT_USER (no parens)
@@ -775,6 +789,7 @@ impl DialectImpl for PostgresDialect {
                 no_parens: true,
                 quoted: false,
                 span: None,
+                inferred_type: None,
             }))),
 
             // ============================================
@@ -920,6 +935,7 @@ impl DialectImpl for PostgresDialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             }))),
 
             // Pass through everything else
@@ -1013,18 +1029,21 @@ impl PostgresDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL (SQL Server) -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GROUP_CONCAT -> STRING_AGG in PostgreSQL
@@ -1052,12 +1071,14 @@ impl PostgresDialect {
             "LEN" if f.args.len() == 1 => Ok(Expression::Length(Box::new(UnaryFunc {
                 this: f.args.into_iter().next().unwrap(),
                 original_name: None,
+                inferred_type: None,
             }))),
 
             // CHAR_LENGTH -> LENGTH in PostgreSQL
             "CHAR_LENGTH" if f.args.len() == 1 => Ok(Expression::Length(Box::new(UnaryFunc {
                 this: f.args.into_iter().next().unwrap(),
                 original_name: None,
+                inferred_type: None,
             }))),
 
             // CHARACTER_LENGTH -> LENGTH in PostgreSQL
@@ -1065,6 +1086,7 @@ impl PostgresDialect {
                 Ok(Expression::Length(Box::new(UnaryFunc {
                     this: f.args.into_iter().next().unwrap(),
                     original_name: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1205,6 +1227,7 @@ impl PostgresDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }))
                     };
 
@@ -1217,6 +1240,7 @@ impl PostgresDialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }))
                     };
 
@@ -1393,6 +1417,7 @@ impl PostgresDialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 })))
             }
 
@@ -1479,6 +1504,7 @@ impl PostgresDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -1489,6 +1515,7 @@ impl PostgresDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -1507,6 +1534,7 @@ impl PostgresDialect {
                 order_by: Vec::new(),
                 name: None,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // STDEVP -> STDDEV_POP in PostgreSQL
@@ -1519,6 +1547,7 @@ impl PostgresDialect {
                 order_by: Vec::new(),
                 name: None,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // VAR -> VAR_SAMP in PostgreSQL
@@ -1531,6 +1560,7 @@ impl PostgresDialect {
                 order_by: Vec::new(),
                 name: None,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // VARP -> VAR_POP in PostgreSQL
@@ -1543,6 +1573,7 @@ impl PostgresDialect {
                 order_by: Vec::new(),
                 name: None,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // BIT_AND is native to PostgreSQL
@@ -1570,6 +1601,7 @@ impl PostgresDialect {
                 order_by: Vec::new(),
                 name: None,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // LOGICAL_OR -> BOOL_OR in PostgreSQL

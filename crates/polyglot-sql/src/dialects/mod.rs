@@ -554,6 +554,7 @@ where
                 left_comments: $op.left_comments,
                 operator_comments: $op.operator_comments,
                 trailing_comments: $op.trailing_comments,
+                inferred_type: $op.inferred_type,
             }))
         }};
     }
@@ -2454,6 +2455,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             return Ok(Expression::Function(Box::new(
@@ -2466,6 +2468,7 @@ impl Dialect {
                                                     no_parens: f.no_parens,
                                                     quoted: f.quoted,
                                                     span: None,
+                                                    inferred_type: None,
                                                 },
                                             )));
                                         }
@@ -2609,6 +2612,7 @@ impl Dialect {
                                     order_by: Vec::new(),
                                     limit: None,
                                     ignore_nulls: None,
+                                    inferred_type: None,
                                 },
                             )))
                         } else {
@@ -2765,6 +2769,7 @@ impl Dialect {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     start_expr.clone(),
                     end_expr.clone(),
@@ -2777,6 +2782,7 @@ impl Dialect {
                 left_comments: vec![],
                 operator_comments: vec![],
                 trailing_comments: vec![],
+                inferred_type: None,
             }));
             let minus_one = Expression::Sub(Box::new(BinaryOp {
                 left: plus_one,
@@ -2784,6 +2790,7 @@ impl Dialect {
                 left_comments: vec![],
                 operator_comments: vec![],
                 trailing_comments: vec![],
+                inferred_type: None,
             }));
             let paren_inner = Expression::Paren(Box::new(Paren {
                 this: minus_one,
@@ -2795,6 +2802,7 @@ impl Dialect {
                 left_comments: vec![],
                 operator_comments: vec![],
                 trailing_comments: vec![],
+                inferred_type: None,
             }));
 
             let array_gen_range = Expression::Function(Box::new(Function::new(
@@ -2830,6 +2838,7 @@ impl Dialect {
                 ],
                 pre_alias_comments: vec![],
                 trailing_comments: vec![],
+                inferred_type: None,
             };
             let lateral_expr = Expression::Lateral(Box::new(Lateral {
                 this: Box::new(Expression::Alias(Box::new(alias_table))),
@@ -2858,6 +2867,7 @@ impl Dialect {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     Expression::Cast(Box::new(Cast {
                         this: Expression::Column(Column {
@@ -2866,6 +2876,7 @@ impl Dialect {
                             join_mark: false,
                             trailing_comments: vec![],
                             span: None,
+                            inferred_type: None,
                         }),
                         to: DataType::Int {
                             length: None,
@@ -2875,6 +2886,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                     Expression::Cast(Box::new(Cast {
                         this: start_expr.clone(),
@@ -2883,6 +2895,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })),
                 ],
             )));
@@ -2915,6 +2928,7 @@ impl Dialect {
                     column_aliases: vec![],
                     pre_alias_comments: vec![],
                     trailing_comments: vec![],
+                    inferred_type: None,
                 }))
             }
             Expression::Alias(a) => {
@@ -2926,6 +2940,7 @@ impl Dialect {
                     column_aliases: a.column_aliases.clone(),
                     pre_alias_comments: a.pre_alias_comments.clone(),
                     trailing_comments: a.trailing_comments.clone(),
+                    inferred_type: None,
                 }))
             }
             _ => expr.clone(),
@@ -2952,6 +2967,7 @@ impl Dialect {
                     left_comments: op.left_comments.clone(),
                     operator_comments: op.operator_comments.clone(),
                     trailing_comments: op.trailing_comments.clone(),
+                    inferred_type: None,
                 }))
             }
             Expression::Sub(op) => {
@@ -2963,6 +2979,7 @@ impl Dialect {
                     left_comments: op.left_comments.clone(),
                     operator_comments: op.operator_comments.clone(),
                     trailing_comments: op.trailing_comments.clone(),
+                    inferred_type: None,
                 }))
             }
             Expression::Mul(op) => {
@@ -2974,6 +2991,7 @@ impl Dialect {
                     left_comments: op.left_comments.clone(),
                     operator_comments: op.operator_comments.clone(),
                     trailing_comments: op.trailing_comments.clone(),
+                    inferred_type: None,
                 }))
             }
             _ => expr.clone(),
@@ -3074,6 +3092,7 @@ impl Dialect {
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 }),
                 start_expr.clone(),
                 end_expr.clone(),
@@ -3086,6 +3105,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let minus_one = Expression::Sub(Box::new(BinaryOp {
             left: plus_one,
@@ -3093,6 +3113,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let paren_inner = Expression::Paren(Box::new(Paren {
             this: minus_one,
@@ -3104,6 +3125,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let array_gen_range = Expression::Function(Box::new(Function::new(
@@ -3147,6 +3169,7 @@ impl Dialect {
             ],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // SELECT DATEADD(unit, CAST(col_name AS INT), CAST(start AS DATE)) AS col_name
@@ -3159,6 +3182,7 @@ impl Dialect {
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 }),
                 Expression::Cast(Box::new(Cast {
                     this: Expression::Column(Column {
@@ -3167,6 +3191,7 @@ impl Dialect {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     to: DataType::Int {
                         length: None,
@@ -3176,6 +3201,7 @@ impl Dialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })),
                 // Use start_expr directly - it's already been normalized (DATE literal -> CAST)
                 start_expr.clone(),
@@ -3187,6 +3213,7 @@ impl Dialect {
             column_aliases: vec![],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // Build inner SELECT
@@ -3210,6 +3237,7 @@ impl Dialect {
             lateral: false,
             modifiers_inside: false,
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // If there was an outer alias (e.g., AS _q(date_week)), wrap with alias
@@ -3220,6 +3248,7 @@ impl Dialect {
                 column_aliases: col_aliases,
                 pre_alias_comments: vec![],
                 trailing_comments: vec![],
+                inferred_type: None,
             }))
         } else {
             subquery
@@ -3255,6 +3284,7 @@ impl Dialect {
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 }),
                 start_expr.clone(),
                 end_expr.clone(),
@@ -3266,6 +3296,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let minus_one = Expression::Sub(Box::new(BinaryOp {
             left: plus_one,
@@ -3273,6 +3304,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
         let paren_inner = Expression::Paren(Box::new(Paren {
             this: minus_one,
@@ -3284,6 +3316,7 @@ impl Dialect {
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let array_gen_range = Expression::Function(Box::new(Function::new(
@@ -3319,6 +3352,7 @@ impl Dialect {
             ],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         let dateadd_expr = Expression::Function(Box::new(Function::new(
@@ -3330,6 +3364,7 @@ impl Dialect {
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
+                    inferred_type: None,
                 }),
                 Expression::Cast(Box::new(Cast {
                     this: Expression::Column(Column {
@@ -3338,6 +3373,7 @@ impl Dialect {
                         join_mark: false,
                         trailing_comments: vec![],
                         span: None,
+                        inferred_type: None,
                     }),
                     to: DataType::Int {
                         length: None,
@@ -3347,6 +3383,7 @@ impl Dialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })),
                 start_expr.clone(),
             ],
@@ -3357,6 +3394,7 @@ impl Dialect {
             column_aliases: vec![],
             pre_alias_comments: vec![],
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // Inner SELECT: SELECT DATEADD(...) AS value FROM TABLE(FLATTEN(...)) AS _t0(...)
@@ -3380,6 +3418,7 @@ impl Dialect {
             lateral: false,
             modifiers_inside: false,
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // Outer: SELECT ARRAY_AGG(*) FROM (inner_subquery)
@@ -3400,6 +3439,7 @@ impl Dialect {
             ignore_nulls: None,
             having_max: None,
             limit: None,
+            inferred_type: None,
         }));
 
         let mut outer_select = Select::new();
@@ -3422,6 +3462,7 @@ impl Dialect {
             lateral: false,
             modifiers_inside: false,
             trailing_comments: vec![],
+            inferred_type: None,
         }));
 
         // ARRAY_SIZE(subquery)
@@ -3781,6 +3822,7 @@ impl Dialect {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 })
                             })
                             .collect();
@@ -3989,6 +4031,7 @@ impl Dialect {
                                     lateral: false,
                                     modifiers_inside: false,
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                             let mut new_select = crate::expressions::Select::new();
                             new_select.expressions =
@@ -4469,6 +4512,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     let octet_length = Expression::Function(Box::new(Function::new(
                         "OCTET_LENGTH".to_string(),
@@ -4481,10 +4525,12 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     let length_text = Expression::Length(Box::new(crate::expressions::UnaryFunc {
                         this: text_cast,
                         original_name: None,
+                        inferred_type: None,
                     }));
                     return Ok(Expression::Case(Box::new(Case {
                         operand: Some(typeof_func),
@@ -4494,6 +4540,7 @@ impl Dialect {
                         )],
                         else_: Some(length_text),
                         comments: Vec::new(),
+                        inferred_type: None,
                     })));
                 }
             }
@@ -4595,6 +4642,7 @@ impl Dialect {
                                     distribute_by: None,
                                     sort_by: None,
                                     cluster_by: None,
+                                    inferred_type: None,
                                 }));
                             return Ok(subquery);
                         }
@@ -4664,6 +4712,7 @@ impl Dialect {
                                                         join_mark: false,
                                                         trailing_comments: vec![],
                                                         span: None,
+                                                        inferred_type: None,
                                                     },
                                                 );
                                                 let unnest_expr = Expression::Unnest(Box::new(
@@ -4690,6 +4739,7 @@ impl Dialect {
                                                                 column_aliases: vec![alias.clone()],
                                                                 pre_alias_comments: vec![],
                                                                 trailing_comments: vec![],
+                                                                inferred_type: None,
                                                             },
                                                         ))
                                                     } else {
@@ -4701,6 +4751,7 @@ impl Dialect {
                                                                 column_aliases: vec![],
                                                                 pre_alias_comments: vec![],
                                                                 trailing_comments: vec![],
+                                                                inferred_type: None,
                                                             },
                                                         ))
                                                     }
@@ -5001,6 +5052,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                     }
@@ -5079,6 +5131,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })));
                 }
             }
@@ -5213,6 +5266,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let new_op = crate::expressions::BinaryOp {
                             left: cast_left,
@@ -5220,6 +5274,7 @@ impl Dialect {
                             left_comments: op.left_comments.clone(),
                             operator_comments: op.operator_comments.clone(),
                             trailing_comments: op.trailing_comments.clone(),
+                            inferred_type: None,
                         };
                         return Ok(Expression::Div(Box::new(new_op)));
                     }
@@ -7184,6 +7239,7 @@ impl Dialect {
                                 right: lower_right,
                                 escape: like.escape,
                                 quantifier: like.quantifier,
+                                inferred_type: None,
                             })));
                         }
                     }
@@ -7261,6 +7317,7 @@ impl Dialect {
                                 return Ok(Expression::Not(Box::new(
                                     crate::expressions::UnaryOp {
                                         this: itf.this.clone(),
+                                        inferred_type: None,
                                     },
                                 )));
                             }
@@ -7269,6 +7326,7 @@ impl Dialect {
                                 return Ok(Expression::Not(Box::new(
                                     crate::expressions::UnaryOp {
                                         this: itf.this.clone(),
+                                        inferred_type: None,
                                     },
                                 )));
                             }
@@ -7277,9 +7335,10 @@ impl Dialect {
                                 let not_x =
                                     Expression::Not(Box::new(crate::expressions::UnaryOp {
                                         this: itf.this.clone(),
+                                        inferred_type: None,
                                     }));
                                 return Ok(Expression::Not(Box::new(
-                                    crate::expressions::UnaryOp { this: not_x },
+                                    crate::expressions::UnaryOp { this: not_x, inferred_type: None },
                                 )));
                             }
                             _ => {}
@@ -7297,6 +7356,7 @@ impl Dialect {
                                                 not: false,
                                             },
                                         )),
+                                        inferred_type: None,
                                     },
                                 )));
                             }
@@ -7362,6 +7422,7 @@ impl Dialect {
                             f.name, f.args,
                         )))),
                         comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 }
 
@@ -7460,6 +7521,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::IfFunc(Box::new(crate::expressions::IfFunc {
                             condition: if_func.condition,
@@ -7524,6 +7586,7 @@ impl Dialect {
                             ignore_nulls: inner_agg.ignore_nulls,
                             having_max: inner_agg.having_max,
                             limit: inner_agg.limit,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(Expression::WithinGroup(Box::new(wg)))
@@ -7643,6 +7706,7 @@ impl Dialect {
                                     lateral: false,
                                     modifiers_inside: false,
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 },
                             )))
                         } else {
@@ -7711,6 +7775,7 @@ impl Dialect {
                                 whens,
                                 else_: Some(tuple_expr),
                                 comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             Ok(Expression::Count(Box::new(crate::expressions::CountFunc {
                                 this: Some(case_expr),
@@ -7782,6 +7847,7 @@ impl Dialect {
                             trailing_comments: vec![],
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -7810,6 +7876,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let add_expr =
                                         Expression::Add(Box::new(BinaryOp::new(date_expr, d.this)));
@@ -7824,6 +7891,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     let inner = Expression::DateTrunc(Box::new(*d));
@@ -7834,6 +7902,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             } else {
@@ -7860,6 +7929,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let mut args = f.args;
                                     let unit_arg = args.remove(0);
@@ -7878,6 +7948,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // Wrap the function in CAST
@@ -7888,6 +7959,7 @@ impl Dialect {
                                         trailing_comments: vec![],
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             } else {
@@ -8087,6 +8159,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }));
                             let cast_div = Expression::Div(Box::new(BinaryOp::new(
                                 cast_x,
@@ -8125,6 +8198,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }));
                             let y_paren = match &y {
                                 Expression::Column(_)
@@ -8142,6 +8216,7 @@ impl Dialect {
                                 whens: vec![(condition, cast_div)],
                                 else_: Some(Expression::Null(Null)),
                                 comments: Vec::new(),
+                                inferred_type: None,
                             })))
                         } else if matches!(target, DialectType::DuckDB) {
                             // DuckDB: CASE WHEN y <> 0 THEN x / y ELSE NULL END
@@ -8150,6 +8225,7 @@ impl Dialect {
                                 whens: vec![(condition, div_expr)],
                                 else_: Some(Expression::Null(Null)),
                                 comments: Vec::new(),
+                                inferred_type: None,
                             })))
                         } else if matches!(target, DialectType::Snowflake) {
                             // Snowflake: IFF(y <> 0, x / y, NULL)
@@ -8223,6 +8299,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             DialectType::Presto => {
@@ -8326,6 +8403,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })))
                         }
                         _ => Ok(e),
@@ -8372,6 +8450,7 @@ impl Dialect {
                                 Ok(Expression::Lower(Box::new(crate::expressions::UnaryFunc {
                                     this: other,
                                     original_name: None,
+                                    inferred_type: None,
                                 })))
                             }
                         }
@@ -8526,6 +8605,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))),
                                 }
                             }
@@ -8690,6 +8770,7 @@ impl Dialect {
                                                 ],
                                                 else_: Some(Expression::number(0)),
                                                 comments: Vec::new(),
+                                                inferred_type: None,
                                             })),
                                             colon: false,
                                             parameter_types: Vec::new(),
@@ -9079,12 +9160,14 @@ impl Dialect {
                                                             Expression::Neg(Box::new(
                                                                 crate::expressions::UnaryOp {
                                                                     this: Expression::number(1),
+                                                                    inferred_type: None,
                                                                 },
                                                             )),
                                                         ),
                                                     ],
                                                     else_: Some(Expression::number(0)),
                                                     comments: Vec::new(),
+                                                    inferred_type: None,
                                                 })),
                                             },
                                         ));
@@ -9625,6 +9708,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 };
 
@@ -9666,6 +9750,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         let date = cast_to_date(cast_ts);
                                         let date = if let Some(offset) = month_offset {
@@ -9739,6 +9824,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::DuckDB => {
@@ -9883,6 +9969,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         let date = if let Some(offset) = month_offset {
                                             Expression::Function(Box::new(Function::new(
@@ -10423,6 +10510,7 @@ impl Dialect {
                                     no_parens: f.no_parens,
                                     quoted: f.quoted,
                                     span: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // TSQL JSON_QUERY/JSON_VALUE -> target-specific
@@ -10483,6 +10571,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }));
                                         let date_parse =
                                             Expression::Function(Box::new(Function::new(
@@ -10597,6 +10686,7 @@ impl Dialect {
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
                                                     span: None,
+                                                    inferred_type: None,
                                                 });
                                             let b =
                                                 Expression::Column(crate::expressions::Column {
@@ -10605,6 +10695,7 @@ impl Dialect {
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
                                                     span: None,
+                                                    inferred_type: None,
                                                 });
                                             let case_expr = Expression::Case(Box::new(
                                                 crate::expressions::Case {
@@ -10631,6 +10722,7 @@ impl Dialect {
                                                         Literal::Number("0".to_string()),
                                                     )),
                                                     comments: Vec::new(),
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             let lambda = Expression::Lambda(Box::new(
@@ -10695,6 +10787,7 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "LEFT".to_string(),
@@ -10759,6 +10852,7 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "RIGHT".to_string(),
@@ -10804,6 +10898,7 @@ impl Dialect {
                                     right: pattern,
                                     escape,
                                     quantifier: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // ILIKE(foo, 'pat') -> foo ILIKE 'pat'
@@ -10820,6 +10915,7 @@ impl Dialect {
                                     right: pattern,
                                     escape,
                                     quantifier: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // CHAR(n) -> CHR(n) for non-MySQL/non-TSQL targets
@@ -11041,6 +11137,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // DBMS_RANDOM.VALUE() -> RANDOM() for PostgreSQL
@@ -11092,6 +11189,7 @@ impl Dialect {
                                                 trailing_comments: Vec::new(),
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         };
                                         Ok(Expression::Function(Box::new(Function::new(
@@ -11571,6 +11669,7 @@ impl Dialect {
                                                         double_colon_syntax: false,
                                                         format: None,
                                                         default: None,
+                                                        inferred_type: None,
                                                     },
                                                 ))
                                             } else {
@@ -11582,6 +11681,7 @@ impl Dialect {
                                                         double_colon_syntax: false,
                                                         format: None,
                                                         default: None,
+                                                        inferred_type: None,
                                                     },
                                                 ))
                                             };
@@ -11654,6 +11754,7 @@ impl Dialect {
                                                                 double_colon_syntax: false,
                                                                 format: None,
                                                                 default: None,
+                                                                inferred_type: None,
                                                             },
                                                         )));
                                                     }
@@ -11707,6 +11808,7 @@ impl Dialect {
                                                                 double_colon_syntax: false,
                                                                 format: None,
                                                                 default: None,
+                                                                inferred_type: None,
                                                             },
                                                         ))
                                                     } else {
@@ -11718,6 +11820,7 @@ impl Dialect {
                                                                 double_colon_syntax: false,
                                                                 format: None,
                                                                 default: None,
+                                                                inferred_type: None,
                                                             },
                                                         ))
                                                     };
@@ -11758,6 +11861,7 @@ impl Dialect {
                                                             double_colon_syntax: false,
                                                             format: None,
                                                             default: None,
+                                                            inferred_type: None,
                                                         },
                                                     )))
                                                 }
@@ -11781,6 +11885,7 @@ impl Dialect {
                                                         double_colon_syntax: false,
                                                         format: None,
                                                         default: None,
+                                                        inferred_type: None,
                                                     },
                                                 ))),
                                             }
@@ -11795,6 +11900,7 @@ impl Dialect {
                                                         double_colon_syntax: false,
                                                         format: None,
                                                         default: None,
+                                                        inferred_type: None,
                                                     },
                                                 ))
                                             } else {
@@ -11806,6 +11912,7 @@ impl Dialect {
                                                         double_colon_syntax: false,
                                                         format: None,
                                                         default: None,
+                                                        inferred_type: None,
                                                     },
                                                 ))
                                             };
@@ -11841,6 +11948,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ))
                                         } else {
@@ -11851,6 +11959,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         };
                                         Ok(cast_expr)
@@ -11934,6 +12043,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }));
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRFTIME".to_string(),
@@ -12108,6 +12218,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             )))
                                         } else {
@@ -12288,6 +12399,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 })))
                                             } else {
                                                 let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
@@ -12382,6 +12494,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // DATE_FORMAT(val, fmt) from Hive/Spark/MySQL -> target-specific format function
@@ -12482,6 +12595,7 @@ impl Dialect {
                                                             double_colon_syntax: false,
                                                             format: None,
                                                             default: None,
+                                                            inferred_type: None,
                                                         },
                                                     ))
                                                 }
@@ -12508,6 +12622,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         }
                                         Expression::Literal(crate::expressions::Literal::Date(
@@ -12531,6 +12646,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         }
                                         _ => val.clone(),
@@ -12721,6 +12837,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             })));
                                         }
 
@@ -12819,6 +12936,7 @@ impl Dialect {
                                                             double_colon_syntax: false,
                                                             format: None,
                                                             default: None,
+                                                            inferred_type: None,
                                                         }))
                                                     }
                                                     let epoch_end = Expression::Function(Box::new(
@@ -12972,6 +13090,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))),
                                         "WEEK" => Ok(Expression::Cast(Box::new(Cast {
                                             this: Expression::Div(Box::new(
@@ -12991,6 +13110,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))),
                                         _ => Ok(Expression::Function(Box::new(Function::new(
                                             "DATEDIFF".to_string(),
@@ -13243,6 +13363,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             arg2
@@ -13274,6 +13395,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             arg2
@@ -13327,6 +13449,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }));
                                             let epoch_ns =
                                                 Expression::Function(Box::new(Function::new(
@@ -13362,6 +13485,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 }))
                                             } else {
                                                 arg2
@@ -13504,6 +13628,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             arg2
@@ -13539,6 +13664,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             arg2
@@ -13587,6 +13713,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         } else {
                                             arg2
@@ -14582,6 +14709,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     _ => Ok(Expression::Function(f)),
@@ -14736,6 +14864,7 @@ impl Dialect {
                                             whens: vec![(is_zero, Expression::number(0))],
                                             else_: Some(pos_adjusted),
                                             comments: Vec::new(),
+                                            inferred_type: None,
                                         })))
                                     }
                                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -14974,6 +15103,7 @@ impl Dialect {
                                                     ),
                                                 ],
                                                 original_name: None,
+                                                inferred_type: None,
                                             },
                                         ));
                                         let is_null_check = Expression::IsNull(Box::new(
@@ -14991,6 +15121,7 @@ impl Dialect {
                                             )],
                                             else_: Some(coalesce),
                                             comments: Vec::new(),
+                                            inferred_type: None,
                                         })))
                                     }
                                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -15477,6 +15608,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             Ok(Expression::Function(Box::new(Function::new(
@@ -15496,6 +15628,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             Ok(Expression::Function(Box::new(Function::new(
@@ -15517,6 +15650,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             Ok(Expression::Function(Box::new(Function::new(
@@ -15536,6 +15670,7 @@ impl Dialect {
                                                     double_colon_syntax: false,
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 },
                                             ));
                                             Ok(Expression::Function(Box::new(Function::new(
@@ -15688,6 +15823,7 @@ impl Dialect {
                                             trailing_comments: vec![],
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::MySQL | DialectType::SingleStore => {
@@ -15727,6 +15863,7 @@ impl Dialect {
                                             trailing_comments: vec![],
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::Presto
@@ -15778,6 +15915,7 @@ impl Dialect {
                                                 trailing_comments: vec![],
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             })))
                                         }
                                         DialectType::Presto
@@ -15856,6 +15994,7 @@ impl Dialect {
                                                     trailing_comments: vec![],
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 }));
                                                 Ok(Expression::Cast(Box::new(Cast {
                                                     this: cast_ts,
@@ -15864,6 +16003,7 @@ impl Dialect {
                                                     trailing_comments: vec![],
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 })))
                                             }
                                             DialectType::Presto
@@ -15891,6 +16031,7 @@ impl Dialect {
                                                     trailing_comments: vec![],
                                                     format: None,
                                                     default: None,
+                                                    inferred_type: None,
                                                 })))
                                             }
                                             DialectType::Snowflake => {
@@ -15962,6 +16103,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::TSQL => {
@@ -15980,6 +16122,7 @@ impl Dialect {
                                             crate::expressions::VarArgFunc {
                                                 expressions: vec![arg, Expression::string("")],
                                                 original_name: None,
+                                                inferred_type: None,
                                             },
                                         ));
                                         Ok(Expression::Function(Box::new(Function::new(
@@ -16088,6 +16231,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         let cast_x = Expression::Cast(Box::new(Cast {
                                             this: x,
@@ -16096,6 +16240,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         Expression::Function(Box::new(Function::new(
                                             "DATE_DIFF".to_string(),
@@ -16171,6 +16316,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -16209,6 +16355,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // RANGE(start, end) -> GENERATE_SERIES for SQLite
@@ -16279,6 +16426,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         ts_arg
@@ -16327,6 +16475,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                         let ts_func =
                                             Expression::Function(Box::new(Function::new(
@@ -16373,6 +16522,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         ts_arg
@@ -16502,6 +16652,7 @@ impl Dialect {
                                     crate::expressions::UnaryFunc {
                                         this,
                                         original_name: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -16550,6 +16701,7 @@ impl Dialect {
                                     crate::expressions::UnaryFunc {
                                         this,
                                         original_name: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -16638,6 +16790,7 @@ impl Dialect {
                                             whens: vec![(both_cond, Expression::number(0))],
                                             else_: Some(frac),
                                             comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         Ok(Expression::Add(Box::new(BinaryOp::new(dd, case_expr))))
                                     }
@@ -16708,6 +16861,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // STRING(x) -> CAST(x AS STRING) for Spark target
@@ -16734,6 +16888,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             // LOGICAL_OR(x) -> BOOL_OR(x) for Spark target
@@ -16842,6 +16997,7 @@ impl Dialect {
                                             no_parens: true,
                                             quoted: false,
                                             span: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::MySQL
@@ -16983,6 +17139,7 @@ impl Dialect {
                                                 trailing_comments: Vec::new(),
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         })
                                         .collect();
@@ -17044,6 +17201,7 @@ impl Dialect {
                                                     left_comments: Vec::new(),
                                                     operator_comments: Vec::new(),
                                                     trailing_comments: Vec::new(),
+                                                    inferred_type: None,
                                                 })),
                                                 colon: false,
                                                 parameter_types: Vec::new(),
@@ -17069,6 +17227,7 @@ impl Dialect {
                                                     left_comments: Vec::new(),
                                                     operator_comments: Vec::new(),
                                                     trailing_comments: Vec::new(),
+                                                    inferred_type: None,
                                                 })),
                                                 colon: false,
                                                 parameter_types: Vec::new(),
@@ -17092,6 +17251,7 @@ impl Dialect {
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
+                                                inferred_type: None,
                                             });
                                         // UNNEST(the_array) AS _u
                                         let unnest_expr = Expression::Unnest(Box::new(
@@ -17110,6 +17270,7 @@ impl Dialect {
                                                 column_aliases: Vec::new(),
                                                 pre_alias_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             },
                                         ));
                                         // _u <> target
@@ -17119,6 +17280,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         // SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target
                                         let subquery = Expression::Select(Box::new(
@@ -17210,6 +17372,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             (condition, result)
                                         } else if is_literal(&search) {
@@ -17220,6 +17383,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             (eq, result)
                                         } else {
@@ -17249,6 +17413,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             let search_for_null = if needs_paren {
                                                 Expression::Paren(Box::new(
@@ -17266,6 +17431,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             let s_is_null = Expression::Is(Box::new(BinaryOp {
                                                 left: search_for_null,
@@ -17273,6 +17439,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             let both_null = Expression::And(Box::new(BinaryOp {
                                                 left: x_is_null,
@@ -17280,6 +17447,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             let condition = Expression::Or(Box::new(BinaryOp {
                                                 left: eq,
@@ -17292,6 +17460,7 @@ impl Dialect {
                                                 left_comments: Vec::new(),
                                                 operator_comments: Vec::new(),
                                                 trailing_comments: Vec::new(),
+                                                inferred_type: None,
                                             }));
                                             (condition, result)
                                         }
@@ -17302,6 +17471,7 @@ impl Dialect {
                                     whens,
                                     else_: default,
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 })))
                             }
                             // LEVENSHTEIN(a, b, ...) -> dialect-specific
@@ -17398,6 +17568,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else if matches!(
                                     target,
@@ -17575,6 +17746,7 @@ impl Dialect {
                                         order_by,
                                         limit: None,
                                         ignore_nulls: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -17593,6 +17765,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -17658,6 +17831,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 let div = Expression::Div(Box::new(BinaryOp::new(
                                     cast_arg,
@@ -17696,6 +17870,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 let div = Expression::Div(Box::new(BinaryOp::new(
                                     cast_arg,
@@ -17720,6 +17895,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "fromUnixTimestamp64Milli".to_string(),
@@ -17932,6 +18108,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }));
                             return Ok(Expression::Div(Box::new(BinaryOp::new(new_left, right))));
                         }
@@ -17955,6 +18132,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })),
                             DialectType::Drill
                             | DialectType::Trino
@@ -17969,6 +18147,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })),
                             DialectType::TSQL => Expression::Cast(Box::new(Cast {
                                 this: left,
@@ -17981,6 +18160,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })),
                             _ => left,
                         };
@@ -18260,6 +18440,7 @@ impl Dialect {
                                         left_comments: vec![],
                                         operator_comments: vec![],
                                         trailing_comments: vec![],
+                                        inferred_type: None,
                                     }));
                                 }
                                 return result;
@@ -18278,6 +18459,7 @@ impl Dialect {
                                         left_comments: vec![],
                                         operator_comments: vec![],
                                         trailing_comments: vec![],
+                                        inferred_type: None,
                                     }));
                                 }
                                 return result;
@@ -18303,6 +18485,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     })
                                     .collect();
@@ -18333,6 +18516,7 @@ impl Dialect {
                                         ignore_nulls: None,
                                         having_max: None,
                                         limit: None,
+                                        inferred_type: None,
                                     }));
                                 Ok(Expression::ArrayJoin(Box::new(
                                     crate::expressions::ArrayJoinFunc {
@@ -18581,6 +18765,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             let right_and = Expression::And(Box::new(BinaryOp {
                                 left: Expression::Paren(Box::new(Paren {
@@ -18591,6 +18776,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             Expression::Or(Box::new(BinaryOp {
                                 left: Expression::Paren(Box::new(Paren {
@@ -18604,6 +18790,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }))
                         };
 
@@ -18639,6 +18826,7 @@ impl Dialect {
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
+                                inferred_type: None,
                             });
                         }
                         Ok(Expression::Function(f))
@@ -19083,6 +19271,7 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 let paren_mod = Expression::Paren(Box::new(Paren {
                                     this: modulo,
@@ -19094,6 +19283,7 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Paren(Box::new(Paren {
                                     this: add_one,
@@ -19258,6 +19448,7 @@ impl Dialect {
                                     },
                                     limit: agg.limit.clone(),
                                     ignore_nulls: agg.ignore_nulls,
+                                    inferred_type: None,
                                 },
                             )))
                         }
@@ -19346,6 +19537,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "JSON_FORMAT".to_string(),
@@ -19361,6 +19553,7 @@ impl Dialect {
                                     Expression::ToJson(Box::new(crate::expressions::UnaryFunc {
                                         this: arg,
                                         original_name: None,
+                                        inferred_type: None,
                                     }));
                                 Ok(Expression::Cast(Box::new(Cast {
                                     this: to_json,
@@ -19369,12 +19562,14 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             _ => Ok(Expression::ToJson(Box::new(
                                 crate::expressions::UnaryFunc {
                                     this: arg,
                                     original_name: None,
+                                    inferred_type: None,
                                 },
                             ))),
                         }
@@ -19619,6 +19814,7 @@ impl Dialect {
                                 )],
                                 else_: Some(Expression::number(non_null_val)),
                                 comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             o.nulls_first = None;
                             // Return a tuple of [case_expr, ordered_expr]
@@ -19657,6 +19853,7 @@ impl Dialect {
                                         "0".to_string(),
                                     ))),
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 new_order_by.push(crate::expressions::Ordered {
                                     this: case_expr,
@@ -19875,6 +20072,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }));
                                     let rounded = Expression::Function(Box::new(Function::new(
                                         "ROUND".to_string(),
@@ -19887,6 +20085,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 }
                                 DataType::Decimal { .. } => {
@@ -19898,6 +20097,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 }
                                 _ => Expression::Cast(c),
@@ -20343,6 +20543,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     Ok(row_func)
@@ -20455,6 +20656,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     Ok(row_func)
@@ -20502,6 +20704,7 @@ impl Dialect {
                             name: None,
                             having_max: None,
                             limit: None,
+                            inferred_type: None,
                         };
                         Ok(Expression::ArrayAgg(Box::new(agg)))
                     } else {
@@ -20522,6 +20725,7 @@ impl Dialect {
                                     filter: f.filter,
                                     limit: f.limit,
                                     ignore_nulls: f.ignore_nulls,
+                                    inferred_type: None,
                                 },
                             ))),
                             DialectType::Snowflake => Ok(Expression::AggregateFunction(Box::new(
@@ -20533,6 +20737,7 @@ impl Dialect {
                                     filter: f.filter,
                                     limit: f.limit,
                                     ignore_nulls: f.ignore_nulls,
+                                    inferred_type: None,
                                 },
                             ))),
                             DialectType::Trino | DialectType::DuckDB => {
@@ -20549,6 +20754,7 @@ impl Dialect {
                                     name: None,
                                     having_max: None,
                                     limit: None,
+                                    inferred_type: None,
                                 };
                                 Ok(Expression::ArrayAgg(Box::new(agg)))
                             }
@@ -20576,6 +20782,7 @@ impl Dialect {
                                 filter: f.filter,
                                 limit: f.limit,
                                 ignore_nulls: f.ignore_nulls,
+                                inferred_type: None,
                             },
                         )))
                     } else {
@@ -20596,6 +20803,7 @@ impl Dialect {
                         whens: vec![(isnan, Expression::Null(crate::expressions::Null))],
                         else_: Some(corr_clone),
                         comments: Vec::new(),
+                        inferred_type: None,
                     }));
                     Ok(case_expr)
                 }
@@ -20666,6 +20874,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "ARRAY_CONTAINS".to_string(),
@@ -20741,6 +20950,7 @@ impl Dialect {
                                     whens: vec![(is_zero, Expression::number(0))],
                                     else_: Some(pos_adjusted),
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 })))
                             }
                             _ => {
@@ -20829,6 +21039,7 @@ impl Dialect {
                                     whens: vec![(both_cond, Expression::number(0))],
                                     else_: Some(frac),
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Add(Box::new(BinaryOp::new(dd, case_expr))))
                             }
@@ -20850,6 +21061,7 @@ impl Dialect {
                                     this: end_date,
                                     expression: start_date,
                                     original_name: None,
+                                    inferred_type: None,
                                 },
                             ))),
                         }
@@ -20893,6 +21105,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             })),
                                             None,
                                         )
@@ -20943,6 +21156,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     Expression::Function(Box::new(Function::new(
                                         "TO_MONTHS".to_string(),
@@ -21010,6 +21224,7 @@ impl Dialect {
                                     )],
                                     else_: Some(date_plus_interval),
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
 
                                 // Wrap in CAST(... AS type) if needed
@@ -21021,6 +21236,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     Ok(case_expr)
@@ -21040,6 +21256,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         date
@@ -21097,6 +21314,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         date
@@ -21126,6 +21344,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         date
@@ -21148,6 +21367,7 @@ impl Dialect {
                                         this: date,
                                         expression: val,
                                         original_name: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -21343,6 +21563,7 @@ impl Dialect {
                                                 double_colon_syntax: false,
                                                 format: None,
                                                 default: None,
+                                                inferred_type: None,
                                             }))
                                         }
                                         _ => arg,
@@ -21448,6 +21669,7 @@ impl Dialect {
                                             double_colon_syntax: false,
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         }))
                                     } else {
                                         arg
@@ -21483,6 +21705,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let cast_right = Expression::Cast(Box::new(Cast {
                             this: op.right,
@@ -21494,6 +21717,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "CONCAT".to_string(),
@@ -21518,6 +21742,7 @@ impl Dialect {
                                             this: a,
                                             expression: b,
                                             original_name: None,
+                                            inferred_type: None,
                                         },
                                     ));
                                     Ok(Expression::Cast(Box::new(Cast {
@@ -21530,6 +21755,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                                 DialectType::BigQuery => {
@@ -21547,6 +21773,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                                 DialectType::SQLite => {
@@ -21560,6 +21787,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let div = Expression::Div(Box::new(BinaryOp::new(cast_a, b)));
                                     let cast_int = Expression::Cast(Box::new(Cast {
@@ -21572,6 +21800,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     Ok(Expression::Cast(Box::new(Cast {
                                         this: cast_int,
@@ -21582,6 +21811,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                                 _ => Ok(Expression::Function(f)),
@@ -21795,12 +22025,13 @@ impl Dialect {
                         postfix_form: false,
                     }));
                     let not_null =
-                        Expression::Not(Box::new(crate::expressions::UnaryOp { this: is_null }));
+                        Expression::Not(Box::new(crate::expressions::UnaryOp { this: is_null, inferred_type: None }));
                     Ok(Expression::Case(Box::new(Case {
                         operand: Option::None,
                         whens: vec![(not_null, b)],
                         else_: c,
                         comments: Vec::new(),
+                        inferred_type: None,
                     })))
                 }
 
@@ -21866,6 +22097,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: Option::None,
                                     default: Option::None,
+                                    inferred_type: None,
                                 }));
                                 let glob = Expression::Glob(Box::new(BinaryOp {
                                     left: arg,
@@ -21873,10 +22105,12 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Paren(Box::new(Paren {
                                     this: Expression::Not(Box::new(crate::expressions::UnaryOp {
                                         this: glob,
+                                        inferred_type: None,
                                     })),
                                     trailing_comments: Vec::new(),
                                 })))
@@ -21912,6 +22146,7 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Paren(Box::new(Paren {
                                     this: eq_zero,
@@ -21973,6 +22208,7 @@ impl Dialect {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 });
                                 let nvl = Expression::Function(Box::new(Function::new(
                                     "NVL".to_string(),
@@ -22041,6 +22277,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             let add_pos = Expression::Add(Box::new(BinaryOp {
                                 left: inner_call,
@@ -22048,6 +22285,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
                             let sub_one = Expression::Sub(Box::new(BinaryOp {
                                 left: add_pos,
@@ -22055,6 +22293,7 @@ impl Dialect {
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
 
                             match wrapper {
@@ -22063,6 +22302,7 @@ impl Dialect {
                                     whens: vec![(eq_zero, zero)],
                                     else_: Some(sub_one),
                                     comments: Vec::new(),
+                                    inferred_type: None,
                                 })),
                                 "IIF" => Expression::Function(Box::new(Function::new(
                                     "IIF".to_string(),
@@ -22180,6 +22420,7 @@ impl Dialect {
                                         left_comments: Vec::new(),
                                         operator_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }));
                                     let add_pos = Expression::Add(Box::new(BinaryOp {
                                         left: pos_in,
@@ -22187,6 +22428,7 @@ impl Dialect {
                                         left_comments: Vec::new(),
                                         operator_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }));
                                     let sub_one = Expression::Sub(Box::new(BinaryOp {
                                         left: add_pos,
@@ -22194,12 +22436,14 @@ impl Dialect {
                                         left_comments: Vec::new(),
                                         operator_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }));
                                     Ok(Expression::Case(Box::new(Case {
                                         operand: Option::None,
                                         whens: vec![(eq_zero, zero)],
                                         else_: Some(sub_one),
                                         comments: Vec::new(),
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     Ok(Expression::StrPosition(Box::new(
@@ -22282,6 +22526,7 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 let lambda1 =
                                     Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
@@ -22325,6 +22570,7 @@ impl Dialect {
                                         left_comments: Vec::new(),
                                         operator_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }));
                                     let lambda1 = Expression::Lambda(Box::new(
                                         crate::expressions::LambdaExpr {
@@ -22514,6 +22760,7 @@ impl Dialect {
                                             column_aliases: vec![Identifier::new(&param_name)],
                                             pre_alias_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                     let mut sel = crate::expressions::Select::default();
                                     sel.expressions = vec![param_col];
@@ -22573,6 +22820,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         (condition, result)
                                     } else if is_decode_literal(&search)
@@ -22585,6 +22833,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         (eq, result)
                                     } else {
@@ -22613,6 +22862,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         let search_in_null = if needs_paren {
                                             Expression::Paren(Box::new(crate::expressions::Paren {
@@ -22628,6 +22878,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         let search_is_null = Expression::Is(Box::new(BinaryOp {
                                             left: search_in_null,
@@ -22635,6 +22886,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         let both_null = Expression::And(Box::new(BinaryOp {
                                             left: x_is_null,
@@ -22642,6 +22894,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         let condition = Expression::Or(Box::new(BinaryOp {
                                             left: eq,
@@ -22654,6 +22907,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         }));
                                         (condition, result)
                                     }
@@ -22664,6 +22918,7 @@ impl Dialect {
                                 whens,
                                 else_: default,
                                 comments: Vec::new(),
+                                inferred_type: None,
                             }))
                         };
 
@@ -22878,6 +23133,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Substring(Box::new(
                             crate::expressions::SubstringFunc {
@@ -22908,6 +23164,7 @@ impl Dialect {
                                 trailing_comments: Vec::new(),
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))),
                         }
                     } else {
@@ -22938,6 +23195,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             _ => {
@@ -22949,6 +23207,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                         }
@@ -23018,6 +23277,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23053,6 +23313,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     Ok(Expression::Cast(Box::new(Cast {
@@ -23064,6 +23325,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23080,6 +23342,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // BigQuery: CAST(x AS DATETIME) - Timestamp{tz:false} renders as DATETIME for BigQuery
@@ -23092,6 +23355,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23106,6 +23370,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             DialectType::TSQL | DialectType::Fabric => {
@@ -23120,6 +23385,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     Ok(Expression::AtTimeZone(Box::new(
                                         crate::expressions::AtTimeZone {
@@ -23140,6 +23406,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23156,6 +23423,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // DuckDB: CAST(x AS TIMESTAMP)
@@ -23169,6 +23437,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23187,6 +23456,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // PostgreSQL: CAST(x AS TIMESTAMP)
@@ -23200,6 +23470,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23216,6 +23487,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // Snowflake: CAST(x AS TIMESTAMP)
@@ -23229,6 +23501,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23275,6 +23548,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // Check for sub-second precision for Trino
@@ -23310,6 +23584,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23326,6 +23601,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 } else {
                                     // Redshift: CAST(x AS TIMESTAMP)
@@ -23339,6 +23615,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     })))
                                 }
                             }
@@ -23354,6 +23631,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                         }
@@ -23392,6 +23670,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -23462,6 +23741,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -23482,6 +23762,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 let strptime = Expression::Function(Box::new(Function::new(
                                     "STRPTIME".to_string(),
@@ -23494,6 +23775,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             DialectType::Hive | DialectType::Spark | DialectType::Databricks => {
@@ -23507,6 +23789,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "TO_DATE".to_string(),
@@ -23525,6 +23808,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 let date_parse = Expression::Function(Box::new(Function::new(
                                     "DATE_PARSE".to_string(),
@@ -23537,6 +23821,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             DialectType::Drill => {
@@ -23551,6 +23836,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "TO_DATE".to_string(),
@@ -23596,6 +23882,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let replace_expr = Expression::Function(Box::new(Function::new(
                             "REPLACE".to_string(),
@@ -23635,6 +23922,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -23774,6 +24062,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             DialectType::DuckDB => {
@@ -23789,6 +24078,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })))
                             }
                             _ => Ok(Expression::Function(Box::new(Function::new(
@@ -23809,6 +24099,7 @@ impl Dialect {
                             crate::expressions::UnaryFunc {
                                 this: arg,
                                 original_name: None,
+                                inferred_type: None,
                             },
                         )))
                     } else {
@@ -23885,6 +24176,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 }));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "EPOCH".to_string(),
@@ -23950,6 +24242,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         Ok(e)
@@ -23977,6 +24270,7 @@ impl Dialect {
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
                                             span: None,
+                                            inferred_type: None,
                                         });
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATE_TRUNC".to_string(),
@@ -24061,6 +24355,7 @@ impl Dialect {
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
                                             span: None,
+                                            inferred_type: None,
                                         });
                                     let mut args = vec![expr_arg, unit_ident];
                                     if let Some(tz) = tz_arg {
@@ -24172,6 +24467,7 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::Presto
@@ -24190,6 +24486,7 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     _ => {
@@ -24238,6 +24535,7 @@ impl Dialect {
                                             trailing_comments: Vec::new(),
                                             format: None,
                                             default: None,
+                                            inferred_type: None,
                                         })))
                                     }
                                     DialectType::Spark | DialectType::Databricks => {
@@ -24350,6 +24648,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let cast_date = Expression::Cast(Box::new(Cast {
                                         this: cast_ts,
@@ -24358,6 +24657,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATE_ADD".to_string(),
@@ -24373,6 +24673,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let iu = match unit_str.to_uppercase().as_str() {
                                         "YEAR" => crate::expressions::IntervalUnit::Year,
@@ -24401,6 +24702,7 @@ impl Dialect {
                                         left_comments: Vec::new(),
                                         operator_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     })))
                                 }
                                 DialectType::Drill => {
@@ -24412,6 +24714,7 @@ impl Dialect {
                                         trailing_comments: Vec::new(),
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }));
                                     let iu = match unit_str.to_uppercase().as_str() {
                                         "YEAR" => crate::expressions::IntervalUnit::Year,
@@ -24476,6 +24779,7 @@ impl Dialect {
                             trailing_comments: Vec::new(),
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         match target {
                             DialectType::DuckDB => {
@@ -24597,6 +24901,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         })),
                                         colon: false,
                                         parameter_types: Vec::new(),
@@ -24617,6 +24922,7 @@ impl Dialect {
                                             left_comments: Vec::new(),
                                             operator_comments: Vec::new(),
                                             trailing_comments: Vec::new(),
+                                            inferred_type: None,
                                         })),
                                         colon: false,
                                         parameter_types: Vec::new(),
@@ -24635,6 +24941,7 @@ impl Dialect {
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
+                                    inferred_type: None,
                                 });
                                 let unnest_expr =
                                     Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
@@ -24651,6 +24958,7 @@ impl Dialect {
                                         column_aliases: Vec::new(),
                                         pre_alias_comments: Vec::new(),
                                         trailing_comments: Vec::new(),
+                                        inferred_type: None,
                                     }));
                                 let where_cond = Expression::Neq(Box::new(BinaryOp {
                                     left: u_col.clone(),
@@ -24658,6 +24966,7 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                                 let subquery = Expression::Select(Box::new(
                                     crate::expressions::Select::new()
@@ -24678,6 +24987,7 @@ impl Dialect {
                                     original_name: None,
                                     this: arr,
                                     expression: target_val,
+                                    inferred_type: None,
                                 },
                             ))),
                         }
@@ -24832,6 +25142,7 @@ impl Dialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let sub = Expression::Sub(Box::new(crate::expressions::BinaryOp {
                     left: mul,
@@ -24839,6 +25150,7 @@ impl Dialect {
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 let concat_args = vec![
                     year_x,
@@ -25057,6 +25369,7 @@ impl Dialect {
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
+                    inferred_type: None,
                 })
             } else {
                 Expression::Identifier(Identifier::new(name.to_string()))
@@ -25301,6 +25614,7 @@ impl Dialect {
                 column_aliases: col_aliases,
                 pre_alias_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             }))
         } else {
             Expression::Alias(Box::new(Alias::new(
@@ -25343,6 +25657,7 @@ impl Dialect {
                         ],
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 }
                 DialectType::Snowflake => {
@@ -25373,6 +25688,7 @@ impl Dialect {
                         ],
                         pre_alias_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 }
                 _ => return None,
@@ -26166,6 +26482,7 @@ impl Dialect {
                         join_mark: false,
                         trailing_comments: Vec::new(),
                         span: None,
+                        inferred_type: None,
                     })
                 })
                 .collect();
@@ -26394,6 +26711,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 }
                                 other => other,
@@ -26515,6 +26833,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })));
                         }
                         _ => {
@@ -26840,6 +27159,7 @@ impl Dialect {
                             val,
                             Expression::Neg(Box::new(crate::expressions::UnaryOp {
                                 this: Expression::number(1),
+                                inferred_type: None,
                             })),
                         )));
                         Ok(Expression::TimestampAdd(Box::new(
@@ -26879,6 +27199,7 @@ impl Dialect {
                                     val,
                                     Expression::Neg(Box::new(crate::expressions::UnaryOp {
                                         this: Expression::number(1),
+                                        inferred_type: None,
                                     })),
                                 )));
                             Ok(Expression::Function(Box::new(Function::new(
@@ -27346,6 +27667,7 @@ impl Dialect {
                                     double_colon_syntax: false,
                                     format: None,
                                     default: None,
+                                    inferred_type: None,
                                 })),
                                 date,
                             ],
@@ -27586,6 +27908,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }));
                             Expression::Div(Box::new(crate::expressions::BinaryOp::new(
                                 cast_x, y_ref,
@@ -27598,6 +27921,7 @@ impl Dialect {
                             whens: vec![(condition, result_div)],
                             else_: Some(Expression::Null(crate::expressions::Null)),
                             comments: Vec::new(),
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -27621,6 +27945,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let cast_div = Expression::Div(Box::new(
                             crate::expressions::BinaryOp::new(cast_x, y_ref),
@@ -27671,6 +27996,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(uuid_expr)
@@ -27689,6 +28015,7 @@ impl Dialect {
                     ignore_nulls: None,
                     having_max: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -27711,6 +28038,7 @@ impl Dialect {
                         this: col1,
                         expression: col2,
                         original_name: None,
+                        inferred_type: None,
                     };
                     // Pass extra args through a function wrapper with all args
                     if !positional_args.is_empty() {
@@ -27740,11 +28068,13 @@ impl Dialect {
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }));
                             let least =
                                 Expression::Least(Box::new(crate::expressions::VarArgFunc {
                                     expressions: vec![lev, max_dist],
                                     original_name: None,
+                                    inferred_type: None,
                                 }));
                             return Ok(Expression::Case(Box::new(crate::expressions::Case {
                                 operand: None,
@@ -27754,6 +28084,7 @@ impl Dialect {
                                 )],
                                 else_: Some(least),
                                 comments: Vec::new(),
+                                inferred_type: None,
                             })));
                         }
                         let mut all_args = vec![levenshtein.this, levenshtein.expression, max_dist];
@@ -27835,6 +28166,7 @@ impl Dialect {
                         this: x,
                         expression: y,
                         original_name: None,
+                        inferred_type: None,
                     },
                 )))
             }
@@ -27963,6 +28295,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))
                         } else {
                             expr
@@ -28008,6 +28341,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "JSON_FORMAT".to_string(),
@@ -28035,6 +28369,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -28065,6 +28400,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "JSON_FORMAT".to_string(),
@@ -28088,6 +28424,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -28173,6 +28510,7 @@ impl Dialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -28269,6 +28607,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 }
                                 _ => Self::maybe_cast_ts_to_tz(ts, &name),
@@ -28373,6 +28712,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         // Most targets: CAST(x AS TIME)
@@ -28386,6 +28726,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                 } else if args.len() == 2 {
@@ -28402,6 +28743,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     let at_tz = Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
                         this: cast_tstz,
@@ -28417,6 +28759,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -28451,6 +28794,7 @@ impl Dialect {
                                         double_colon_syntax: false,
                                         format: None,
                                         default: None,
+                                        inferred_type: None,
                                     }))
                                 }
                                 other => other,
@@ -28479,6 +28823,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else if args.len() == 2 {
                     let first = args.remove(0);
@@ -28494,6 +28839,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         // Convert TIME 'x' literal to string 'x' so CAST produces CAST('x' AS TIME) not CAST(TIME 'x' AS TIME)
                         let time_as_string = match second {
@@ -28512,6 +28858,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let add_expr =
                             Expression::Add(Box::new(BinaryOp::new(cast_date, cast_time)));
@@ -28525,6 +28872,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         // DATETIME('string', 'timezone')
@@ -28538,6 +28886,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let at_tz =
                             Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
@@ -28554,6 +28903,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                 } else if args.len() >= 3 {
@@ -28593,6 +28943,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else if args.len() == 2 {
                     let arg = args.remove(0);
@@ -28607,6 +28958,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                     if matches!(target, DialectType::Snowflake) {
                         // CONVERT_TIMEZONE('tz', CAST(x AS TIMESTAMP))
@@ -28649,6 +29001,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else if args.len() == 2 {
                     let arg = args.remove(0);
@@ -28677,6 +29030,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     } else {
                         // STRING(x, tz) -> CAST(CAST(x AS TIMESTAMP) AT TIME ZONE 'UTC' AT TIME ZONE tz AS TEXT/VARCHAR)
@@ -28690,6 +29044,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let at_utc =
                             Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
@@ -28708,6 +29063,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                 } else {
@@ -28736,6 +29092,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -28752,6 +29109,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::TimestampDiff(Box::new(
                             crate::expressions::TimestampDiff {
@@ -28922,6 +29280,7 @@ impl Dialect {
                                 ignore_nulls: None,
                                 having_max: None,
                                 limit: None,
+                                inferred_type: None,
                             }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "ARRAY_FLATTEN".to_string(),
@@ -29314,6 +29673,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))
                         } else {
                             expr
@@ -29341,6 +29701,7 @@ impl Dialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else if matches!(target, DialectType::Snowflake) {
                     // Snowflake: keep as GENERATE_DATE_ARRAY function for later transform
@@ -29411,6 +29772,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -29474,6 +29836,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "STRFTIME".to_string(),
@@ -29507,6 +29870,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             }))
                         }
                         other => other,
@@ -29552,6 +29916,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "STRFTIME".to_string(),
@@ -29571,6 +29936,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let sf_format = Self::bq_format_to_snowflake(&format);
                         Ok(Expression::Function(Box::new(Function::new(
@@ -29597,6 +29963,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         // DATE_DIFF('DAY', epoch, date) but date might be DATE '...' literal
                         // Need to convert DATE literal to CAST
@@ -29635,6 +30002,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -29651,6 +30019,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         Ok(Expression::Function(Box::new(Function::new(
                             "TIMESTAMPDIFF".to_string(),
@@ -29758,6 +30127,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })))
                         }
                         DialectType::Snowflake => {
@@ -29777,6 +30147,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })))
                         }
                         _ => {
@@ -29891,6 +30262,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Snowflake => {
@@ -29923,6 +30295,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
                             parameters: vec![Identifier::new("x")],
@@ -30031,6 +30404,7 @@ impl Dialect {
                                 no_parens: f.no_parens,
                                 quoted: f.quoted,
                                 span: None,
+                                inferred_type: None,
                             })))
                         }
                     }
@@ -30053,6 +30427,7 @@ impl Dialect {
                             no_parens: f.no_parens,
                             quoted: f.quoted,
                             span: None,
+                            inferred_type: None,
                         })))
                     }
                 }
@@ -30161,6 +30536,7 @@ impl Dialect {
                                 double_colon_syntax: false,
                                 format: None,
                                 default: None,
+                                inferred_type: None,
                             })))
                         } else {
                             Ok(row_expr)
@@ -30320,6 +30696,7 @@ impl Dialect {
                                     )),
                                     null_text,
                                 ],
+                                inferred_type: None,
                             }));
                         let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
                             parameters: vec![crate::expressions::Identifier::new("x")],
@@ -30360,6 +30737,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let octet_length = Expression::Function(Box::new(Function::new(
                             "OCTET_LENGTH".to_string(),
@@ -30372,6 +30750,7 @@ impl Dialect {
                             double_colon_syntax: false,
                             format: None,
                             default: None,
+                            inferred_type: None,
                         }));
                         let length_text = Expression::Function(Box::new(Function::new(
                             "LENGTH".to_string(),
@@ -30385,6 +30764,7 @@ impl Dialect {
                             )],
                             else_: Some(length_text),
                             comments: Vec::new(),
+                            inferred_type: None,
                         })))
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new(
@@ -30427,6 +30807,7 @@ impl Dialect {
                 no_parens: f.no_parens,
                 quoted: f.quoted,
                 span: None,
+                inferred_type: None,
             }))),
         }
     }
@@ -30675,6 +31056,7 @@ impl Dialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))
             }
             other => other,
@@ -30695,6 +31077,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -30711,6 +31094,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -30728,6 +31112,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             Expression::Literal(Literal::String(ref _s)) => {
                 // String literal that should be a date -> CAST('s' AS DATE)
@@ -30738,6 +31123,7 @@ impl Dialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 }))
             }
             // Already a CAST or other expression -> leave as-is
@@ -30762,6 +31148,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -30792,6 +31179,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -30808,6 +31196,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
         Expression::Cast(Box::new(Cast {
             this: inner,
@@ -30816,6 +31205,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -30831,6 +31221,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
         Expression::Cast(Box::new(Cast {
             this: inner,
@@ -30839,6 +31230,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -30854,6 +31246,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }));
         Expression::Cast(Box::new(Cast {
             this: inner,
@@ -30862,6 +31255,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -31010,6 +31404,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
@@ -31021,6 +31416,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             Expression::Literal(Literal::Datetime(s)) => Expression::Cast(Box::new(Cast {
                 this: Expression::Literal(Literal::String(s)),
@@ -31032,6 +31428,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -31057,6 +31454,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -31074,6 +31472,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
@@ -31085,6 +31484,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             Expression::Literal(Literal::Datetime(s)) => Expression::Cast(Box::new(Cast {
                 this: Expression::Literal(Literal::String(s)),
@@ -31096,6 +31496,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -31114,6 +31515,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -31138,6 +31540,7 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
         }))
     }
 
@@ -31154,6 +31557,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }
@@ -31173,6 +31577,7 @@ impl Dialect {
                 double_colon_syntax: false,
                 format: None,
                 default: None,
+                inferred_type: None,
             })),
             other => other,
         }

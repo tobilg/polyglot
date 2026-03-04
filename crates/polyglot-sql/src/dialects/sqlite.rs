@@ -82,6 +82,7 @@ impl DialectImpl for SQLiteDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier.clone(),
+                    inferred_type: None,
                 })))
             }
 
@@ -100,6 +101,7 @@ impl DialectImpl for SQLiteDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -154,6 +156,7 @@ impl DialectImpl for SQLiteDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     }));
                 }
                 Ok(Expression::Div(op))
@@ -204,6 +207,7 @@ impl SQLiteDialect {
                     right: pattern,
                     escape: Some(escape),
                     quantifier: None,
+                    inferred_type: None,
                 })))
             }
             // GLOB(pattern, string) -> string GLOB pattern (SQLite function form)
@@ -223,6 +227,7 @@ impl SQLiteDialect {
                     original_name: None,
                     this: expr1,
                     expression: expr2,
+                    inferred_type: None,
                 })))
             }
 
@@ -230,6 +235,7 @@ impl SQLiteDialect {
             "COALESCE" => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // RAND -> RANDOM in SQLite
@@ -405,6 +411,7 @@ impl SQLiteDialect {
                     double_colon_syntax: false,
                     format: None,
                     default: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -456,6 +463,7 @@ impl SQLiteDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -466,6 +474,7 @@ impl SQLiteDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -481,6 +490,7 @@ impl SQLiteDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

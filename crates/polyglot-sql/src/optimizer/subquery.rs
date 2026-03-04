@@ -206,6 +206,7 @@ fn inline_cte_in_source(
                     lateral: false,
                     modifiers_inside: false,
                     trailing_comments: Vec::new(),
+                    inferred_type: None,
                 }))
             } else {
                 source.clone()
@@ -568,6 +569,7 @@ fn try_merge_join_subqueries(mut outer: Select, leave_tables_isolated: bool) -> 
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
+                        inferred_type: None,
                     }))
                 } else {
                     inner_where.this.clone()
@@ -700,6 +702,7 @@ fn replace_column_refs(
                                 column_aliases: Vec::new(),
                                 pre_alias_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
+                                inferred_type: None,
                             }));
                         }
                     }
@@ -716,6 +719,7 @@ fn replace_column_refs(
                 column_aliases: alias.column_aliases.clone(),
                 pre_alias_comments: alias.pre_alias_comments.clone(),
                 trailing_comments: alias.trailing_comments.clone(),
+                inferred_type: None,
             }))
         }
         // Binary operations
@@ -940,6 +944,7 @@ fn replace_binary_op(
         left_comments: bin.left_comments.clone(),
         operator_comments: bin.operator_comments.clone(),
         trailing_comments: bin.trailing_comments.clone(),
+        inferred_type: None,
     }
 }
 
@@ -964,6 +969,7 @@ fn merge_where_conditions(outer_where: Option<&Where>, inner_cond: &Expression) 
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
+                inferred_type: None,
             })),
         },
         None => Where {

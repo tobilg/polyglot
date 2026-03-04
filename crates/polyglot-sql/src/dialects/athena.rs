@@ -75,12 +75,14 @@ impl DialectImpl for AthenaDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in Athena
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -104,6 +106,7 @@ impl DialectImpl for AthenaDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier.clone(),
+                    inferred_type: None,
                 })))
             }
 
@@ -114,6 +117,7 @@ impl DialectImpl for AthenaDialect {
                     whens: vec![(f.this.clone(), Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -124,6 +128,7 @@ impl DialectImpl for AthenaDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -172,18 +177,21 @@ impl AthenaDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
@@ -278,6 +286,7 @@ impl AthenaDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -300,6 +309,7 @@ impl AthenaDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -355,6 +365,7 @@ impl AthenaDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -365,6 +376,7 @@ impl AthenaDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 

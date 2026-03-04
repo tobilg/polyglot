@@ -50,12 +50,14 @@ impl DialectImpl for TrinoDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE in Trino
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Coalesce with original_name (e.g., IFNULL parsed as Coalesce) -> clear original_name
@@ -79,6 +81,7 @@ impl DialectImpl for TrinoDialect {
                     right: lower_right,
                     escape: op.escape,
                     quantifier: op.quantifier.clone(),
+                    inferred_type: None,
                 })))
             }
 
@@ -190,18 +193,21 @@ impl TrinoDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GETDATE -> CURRENT_TIMESTAMP
@@ -304,6 +310,7 @@ impl TrinoDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -326,6 +333,7 @@ impl TrinoDialect {
                         double_colon_syntax: false,
                         format: None,
                         default: None,
+                        inferred_type: None,
                     })))
                 } else {
                     Ok(Expression::Function(Box::new(Function::new(
@@ -417,6 +425,7 @@ impl TrinoDialect {
                     whens: vec![(condition, Expression::number(1))],
                     else_: Some(Expression::number(0)),
                     comments: Vec::new(),
+                    inferred_type: None,
                 }));
                 Ok(Expression::Sum(Box::new(AggFunc {
                     ignore_nulls: None,
@@ -427,6 +436,7 @@ impl TrinoDialect {
                     order_by: Vec::new(),
                     name: None,
                     limit: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -456,6 +466,7 @@ impl TrinoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -469,6 +480,7 @@ impl TrinoDialect {
                     order_by: Vec::new(),
                     limit: None,
                     ignore_nulls: None,
+                    inferred_type: None,
                 })))
             }
 

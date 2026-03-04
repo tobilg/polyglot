@@ -95,12 +95,14 @@ impl DialectImpl for SparkDialect {
             Expression::IfNull(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // NVL is supported in Spark (from Hive), but COALESCE is standard
             Expression::Nvl(f) => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: vec![f.this, f.expression],
+                inferred_type: None,
             }))),
 
             // Cast: normalize VARCHAR(n) -> STRING, CHAR(n) -> STRING for Spark
@@ -240,18 +242,21 @@ impl SparkDialect {
             "IFNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // NVL -> COALESCE
             "NVL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // ISNULL -> COALESCE
             "ISNULL" if f.args.len() == 2 => Ok(Expression::Coalesce(Box::new(VarArgFunc {
                 original_name: None,
                 expressions: f.args,
+                inferred_type: None,
             }))),
 
             // GROUP_CONCAT -> CONCAT_WS + COLLECT_LIST in older Spark
@@ -616,6 +621,7 @@ impl SparkDialect {
                                     column_aliases: Vec::new(),
                                     pre_alias_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }))
                             }
                             _ => {
@@ -627,6 +633,7 @@ impl SparkDialect {
                                     column_aliases: Vec::new(),
                                     pre_alias_comments: Vec::new(),
                                     trailing_comments: Vec::new(),
+                                    inferred_type: None,
                                 }))
                             }
                         }
@@ -641,6 +648,7 @@ impl SparkDialect {
                     no_parens: false,
                     quoted: false,
                     span: None,
+                    inferred_type: None,
                 })))
             }
 
@@ -796,6 +804,7 @@ impl SparkDialect {
                             column_aliases: vec![],
                             pre_alias_comments: vec![],
                             trailing_comments: vec![],
+                            inferred_type: None,
                         })));
                     } else {
                         struct_args.push(pair[1].clone());
