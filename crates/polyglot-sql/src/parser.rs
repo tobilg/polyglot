@@ -627,6 +627,16 @@ impl Parser {
                 }
             }
 
+            // ClickHouse: consume trailing SETTINGS key=val, ... after any statement
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && self.check(TokenType::Settings)
+            {
+                self.advance(); // consume SETTINGS
+                let _ = self.parse_settings_property()?;
+            }
+
             // ClickHouse: consume trailing FORMAT <name> after any statement
             if matches!(
                 self.config.dialect,
@@ -659,7 +669,19 @@ impl Parser {
             // If not, there are unconsumed tokens which indicates a parse error.
             // This matches Python sqlglot's behavior (parser.py line 1826-1827).
             if !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                return Err(self.parse_error("Invalid expression / Unexpected token"));
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::ClickHouse)
+                ) {
+                    // ClickHouse fallback: consume unconsumed tokens until semicolon/EOF.
+                    // This matches Python sqlglot's _parse_as_command behavior for
+                    // ClickHouse-specific syntax that we don't fully parse yet.
+                    while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                        self.advance();
+                    }
+                } else {
+                    return Err(self.parse_error("Invalid expression / Unexpected token"));
+                }
             }
 
             // Consume optional semicolons (ClickHouse allows multiple like `;;`)
@@ -11099,6 +11121,7 @@ impl Parser {
         // Check for AS SELECT (CTAS)
         if self.match_token(TokenType::As) {
             // ClickHouse: CREATE TABLE t AS other_table [ENGINE = ...] — copy structure from another table
+            // Also: CREATE TABLE t AS func_name(args...) — table from function (e.g., remote, merge)
             // Detect when AS is followed by an identifier (not SELECT/WITH/LParen)
             if is_clickhouse
                 && !self.check(TokenType::Select)
@@ -11106,7 +11129,50 @@ impl Parser {
                 && !self.check(TokenType::LParen)
                 && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
             {
-                let source = self.parse_table_ref()?;
+                // Check if this is AS func_name(...) — table function
+                let is_table_func = self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1].token_type == TokenType::LParen;
+                let source = if is_table_func {
+                    // Parse as expression to consume function call with arguments
+                    self.parse_primary()?;
+                    let mut table_properties: Vec<Expression> = Vec::new();
+                    self.parse_clickhouse_table_properties(&mut table_properties)?;
+                    return Ok(Expression::CreateTable(Box::new(CreateTable {
+                        name,
+                        on_cluster: on_cluster.clone(),
+                        columns: Vec::new(),
+                        constraints: Vec::new(),
+                        if_not_exists,
+                        temporary,
+                        or_replace,
+                        table_modifier: table_modifier.map(|s| s.to_string()),
+                        as_select: None,
+                        as_select_parenthesized: false,
+                        on_commit: None,
+                        clone_source: None,
+                        clone_at_clause: None,
+                        shallow_clone: false,
+                        is_copy: false,
+                        leading_comments,
+                        with_properties,
+                        teradata_post_name_options: teradata_post_name_options.clone(),
+                        with_data: None,
+                        with_statistics: None,
+                        teradata_indexes: Vec::new(),
+                        with_cte: None,
+                        properties: table_properties,
+                        partition_of: None,
+                        post_table_properties: redshift_ctas_properties,
+                        mysql_table_options: Vec::new(),
+                        inherits: Vec::new(),
+                        on_property: None,
+                        copy_grants,
+                        using_template: None,
+                        rollup: None,
+                    })));
+                } else {
+                    self.parse_table_ref()?
+                };
                 // Parse ClickHouse table properties after the source table
                 let mut table_properties: Vec<Expression> = Vec::new();
                 self.parse_clickhouse_table_properties(&mut table_properties)?;
@@ -17225,7 +17291,8 @@ impl Parser {
             ) && (self.check(TokenType::Index)
                 || self.check_identifier("PROJECTION")
                 || self.check_identifier("STATISTICS")
-                || self.check_identifier("DETACHED"))
+                || self.check_identifier("DETACHED")
+                || self.check_identifier("PART"))
             {
                 let is_statistics = self.check_identifier("STATISTICS");
                 let mut tokens: Vec<(String, TokenType)> =
@@ -18169,9 +18236,37 @@ impl Parser {
     /// Parse TRUNCATE statement
     fn parse_truncate(&mut self) -> Result<Expression> {
         self.expect(TokenType::Truncate)?;
+
+        // ClickHouse: TRUNCATE ALL TABLES FROM [IF EXISTS] db
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.check_identifier("ALL")
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1].text.eq_ignore_ascii_case("TABLES")
+        {
+            // Consume remaining tokens as Command
+            let mut parts = vec!["TRUNCATE".to_string()];
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                let token = self.advance();
+                if token.token_type == TokenType::String {
+                    parts.push(format!("'{}'", token.text));
+                } else {
+                    parts.push(token.text.clone());
+                }
+            }
+            return Ok(Expression::Command(Box::new(
+                crate::expressions::Command {
+                    this: parts.join(" "),
+                },
+            )));
+        }
+
         let target = if self.match_token(TokenType::Database) {
             TruncateTarget::Database
         } else {
+            // ClickHouse: TRUNCATE TEMPORARY TABLE t
+            self.match_token(TokenType::Temporary);
             self.match_token(TokenType::Table); // optional TABLE keyword
             TruncateTarget::Table
         };
@@ -19803,6 +19898,33 @@ impl Parser {
         } else {
             like
         };
+
+        // ClickHouse: SHOW ... NOT LIKE 'pattern' / NOT ILIKE 'pattern'
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.check(TokenType::Not)
+        {
+            if self.current + 1 < self.tokens.len()
+                && matches!(
+                    self.tokens[self.current + 1].token_type,
+                    TokenType::Like | TokenType::ILike
+                )
+            {
+                self.advance(); // consume NOT
+                self.advance(); // consume LIKE/ILIKE
+                let _ = self.parse_primary()?; // consume pattern
+            }
+        }
+
+        // ClickHouse: SHOW ... ILIKE 'pattern'
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.match_token(TokenType::ILike)
+        {
+            let _ = self.parse_primary()?; // consume pattern
+        }
 
         // Check for WHERE clause (MySQL: SHOW STATUS WHERE condition)
         let where_clause = if self.match_token(TokenType::Where) {
