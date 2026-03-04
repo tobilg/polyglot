@@ -613,6 +613,25 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
             current_scope.union_scopes.push(left_scope);
             current_scope.union_scopes.push(right_scope);
         }
+        Expression::CreateTable(create) => {
+            // Handle CREATE TABLE ... AS [WITH ...] SELECT ...
+            // Process CTEs if present
+            if let Some(with) = &create.with_cte {
+                for cte in &with.ctes {
+                    let cte_name = cte.alias.name.clone();
+                    let mut cte_scope = current_scope
+                        .branch(Expression::Cte(Box::new(cte.clone())), ScopeType::Cte);
+                    build_scope_impl(&cte.this, &mut cte_scope);
+                    current_scope
+                        .add_cte_source(cte_name, Expression::Cte(Box::new(cte.clone())));
+                    current_scope.cte_scopes.push(cte_scope);
+                }
+            }
+            // Traverse the AS SELECT body
+            if let Some(as_select) = &create.as_select {
+                build_scope_impl(as_select, current_scope);
+            }
+        }
         _ => {}
     }
 }
@@ -1088,7 +1107,8 @@ pub fn traverse_scope(expression: &Expression) -> Vec<Scope> {
         Expression::Select(_)
         | Expression::Union(_)
         | Expression::Intersect(_)
-        | Expression::Except(_) => {
+        | Expression::Except(_)
+        | Expression::CreateTable(_) => {
             let root = build_scope(expression);
             root.traverse().into_iter().cloned().collect()
         }
@@ -1387,5 +1407,42 @@ mod tests {
         let traversed = scope.traverse();
         // Should include: CTE scope, subquery scope, root scope
         assert!(traversed.len() >= 3);
+    }
+
+    #[test]
+    fn test_create_table_as_select_scope() {
+        // Simple CTAS
+        let scope = parse_and_build_scope("CREATE TABLE out_table AS SELECT 1 AS id FROM src");
+        assert!(
+            scope.sources.contains_key("src"),
+            "CTAS scope should contain the FROM table"
+        );
+
+        // CTAS with multiple FROM tables
+        let scope = parse_and_build_scope(
+            "CREATE TABLE out_table AS SELECT a.id FROM foo AS a JOIN bar AS b ON a.id = b.id",
+        );
+        assert!(scope.sources.contains_key("a"));
+        assert!(scope.sources.contains_key("b"));
+
+        // CTAS with CTEs
+        let scope = parse_and_build_scope(
+            "CREATE TABLE out_table AS WITH cte AS (SELECT 1 AS id FROM src) SELECT * FROM cte",
+        );
+        assert!(
+            scope.sources.contains_key("cte"),
+            "CTAS with CTE should resolve CTE as source"
+        );
+        assert_eq!(scope.cte_scopes.len(), 1);
+    }
+
+    #[test]
+    fn test_create_table_as_select_traverse() {
+        let ast = Parser::parse_sql("CREATE TABLE t AS SELECT a FROM src").unwrap();
+        let scopes = traverse_scope(&ast[0]);
+        assert!(
+            !scopes.is_empty(),
+            "traverse_scope should return scopes for CTAS"
+        );
     }
 }
