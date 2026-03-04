@@ -7338,7 +7338,10 @@ impl Dialect {
                                         inferred_type: None,
                                     }));
                                 return Ok(Expression::Not(Box::new(
-                                    crate::expressions::UnaryOp { this: not_x, inferred_type: None },
+                                    crate::expressions::UnaryOp {
+                                        this: not_x,
+                                        inferred_type: None,
+                                    },
                                 )));
                             }
                             _ => {}
@@ -22024,8 +22027,10 @@ impl Dialect {
                         not: false,
                         postfix_form: false,
                     }));
-                    let not_null =
-                        Expression::Not(Box::new(crate::expressions::UnaryOp { this: is_null, inferred_type: None }));
+                    let not_null = Expression::Not(Box::new(crate::expressions::UnaryOp {
+                        this: is_null,
+                        inferred_type: None,
+                    }));
                     Ok(Expression::Case(Box::new(Case {
                         operand: Option::None,
                         whens: vec![(not_null, b)],

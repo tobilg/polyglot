@@ -332,7 +332,9 @@ fn expand_using(
     ) {
         if let Ok(source_cols) = resolver.get_source_columns(source_name) {
             for col_name in source_cols {
-                columns.entry(col_name).or_insert_with(|| source_name.to_string());
+                columns
+                    .entry(col_name)
+                    .or_insert_with(|| source_name.to_string());
             }
         }
     }
@@ -358,9 +360,8 @@ fn expand_using(
             continue;
         }
 
-        let _join_columns: Vec<String> = resolver
-            .get_source_columns(&join_table)
-            .unwrap_or_default();
+        let _join_columns: Vec<String> =
+            resolver.get_source_columns(&join_table).unwrap_or_default();
 
         let using_identifiers: Vec<String> = select.joins[i]
             .using
@@ -448,7 +449,9 @@ fn expand_using(
         let mut new_expressions = Vec::with_capacity(select.expressions.len());
         for expr in &select.expressions {
             match expr {
-                Expression::Column(col) if col.table.is_none() && column_tables.contains_key(&col.name.name) => {
+                Expression::Column(col)
+                    if col.table.is_none() && column_tables.contains_key(&col.name.name) =>
+                {
                     let tables = &column_tables[&col.name.name];
                     let coalesce = make_coalesce(&col.name.name, tables);
                     // Wrap in alias to preserve column name in projections
@@ -509,7 +512,9 @@ fn rewrite_using_columns_in_expression(
     column_tables: &HashMap<String, Vec<String>>,
 ) {
     let transformed = transform_recursive(expr.clone(), &|node| match node {
-        Expression::Column(col) if col.table.is_none() && column_tables.contains_key(&col.name.name) => {
+        Expression::Column(col)
+            if col.table.is_none() && column_tables.contains_key(&col.name.name) =>
+        {
             let tables = &column_tables[&col.name.name];
             Ok(make_coalesce(&col.name.name, tables))
         }
@@ -3162,8 +3167,14 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        assert!(sql.contains("t1.id"), "outer column should be qualified: {sql}");
-        assert!(sql.contains("t2.id"), "inner column should be qualified: {sql}");
+        assert!(
+            sql.contains("t1.id"),
+            "outer column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("t2.id"),
+            "inner column should be qualified: {sql}"
+        );
     }
 
     #[test]

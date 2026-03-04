@@ -586,12 +586,12 @@ impl<'a> TypeAnnotator<'a> {
             Expression::Floor(f) => self.annotate_math_function(&f.this),
             Expression::Ceil(f) => self.annotate_math_function(&f.this),
             Expression::Sign(s) => self.annotate(&s.this),
-            Expression::DateFormat(_)
-            | Expression::FormatDate(_)
-            | Expression::TimeToStr(_) => Some(DataType::VarChar {
-                length: None,
-                parenthesized_length: false,
-            }),
+            Expression::DateFormat(_) | Expression::FormatDate(_) | Expression::TimeToStr(_) => {
+                Some(DataType::VarChar {
+                    length: None,
+                    parenthesized_length: false,
+                })
+            }
 
             // Greatest/Least - coerce argument types
             Expression::Greatest(v) | Expression::Least(v) => self.coerce_arg_types(&v.expressions),
@@ -737,19 +737,42 @@ impl<'a> TypeAnnotator<'a> {
     fn annotate_children_in_place(&mut self, expr: &mut Expression) {
         match expr {
             // Binary operations
-            Expression::And(op) | Expression::Or(op) | Expression::Add(op) | Expression::Sub(op)
-            | Expression::Mul(op) | Expression::Div(op) | Expression::Mod(op)
-            | Expression::Eq(op) | Expression::Neq(op) | Expression::Lt(op) | Expression::Lte(op)
-            | Expression::Gt(op) | Expression::Gte(op) | Expression::Concat(op)
-            | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op) | Expression::BitwiseXor(op)
-            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
-            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
-            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
-            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
-            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
-            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
-            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
-            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op) => {
+            Expression::And(op)
+            | Expression::Or(op)
+            | Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op)
+            | Expression::Eq(op)
+            | Expression::Neq(op)
+            | Expression::Lt(op)
+            | Expression::Lte(op)
+            | Expression::Gt(op)
+            | Expression::Gte(op)
+            | Expression::Concat(op)
+            | Expression::BitwiseAnd(op)
+            | Expression::BitwiseOr(op)
+            | Expression::BitwiseXor(op)
+            | Expression::Adjacent(op)
+            | Expression::TsMatch(op)
+            | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op)
+            | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op)
+            | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op)
+            | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op)
+            | Expression::ExtendsRight(op)
+            | Expression::Is(op)
+            | Expression::MemberOf(op)
+            | Expression::Match(op)
+            | Expression::NullSafeEq(op)
+            | Expression::NullSafeNeq(op)
+            | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op)
+            | Expression::BitwiseRightShift(op) => {
                 self.annotate_in_place(&mut op.left);
                 self.annotate_in_place(&mut op.right);
             }
@@ -817,70 +840,143 @@ impl<'a> TypeAnnotator<'a> {
             }
 
             // UnaryFunc variants
-            Expression::Upper(f) | Expression::Lower(f) | Expression::Length(f)
-            | Expression::LTrim(f) | Expression::RTrim(f) | Expression::Reverse(f)
-            | Expression::Abs(f) | Expression::Sqrt(f) | Expression::Cbrt(f)
-            | Expression::Ln(f) | Expression::Exp(f) | Expression::Sign(f)
-            | Expression::Date(f) | Expression::Time(f) | Expression::Explode(f)
-            | Expression::ExplodeOuter(f) | Expression::MapFromEntries(f)
-            | Expression::MapKeys(f) | Expression::MapValues(f) | Expression::ArrayLength(f)
-            | Expression::ArraySize(f) | Expression::Cardinality(f)
-            | Expression::ArrayReverse(f) | Expression::ArrayDistinct(f)
-            | Expression::ArrayFlatten(f) | Expression::ArrayCompact(f)
-            | Expression::ToArray(f) | Expression::JsonArrayLength(f)
-            | Expression::JsonKeys(f) | Expression::JsonType(f)
-            | Expression::ParseJson(f) | Expression::ToJson(f)
-            | Expression::Year(f) | Expression::Month(f) | Expression::Day(f)
-            | Expression::Hour(f) | Expression::Minute(f) | Expression::Second(f)
-            | Expression::Initcap(f) | Expression::Ascii(f) | Expression::Chr(f)
-            | Expression::Soundex(f) | Expression::ByteLength(f) | Expression::Hex(f)
-            | Expression::LowerHex(f) | Expression::Unicode(f) | Expression::Typeof(f)
-            | Expression::BitwiseCount(f) | Expression::Epoch(f) | Expression::EpochMs(f)
-            | Expression::Radians(f) | Expression::Degrees(f)
-            | Expression::Sin(f) | Expression::Cos(f) | Expression::Tan(f)
-            | Expression::Asin(f) | Expression::Acos(f) | Expression::Atan(f)
-            | Expression::IsNan(f) | Expression::IsInf(f) => {
+            Expression::Upper(f)
+            | Expression::Lower(f)
+            | Expression::Length(f)
+            | Expression::LTrim(f)
+            | Expression::RTrim(f)
+            | Expression::Reverse(f)
+            | Expression::Abs(f)
+            | Expression::Sqrt(f)
+            | Expression::Cbrt(f)
+            | Expression::Ln(f)
+            | Expression::Exp(f)
+            | Expression::Sign(f)
+            | Expression::Date(f)
+            | Expression::Time(f)
+            | Expression::Explode(f)
+            | Expression::ExplodeOuter(f)
+            | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f)
+            | Expression::MapValues(f)
+            | Expression::ArrayLength(f)
+            | Expression::ArraySize(f)
+            | Expression::Cardinality(f)
+            | Expression::ArrayReverse(f)
+            | Expression::ArrayDistinct(f)
+            | Expression::ArrayFlatten(f)
+            | Expression::ArrayCompact(f)
+            | Expression::ToArray(f)
+            | Expression::JsonArrayLength(f)
+            | Expression::JsonKeys(f)
+            | Expression::JsonType(f)
+            | Expression::ParseJson(f)
+            | Expression::ToJson(f)
+            | Expression::Year(f)
+            | Expression::Month(f)
+            | Expression::Day(f)
+            | Expression::Hour(f)
+            | Expression::Minute(f)
+            | Expression::Second(f)
+            | Expression::Initcap(f)
+            | Expression::Ascii(f)
+            | Expression::Chr(f)
+            | Expression::Soundex(f)
+            | Expression::ByteLength(f)
+            | Expression::Hex(f)
+            | Expression::LowerHex(f)
+            | Expression::Unicode(f)
+            | Expression::Typeof(f)
+            | Expression::BitwiseCount(f)
+            | Expression::Epoch(f)
+            | Expression::EpochMs(f)
+            | Expression::Radians(f)
+            | Expression::Degrees(f)
+            | Expression::Sin(f)
+            | Expression::Cos(f)
+            | Expression::Tan(f)
+            | Expression::Asin(f)
+            | Expression::Acos(f)
+            | Expression::Atan(f)
+            | Expression::IsNan(f)
+            | Expression::IsInf(f) => {
                 self.annotate_in_place(&mut f.this);
             }
 
             // BinaryFunc variants
-            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
-            | Expression::Nvl(f) | Expression::Contains(f) | Expression::StartsWith(f)
-            | Expression::EndsWith(f) | Expression::Levenshtein(f) | Expression::ModFunc(f)
-            | Expression::IntDiv(f) | Expression::Atan2(f) | Expression::AddMonths(f)
-            | Expression::MonthsBetween(f) | Expression::NextDay(f)
+            Expression::Power(f)
+            | Expression::NullIf(f)
+            | Expression::IfNull(f)
+            | Expression::Nvl(f)
+            | Expression::Contains(f)
+            | Expression::StartsWith(f)
+            | Expression::EndsWith(f)
+            | Expression::Levenshtein(f)
+            | Expression::ModFunc(f)
+            | Expression::IntDiv(f)
+            | Expression::Atan2(f)
+            | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f)
+            | Expression::NextDay(f)
             | Expression::UnixToTimeStr(f)
-            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
-            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
-            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
-            | Expression::ArrayRemove(f) | Expression::StarMap(f)
-            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
-            | Expression::ElementAt(f) | Expression::JsonMergePatch(f) => {
+            | Expression::ArrayContains(f)
+            | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f)
+            | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f)
+            | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f)
+            | Expression::StarMap(f)
+            | Expression::MapFromArrays(f)
+            | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f)
+            | Expression::JsonMergePatch(f) => {
                 self.annotate_in_place(&mut f.this);
                 self.annotate_in_place(&mut f.expression);
             }
 
             // VarArgFunc variants
-            Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f)
-            | Expression::ArrayConcat(f) | Expression::ArrayIntersect(f)
-            | Expression::ArrayZip(f) | Expression::MapConcat(f) | Expression::JsonArray(f) => {
+            Expression::Coalesce(f)
+            | Expression::Greatest(f)
+            | Expression::Least(f)
+            | Expression::ArrayConcat(f)
+            | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f)
+            | Expression::MapConcat(f)
+            | Expression::JsonArray(f) => {
                 for e in &mut f.expressions {
                     self.annotate_in_place(e);
                 }
             }
 
             // AggFunc variants
-            Expression::Sum(f) | Expression::Avg(f) | Expression::Min(f) | Expression::Max(f)
-            | Expression::ArrayAgg(f) | Expression::CountIf(f)
-            | Expression::Stddev(f) | Expression::StddevPop(f) | Expression::StddevSamp(f)
-            | Expression::Variance(f) | Expression::VarPop(f) | Expression::VarSamp(f)
-            | Expression::Median(f) | Expression::Mode(f) | Expression::First(f)
-            | Expression::Last(f) | Expression::AnyValue(f) | Expression::ApproxDistinct(f)
-            | Expression::ApproxCountDistinct(f) | Expression::LogicalAnd(f)
-            | Expression::LogicalOr(f) | Expression::Skewness(f)
-            | Expression::ArrayConcatAgg(f) | Expression::ArrayUniqueAgg(f)
+            Expression::Sum(f)
+            | Expression::Avg(f)
+            | Expression::Min(f)
+            | Expression::Max(f)
+            | Expression::ArrayAgg(f)
+            | Expression::CountIf(f)
+            | Expression::Stddev(f)
+            | Expression::StddevPop(f)
+            | Expression::StddevSamp(f)
+            | Expression::Variance(f)
+            | Expression::VarPop(f)
+            | Expression::VarSamp(f)
+            | Expression::Median(f)
+            | Expression::Mode(f)
+            | Expression::First(f)
+            | Expression::Last(f)
+            | Expression::AnyValue(f)
+            | Expression::ApproxDistinct(f)
+            | Expression::ApproxCountDistinct(f)
+            | Expression::LogicalAnd(f)
+            | Expression::LogicalOr(f)
+            | Expression::Skewness(f)
+            | Expression::ArrayConcatAgg(f)
+            | Expression::ArrayUniqueAgg(f)
             | Expression::BoolXorAgg(f)
-            | Expression::BitwiseAndAgg(f) | Expression::BitwiseOrAgg(f)
+            | Expression::BitwiseAndAgg(f)
+            | Expression::BitwiseOrAgg(f)
             | Expression::BitwiseXorAgg(f) => {
                 self.annotate_in_place(&mut f.this);
             }
@@ -2139,9 +2235,8 @@ mod tests {
     #[test]
     fn test_annotate_in_place_parsed_sql() {
         use crate::parser::Parser;
-        let mut expr = Parser::parse_sql("SELECT 1 + 2.0, 'hello', TRUE")
-            .expect("parse failed")[0]
-            .clone();
+        let mut expr =
+            Parser::parse_sql("SELECT 1 + 2.0, 'hello', TRUE").expect("parse failed")[0].clone();
         annotate_types(&mut expr, None, None);
 
         // The expression tree should have types annotated throughout

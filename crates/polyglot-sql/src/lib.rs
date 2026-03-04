@@ -802,15 +802,26 @@ mod format_tests {
         let sql = "SELECT x > 0 ? 1 : 0 FROM t";
 
         let parse_result = parse(sql, DialectType::PostgreSQL);
-        assert!(parse_result.is_err(), "Expected parse error for invalid ternary SQL, got: {:?}", parse_result);
+        assert!(
+            parse_result.is_err(),
+            "Expected parse error for invalid ternary SQL, got: {:?}",
+            parse_result
+        );
 
         let format_result = format(sql, DialectType::PostgreSQL);
-        assert!(format_result.is_err(), "Expected format error for invalid ternary SQL, got: {:?}", format_result);
+        assert!(
+            format_result.is_err(),
+            "Expected format error for invalid ternary SQL, got: {:?}",
+            format_result
+        );
 
         let transpile_result = transpile(sql, DialectType::PostgreSQL, DialectType::PostgreSQL);
-        assert!(transpile_result.is_err(), "Expected transpile error for invalid ternary SQL, got: {:?}", transpile_result);
+        assert!(
+            transpile_result.is_err(),
+            "Expected transpile error for invalid ternary SQL, got: {:?}",
+            transpile_result
+        );
     }
-
 
     #[test]
     fn format_default_guard_rejects_deep_union_chain_before_parse() {

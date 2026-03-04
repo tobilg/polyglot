@@ -137,7 +137,10 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
 
         Expression::Not(un) => {
             let inner = ensure_bools(canonicalize_recursive(un.this, dialect));
-            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner, inferred_type: None }))
+            Expression::Not(Box::new(crate::expressions::UnaryOp {
+                this: inner,
+                inferred_type: None,
+            }))
         }
 
         // Comparison operations - check for date coercion

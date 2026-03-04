@@ -370,7 +370,10 @@ impl Simplifier {
             return inner_not.this.clone();
         }
 
-        Expression::Not(Box::new(UnaryOp { this: inner, inferred_type: None }))
+        Expression::Not(Box::new(UnaryOp {
+            this: inner,
+            inferred_type: None,
+        }))
     }
 
     /// Simplify addition (constant folding)
@@ -494,7 +497,10 @@ impl Simplifier {
             return Expression::Literal(Literal::Number((-n).to_string()));
         }
 
-        Expression::Neg(Box::new(UnaryOp { this: inner, inferred_type: None }))
+        Expression::Neg(Box::new(UnaryOp {
+            this: inner,
+            inferred_type: None,
+        }))
     }
 
     /// Simplify comparison operations (constant folding)

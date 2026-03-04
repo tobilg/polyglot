@@ -30,7 +30,12 @@ export {
   parse,
   transpile,
 } from './index';
-export type { AnnotateTypesResult, FormatOptions, ParseResult, TranspileResult } from './index';
+export type {
+  AnnotateTypesResult,
+  FormatOptions,
+  ParseResult,
+  TranspileResult,
+} from './index';
 
 // AST: Type guards & Visitors
 export {

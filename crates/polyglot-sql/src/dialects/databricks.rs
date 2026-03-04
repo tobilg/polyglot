@@ -156,7 +156,10 @@ impl DialectImpl for DatabricksDialect {
                     }
                     other => other,
                 };
-                let neg_val = Expression::Neg(Box::new(crate::expressions::UnaryOp { this: val, inferred_type: None }));
+                let neg_val = Expression::Neg(Box::new(crate::expressions::UnaryOp {
+                    this: val,
+                    inferred_type: None,
+                }));
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_ADD".to_string(),
                     vec![f.this, neg_val],

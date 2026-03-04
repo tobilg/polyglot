@@ -45715,7 +45715,10 @@ impl Parser {
                     let in_result = self.parse_in_with_expr(Some(left_expr))?;
                     if let Some(in_expr) = in_result {
                         return Ok(Some(if negate {
-                            Expression::Not(Box::new(UnaryOp { this: in_expr, inferred_type: None }))
+                            Expression::Not(Box::new(UnaryOp {
+                                this: in_expr,
+                                inferred_type: None,
+                            }))
                         } else {
                             in_expr
                         }));
@@ -50567,7 +50570,10 @@ impl Parser {
                     inferred_type: None,
                 }));
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: like, inferred_type: None })))
+                    Some(Expression::Not(Box::new(UnaryOp {
+                        this: like,
+                        inferred_type: None,
+                    })))
                 } else {
                     Some(like)
                 };
@@ -50588,7 +50594,10 @@ impl Parser {
                     inferred_type: None,
                 }));
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: ilike, inferred_type: None })))
+                    Some(Expression::Not(Box::new(UnaryOp {
+                        this: ilike,
+                        inferred_type: None,
+                    })))
                 } else {
                     Some(ilike)
                 };
@@ -50601,7 +50610,10 @@ impl Parser {
             let in_result = self.parse_in_with_expr(this.clone())?;
             if let Some(in_expr) = in_result {
                 this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp { this: in_expr, inferred_type: None })))
+                    Some(Expression::Not(Box::new(UnaryOp {
+                        this: in_expr,
+                        inferred_type: None,
+                    })))
                 } else {
                     Some(in_expr)
                 };
@@ -50629,7 +50641,10 @@ impl Parser {
                     trailing_comments: Vec::new(),
                     inferred_type: None,
                 }));
-                return Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null, inferred_type: None }))));
+                return Ok(Some(Expression::Not(Box::new(UnaryOp {
+                    this: is_null,
+                    inferred_type: None,
+                }))));
             }
         }
 
@@ -50772,7 +50787,10 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_null, inferred_type: None }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                    this: is_null,
+                    inferred_type: None,
+                }))))
             } else {
                 Ok(Some(is_null))
             };
@@ -50789,7 +50807,10 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_true, inferred_type: None }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                    this: is_true,
+                    inferred_type: None,
+                }))))
             } else {
                 Ok(Some(is_true))
             };
@@ -50806,7 +50827,10 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp { this: is_false, inferred_type: None }))))
+                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                    this: is_false,
+                    inferred_type: None,
+                }))))
             } else {
                 Ok(Some(is_false))
             };

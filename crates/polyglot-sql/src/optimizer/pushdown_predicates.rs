@@ -573,7 +573,10 @@ fn replace_aliases_recursive(
         }
         Expression::Not(un) => {
             let inner = replace_aliases_recursive(un.this, aliases);
-            Expression::Not(Box::new(crate::expressions::UnaryOp { this: inner, inferred_type: None }))
+            Expression::Not(Box::new(crate::expressions::UnaryOp {
+                this: inner,
+                inferred_type: None,
+            }))
         }
         Expression::Paren(paren) => {
             let inner = replace_aliases_recursive(paren.this, aliases);

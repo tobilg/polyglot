@@ -80,9 +80,7 @@ fn annotate_types_impl(
     for expr in &mut expressions {
         polyglot_sql::annotate_types(
             expr,
-            schema
-                .as_ref()
-                .map(|s| s as &dyn polyglot_sql::Schema),
+            schema.as_ref().map(|s| s as &dyn polyglot_sql::Schema),
             dialect_opt,
         );
     }

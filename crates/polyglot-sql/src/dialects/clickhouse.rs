@@ -298,7 +298,10 @@ impl DialectImpl for ClickHouseDialect {
 
             Expression::Not(op) => {
                 let inner = wrap_not_target(op.this);
-                Ok(Expression::Not(Box::new(UnaryOp { this: inner, inferred_type: None })))
+                Ok(Expression::Not(Box::new(UnaryOp {
+                    this: inner,
+                    inferred_type: None,
+                })))
             }
 
             Expression::MapFunc(map) if map.curly_brace_syntax => {
@@ -388,7 +391,10 @@ impl ClickHouseDialect {
                 let left = f.args[0].clone();
                 let right = f.args[1].clone();
                 let like = Expression::Like(Box::new(LikeOp::new(left, right)));
-                Ok(Expression::Not(Box::new(UnaryOp { this: like, inferred_type: None })))
+                Ok(Expression::Not(Box::new(UnaryOp {
+                    this: like,
+                    inferred_type: None,
+                })))
             }
             "ILIKE" if f.args.len() == 2 => {
                 let left = f.args[0].clone();

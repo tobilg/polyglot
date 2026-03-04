@@ -1160,11 +1160,7 @@ pub fn annotate_types_value(sql: &str, dialect: &str, schema_json: &str) -> JsVa
         .unwrap_or(JsValue::from_str("serialization error"))
 }
 
-fn annotate_types_internal(
-    sql: &str,
-    dialect: &str,
-    schema_json: &str,
-) -> ParseValueResult {
+fn annotate_types_internal(sql: &str, dialect: &str, schema_json: &str) -> ParseValueResult {
     let dialect_type = match dialect.parse::<DialectType>() {
         Ok(d) => d,
         Err(e) => {

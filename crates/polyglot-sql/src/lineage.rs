@@ -1824,9 +1824,14 @@ mod tests {
         let node_without_schema = lineage("name", &expr, Some(DialectType::BigQuery), false)
             .expect("lineage without schema");
         let mut expr_without = node_without_schema.expression.clone();
-        annotate_types(&mut expr_without, Some(&schema), Some(DialectType::BigQuery));
+        annotate_types(
+            &mut expr_without,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+        );
         assert_eq!(
-            expr_without.inferred_type(), None,
+            expr_without.inferred_type(),
+            None,
             "Expected unresolved root type without schema-aware lineage qualification"
         );
 
@@ -1846,8 +1851,7 @@ mod tests {
 
     #[test]
     fn test_lineage_with_schema_correlated_scalar_subquery() {
-        let query =
-            "SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1";
+        let query = "SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1";
         let dialect = Dialect::get(DialectType::BigQuery);
         let expr = dialect
             .parse(query)

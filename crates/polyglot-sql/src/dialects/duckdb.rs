@@ -3742,10 +3742,14 @@ impl DuckDBDialect {
                     vec![b, Expression::number(0)],
                 )));
                 // (ra AND (NOT rb)) OR ((NOT ra) AND rb)
-                let not_rb =
-                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: rb.clone(), inferred_type: None }));
-                let not_ra =
-                    Expression::Not(Box::new(crate::expressions::UnaryOp { this: ra.clone(), inferred_type: None }));
+                let not_rb = Expression::Not(Box::new(crate::expressions::UnaryOp {
+                    this: rb.clone(),
+                    inferred_type: None,
+                }));
+                let not_ra = Expression::Not(Box::new(crate::expressions::UnaryOp {
+                    this: ra.clone(),
+                    inferred_type: None,
+                }));
                 let left_and = Expression::And(Box::new(BinaryOp {
                     left: ra,
                     right: Expression::Paren(Box::new(Paren {

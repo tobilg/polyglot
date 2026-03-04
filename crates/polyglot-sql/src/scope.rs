@@ -622,8 +622,7 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
                     let mut cte_scope = current_scope
                         .branch(Expression::Cte(Box::new(cte.clone())), ScopeType::Cte);
                     build_scope_impl(&cte.this, &mut cte_scope);
-                    current_scope
-                        .add_cte_source(cte_name, Expression::Cte(Box::new(cte.clone())));
+                    current_scope.add_cte_source(cte_name, Expression::Cte(Box::new(cte.clone())));
                     current_scope.cte_scopes.push(cte_scope);
                 }
             }

@@ -156,8 +156,16 @@ type WasmBindings = typeof wasmModule & {
   ) => unknown;
   get_dialects_value?: () => unknown;
   tokenize_value?: (sql: string, dialect: string) => unknown;
-  annotate_types?: (sql: string, dialect: string, schema_json: string) => string;
-  annotate_types_value?: (sql: string, dialect: string, schema_json: string) => unknown;
+  annotate_types?: (
+    sql: string,
+    dialect: string,
+    schema_json: string,
+  ) => string;
+  annotate_types_value?: (
+    sql: string,
+    dialect: string,
+    schema_json: string,
+  ) => unknown;
 };
 
 const wasm = wasmModule as WasmBindings;
