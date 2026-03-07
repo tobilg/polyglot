@@ -243,6 +243,7 @@ impl DialectImpl for TSQLDialect {
                 distinct: f.distinct,
                 filter: f.filter,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // LISTAGG -> STRING_AGG in SQL Server (SQL Server 2017+)
@@ -253,6 +254,7 @@ impl DialectImpl for TSQLDialect {
                 distinct: f.distinct,
                 filter: f.filter,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // TryCast -> TRY_CAST (SQL Server supports TRY_CAST starting from 2012)

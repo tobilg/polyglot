@@ -4,7 +4,7 @@
 //! They cover parsing, generation, and transpilation between dialects.
 
 use polyglot_sql::dialects::{Dialect, DialectType};
-use polyglot_sql::generator::Generator;
+use polyglot_sql::generator::{Generator, UnsupportedLevel};
 use polyglot_sql::parser::Parser;
 
 /// Helper function to test roundtrip: parse SQL and regenerate it
@@ -74,28 +74,25 @@ mod identity_tests {
         assert_eq!(roundtrip("SELECT NOT x"), "SELECT NOT x");
     }
 
-    // TODO: Bitwise operators not yet fully implemented in parser
-    // #[test]
-    // fn test_bitwise() {
-    //     assert_eq!(roundtrip("SELECT x & 1"), "SELECT x & 1");
-    //     assert_eq!(roundtrip("SELECT x | 1"), "SELECT x | 1");
-    //     assert_eq!(roundtrip("SELECT x ^ 1"), "SELECT x ^ 1");
-    //     assert_eq!(roundtrip("SELECT ~x"), "SELECT ~x");
-    // }
+    #[test]
+    fn test_bitwise() {
+        assert_eq!(roundtrip("SELECT x & 1"), "SELECT x & 1");
+        assert_eq!(roundtrip("SELECT x | 1"), "SELECT x | 1");
+        assert_eq!(roundtrip("SELECT x ^ 1"), "SELECT x ^ 1");
+        assert_eq!(roundtrip("SELECT ~x"), "SELECT ~x");
+    }
 
     #[test]
     fn test_column_access() {
         assert_eq!(roundtrip("SELECT a.b"), "SELECT a.b");
-        // TODO: Multi-level column access (a.b.c) needs parser enhancement
-        // assert_eq!(roundtrip("SELECT a.b.c"), "SELECT a.b.c");
-        // assert_eq!(roundtrip("SELECT a.b.c.d"), "SELECT a.b.c.d");
+        assert_eq!(roundtrip("SELECT a.b.c"), "SELECT a.b.c");
+        assert_eq!(roundtrip("SELECT a.b.c.d"), "SELECT a.b.c.d");
     }
 
     #[test]
     fn test_subscript() {
         assert_eq!(roundtrip("SELECT a[0]"), "SELECT a[0]");
-        // TODO: Subscript followed by dot access needs parser enhancement
-        // assert_eq!(roundtrip("SELECT a[0].b"), "SELECT a[0].b");
+        assert_eq!(roundtrip("SELECT a[0].b"), "SELECT a[0].b");
     }
 
     #[test]
@@ -185,11 +182,10 @@ mod identity_tests {
             roundtrip("SELECT * FROM (SELECT 1) AS t"),
             "SELECT * FROM (SELECT 1) AS t"
         );
-        // TODO: Subquery in IN expression needs parser enhancement
-        // assert_eq!(
-        //     roundtrip("SELECT * FROM t WHERE x IN (SELECT y FROM s)"),
-        //     "SELECT * FROM t WHERE x IN (SELECT y FROM s)"
-        // );
+        assert_eq!(
+            roundtrip("SELECT * FROM t WHERE x IN (SELECT y FROM s)"),
+            "SELECT * FROM t WHERE x IN (SELECT y FROM s)"
+        );
     }
 
     #[test]
@@ -548,35 +544,44 @@ mod transpile_tests {
         );
     }
 
-    // TODO: COALESCE optimization not implemented yet
-    // #[test]
-    // fn test_coalesce_2args_to_ifnull_mysql() {
-    //     // COALESCE with 2 args -> IFNULL in MySQL (optimization)
-    //     assert_eq!(
-    //         transpile("SELECT COALESCE(a, b)", DialectType::Generic, DialectType::MySQL),
-    //         "SELECT IFNULL(a, b)"
-    //     );
-    // }
+    #[test]
+    fn test_coalesce_preserved_mysql() {
+        // Pinned sqlglot baseline preserves COALESCE for MySQL
+        assert_eq!(
+            transpile(
+                "SELECT COALESCE(a, b)",
+                DialectType::Generic,
+                DialectType::MySQL
+            ),
+            "SELECT COALESCE(a, b)"
+        );
+    }
 
-    // TODO: String aggregation function transformations need implementation
-    // These require parsing the functions first, then transforming
-    // #[test]
-    // fn test_group_concat_to_string_agg_postgres() {
-    //     // GROUP_CONCAT -> STRING_AGG in PostgreSQL
-    //     assert_eq!(
-    //         transpile("SELECT GROUP_CONCAT(name)", DialectType::MySQL, DialectType::PostgreSQL),
-    //         "SELECT STRING_AGG(name)"
-    //     );
-    // }
+    #[test]
+    fn test_group_concat_to_string_agg_postgres() {
+        // GROUP_CONCAT -> STRING_AGG with explicit default separator in PostgreSQL
+        assert_eq!(
+            transpile(
+                "SELECT GROUP_CONCAT(name)",
+                DialectType::MySQL,
+                DialectType::PostgreSQL
+            ),
+            "SELECT STRING_AGG(name, ',')"
+        );
+    }
 
-    // #[test]
-    // fn test_array_agg_to_group_concat_mysql() {
-    //     // ARRAY_AGG -> GROUP_CONCAT in MySQL
-    //     assert_eq!(
-    //         transpile("SELECT ARRAY_AGG(name)", DialectType::Generic, DialectType::MySQL),
-    //         "SELECT GROUP_CONCAT(name)"
-    //     );
-    // }
+    #[test]
+    fn test_array_agg_to_group_concat_mysql() {
+        // ARRAY_AGG -> GROUP_CONCAT in MySQL
+        assert_eq!(
+            transpile(
+                "SELECT ARRAY_AGG(name)",
+                DialectType::Generic,
+                DialectType::MySQL
+            ),
+            "SELECT GROUP_CONCAT(name)"
+        );
+    }
 
     // Substring function conversions
     #[test]
@@ -697,14 +702,13 @@ mod complex_tests {
         );
     }
 
-    // TODO: Scalar subqueries in expressions need parser enhancement
-    // #[test]
-    // fn test_correlated_subquery() {
-    //     assert_eq!(
-    //         roundtrip("SELECT * FROM t WHERE x = (SELECT MAX(y) FROM s WHERE s.id = t.id)"),
-    //         "SELECT * FROM t WHERE x = (SELECT MAX(y) FROM s WHERE s.id = t.id)"
-    //     );
-    // }
+    #[test]
+    fn test_correlated_subquery() {
+        assert_eq!(
+            roundtrip("SELECT * FROM t WHERE x = (SELECT MAX(y) FROM s WHERE s.id = t.id)"),
+            "SELECT * FROM t WHERE x = (SELECT MAX(y) FROM s WHERE s.id = t.id)"
+        );
+    }
 
     #[test]
     fn test_multiple_joins() {
@@ -1817,5 +1821,43 @@ mod match_recognize_tests {
         let mut gen = Generator::with_config(config);
         let result = gen.generate(&ast[0]).expect("Failed to generate SQL");
         assert!(result.contains("MATCH_RECOGNIZE not supported"));
+        assert_eq!(gen.unsupported_messages().len(), 1);
+        assert!(gen.unsupported_messages()[0].contains("MATCH_RECOGNIZE"));
+    }
+
+    #[test]
+    fn test_match_recognize_unsupported_raise_level() {
+        let ast = Parser::parse_sql(
+            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10)",
+        )
+        .expect("Failed to parse");
+        let config = GeneratorConfig {
+            dialect: Some(DialectType::PostgreSQL),
+            unsupported_level: UnsupportedLevel::Raise,
+            ..Default::default()
+        };
+        let mut gen = Generator::with_config(config);
+        let err = gen
+            .generate(&ast[0])
+            .expect_err("expected unsupported raise error");
+        assert!(err.to_string().contains("MATCH_RECOGNIZE"));
+    }
+
+    #[test]
+    fn test_match_recognize_unsupported_immediate_level() {
+        let ast = Parser::parse_sql(
+            "SELECT * FROM ticker MATCH_RECOGNIZE (PATTERN (A B) DEFINE A AS A.price > 10)",
+        )
+        .expect("Failed to parse");
+        let config = GeneratorConfig {
+            dialect: Some(DialectType::PostgreSQL),
+            unsupported_level: UnsupportedLevel::Immediate,
+            ..Default::default()
+        };
+        let mut gen = Generator::with_config(config);
+        let err = gen
+            .generate(&ast[0])
+            .expect_err("expected immediate unsupported error");
+        assert!(err.to_string().contains("MATCH_RECOGNIZE"));
     }
 }

@@ -361,6 +361,7 @@ pub fn count(expr: Expr) -> Expr {
         filter: None,
         ignore_nulls: None,
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -373,6 +374,7 @@ pub fn count_star() -> Expr {
         filter: None,
         ignore_nulls: None,
         original_name: None,
+        inferred_type: None,
     })))
 }
 
@@ -385,6 +387,7 @@ pub fn count_distinct(expr: Expr) -> Expr {
         filter: None,
         ignore_nulls: None,
         original_name: None,
+        inferred_type: None,
     })))
 }
 

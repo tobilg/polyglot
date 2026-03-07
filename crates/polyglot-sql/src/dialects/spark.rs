@@ -753,6 +753,7 @@ impl SparkDialect {
                             vec![x],
                         )))),
                         original_name: Some("IF".to_string()),
+                        inferred_type: None,
                     }))),
                 }
             }

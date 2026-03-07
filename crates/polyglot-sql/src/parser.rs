@@ -3234,7 +3234,7 @@ impl Parser {
                     let mut args_iter = args.into_iter();
                     let this = args_iter
                         .next()
-                        .unwrap_or(Expression::Null(crate::expressions::Null));
+                        .ok_or_else(|| self.parse_error("Expected expression in UNNEST"))?;
                     let expressions: Vec<Expression> = args_iter.collect();
                     Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
                         this,
@@ -4159,7 +4159,7 @@ impl Parser {
                         let mut args_iter = args.into_iter();
                         let this = args_iter
                             .next()
-                            .unwrap_or(Expression::Null(crate::expressions::Null));
+                            .ok_or_else(|| self.parse_error("Expected expression in UNNEST"))?;
                         let expressions: Vec<Expression> = args_iter.collect();
                         Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
                             this,
@@ -13233,7 +13233,9 @@ impl Parser {
                 self.advance(); // consume INDEX
                 let name = self.expect_identifier_or_keyword_with_quoted()?;
                 // Use parse_conjunction to handle comparisons like c0 < (SELECT _table)
-                let expression = self.parse_conjunction()?.unwrap_or(Expression::Null(Null));
+                let expression = self.parse_conjunction()?.ok_or_else(|| {
+                    self.parse_error("Expected expression in ClickHouse INDEX definition")
+                })?;
                 let index_type = if self.match_token(TokenType::Type) {
                     // Parse function or identifier for type (e.g., bloom_filter(0.001), set(100), minmax)
                     // Handle keywords like 'set' that are tokenized as TokenType::Set
@@ -13375,7 +13377,11 @@ impl Parser {
                     constraints.push(TableConstraint::Projection { name, expression });
                 } else if self.match_token(TokenType::Index) {
                     // PROJECTION name INDEX expr TYPE type_name
-                    let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                    let expr = self.parse_bitwise()?.ok_or_else(|| {
+                        self.parse_error(
+                            "Expected expression in ClickHouse PROJECTION INDEX definition",
+                        )
+                    })?;
                     let type_str = if self.match_token(TokenType::Type) {
                         if !self.is_at_end()
                             && !self.check(TokenType::Comma)
@@ -18243,7 +18249,9 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check_identifier("ALL")
             && self.current + 1 < self.tokens.len()
-            && self.tokens[self.current + 1].text.eq_ignore_ascii_case("TABLES")
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("TABLES")
         {
             // Consume remaining tokens as Command
             let mut parts = vec!["TRUNCATE".to_string()];
@@ -18255,11 +18263,9 @@ impl Parser {
                     parts.push(token.text.clone());
                 }
             }
-            return Ok(Expression::Command(Box::new(
-                crate::expressions::Command {
-                    this: parts.join(" "),
-                },
-            )));
+            return Ok(Expression::Command(Box::new(crate::expressions::Command {
+                this: parts.join(" "),
+            })));
         }
 
         let target = if self.match_token(TokenType::Database) {
@@ -24348,6 +24354,11 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.match_token(TokenType::Parameter)
         {
+            if self.check(TokenType::Colon) {
+                return Err(
+                    self.parse_error("Expected true expression after ? in ClickHouse ternary")
+                );
+            }
             let true_value = self.parse_or()?;
             let false_value = if self.match_token(TokenType::Colon) {
                 self.parse_or()?
@@ -24359,6 +24370,7 @@ impl Parser {
                 condition: left,
                 true_value,
                 false_value: Some(false_value),
+                inferred_type: None,
             }));
         }
 
@@ -30267,7 +30279,7 @@ impl Parser {
             (crate::function_registry::TypedParseKind::Variadic, "DATE_PART") => {
                 let part = self.parse_expression()?;
                 // For TSQL/Fabric, normalize date part aliases (e.g., "dd" -> DAY)
-                let part = if matches!(
+                let mut part = if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::TSQL)
                         | Some(crate::dialects::DialectType::Fabric)
@@ -30282,6 +30294,17 @@ impl Parser {
                 }
                 let from_expr = self.parse_expression()?;
                 self.expect(TokenType::RParen)?;
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Snowflake)
+                ) {
+                    if self
+                        .try_parse_date_part_field_identifier_expr(&part)
+                        .is_some()
+                    {
+                        part = self.convert_date_part_identifier_expr_to_var(part);
+                    }
+                }
                 Ok(Some(Expression::Function(Box::new(Function {
                     name: "DATE_PART".to_string(),
                     args: vec![part, from_expr],
@@ -30295,8 +30318,8 @@ impl Parser {
                 }))))
             }
             (crate::function_registry::TypedParseKind::Variadic, "DATEADD") => {
-                let first_arg = self.parse_expression()?;
-                let first_arg = self.try_clickhouse_func_arg_alias(first_arg);
+                let mut first_arg = self.parse_expression()?;
+                first_arg = self.try_clickhouse_func_arg_alias(first_arg);
                 self.expect(TokenType::Comma)?;
                 let second_arg = self.parse_expression()?;
                 let second_arg = self.try_clickhouse_func_arg_alias(second_arg);
@@ -30306,6 +30329,17 @@ impl Parser {
                     let third_arg = self.parse_expression()?;
                     let third_arg = self.try_clickhouse_func_arg_alias(third_arg);
                     self.expect(TokenType::RParen)?;
+                    if matches!(
+                        self.config.dialect,
+                        Some(crate::dialects::DialectType::Snowflake)
+                    ) {
+                        if self
+                            .try_parse_date_part_unit_identifier_expr(&first_arg)
+                            .is_some()
+                        {
+                            first_arg = self.convert_date_part_identifier_expr_to_var(first_arg);
+                        }
+                    }
                     Ok(Some(Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args: vec![first_arg, second_arg, third_arg],
@@ -30354,6 +30388,19 @@ impl Parser {
                     args.push(self.try_clickhouse_func_arg_alias(arg));
                 }
                 self.expect(TokenType::RParen)?;
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Snowflake)
+                ) && args.len() == 3
+                {
+                    if let Some(unit) = self.try_parse_date_part_unit_expr(&args[0]) {
+                        return Ok(Some(Expression::DateDiff(Box::new(DateDiffFunc {
+                            this: args[2].clone(),
+                            expression: args[1].clone(),
+                            unit: Some(unit),
+                        }))));
+                    }
+                }
                 Ok(Some(Expression::Function(Box::new(Function {
                     name: name.to_string(),
                     args,
@@ -30729,6 +30776,7 @@ impl Parser {
                             this: args[0].clone(),
                             true_value: args[1].clone(),
                             false_value: args[2].clone(),
+                            inferred_type: None,
                         },
                     ))))
                 } else {
@@ -31500,6 +31548,7 @@ impl Parser {
                         condition: args[0].clone(),
                         true_value: args[1].clone(),
                         false_value: Some(args[2].clone()),
+                        inferred_type: None,
                     }))
                 } else if args.len() == 2 {
                     // IF with 2 args: condition, true_value (no false_value)
@@ -31508,6 +31557,7 @@ impl Parser {
                         condition: args[0].clone(),
                         true_value: args[1].clone(),
                         false_value: None,
+                        inferred_type: None,
                     }))
                 } else {
                     return Err(self.parse_error("IF function requires 2 or 3 arguments"));
@@ -31878,6 +31928,7 @@ impl Parser {
                     filter,
                     ignore_nulls,
                     original_name: Some(name.to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -32361,6 +32412,7 @@ impl Parser {
                     distinct,
                     filter,
                     limit,
+                    inferred_type: None,
                 })))
             }
 
@@ -32407,6 +32459,7 @@ impl Parser {
                     order_by,
                     distinct,
                     filter,
+                    inferred_type: None,
                 })))
             }
 
@@ -32461,6 +32514,7 @@ impl Parser {
                     order_by: None,
                     distinct,
                     filter: None,
+                    inferred_type: None,
                 })))
             }
             _ => unreachable!(
@@ -32917,7 +32971,9 @@ impl Parser {
                                 s
                             } else {
                                 // Use parse_column for key to avoid interpreting colon as JSON path
-                                self.parse_column()?.unwrap_or(Expression::Null(Null))
+                                self.parse_column()?.ok_or_else(|| {
+                                    self.parse_error("Expected key expression in JSON_OBJECT")
+                                })?
                             };
 
                             // Support colon, VALUE keyword (identifier), and IS keyword (for KEY...IS syntax)
@@ -32926,7 +32982,9 @@ impl Parser {
                                 || (has_key_keyword && self.match_token(TokenType::Is));
 
                             if has_separator {
-                                let value = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                                let value = self.parse_bitwise()?.ok_or_else(|| {
+                                    self.parse_error("Expected value expression in JSON_OBJECT")
+                                })?;
                                 // Check for FORMAT JSON after value
                                 let value_with_format = if self.match_text_seq(&["FORMAT", "JSON"])
                                 {
@@ -32943,12 +33001,13 @@ impl Parser {
                             } else {
                                 // Just key/value pairs without separator
                                 if self.match_token(TokenType::Comma) {
-                                    let value =
-                                        self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                                    let value = self.parse_bitwise()?.ok_or_else(|| {
+                                        self.parse_error("Expected value expression in JSON_OBJECT")
+                                    })?;
                                     pairs.push((key, value));
                                 } else {
-                                    // Single key - treat as args list for compatibility
-                                    pairs.push((key, Expression::Null(Null)));
+                                    return Err(self
+                                        .parse_error("Expected value expression in JSON_OBJECT"));
                                 }
                             }
                             if !self.match_token(TokenType::Comma) {
@@ -35978,6 +36037,11 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.match_token(TokenType::Parameter)
         {
+            if self.check(TokenType::Colon) {
+                return Err(
+                    self.parse_error("Expected true expression after ? in ClickHouse ternary")
+                );
+            }
             let true_value = self.parse_or()?;
             let false_value = if self.match_token(TokenType::Colon) {
                 self.parse_or()?
@@ -35989,6 +36053,7 @@ impl Parser {
                 condition: expr,
                 true_value,
                 false_value: Some(false_value),
+                inferred_type: None,
             }))
         } else {
             expr
@@ -41859,7 +41924,14 @@ impl Parser {
         ) {
             if let Some(condition) = this {
                 if self.match_token(TokenType::Parameter) {
-                    let true_value = self.parse_assignment()?.unwrap_or(Expression::Null(Null));
+                    if self.check(TokenType::Colon) {
+                        return Err(self.parse_error(
+                            "Expected true expression after ? in ClickHouse ternary",
+                        ));
+                    }
+                    let true_value = self.parse_assignment()?.ok_or_else(|| {
+                        self.parse_error("Expected true expression after ? in ClickHouse ternary")
+                    })?;
                     let false_value = if self.match_token(TokenType::Colon) {
                         self.parse_assignment()?.unwrap_or(Expression::Null(Null))
                     } else {
@@ -41870,6 +41942,7 @@ impl Parser {
                         condition,
                         true_value,
                         false_value: Some(false_value),
+                        inferred_type: None,
                     }))));
                 }
                 this = Some(condition);
@@ -41937,9 +42010,11 @@ impl Parser {
     /// Python: _parse_bitwise
     /// Delegates to the existing parse_bitwise_or in the operator precedence chain
     pub fn parse_bitwise(&mut self) -> Result<Option<Expression>> {
+        let start = self.current;
         match self.parse_bitwise_or() {
             Ok(expr) => Ok(Some(expr)),
-            Err(_) => Ok(None),
+            Err(_err) if self.current == start => Ok(None),
+            Err(err) => Err(err),
         }
     }
 
@@ -43224,7 +43299,9 @@ impl Parser {
         {
             let name = self.expect_identifier_or_keyword_with_quoted()?;
             // Use parse_conjunction to handle comparisons like c0 < (SELECT _table)
-            let expression = self.parse_conjunction()?.unwrap_or(Expression::Null(Null));
+            let expression = self.parse_conjunction()?.ok_or_else(|| {
+                self.parse_error("Expected expression in ClickHouse INDEX definition")
+            })?;
             let index_type = if self.match_token(TokenType::Type) {
                 if let Some(func) = self.parse_function()? {
                     Some(Box::new(func))
@@ -43300,7 +43377,11 @@ impl Parser {
             }
             // PROJECTION name INDEX expr TYPE type_name
             if self.match_token(TokenType::Index) {
-                let expr = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
+                let expr = self.parse_bitwise()?.ok_or_else(|| {
+                    self.parse_error(
+                        "Expected expression in ClickHouse PROJECTION INDEX definition",
+                    )
+                })?;
                 let type_str = if self.match_token(TokenType::Type) {
                     if !self.is_at_end() {
                         let t = self.advance().text.clone();
@@ -45347,6 +45428,7 @@ impl Parser {
             order_by,
             distinct,
             filter: None,
+            inferred_type: None,
         }))))
     }
 
@@ -45708,6 +45790,7 @@ impl Parser {
                     condition: args[0].clone(),
                     true_value: args[1].clone(),
                     false_value: Some(args[2].clone()),
+                    inferred_type: None,
                 }))));
             } else if args.len() == 2 {
                 return Ok(Some(Expression::IfFunc(Box::new(IfFunc {
@@ -45715,6 +45798,7 @@ impl Parser {
                     condition: args[0].clone(),
                     true_value: args[1].clone(),
                     false_value: None,
+                    inferred_type: None,
                 }))));
             } else if args.len() == 1 {
                 return Ok(Some(Expression::Function(Box::new(Function {
@@ -45810,6 +45894,7 @@ impl Parser {
             condition,
             true_value,
             false_value,
+            inferred_type: None,
         }))))
     }
 
@@ -45820,7 +45905,7 @@ impl Parser {
     pub fn parse_in(&mut self) -> Result<Option<Expression>> {
         // If we're at IN keyword, parse what follows
         if self.match_token(TokenType::In) {
-            return self.parse_in_with_expr(None);
+            return Err(self.parse_error("Expected expression before IN"));
         }
 
         // Try to parse as a complete expression: left IN (...)
@@ -45835,16 +45920,14 @@ impl Parser {
                 // Expect IN keyword
                 if self.match_token(TokenType::In) {
                     let in_result = self.parse_in_with_expr(Some(left_expr))?;
-                    if let Some(in_expr) = in_result {
-                        return Ok(Some(if negate {
-                            Expression::Not(Box::new(UnaryOp {
-                                this: in_expr,
-                                inferred_type: None,
-                            }))
-                        } else {
-                            in_expr
-                        }));
-                    }
+                    return Ok(Some(if negate {
+                        Expression::Not(Box::new(UnaryOp {
+                            this: in_result,
+                            inferred_type: None,
+                        }))
+                    } else {
+                        in_result
+                    }));
                 }
 
                 // Not an IN expression, restore position
@@ -50317,7 +50400,12 @@ impl Parser {
 
             if self.match_token(TokenType::Partition) {
                 self.expect(TokenType::By)?;
-                let expr = self.parse_assignment()?.unwrap_or(Expression::Null(Null));
+                if self.check(TokenType::Order) && self.check_next(TokenType::By) {
+                    return Err(self.parse_error("Expected expression after PARTITION BY"));
+                }
+                let expr = self
+                    .parse_assignment()?
+                    .ok_or_else(|| self.parse_error("Expected expression after PARTITION BY"))?;
                 properties.push(Expression::PartitionedByProperty(Box::new(
                     PartitionedByProperty {
                         this: Box::new(expr),
@@ -50509,6 +50597,116 @@ impl Parser {
         expr
     }
 
+    fn try_parse_date_part_unit_expr(&self, expr: &Expression) -> Option<IntervalUnit> {
+        let upper = self.date_part_expr_name(expr)?.to_uppercase();
+        let canonical = match upper.as_str() {
+            // Year
+            "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => "YEAR",
+            // Quarter
+            "Q" | "QTR" | "QTRS" | "QUARTERS" | "QQ" => "QUARTER",
+            // Month
+            "MM" | "MON" | "MONS" | "MONTHS" | "M" => "MONTH",
+            // Week
+            "W" | "WK" | "WEEKOFYEAR" | "WOY" | "WY" | "WW" | "WEEKS" => "WEEK",
+            // Day
+            "D" | "DD" | "DAYS" | "DAYOFMONTH" => "DAY",
+            // Hour
+            "H" | "HH" | "HR" | "HOURS" | "HRS" => "HOUR",
+            // Minute
+            "MI" | "MIN" | "MINUTES" | "MINS" | "N" => "MINUTE",
+            // Second
+            "S" | "SEC" | "SECONDS" | "SECS" | "SS" => "SECOND",
+            // Millisecond
+            "MS" | "MSEC" | "MSECS" | "MSECOND" | "MSECONDS" | "MILLISEC" | "MILLISECS"
+            | "MILLISECON" | "MILLISECONDS" => "MILLISECOND",
+            // Microsecond
+            "US" | "USEC" | "USECS" | "MICROSEC" | "MICROSECS" | "USECOND" | "USECONDS"
+            | "MICROSECONDS" | "MCS" => "MICROSECOND",
+            // Nanosecond
+            "NS" | "NSEC" | "NANOSEC" | "NSECOND" | "NSECONDS" | "NANOSECS" => "NANOSECOND",
+            _ => upper.as_str(),
+        };
+
+        Self::parse_interval_unit_from_string(canonical)
+    }
+
+    fn try_parse_date_part_unit_identifier_expr(&self, expr: &Expression) -> Option<IntervalUnit> {
+        let upper = self.date_part_identifier_expr_name(expr)?.to_uppercase();
+        let canonical = match upper.as_str() {
+            "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => "YEAR",
+            "Q" | "QTR" | "QTRS" | "QUARTERS" | "QQ" => "QUARTER",
+            "MM" | "MON" | "MONS" | "MONTHS" | "M" => "MONTH",
+            "W" | "WK" | "WEEKOFYEAR" | "WOY" | "WY" | "WW" | "WEEKS" => "WEEK",
+            "D" | "DD" | "DAYS" | "DAYOFMONTH" => "DAY",
+            "H" | "HH" | "HR" | "HOURS" | "HRS" => "HOUR",
+            "MI" | "MIN" | "MINUTES" | "MINS" | "N" => "MINUTE",
+            "S" | "SEC" | "SECONDS" | "SECS" | "SS" => "SECOND",
+            "MS" | "MSEC" | "MSECS" | "MSECOND" | "MSECONDS" | "MILLISEC" | "MILLISECS"
+            | "MILLISECON" | "MILLISECONDS" => "MILLISECOND",
+            "US" | "USEC" | "USECS" | "MICROSEC" | "MICROSECS" | "USECOND" | "USECONDS"
+            | "MICROSECONDS" | "MCS" => "MICROSECOND",
+            "NS" | "NSEC" | "NANOSEC" | "NSECOND" | "NSECONDS" | "NANOSECS" => "NANOSECOND",
+            _ => upper.as_str(),
+        };
+
+        Self::parse_interval_unit_from_string(canonical)
+    }
+
+    fn try_parse_date_part_field_identifier_expr(
+        &self,
+        expr: &Expression,
+    ) -> Option<DateTimeField> {
+        let upper = self.date_part_identifier_expr_name(expr)?.to_uppercase();
+        Some(match upper.as_str() {
+            "YEAR" | "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => DateTimeField::Year,
+            "MONTH" | "MM" | "MON" | "MONS" | "MONTHS" => DateTimeField::Month,
+            "DAY" | "D" | "DD" | "DAYS" | "DAYOFMONTH" => DateTimeField::Day,
+            "HOUR" | "H" | "HH" | "HR" | "HOURS" | "HRS" => DateTimeField::Hour,
+            "MINUTE" | "MI" | "MIN" | "MINUTES" | "MINS" => DateTimeField::Minute,
+            "SECOND" | "S" | "SEC" | "SECONDS" | "SECS" => DateTimeField::Second,
+            "MILLISECOND" | "MS" | "MSEC" | "MILLISECONDS" => DateTimeField::Millisecond,
+            "MICROSECOND" | "US" | "USEC" | "MICROSECONDS" => DateTimeField::Microsecond,
+            "DOW" | "DAYOFWEEK" | "DW" => DateTimeField::DayOfWeek,
+            "DOY" | "DAYOFYEAR" | "DY" => DateTimeField::DayOfYear,
+            "WEEK" | "W" | "WK" | "WEEKOFYEAR" | "WOY" | "WW" => DateTimeField::Week,
+            "QUARTER" | "Q" | "QTR" | "QTRS" | "QUARTERS" => DateTimeField::Quarter,
+            "EPOCH" | "EPOCH_SECOND" | "EPOCH_SECONDS" => DateTimeField::Epoch,
+            "TIMEZONE" => DateTimeField::Timezone,
+            "TIMEZONE_HOUR" | "TZH" => DateTimeField::TimezoneHour,
+            "TIMEZONE_MINUTE" | "TZM" => DateTimeField::TimezoneMinute,
+            "DATE" => DateTimeField::Date,
+            "TIME" => DateTimeField::Time,
+            other => DateTimeField::Custom(other.to_string()),
+        })
+    }
+
+    fn convert_date_part_identifier_expr_to_var(&self, expr: Expression) -> Expression {
+        match expr {
+            Expression::Var(_) => expr,
+            Expression::Column(c) if c.table.is_none() => {
+                Expression::Var(Box::new(Var { this: c.name.name }))
+            }
+            Expression::Identifier(id) => Expression::Var(Box::new(Var { this: id.name })),
+            _ => expr,
+        }
+    }
+
+    fn date_part_identifier_expr_name<'a>(&self, expr: &'a Expression) -> Option<&'a str> {
+        match expr {
+            Expression::Var(v) => Some(v.this.as_str()),
+            Expression::Column(c) if c.table.is_none() => Some(c.name.name.as_str()),
+            Expression::Identifier(id) => Some(id.name.as_str()),
+            _ => None,
+        }
+    }
+
+    fn date_part_expr_name<'a>(&self, expr: &'a Expression) -> Option<&'a str> {
+        self.date_part_identifier_expr_name(expr).or(match expr {
+            Expression::Literal(Literal::String(s)) => Some(s.as_str()),
+            _ => None,
+        })
+    }
+
     fn try_clickhouse_func_arg_alias(&mut self, expr: Expression) -> Expression {
         if !matches!(
             self.config.dialect,
@@ -50672,84 +50870,80 @@ impl Parser {
 
         // BETWEEN
         if self.match_token(TokenType::Between) {
-            let between_result = self.parse_between_with_expr(this.clone(), negate)?;
-            if let Some(between) = between_result {
-                this = Some(between);
-                return Ok(this);
-            }
+            let between = self.parse_between_with_expr(this.clone(), negate)?;
+            this = Some(between);
+            return Ok(this);
         }
 
         // LIKE
         if self.match_token(TokenType::Like) {
-            let pattern = self.parse_bitwise()?;
+            let left = this.clone().expect("left expression checked above");
+            let right = self
+                .parse_bitwise()?
+                .ok_or_else(|| self.parse_error("Expected expression after LIKE"))?;
             let escape = self.parse_escape()?;
-            if let (Some(left), Some(right)) = (this.clone(), pattern) {
-                let like = Expression::Like(Box::new(LikeOp {
-                    left,
-                    right,
-                    escape,
-                    quantifier: None,
+            let like = Expression::Like(Box::new(LikeOp {
+                left,
+                right,
+                escape,
+                quantifier: None,
+                inferred_type: None,
+            }));
+            this = if negate {
+                Some(Expression::Not(Box::new(UnaryOp {
+                    this: like,
                     inferred_type: None,
-                }));
-                this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp {
-                        this: like,
-                        inferred_type: None,
-                    })))
-                } else {
-                    Some(like)
-                };
-                return Ok(this);
-            }
+                })))
+            } else {
+                Some(like)
+            };
+            return Ok(this);
         }
 
         // ILIKE
         if self.match_token(TokenType::ILike) {
-            let pattern = self.parse_bitwise()?;
+            let left = this.clone().expect("left expression checked above");
+            let right = self
+                .parse_bitwise()?
+                .ok_or_else(|| self.parse_error("Expected expression after ILIKE"))?;
             let escape = self.parse_escape()?;
-            if let (Some(left), Some(right)) = (this.clone(), pattern) {
-                let ilike = Expression::ILike(Box::new(LikeOp {
-                    left,
-                    right,
-                    escape,
-                    quantifier: None,
+            let ilike = Expression::ILike(Box::new(LikeOp {
+                left,
+                right,
+                escape,
+                quantifier: None,
+                inferred_type: None,
+            }));
+            this = if negate {
+                Some(Expression::Not(Box::new(UnaryOp {
+                    this: ilike,
                     inferred_type: None,
-                }));
-                this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp {
-                        this: ilike,
-                        inferred_type: None,
-                    })))
-                } else {
-                    Some(ilike)
-                };
-                return Ok(this);
-            }
+                })))
+            } else {
+                Some(ilike)
+            };
+            return Ok(this);
         }
 
         // IN
         if self.match_token(TokenType::In) {
-            let in_result = self.parse_in_with_expr(this.clone())?;
-            if let Some(in_expr) = in_result {
-                this = if negate {
-                    Some(Expression::Not(Box::new(UnaryOp {
-                        this: in_expr,
-                        inferred_type: None,
-                    })))
-                } else {
-                    Some(in_expr)
-                };
-                return Ok(this);
-            }
+            let in_expr = self.parse_in_with_expr(this.clone())?;
+            this = if negate {
+                Some(Expression::Not(Box::new(UnaryOp {
+                    this: in_expr,
+                    inferred_type: None,
+                })))
+            } else {
+                Some(in_expr)
+            };
+            return Ok(this);
         }
 
         // IS [NOT] NULL / IS [NOT] TRUE / IS [NOT] FALSE
         if self.match_token(TokenType::Is) {
-            let is_result = self.parse_is_with_expr(this.clone())?;
-            if let Some(is_expr) = is_result {
-                this = Some(is_expr);
-                return Ok(this);
-            }
+            let is_expr = self.parse_is_with_expr(this.clone())?;
+            this = Some(is_expr);
+            return Ok(this);
         }
 
         // Handle standalone NOT with NULL (for NOT NULL pattern after negate)
@@ -50778,10 +50972,10 @@ impl Parser {
         &mut self,
         this: Option<Expression>,
         negate: bool,
-    ) -> Result<Option<Expression>> {
+    ) -> Result<Expression> {
         let this_expr = match this {
             Some(e) => e,
-            None => return Ok(None),
+            None => return Err(self.parse_error("Expected expression before BETWEEN")),
         };
 
         // Check for SYMMETRIC/ASYMMETRIC qualifier
@@ -50793,34 +50987,32 @@ impl Parser {
             None
         };
 
-        let low = self.parse_bitwise()?;
-        if low.is_none() {
-            return Ok(Some(this_expr));
-        }
+        let low = self
+            .parse_bitwise()?
+            .ok_or_else(|| self.parse_error("Expected low expression after BETWEEN"))?;
 
         if !self.match_token(TokenType::And) {
-            return Ok(Some(this_expr));
+            return Err(self.parse_error("Expected AND in BETWEEN expression"));
         }
 
-        let high = self.parse_bitwise()?;
-        if high.is_none() {
-            return Ok(Some(this_expr));
-        }
+        let high = self
+            .parse_bitwise()?
+            .ok_or_else(|| self.parse_error("Expected high expression after AND in BETWEEN"))?;
 
-        Ok(Some(Expression::Between(Box::new(Between {
+        Ok(Expression::Between(Box::new(Between {
             this: this_expr,
-            low: low.unwrap(),
-            high: high.unwrap(),
+            low,
+            high,
             not: negate,
             symmetric,
-        }))))
+        })))
     }
 
     /// parse_in_with_expr - Parses IN expression with given left side
-    fn parse_in_with_expr(&mut self, this: Option<Expression>) -> Result<Option<Expression>> {
+    fn parse_in_with_expr(&mut self, this: Option<Expression>) -> Result<Expression> {
         let this_expr = match this {
             Some(e) => e,
-            None => return Ok(None),
+            None => return Err(self.parse_error("Expected expression before IN")),
         };
 
         // BigQuery: IN UNNEST(expr) — UNNEST without wrapping parentheses
@@ -50829,7 +51021,7 @@ impl Parser {
             self.expect(TokenType::LParen)?;
             let unnest_expr = self.parse_expression()?;
             self.expect(TokenType::RParen)?;
-            return Ok(Some(Expression::In(Box::new(In {
+            return Ok(Expression::In(Box::new(In {
                 this: this_expr,
                 expressions: Vec::new(),
                 query: None,
@@ -50837,7 +51029,7 @@ impl Parser {
                 global: false,
                 unnest: Some(Box::new(unnest_expr)),
                 is_field: false,
-            }))));
+            })));
         }
 
         // Parse the IN list (subquery or value list)
@@ -50845,7 +51037,7 @@ impl Parser {
             // DuckDB: IN without parentheses for array/list membership: 'red' IN tbl.flags
             // Try to parse as a single expression (column/array reference)
             if let Ok(expr) = self.parse_primary() {
-                return Ok(Some(Expression::In(Box::new(In {
+                return Ok(Expression::In(Box::new(In {
                     this: this_expr,
                     expressions: vec![expr],
                     query: None,
@@ -50853,16 +51045,16 @@ impl Parser {
                     global: false,
                     unnest: None,
                     is_field: true,
-                }))));
+                })));
             }
-            return Ok(Some(this_expr));
+            return Err(self.parse_error("Expected expression or parenthesized list after IN"));
         }
 
         // Check if it's a subquery
         if self.check(TokenType::Select) {
             let subquery = self.parse_select()?;
-            self.match_token(TokenType::RParen);
-            return Ok(Some(Expression::In(Box::new(In {
+            self.expect(TokenType::RParen)?;
+            return Ok(Expression::In(Box::new(In {
                 this: this_expr,
                 expressions: Vec::new(),
                 query: Some(subquery),
@@ -50870,15 +51062,19 @@ impl Parser {
                 global: false,
                 unnest: None,
                 is_field: false,
-            }))));
+            })));
         }
 
         // Parse value list. Pre-size for large IN lists to reduce reallocations.
         let capacity_hint = self.estimate_expression_list_capacity_until_rparen();
         let expressions = self.parse_expression_list_with_capacity(capacity_hint)?;
-        self.match_token(TokenType::RParen);
+        self.expect(TokenType::RParen)?;
 
-        Ok(Some(Expression::In(Box::new(In {
+        if expressions.is_empty() {
+            return Err(self.parse_error("Expected expression list after IN"));
+        }
+
+        Ok(Expression::In(Box::new(In {
             this: this_expr,
             expressions,
             query: None,
@@ -50886,14 +51082,14 @@ impl Parser {
             global: false,
             unnest: None,
             is_field: false,
-        }))))
+        })))
     }
 
     /// parse_is_with_expr - Parses IS expression with given left side
-    fn parse_is_with_expr(&mut self, this: Option<Expression>) -> Result<Option<Expression>> {
+    fn parse_is_with_expr(&mut self, this: Option<Expression>) -> Result<Expression> {
         let this_expr = match this {
             Some(e) => e,
-            None => return Ok(None),
+            None => return Err(self.parse_error("Expected expression before IS")),
         };
 
         let negate = self.match_token(TokenType::Not);
@@ -50909,12 +51105,12 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                Ok(Expression::Not(Box::new(UnaryOp {
                     this: is_null,
                     inferred_type: None,
-                }))))
+                })))
             } else {
-                Ok(Some(is_null))
+                Ok(is_null)
             };
         }
 
@@ -50929,12 +51125,12 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                Ok(Expression::Not(Box::new(UnaryOp {
                     this: is_true,
                     inferred_type: None,
-                }))))
+                })))
             } else {
-                Ok(Some(is_true))
+                Ok(is_true)
             };
         }
 
@@ -50949,12 +51145,12 @@ impl Parser {
                 inferred_type: None,
             }));
             return if negate {
-                Ok(Some(Expression::Not(Box::new(UnaryOp {
+                Ok(Expression::Not(Box::new(UnaryOp {
                     this: is_false,
                     inferred_type: None,
-                }))))
+                })))
             } else {
-                Ok(Some(is_false))
+                Ok(is_false)
             };
         }
 
@@ -50985,12 +51181,12 @@ impl Parser {
                 None
             };
 
-            return Ok(Some(Expression::IsJson(Box::new(IsJson {
+            return Ok(Expression::IsJson(Box::new(IsJson {
                 this: this_expr,
                 json_type,
                 unique_keys,
                 negated: negate,
-            }))));
+            })));
         }
 
         // IS DISTINCT FROM / IS NOT DISTINCT FROM
@@ -51019,11 +51215,12 @@ impl Parser {
                         inferred_type: None,
                     }))
                 };
-                return Ok(Some(expr));
+                return Ok(expr);
             }
+            return Err(self.parse_error("Expected expression after IS DISTINCT FROM"));
         }
 
-        Ok(Some(this_expr))
+        Err(self.parse_error("Expected NULL, TRUE, FALSE, JSON, or DISTINCT FROM after IS"))
     }
 
     /// parse_reads_property - Implemented from Python _parse_reads_property
@@ -52741,6 +52938,7 @@ impl Parser {
             order_by: None,
             distinct,
             filter: None,
+            inferred_type: None,
         }))))
     }
 

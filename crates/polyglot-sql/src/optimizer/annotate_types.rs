@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 use crate::dialects::DialectType;
 use crate::expressions::{
-    BinaryOp, DataType, Expression, Function, Literal, Map, Struct, StructField, Subscript,
+    BinaryOp, DataType, Expression, Function, IfFunc, ListAggOverflow, Literal, Map, Nvl2Func,
+    Struct, StructField, Subscript,
 };
 use crate::schema::Schema;
 
@@ -421,10 +422,13 @@ impl<'a> TypeAnnotator<'a> {
 
             // Functions
             Expression::Function(func) => self.annotate_function(func),
+            Expression::IfFunc(if_func) => self.annotate_if_func(if_func),
+            Expression::Nvl2(nvl2) => self.annotate_nvl2(nvl2),
 
             // Typed aggregate functions
             Expression::Count(_) => Some(DataType::BigInt { length: None }),
             Expression::Sum(agg) => self.annotate_sum(&agg.this),
+            Expression::SumIf(f) => self.annotate_sum(&f.this),
             Expression::Avg(_) => Some(DataType::Double {
                 precision: None,
                 scale: None,
@@ -822,10 +826,93 @@ impl<'a> TypeAnnotator<'a> {
                 }
             }
 
+            // Dedicated conditional functions
+            Expression::IfFunc(f) => {
+                self.annotate_in_place(&mut f.condition);
+                self.annotate_in_place(&mut f.true_value);
+                if let Some(false_value) = &mut f.false_value {
+                    self.annotate_in_place(false_value);
+                }
+            }
+            Expression::Nvl2(f) => {
+                self.annotate_in_place(&mut f.this);
+                self.annotate_in_place(&mut f.true_value);
+                self.annotate_in_place(&mut f.false_value);
+            }
+
             // AggregateFunction
             Expression::AggregateFunction(f) => {
                 for arg in &mut f.args {
                     self.annotate_in_place(arg);
+                }
+            }
+
+            // Dedicated aggregate / string functions
+            Expression::Count(f) => {
+                if let Some(this) = &mut f.this {
+                    self.annotate_in_place(this);
+                }
+                if let Some(filter) = &mut f.filter {
+                    self.annotate_in_place(filter);
+                }
+            }
+            Expression::GroupConcat(f) => {
+                self.annotate_in_place(&mut f.this);
+                if let Some(separator) = &mut f.separator {
+                    self.annotate_in_place(separator);
+                }
+                if let Some(order_by) = &mut f.order_by {
+                    for ordered in order_by {
+                        self.annotate_in_place(&mut ordered.this);
+                    }
+                }
+                if let Some(filter) = &mut f.filter {
+                    self.annotate_in_place(filter);
+                }
+            }
+            Expression::StringAgg(f) => {
+                self.annotate_in_place(&mut f.this);
+                if let Some(separator) = &mut f.separator {
+                    self.annotate_in_place(separator);
+                }
+                if let Some(order_by) = &mut f.order_by {
+                    for ordered in order_by {
+                        self.annotate_in_place(&mut ordered.this);
+                    }
+                }
+                if let Some(filter) = &mut f.filter {
+                    self.annotate_in_place(filter);
+                }
+                if let Some(limit) = &mut f.limit {
+                    self.annotate_in_place(limit);
+                }
+            }
+            Expression::ListAgg(f) => {
+                self.annotate_in_place(&mut f.this);
+                if let Some(separator) = &mut f.separator {
+                    self.annotate_in_place(separator);
+                }
+                if let Some(order_by) = &mut f.order_by {
+                    for ordered in order_by {
+                        self.annotate_in_place(&mut ordered.this);
+                    }
+                }
+                if let Some(filter) = &mut f.filter {
+                    self.annotate_in_place(filter);
+                }
+                if let Some(ListAggOverflow::Truncate {
+                    filler: Some(filler),
+                    ..
+                }) = &mut f.on_overflow
+                {
+                    self.annotate_in_place(filler);
+                }
+            }
+            Expression::SumIf(f) => {
+                self.annotate_in_place(&mut f.this);
+                self.annotate_in_place(&mut f.condition);
+                if let Some(filter) = &mut f.filter {
+                    self.annotate_in_place(filter);
                 }
             }
 
@@ -1190,6 +1277,33 @@ impl<'a> TypeAnnotator<'a> {
         }
     }
 
+    /// Annotate IF/IIF/IFF conditional function
+    fn annotate_if_func(&mut self, func: &IfFunc) -> Option<DataType> {
+        let true_type = self.annotate(&func.true_value);
+        let false_type = func
+            .false_value
+            .as_ref()
+            .and_then(|expr| self.annotate(expr));
+
+        match (true_type, false_type) {
+            (Some(left), Some(right)) => self.coerce_types(&left, &right),
+            (Some(dt), None) | (None, Some(dt)) => Some(dt),
+            (None, None) => None,
+        }
+    }
+
+    /// Annotate NVL2 conditional function from its true/false branches
+    fn annotate_nvl2(&mut self, func: &Nvl2Func) -> Option<DataType> {
+        let true_type = self.annotate(&func.true_value);
+        let false_type = self.annotate(&func.false_value);
+
+        match (true_type, false_type) {
+            (Some(left), Some(right)) => self.coerce_types(&left, &right),
+            (Some(dt), None) | (None, Some(dt)) => Some(dt),
+            (None, None) => None,
+        }
+    }
+
     /// Get return type for aggregate functions
     fn get_aggregate_return_type(
         &mut self,
@@ -1198,6 +1312,16 @@ impl<'a> TypeAnnotator<'a> {
     ) -> Option<DataType> {
         match func_name {
             "COUNT" | "COUNT_IF" => Some(DataType::BigInt { length: None }),
+            "SUM_IF" => {
+                if let Some(arg) = args.first() {
+                    self.annotate_sum(arg)
+                } else {
+                    Some(DataType::Decimal {
+                        precision: None,
+                        scale: None,
+                    })
+                }
+            }
             "SUM" => {
                 if let Some(arg) = args.first() {
                     self.annotate_sum(arg)
@@ -1378,6 +1502,7 @@ pub fn annotate_types(
 mod tests {
     use super::*;
     use crate::expressions::{BooleanLiteral, Cast, Null};
+    use crate::{parse_one, DialectType, MappingSchema, Schema};
 
     fn make_int_literal(val: i64) -> Expression {
         Expression::Literal(Literal::Number(val.to_string()))
@@ -2278,5 +2403,129 @@ mod tests {
         )));
         let json = serde_json::to_string(&expr).expect("serialize failed");
         assert!(!json.contains("inferred_type"));
+    }
+
+    #[test]
+    fn test_annotate_if_func_bigquery_node_and_alias_type() {
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table(
+                "t",
+                &[("col1".to_string(), DataType::String { length: None })],
+                None,
+            )
+            .unwrap();
+
+        let mut expr = parse_one(
+            "SELECT IF(col1 IS NOT NULL, 1, 0) AS x FROM t",
+            DialectType::BigQuery,
+        )
+        .unwrap();
+        annotate_types(&mut expr, Some(&schema), Some(DialectType::BigQuery));
+
+        let Expression::Select(select) = &expr else {
+            panic!("expected select");
+        };
+        let Expression::Alias(alias) = &select.expressions[0] else {
+            panic!("expected alias");
+        };
+
+        assert_eq!(
+            alias.this.inferred_type(),
+            Some(&DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+        assert_eq!(
+            select.expressions[0].inferred_type(),
+            Some(&DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_annotate_nvl2_node_type() {
+        let mut expr = parse_one("SELECT NVL2(a, 1, 0) AS x", DialectType::Generic).unwrap();
+        annotate_types(&mut expr, None, None);
+
+        let Expression::Select(select) = &expr else {
+            panic!("expected select");
+        };
+        let Expression::Alias(alias) = &select.expressions[0] else {
+            panic!("expected alias");
+        };
+
+        assert_eq!(
+            alias.this.inferred_type(),
+            Some(&DataType::Int {
+                length: None,
+                integer_spelling: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_annotate_count_node_type() {
+        let mut expr = parse_one("SELECT COUNT(1) AS x", DialectType::Generic).unwrap();
+        annotate_types(&mut expr, None, None);
+
+        let Expression::Select(select) = &expr else {
+            panic!("expected select");
+        };
+        let Expression::Alias(alias) = &select.expressions[0] else {
+            panic!("expected alias");
+        };
+
+        assert_eq!(
+            alias.this.inferred_type(),
+            Some(&DataType::BigInt { length: None })
+        );
+    }
+
+    #[test]
+    fn test_annotate_group_concat_node_type() {
+        let mut expr = parse_one("SELECT GROUP_CONCAT(a) AS x", DialectType::Generic).unwrap();
+        annotate_types(&mut expr, None, None);
+
+        let Expression::Select(select) = &expr else {
+            panic!("expected select");
+        };
+        let Expression::Alias(alias) = &select.expressions[0] else {
+            panic!("expected alias");
+        };
+
+        assert_eq!(
+            alias.this.inferred_type(),
+            Some(&DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_annotate_sum_if_generic_aggregate_type() {
+        let mut expr =
+            parse_one("SELECT SUM_IF(1, a > 0) AS x FROM t", DialectType::Generic).unwrap();
+        annotate_types(&mut expr, None, None);
+
+        let Expression::Select(select) = &expr else {
+            panic!("expected select");
+        };
+        let Expression::Alias(alias) = &select.expressions[0] else {
+            panic!("expected alias");
+        };
+
+        assert_eq!(
+            select.expressions[0].inferred_type(),
+            Some(&DataType::BigInt { length: None })
+        );
+        assert_eq!(
+            alias.this.inferred_type(),
+            Some(&DataType::BigInt { length: None })
+        );
     }
 }

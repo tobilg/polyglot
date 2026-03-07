@@ -1416,6 +1416,10 @@ mod tests {
             scope.sources.contains_key("src"),
             "CTAS scope should contain the FROM table"
         );
+        assert!(
+            !scope.sources.contains_key("out_table"),
+            "CTAS target table should not be treated as a source"
+        );
 
         // CTAS with multiple FROM tables
         let scope = parse_and_build_scope(
@@ -1423,6 +1427,10 @@ mod tests {
         );
         assert!(scope.sources.contains_key("a"));
         assert!(scope.sources.contains_key("b"));
+        assert!(
+            !scope.sources.contains_key("out_table"),
+            "CTAS target table should not be treated as a source"
+        );
 
         // CTAS with CTEs
         let scope = parse_and_build_scope(
@@ -1431,6 +1439,10 @@ mod tests {
         assert!(
             scope.sources.contains_key("cte"),
             "CTAS with CTE should resolve CTE as source"
+        );
+        assert!(
+            !scope.sources.contains_key("out_table"),
+            "CTAS target table should not be treated as a source"
         );
         assert_eq!(scope.cte_scopes.len(), 1);
     }

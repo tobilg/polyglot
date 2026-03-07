@@ -12,7 +12,7 @@ use crate::expressions::{
     Select, TableRef, VarArgFunc, With,
 };
 use crate::resolver::{Resolver, ResolverError};
-use crate::schema::Schema;
+use crate::schema::{normalize_name, Schema};
 use crate::scope::{build_scope, traverse_scope, Scope};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -828,9 +828,12 @@ fn qualify_single_column(
         }
 
         if let Ok(source_columns) = resolver.get_source_columns(table_name) {
+            let normalized_column_name = normalize_column_name(&col.name.name, resolver.dialect);
             if !allow_partial
                 && !source_columns.is_empty()
-                && !source_columns.contains(&col.name.name)
+                && !source_columns.iter().any(|column| {
+                    normalize_column_name(column, resolver.dialect) == normalized_column_name
+                })
                 && !source_columns.contains(&"*".to_string())
             {
                 return Err(QualifyColumnsError::UnknownColumn(col.name.name.clone()));
@@ -849,6 +852,10 @@ fn qualify_single_column(
     }
 
     Ok(())
+}
+
+fn normalize_column_name(name: &str, dialect: Option<DialectType>) -> String {
+    normalize_name(name, dialect, false, true)
 }
 
 fn replace_alias_refs_in_expression(

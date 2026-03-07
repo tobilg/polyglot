@@ -1291,6 +1291,13 @@ impl Expression {
             Expression::Case(c) => c.inferred_type.as_ref(),
             Expression::Subquery(s) => s.inferred_type.as_ref(),
             Expression::Alias(a) => a.inferred_type.as_ref(),
+            Expression::IfFunc(f) => f.inferred_type.as_ref(),
+            Expression::Nvl2(f) => f.inferred_type.as_ref(),
+            Expression::Count(f) => f.inferred_type.as_ref(),
+            Expression::GroupConcat(f) => f.inferred_type.as_ref(),
+            Expression::StringAgg(f) => f.inferred_type.as_ref(),
+            Expression::ListAgg(f) => f.inferred_type.as_ref(),
+            Expression::SumIf(f) => f.inferred_type.as_ref(),
 
             // UnaryFunc variants
             Expression::Upper(f)
@@ -1511,6 +1518,13 @@ impl Expression {
             Expression::Case(c) => c.inferred_type = Some(dt),
             Expression::Subquery(s) => s.inferred_type = Some(dt),
             Expression::Alias(a) => a.inferred_type = Some(dt),
+            Expression::IfFunc(f) => f.inferred_type = Some(dt),
+            Expression::Nvl2(f) => f.inferred_type = Some(dt),
+            Expression::Count(f) => f.inferred_type = Some(dt),
+            Expression::GroupConcat(f) => f.inferred_type = Some(dt),
+            Expression::StringAgg(f) => f.inferred_type = Some(dt),
+            Expression::ListAgg(f) => f.inferred_type = Some(dt),
+            Expression::SumIf(f) => f.inferred_type = Some(dt),
 
             // UnaryFunc variants
             Expression::Upper(f)
@@ -4917,6 +4931,9 @@ pub struct IfFunc {
     /// Original function name (IF, IFF, IIF) for round-trip preservation
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub original_name: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// NVL2 function
@@ -4926,6 +4943,9 @@ pub struct Nvl2Func {
     pub this: Expression,
     pub true_value: Expression,
     pub false_value: Expression,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 // ============================================================================
@@ -4972,6 +4992,9 @@ pub struct CountFunc {
     /// Original function name for case preservation (e.g., "count" or "COUNT")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_name: Option<String>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// GROUP_CONCAT function (MySQL style)
@@ -4983,6 +5006,9 @@ pub struct GroupConcatFunc {
     pub order_by: Option<Vec<Ordered>>,
     pub distinct: bool,
     pub filter: Option<Expression>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// STRING_AGG function (PostgreSQL/Standard SQL)
@@ -5001,6 +5027,9 @@ pub struct StringAggFunc {
     /// BigQuery LIMIT inside STRING_AGG
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<Box<Expression>>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// LISTAGG function (Oracle style)
@@ -5013,6 +5042,9 @@ pub struct ListAggFunc {
     pub order_by: Option<Vec<Ordered>>,
     pub distinct: bool,
     pub filter: Option<Expression>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// LISTAGG ON OVERFLOW behavior
@@ -5033,6 +5065,9 @@ pub struct SumIfFunc {
     pub this: Expression,
     pub condition: Expression,
     pub filter: Option<Expression>,
+    /// Inferred data type from type annotation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_type: Option<DataType>,
 }
 
 /// APPROX_PERCENTILE function

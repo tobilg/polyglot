@@ -1,6 +1,7 @@
 """Polyglot SQL — Rust-powered SQL transpiler for 32+ dialects."""
 
 from polyglot_sql._polyglot_sql import (
+    Expression,
     GenerateError,
     ParseError,
     PolyglotError,
@@ -16,7 +17,9 @@ from polyglot_sql._polyglot_sql import (
     lineage_with_schema,
     optimize,
     parse,
+    parse_expr,
     parse_one,
+    parse_one_expr,
     source_tables,
     tokenize,
     transpile,
@@ -30,7 +33,9 @@ __version__ = _version()
 __all__ = [
     "transpile",
     "parse",
+    "parse_expr",
     "parse_one",
+    "parse_one_expr",
     "generate",
     "format_sql",
     "format",
@@ -42,6 +47,7 @@ __all__ = [
     "diff",
     "tokenize",
     "dialects",
+    "Expression",
     "PolyglotError",
     "ParseError",
     "GenerateError",

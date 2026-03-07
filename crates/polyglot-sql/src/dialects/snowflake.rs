@@ -186,6 +186,7 @@ impl DialectImpl for SnowflakeDialect {
                 order_by: f.order_by,
                 distinct: f.distinct,
                 filter: f.filter,
+                inferred_type: None,
             }))),
 
             // ===== Cast operations =====
@@ -862,6 +863,7 @@ impl DialectImpl for SnowflakeDialect {
                         .unwrap_or(Expression::Null(crate::expressions::Null)),
                 ),
                 original_name: Some("IFF".to_string()),
+                inferred_type: None,
             }))),
 
             // ===== Aggregate functions =====
@@ -1480,6 +1482,18 @@ impl SnowflakeDialect {
                     expr
                 }
             }
+            Expression::Var(v) => {
+                if let Some(canonical) = Self::map_date_part(&v.this) {
+                    Expression::Identifier(crate::expressions::Identifier {
+                        name: canonical.to_string(),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    })
+                } else {
+                    expr
+                }
+            }
             // Handle Column (more common - parser treats unqualified names as columns)
             Expression::Column(col) if col.table.is_none() => {
                 if let Some(canonical) = Self::map_date_part(&col.name.name) {
@@ -1504,6 +1518,18 @@ impl SnowflakeDialect {
         match &expr {
             Expression::Identifier(id) => {
                 if let Some(canonical) = Self::map_date_part(&id.name) {
+                    Expression::Identifier(crate::expressions::Identifier {
+                        name: canonical.to_string(),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    })
+                } else {
+                    expr
+                }
+            }
+            Expression::Var(v) => {
+                if let Some(canonical) = Self::map_date_part(&v.this) {
                     Expression::Identifier(crate::expressions::Identifier {
                         name: canonical.to_string(),
                         quoted: false,
@@ -2188,6 +2214,7 @@ impl SnowflakeDialect {
                         false_val.unwrap_or(Expression::Null(crate::expressions::Null)),
                     ),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -2359,6 +2386,7 @@ impl SnowflakeDialect {
                     true_value,
                     false_value,
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -3001,6 +3029,7 @@ impl SnowflakeDialect {
                     })),
                     false_value: Some(Expression::Null(crate::expressions::Null)),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -3077,6 +3106,7 @@ impl SnowflakeDialect {
                     true_value: Expression::number(0),
                     false_value: Some(Expression::Div(Box::new(BinaryOp::new(x_expr, y_expr)))),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -3102,6 +3132,7 @@ impl SnowflakeDialect {
                     true_value: Expression::number(0),
                     false_value: Some(Expression::Div(Box::new(BinaryOp::new(x_expr, y_expr)))),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -3117,6 +3148,7 @@ impl SnowflakeDialect {
                     true_value: Expression::number(0),
                     false_value: Some(x),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 
@@ -3131,6 +3163,7 @@ impl SnowflakeDialect {
                     true_value: Expression::Null(crate::expressions::Null),
                     false_value: Some(x),
                     original_name: Some("IFF".to_string()),
+                    inferred_type: None,
                 })))
             }
 

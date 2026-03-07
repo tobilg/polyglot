@@ -13,6 +13,30 @@ def test_sqlglot_style_parse_one_signature_pattern():
     assert isinstance(ast, dict)
 
 
+def test_sqlglot_style_parse_read_alias_pattern():
+    ast_list = polyglot_sql.parse("SELECT 1", read="postgres")
+    assert isinstance(ast_list, list)
+    assert isinstance(ast_list[0], dict)
+
+
+def test_sqlglot_style_transpile_identity_default_pattern():
+    out = polyglot_sql.transpile("SELECT 1", read="postgres")
+    assert out == ["SELECT 1"]
+
+
+def test_sqlglot_style_optimize_read_alias_pattern():
+    optimized = polyglot_sql.optimize("SELECT 1 + 2 * 3", read="postgres")
+    assert isinstance(optimized, str)
+    assert isinstance(polyglot_sql.parse_one(optimized, read="postgres"), dict)
+
+
+def test_sqlglot_style_error_level_keyword_is_accepted_for_valid_sql():
+    ast = polyglot_sql.parse_one("SELECT 1", read="postgres", error_level="warn")
+    assert isinstance(ast, dict)
+    out = polyglot_sql.transpile("SELECT 1", read="postgres", error_level="raise")
+    assert out == ["SELECT 1"]
+
+
 @pytest.mark.parametrize(
     ("sql", "read", "write", "expected"),
     [

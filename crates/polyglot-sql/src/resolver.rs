@@ -11,7 +11,7 @@
 
 use crate::dialects::DialectType;
 use crate::expressions::{Expression, Identifier, TableRef};
-use crate::schema::Schema;
+use crate::schema::{normalize_name, Schema};
 use crate::scope::{Scope, SourceInfo};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -280,6 +280,7 @@ impl<'a> Resolver<'a> {
         column_name: &str,
         source_columns: Option<&HashMap<String, Vec<String>>>,
     ) -> Option<String> {
+        let normalized_column_name = normalize_column_name(column_name, self.dialect);
         let unambiguous = match source_columns {
             Some(cols) => self.compute_unambiguous_columns(cols),
             None => {
@@ -294,7 +295,7 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        unambiguous.get(column_name).cloned()
+        unambiguous.get(&normalized_column_name).cloned()
     }
 
     /// Compute unambiguous columns mapping
@@ -313,7 +314,7 @@ impl<'a> Resolver<'a> {
         for (source_name, columns) in source_columns {
             for column in columns {
                 column_to_sources
-                    .entry(column.clone())
+                    .entry(normalize_column_name(column, self.dialect))
                     .or_default()
                     .push(source_name.clone());
             }
@@ -329,10 +330,15 @@ impl<'a> Resolver<'a> {
 
     /// Check if a column is ambiguous (appears in multiple sources)
     pub fn is_ambiguous(&mut self, column_name: &str) -> bool {
+        let normalized_column_name = normalize_column_name(column_name, self.dialect);
         let all_source_columns = self.get_all_source_columns();
         let sources_with_column: Vec<_> = all_source_columns
             .iter()
-            .filter(|(_, columns)| columns.contains(&column_name.to_string()))
+            .filter(|(_, columns)| {
+                columns.iter().any(|column| {
+                    normalize_column_name(column, self.dialect) == normalized_column_name
+                })
+            })
             .map(|(name, _)| name.clone())
             .collect();
 
@@ -341,10 +347,15 @@ impl<'a> Resolver<'a> {
 
     /// Get all sources that contain a given column
     pub fn sources_for_column(&mut self, column_name: &str) -> Vec<String> {
+        let normalized_column_name = normalize_column_name(column_name, self.dialect);
         let all_source_columns = self.get_all_source_columns();
         all_source_columns
             .iter()
-            .filter(|(_, columns)| columns.contains(&column_name.to_string()))
+            .filter(|(_, columns)| {
+                columns.iter().any(|column| {
+                    normalize_column_name(column, self.dialect) == normalized_column_name
+                })
+            })
             .map(|(name, _)| name.clone())
             .collect()
     }
@@ -358,11 +369,14 @@ impl<'a> Resolver<'a> {
         column_name: &str,
         available_sources: &[String],
     ) -> Option<String> {
+        let normalized_column_name = normalize_column_name(column_name, self.dialect);
         let mut matching_sources = Vec::new();
 
         for source_name in available_sources {
             if let Ok(columns) = self.get_source_columns(source_name) {
-                if columns.contains(&column_name.to_string()) {
+                if columns.iter().any(|column| {
+                    normalize_column_name(column, self.dialect) == normalized_column_name
+                }) {
                     matching_sources.push(source_name.clone());
                 }
             }
@@ -374,6 +388,10 @@ impl<'a> Resolver<'a> {
             None
         }
     }
+}
+
+fn normalize_column_name(name: &str, dialect: Option<DialectType>) -> String {
+    normalize_name(name, dialect, false, true)
 }
 
 /// Resolve a column to its source table.
@@ -411,6 +429,7 @@ fn qualified_table_name(table: &TableRef) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dialects::Dialect;
     use crate::expressions::DataType;
     use crate::parser::Parser;
     use crate::schema::MappingSchema;
@@ -582,5 +601,33 @@ mod tests {
 
         let table = resolve_column(&scope, &schema, "name", true);
         assert_eq!(table, Some("users".to_string()));
+    }
+
+    #[test]
+    fn test_resolver_bigquery_mixed_case_column_names() {
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse("SELECT Name AS name FROM teams")
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+        let scope = build_scope(&expr);
+
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table(
+                "teams",
+                &[("Name".into(), DataType::String { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let mut resolver = Resolver::new(&scope, &schema, true);
+        let table = resolver.get_table("Name");
+        assert_eq!(table, Some("teams".to_string()));
+
+        let table = resolver.get_table("name");
+        assert_eq!(table, Some("teams".to_string()));
     }
 }

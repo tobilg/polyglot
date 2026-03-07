@@ -368,6 +368,11 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                     collect_cte_aliases(with, &mut cte_aliases);
                 }
             }
+            Expression::CreateTable(create) => {
+                if let Some(with) = &create.with_cte {
+                    collect_cte_aliases(with, &mut cte_aliases);
+                }
+            }
             Expression::Merge(merge) => {
                 if let Some(with_) = &merge.with_ {
                     if let Expression::With(with_clause) = with_.as_ref() {
@@ -404,6 +409,17 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                 }
                 for table in &delete.tables {
                     push_table_ref_name(table, &cte_aliases, &mut names);
+                }
+            }
+            Expression::CreateTable(create) => {
+                push_table_ref_name(&create.name, &cte_aliases, &mut names);
+                if let Some(as_select) = &create.as_select {
+                    names.extend(get_table_names(as_select));
+                }
+                if let Some(with) = &create.with_cte {
+                    for cte in &with.ctes {
+                        names.extend(get_table_names(&cte.this));
+                    }
                 }
             }
             _ => {}
@@ -630,6 +646,11 @@ mod tests {
         let delete_names = get_table_names(&delete_expr);
         assert!(delete_names.iter().any(|n| n == "users"));
         assert!(delete_names.iter().any(|n| n == "accounts"));
+
+        let create_expr = parse_one("CREATE TABLE out_table AS SELECT 1 AS id FROM src");
+        let create_names = get_table_names(&create_expr);
+        assert!(create_names.iter().any(|n| n == "out_table"));
+        assert!(create_names.iter().any(|n| n == "src"));
     }
 
     #[test]

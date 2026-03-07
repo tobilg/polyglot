@@ -13,6 +13,13 @@ use polyglot_sql::parser::Parser;
 mod syntax_errors {
     use super::*;
 
+    fn parse_with_dialect(
+        sql: &str,
+        dialect: DialectType,
+    ) -> polyglot_sql::error::Result<Vec<polyglot_sql::Expression>> {
+        Dialect::get(dialect).parse(sql)
+    }
+
     #[test]
     fn test_unbalanced_parentheses_open() {
         let result = Parser::parse_sql("SELECT (1 + 2");
@@ -131,6 +138,144 @@ mod syntax_errors {
         assert!(
             result.is_ok(),
             "Trailing comma before FROM should be tolerated"
+        );
+    }
+
+    #[test]
+    fn test_incomplete_between_low() {
+        let result = Parser::parse_sql("SELECT x BETWEEN");
+        assert!(result.is_err(), "Expected error for incomplete BETWEEN");
+    }
+
+    #[test]
+    fn test_incomplete_between_high() {
+        let result = Parser::parse_sql("SELECT x BETWEEN 1 AND");
+        assert!(
+            result.is_err(),
+            "Expected error for incomplete BETWEEN high bound"
+        );
+    }
+
+    #[test]
+    fn test_incomplete_like_expression() {
+        let result = Parser::parse_sql("SELECT x LIKE");
+        assert!(result.is_err(), "Expected error for incomplete LIKE");
+    }
+
+    #[test]
+    fn test_incomplete_ilike_expression() {
+        let result = Parser::parse_sql("SELECT x ILIKE");
+        assert!(result.is_err(), "Expected error for incomplete ILIKE");
+    }
+
+    #[test]
+    fn test_incomplete_in_expression() {
+        let result = Parser::parse_sql("SELECT x IN");
+        assert!(result.is_err(), "Expected error for incomplete IN");
+    }
+
+    #[test]
+    fn test_incomplete_is_distinct_from_expression() {
+        let result = Parser::parse_sql("SELECT x IS DISTINCT FROM");
+        assert!(
+            result.is_err(),
+            "Expected error for incomplete IS DISTINCT FROM"
+        );
+    }
+
+    #[test]
+    fn test_incomplete_bitwise_and_expression() {
+        let result = Parser::parse_sql("SELECT x &");
+        assert!(result.is_err(), "Expected error for incomplete bitwise AND");
+    }
+
+    #[test]
+    fn test_incomplete_bitwise_or_expression() {
+        let result = Parser::parse_sql("SELECT x |");
+        assert!(result.is_err(), "Expected error for incomplete bitwise OR");
+    }
+
+    #[test]
+    fn test_incomplete_bitwise_xor_expression() {
+        let result = Parser::parse_sql("SELECT x ^");
+        assert!(result.is_err(), "Expected error for incomplete bitwise XOR");
+    }
+
+    #[test]
+    fn test_incomplete_bitwise_not_expression() {
+        let result = Parser::parse_sql("SELECT ~");
+        assert!(result.is_err(), "Expected error for incomplete bitwise NOT");
+    }
+
+    #[test]
+    fn test_json_object_missing_value_rejected() {
+        let result = Parser::parse_sql("SELECT JSON_OBJECT('a')");
+        assert!(
+            result.is_err(),
+            "Expected error for JSON_OBJECT missing value"
+        );
+    }
+
+    #[test]
+    fn test_json_object_missing_value_after_separator_rejected() {
+        let result = Parser::parse_sql("SELECT JSON_OBJECT('a':)");
+        assert!(
+            result.is_err(),
+            "Expected error for JSON_OBJECT missing value after separator"
+        );
+    }
+
+    #[test]
+    fn test_unnest_requires_expression() {
+        let result = parse_with_dialect("SELECT * FROM UNNEST()", DialectType::PostgreSQL);
+        assert!(
+            result.is_err(),
+            "Expected error for UNNEST with no expressions"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_index_requires_expression() {
+        let result = parse_with_dialect(
+            "CREATE TABLE t (x Int32, INDEX idx TYPE minmax GRANULARITY 1) ENGINE = MergeTree() ORDER BY x",
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.is_err(),
+            "Expected error for ClickHouse INDEX without expression"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_projection_index_requires_expression() {
+        let result = parse_with_dialect(
+            "CREATE TABLE t (x Int32, PROJECTION p INDEX TYPE minmax) ENGINE = MergeTree() ORDER BY x",
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.is_err(),
+            "Expected error for ClickHouse PROJECTION INDEX without expression"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_partition_by_requires_expression() {
+        let result = parse_with_dialect(
+            "CREATE TABLE t (x Int32) ENGINE = MergeTree() PARTITION BY ORDER BY x",
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.is_err(),
+            "Expected error for ClickHouse PARTITION BY without expression"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_ternary_requires_true_expression() {
+        let result = parse_with_dialect("SELECT 1 ? : 2", DialectType::ClickHouse);
+        assert!(
+            result.is_err(),
+            "Expected error for ClickHouse ternary without true expression"
         );
     }
 }
@@ -284,62 +429,63 @@ mod unicode_tests {
 mod nesting_tests {
     use super::*;
 
+    fn run_with_large_stack<F>(f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
     #[test]
     fn test_deeply_nested_parentheses() {
-        // Run in a thread with larger stack to avoid stack overflow
-        // during recursive Drop of nested Expression structures
-        let handle = std::thread::Builder::new()
-            .stack_size(4 * 1024 * 1024) // 4MB stack
-            .spawn(|| {
-                let sql = "SELECT ((((((((1 + 2))))))))";
-                let result = Parser::parse_sql(sql);
-                assert!(result.is_ok(), "Deeply nested parentheses should parse");
-            })
-            .unwrap();
-        handle.join().unwrap();
+        // Run in a thread with a larger stack to avoid stack overflow
+        // during recursive parse and Drop of nested Expression structures.
+        run_with_large_stack(|| {
+            let sql = "SELECT ((((((((1 + 2))))))))";
+            let result = Parser::parse_sql(sql);
+            assert!(result.is_ok(), "Deeply nested parentheses should parse");
+        });
     }
 
     #[test]
     fn test_nested_subqueries() {
-        let sql = "SELECT * FROM (SELECT * FROM (SELECT * FROM users))";
-        let result = Parser::parse_sql(sql);
-        assert!(result.is_ok(), "Nested subqueries should parse");
+        run_with_large_stack(|| {
+            let sql = "SELECT * FROM (SELECT * FROM (SELECT * FROM users))";
+            let result = Parser::parse_sql(sql);
+            assert!(result.is_ok(), "Nested subqueries should parse");
+        });
     }
 
     #[test]
     fn test_nested_case_expressions() {
-        let sql = "SELECT CASE WHEN a THEN CASE WHEN b THEN 1 ELSE 2 END ELSE 3 END";
-        let result = Parser::parse_sql(sql);
-        assert!(result.is_ok(), "Nested CASE should parse");
+        run_with_large_stack(|| {
+            let sql = "SELECT CASE WHEN a THEN CASE WHEN b THEN 1 ELSE 2 END ELSE 3 END";
+            let result = Parser::parse_sql(sql);
+            assert!(result.is_ok(), "Nested CASE should parse");
+        });
     }
 
     #[test]
     fn test_deeply_nested_function_calls() {
-        // Run in a thread with larger stack to avoid stack overflow
-        // during recursive Drop of nested Expression structures
-        let handle = std::thread::Builder::new()
-            .stack_size(4 * 1024 * 1024) // 4MB stack
-            .spawn(|| {
-                let sql = "SELECT UPPER(LOWER(TRIM(UPPER(LOWER(name)))))";
-                let result = Parser::parse_sql(sql);
-                assert!(result.is_ok(), "Nested functions should parse");
-            })
-            .unwrap();
-        handle.join().unwrap();
+        run_with_large_stack(|| {
+            let sql = "SELECT UPPER(LOWER(TRIM(UPPER(LOWER(name)))))";
+            let result = Parser::parse_sql(sql);
+            assert!(result.is_ok(), "Nested functions should parse");
+        });
     }
 
     #[test]
     fn test_complex_nested_expression() {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
-                let result = Parser::parse_sql(sql);
-                assert!(result.is_ok(), "Complex nested math should parse");
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        run_with_large_stack(|| {
+            let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
+            let result = Parser::parse_sql(sql);
+            assert!(result.is_ok(), "Complex nested math should parse");
+        });
     }
 }
 

@@ -9,7 +9,7 @@ use crate::dialects::DialectType;
 use crate::expressions::Expression;
 use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
-use crate::schema::Schema;
+use crate::schema::{normalize_name, Schema};
 use crate::scope::{build_scope, Scope};
 use crate::traversal::ExpressionWalk;
 use crate::{Error, Result};
@@ -288,7 +288,7 @@ fn to_node_inner(
     }
 
     // 2. Find the select expression for this column
-    let select_expr = find_select_expr(effective_expr, &column)?;
+    let select_expr = find_select_expr(effective_expr, &column, dialect)?;
     let column_name = resolve_column_name(&column, &select_expr);
 
     // 3. Trim source if requested
@@ -398,7 +398,7 @@ fn handle_set_operation(
 
     // Determine column index
     let col_index = match column {
-        ColumnRef::Name(name) => column_to_index(scope_expr, name)?,
+        ColumnRef::Name(name) => column_to_index(scope_expr, name, dialect)?,
         ColumnRef::Index(i) => *i,
     };
 
@@ -622,13 +622,20 @@ fn resolve_column_name(column: &ColumnRef<'_>, select_expr: &Expression) -> Stri
 }
 
 /// Find the select expression matching a column reference.
-fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<Expression> {
+fn find_select_expr(
+    scope_expr: &Expression,
+    column: &ColumnRef<'_>,
+    dialect: Option<DialectType>,
+) -> Result<Expression> {
     if let Expression::Select(ref select) = scope_expr {
         match column {
             ColumnRef::Name(name) => {
+                let normalized_name = normalize_column_name(name, dialect);
                 for expr in &select.expressions {
-                    if get_alias_or_name(expr).as_deref() == Some(name) {
-                        return Ok(expr.clone());
+                    if let Some(alias_or_name) = get_alias_or_name(expr) {
+                        if normalize_column_name(&alias_or_name, dialect) == normalized_name {
+                            return Ok(expr.clone());
+                        }
                     }
                 }
                 Err(crate::error::Error::parse(
@@ -655,7 +662,12 @@ fn find_select_expr(scope_expr: &Expression, column: &ColumnRef<'_>) -> Result<E
 }
 
 /// Find the positional index of a column name in a set operation's first SELECT branch.
-fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
+fn column_to_index(
+    set_op_expr: &Expression,
+    name: &str,
+    dialect: Option<DialectType>,
+) -> Result<usize> {
+    let normalized_name = normalize_column_name(name, dialect);
     let mut expr = set_op_expr;
     loop {
         match expr {
@@ -664,8 +676,10 @@ fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
             Expression::Except(e) => expr = &e.left,
             Expression::Select(select) => {
                 for (i, e) in select.expressions.iter().enumerate() {
-                    if get_alias_or_name(e).as_deref() == Some(name) {
-                        return Ok(i);
+                    if let Some(alias_or_name) = get_alias_or_name(e) {
+                        if normalize_column_name(&alias_or_name, dialect) == normalized_name {
+                            return Ok(i);
+                        }
                     }
                 }
                 return Err(crate::error::Error::parse(
@@ -687,6 +701,10 @@ fn column_to_index(set_op_expr: &Expression, name: &str) -> Result<usize> {
             }
         }
     }
+}
+
+fn normalize_column_name(name: &str, dialect: Option<DialectType>) -> String {
+    normalize_name(name, dialect, false, true)
 }
 
 /// If trim_selects is enabled, return a copy of the SELECT with only the target column.
@@ -1717,6 +1735,7 @@ mod tests {
     use crate::dialects::{Dialect, DialectType};
     use crate::expressions::DataType;
     use crate::optimizer::annotate_types::annotate_types;
+    use crate::parse_one;
     use crate::schema::{MappingSchema, Schema};
 
     fn parse(sql: &str) -> Expression {
@@ -1971,6 +1990,299 @@ mod tests {
 
         assert_eq!(with_none.name, baseline.name);
         assert_eq!(with_none.downstream_names(), baseline.downstream_names());
+    }
+
+    #[test]
+    fn test_lineage_with_schema_bigquery_mixed_case_column_names_issue_60() {
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse("SELECT Name AS name FROM teams")
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::BigQuery);
+        schema
+            .add_table(
+                "teams",
+                &[("Name".into(), DataType::String { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "name",
+            &expr,
+            Some(&schema),
+            Some(DialectType::BigQuery),
+            false,
+        )
+        .expect("lineage_with_schema should resolve mixed-case BigQuery columns");
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "teams.Name"),
+            "Expected teams.Name in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_bigquery_mixed_case_alias_lookup() {
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let expr = dialect
+            .parse("SELECT Name AS Name FROM teams")
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("expected one expression");
+
+        let node = lineage("name", &expr, Some(DialectType::BigQuery), false)
+            .expect("lineage should resolve mixed-case aliases in BigQuery");
+
+        assert_eq!(node.name, "name");
+    }
+
+    #[test]
+    fn test_lineage_with_schema_snowflake_datediff_date_part_issue_61() {
+        let expr = parse_one(
+            "SELECT DATEDIFF(day, date_utc, CURRENT_DATE()) AS recency FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::Snowflake);
+        schema
+            .add_table(
+                "fact.some_daily_metrics",
+                &[("date_utc".to_string(), DataType::Date)],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "recency",
+            &expr,
+            Some(&schema),
+            Some(DialectType::Snowflake),
+            false,
+        )
+        .expect("lineage_with_schema should not treat date part as a column");
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "some_daily_metrics.date_utc"),
+            "Expected some_daily_metrics.date_utc in downstream, got: {:?}",
+            names
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with(".day") || n == "day"),
+            "Did not expect date part to appear as lineage column, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_snowflake_datediff_parses_to_typed_ast() {
+        let expr = parse_one(
+            "SELECT DATEDIFF(day, date_utc, CURRENT_DATE()) AS recency FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        match expr {
+            Expression::Select(select) => match &select.expressions[0] {
+                Expression::Alias(alias) => match &alias.this {
+                    Expression::DateDiff(f) => {
+                        assert_eq!(f.unit, Some(crate::expressions::IntervalUnit::Day));
+                    }
+                    other => panic!("expected DateDiff, got {other:?}"),
+                },
+                other => panic!("expected Alias, got {other:?}"),
+            },
+            other => panic!("expected Select, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_lineage_with_schema_snowflake_dateadd_date_part_issue_followup() {
+        let expr = parse_one(
+            "SELECT DATEADD(day, 1, date_utc) AS next_day FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::Snowflake);
+        schema
+            .add_table(
+                "fact.some_daily_metrics",
+                &[("date_utc".to_string(), DataType::Date)],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "next_day",
+            &expr,
+            Some(&schema),
+            Some(DialectType::Snowflake),
+            false,
+        )
+        .expect("lineage_with_schema should not treat DATEADD date part as a column");
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "some_daily_metrics.date_utc"),
+            "Expected some_daily_metrics.date_utc in downstream, got: {:?}",
+            names
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with(".day") || n == "day"),
+            "Did not expect date part to appear as lineage column, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_with_schema_snowflake_date_part_identifier_issue_followup() {
+        let expr = parse_one(
+            "SELECT DATE_PART(day, date_utc) AS day_part FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::Snowflake);
+        schema
+            .add_table(
+                "fact.some_daily_metrics",
+                &[("date_utc".to_string(), DataType::Date)],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "day_part",
+            &expr,
+            Some(&schema),
+            Some(DialectType::Snowflake),
+            false,
+        )
+        .expect("lineage_with_schema should not treat DATE_PART identifier as a column");
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "some_daily_metrics.date_utc"),
+            "Expected some_daily_metrics.date_utc in downstream, got: {:?}",
+            names
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with(".day") || n == "day"),
+            "Did not expect date part to appear as lineage column, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_lineage_with_schema_snowflake_date_part_string_literal_control() {
+        let expr = parse_one(
+            "SELECT DATE_PART('day', date_utc) AS day_part FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        let mut schema = MappingSchema::with_dialect(DialectType::Snowflake);
+        schema
+            .add_table(
+                "fact.some_daily_metrics",
+                &[("date_utc".to_string(), DataType::Date)],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "day_part",
+            &expr,
+            Some(&schema),
+            Some(DialectType::Snowflake),
+            false,
+        )
+        .expect("quoted DATE_PART should continue to work");
+
+        let names = node.downstream_names();
+        assert!(
+            names.iter().any(|n| n == "some_daily_metrics.date_utc"),
+            "Expected some_daily_metrics.date_utc in downstream, got: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn test_snowflake_dateadd_date_part_identifier_stays_generic_function() {
+        let expr = parse_one(
+            "SELECT DATEADD(day, 1, date_utc) AS next_day FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        match expr {
+            Expression::Select(select) => match &select.expressions[0] {
+                Expression::Alias(alias) => match &alias.this {
+                    Expression::Function(f) => {
+                        assert_eq!(f.name.to_uppercase(), "DATEADD");
+                        assert!(matches!(&f.args[0], Expression::Var(v) if v.this == "day"));
+                    }
+                    other => panic!("expected generic DATEADD function, got {other:?}"),
+                },
+                other => panic!("expected Alias, got {other:?}"),
+            },
+            other => panic!("expected Select, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_snowflake_date_part_identifier_stays_generic_function_with_var_arg() {
+        let expr = parse_one(
+            "SELECT DATE_PART(day, date_utc) AS day_part FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        match expr {
+            Expression::Select(select) => match &select.expressions[0] {
+                Expression::Alias(alias) => match &alias.this {
+                    Expression::Function(f) => {
+                        assert_eq!(f.name.to_uppercase(), "DATE_PART");
+                        assert!(matches!(&f.args[0], Expression::Var(v) if v.this == "day"));
+                    }
+                    other => panic!("expected generic DATE_PART function, got {other:?}"),
+                },
+                other => panic!("expected Alias, got {other:?}"),
+            },
+            other => panic!("expected Select, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_snowflake_date_part_string_literal_stays_generic_function() {
+        let expr = parse_one(
+            "SELECT DATE_PART('day', date_utc) AS day_part FROM fact.some_daily_metrics",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        match expr {
+            Expression::Select(select) => match &select.expressions[0] {
+                Expression::Alias(alias) => match &alias.this {
+                    Expression::Function(f) => {
+                        assert_eq!(f.name.to_uppercase(), "DATE_PART");
+                    }
+                    other => panic!("expected generic DATE_PART function, got {other:?}"),
+                },
+                other => panic!("expected Alias, got {other:?}"),
+            },
+            other => panic!("expected Select, got {other:?}"),
+        }
     }
 
     #[test]

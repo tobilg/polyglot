@@ -13,11 +13,12 @@ use crate::traversal::ExpressionWalk;
 use super::annotate_types::annotate_types;
 use super::canonicalize::canonicalize;
 use super::eliminate_ctes::eliminate_ctes;
+use super::eliminate_joins::eliminate_joins;
 use super::normalize::normalize;
 use super::optimize_joins::optimize_joins;
 use super::pushdown_predicates::pushdown_predicates;
 use super::pushdown_projections::pushdown_projections;
-use super::qualify_columns::qualify_columns;
+use super::qualify_columns::{qualify_columns, quote_identifiers};
 use super::simplify::simplify;
 use super::subquery::{merge_subqueries, unnest_subqueries};
 
@@ -69,8 +70,12 @@ pub enum OptimizationRule {
     EliminateSubqueries,
     /// Merge subqueries into outer queries
     MergeSubqueries,
+    /// Eliminate unused joins after join optimization and subquery merges
+    EliminateJoins,
     /// Remove unused CTEs
     EliminateCtes,
+    /// Quote identifiers that require quoting for the target dialect
+    QuoteIdentifiers,
     /// Annotate expressions with type information
     AnnotateTypes,
     /// Convert expressions to canonical form
@@ -89,7 +94,9 @@ pub const DEFAULT_RULES: &[OptimizationRule] = &[
     OptimizationRule::OptimizeJoins,
     OptimizationRule::EliminateSubqueries,
     OptimizationRule::MergeSubqueries,
+    OptimizationRule::EliminateJoins,
     OptimizationRule::EliminateCtes,
+    OptimizationRule::QuoteIdentifiers,
     OptimizationRule::AnnotateTypes,
     OptimizationRule::Canonicalize,
     OptimizationRule::Simplify,
@@ -248,7 +255,15 @@ fn apply_rule(
         OptimizationRule::OptimizeJoins => optimize_joins(expression),
         OptimizationRule::EliminateSubqueries => eliminate_subqueries_opt(expression),
         OptimizationRule::MergeSubqueries => merge_subqueries(expression, config.isolate_tables),
+        OptimizationRule::EliminateJoins => eliminate_joins(expression),
         OptimizationRule::EliminateCtes => eliminate_ctes(expression),
+        OptimizationRule::QuoteIdentifiers => {
+            if config.quote_identifiers {
+                quote_identifiers(expression, config.dialect)
+            } else {
+                expression
+            }
+        }
         OptimizationRule::AnnotateTypes => {
             let mut expr = expression;
             annotate_types(&mut expr, config.schema, config.dialect);
@@ -344,9 +359,66 @@ mod tests {
 
     #[test]
     fn test_default_rules() {
-        assert!(!DEFAULT_RULES.is_empty());
-        assert!(DEFAULT_RULES.contains(&OptimizationRule::Simplify));
-        assert!(DEFAULT_RULES.contains(&OptimizationRule::Canonicalize));
+        assert_eq!(
+            DEFAULT_RULES,
+            &[
+                OptimizationRule::Qualify,
+                OptimizationRule::PushdownProjections,
+                OptimizationRule::Normalize,
+                OptimizationRule::UnnestSubqueries,
+                OptimizationRule::PushdownPredicates,
+                OptimizationRule::OptimizeJoins,
+                OptimizationRule::EliminateSubqueries,
+                OptimizationRule::MergeSubqueries,
+                OptimizationRule::EliminateJoins,
+                OptimizationRule::EliminateCtes,
+                OptimizationRule::QuoteIdentifiers,
+                OptimizationRule::AnnotateTypes,
+                OptimizationRule::Canonicalize,
+                OptimizationRule::Simplify,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_quote_identifiers_rule_respects_config_flag() {
+        let mut expr = parse("SELECT a FROM t");
+        if let Expression::Select(ref mut select) = expr {
+            if let Expression::Column(ref mut col) = select.expressions[0] {
+                col.name.name = "select".to_string();
+            } else {
+                panic!("expected column projection");
+            }
+            if let Some(ref mut from) = select.from {
+                if let Expression::Table(ref mut table) = from.expressions[0] {
+                    table.name.name = "from".to_string();
+                } else {
+                    panic!("expected table reference");
+                }
+            } else {
+                panic!("expected FROM clause");
+            }
+        } else {
+            panic!("expected select expression");
+        }
+        let config = OptimizerConfig {
+            quote_identifiers: true,
+            dialect: Some(DialectType::PostgreSQL),
+            ..Default::default()
+        };
+        let result = optimize_with_rules(expr, &config, &[OptimizationRule::QuoteIdentifiers]);
+        let sql = gen(&result);
+        assert!(sql.contains("\"select\""), "{sql}");
+        assert!(sql.contains("\"from\""), "{sql}");
+    }
+
+    #[test]
+    fn test_quote_identifiers_rule_noop_by_default() {
+        let expr = parse("SELECT a FROM t");
+        let config = OptimizerConfig::default();
+        let result =
+            optimize_with_rules(expr.clone(), &config, &[OptimizationRule::QuoteIdentifiers]);
+        assert_eq!(gen(&result), gen(&expr));
     }
 
     #[test]

@@ -118,6 +118,7 @@ impl DialectImpl for BigQueryDialect {
                 distinct: f.distinct,
                 filter: f.filter,
                 limit: None,
+                inferred_type: None,
             }))),
 
             // ===== Cast operations =====

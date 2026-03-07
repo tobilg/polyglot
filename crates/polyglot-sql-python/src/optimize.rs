@@ -1,16 +1,18 @@
 use crate::errors::map_transpile_error;
-use crate::helpers::{join_sql, resolve_dialect};
-use polyglot_sql::dialects::Dialect;
+use crate::helpers::{join_sql, resolve_read_or_dialect};
 use polyglot_sql::optimizer::{optimize as core_optimize, OptimizerConfig};
 use pyo3::prelude::*;
 
-#[pyfunction(signature = (sql, dialect = "generic"))]
-pub fn optimize(py: Python<'_>, sql: &str, dialect: &str) -> PyResult<String> {
-    resolve_dialect(dialect)?;
+#[pyfunction(signature = (sql, dialect = None, *, read = None))]
+pub fn optimize(
+    py: Python<'_>,
+    sql: &str,
+    dialect: Option<&str>,
+    read: Option<&str>,
+) -> PyResult<String> {
+    let dialect = resolve_read_or_dialect(read, dialect)?;
 
     let optimized = py.detach(|| {
-        let dialect = Dialect::get_by_name(dialect)
-            .expect("dialect existence checked before entering detach");
         let expressions = dialect.parse(sql)?;
         let config = OptimizerConfig {
             dialect: Some(dialect.dialect_type()),

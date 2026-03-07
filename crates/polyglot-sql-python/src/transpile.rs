@@ -1,17 +1,26 @@
 use crate::errors::map_transpile_error;
-use crate::helpers::resolve_dialect;
+use crate::helpers::{normalize_error_level, resolve_dialect};
 use polyglot_sql::dialects::Dialect;
 use pyo3::prelude::*;
 
-#[pyfunction(signature = (sql, read = "generic", write = "generic", *, pretty = false))]
+#[pyfunction(signature = (sql, read = None, write = None, *, identity = true, error_level = None, pretty = false))]
 pub fn transpile(
     py: Python<'_>,
     sql: &str,
-    read: &str,
-    write: &str,
+    read: Option<&str>,
+    write: Option<&str>,
+    identity: bool,
+    error_level: Option<&str>,
     pretty: bool,
 ) -> PyResult<Vec<String>> {
+    let _ = normalize_error_level(error_level)?;
+    let read = read.unwrap_or("generic");
     resolve_dialect(read)?;
+    let write = if identity {
+        write.unwrap_or(read)
+    } else {
+        write.unwrap_or("generic")
+    };
     resolve_dialect(write)?;
 
     let statements = py

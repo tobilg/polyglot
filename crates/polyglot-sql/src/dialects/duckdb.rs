@@ -188,6 +188,7 @@ impl DialectImpl for DuckDBDialect {
                     order_by: f.order_by,
                     distinct: f.distinct,
                     filter: f.filter,
+                    inferred_type: None,
                 },
             ))),
 
@@ -203,6 +204,7 @@ impl DialectImpl for DuckDBDialect {
                     order_by: f.order_by,
                     distinct: f.distinct,
                     filter: f.filter,
+                    inferred_type: None,
                 },
             ))),
 
@@ -6273,6 +6275,7 @@ impl DuckDBDialect {
         let unit_name = match &unit_expr {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
+            Expression::Var(v) => v.this.to_uppercase(),
             Expression::Literal(Literal::String(s)) => s.to_uppercase(),
             _ => {
                 return Ok(Expression::Function(Box::new(Function::new(
@@ -6413,6 +6416,7 @@ impl DuckDBDialect {
         let unit_name = match &unit_expr {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
+            Expression::Var(v) => v.this.to_uppercase(),
             Expression::Literal(Literal::String(s)) => s.to_uppercase(),
             _ => String::new(),
         };
@@ -6501,6 +6505,7 @@ impl DuckDBDialect {
         let unit_name = match &unit_expr {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
+            Expression::Var(v) => v.this.to_uppercase(),
             Expression::Literal(Literal::String(s)) => s.to_uppercase(),
             _ => String::new(),
         };

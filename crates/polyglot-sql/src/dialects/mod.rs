@@ -3596,6 +3596,7 @@ impl Dialect {
             DayOfWeekConvert,  // DAY_OF_WEEK -> dialect-specific
             MaxByMinByConvert, // MAX_BY/MIN_BY -> argMax/argMin for ClickHouse
             ArrayAggToCollectList, // ARRAY_AGG(x ORDER BY ...) -> COLLECT_LIST(x) for Hive/Spark
+            ArrayAggToGroupConcat, // ARRAY_AGG(x) -> GROUP_CONCAT(x) for MySQL-like targets
             ElementAtConvert, // ELEMENT_AT(arr, idx) -> arr[idx] for PostgreSQL, arr[SAFE_ORDINAL(idx)] for BigQuery
             CurrentUserParens, // CURRENT_USER -> CURRENT_USER() for Snowflake
             CastToJsonForSpark, // CAST(x AS JSON) -> TO_JSON(x) for Spark
@@ -5917,7 +5918,9 @@ impl Dialect {
                         _ => Action::None,
                     },
                     Expression::ArrayAgg(ref agg) => {
-                        if matches!(
+                        if matches!(target, DialectType::MySQL | DialectType::SingleStore) {
+                            Action::ArrayAggToGroupConcat
+                        } else if matches!(
                             target,
                             DialectType::Hive | DialectType::Spark | DialectType::Databricks
                         ) {
@@ -7534,6 +7537,7 @@ impl Dialect {
                                 div.right,
                             )))),
                             original_name: if_func.original_name,
+                            inferred_type: None,
                         })))
                     } else {
                         // Not actually a Div, reconstruct
@@ -7549,6 +7553,18 @@ impl Dialect {
                     };
                     Ok(Expression::ArrayAgg(Box::new(AggFunc {
                         name: Some("COLLECT_LIST".to_string()),
+                        ..agg
+                    })))
+                }
+
+                Action::ArrayAggToGroupConcat => {
+                    let agg = if let Expression::ArrayAgg(a) = e {
+                        *a
+                    } else {
+                        unreachable!("action only triggered for ArrayAgg expressions")
+                    };
+                    Ok(Expression::ArrayAgg(Box::new(AggFunc {
+                        name: Some("GROUP_CONCAT".to_string()),
                         ..agg
                     })))
                 }
@@ -7787,6 +7803,7 @@ impl Dialect {
                                 filter: c.filter,
                                 ignore_nulls: c.ignore_nulls,
                                 original_name: c.original_name,
+                                inferred_type: None,
                             })))
                         } else {
                             Ok(Expression::Count(c))
@@ -8181,6 +8198,7 @@ impl Dialect {
                                 true_value: cast_div,
                                 false_value: Some(Expression::Null(Null)),
                                 original_name: None,
+                                inferred_type: None,
                             })))
                         } else if matches!(target, DialectType::PostgreSQL) {
                             // PostgreSQL: CASE WHEN y <> 0 THEN CAST(x AS DOUBLE PRECISION) / y ELSE NULL END
@@ -8237,6 +8255,7 @@ impl Dialect {
                                 true_value: div_expr,
                                 false_value: Some(Expression::Null(Null)),
                                 original_name: Some("IFF".to_string()),
+                                inferred_type: None,
                             })))
                         } else {
                             // All others: IF(y <> 0, x / y, NULL)
@@ -8245,6 +8264,7 @@ impl Dialect {
                                 true_value: div_expr,
                                 false_value: Some(Expression::Null(Null)),
                                 original_name: None,
+                                inferred_type: None,
                             })))
                         }
                     } else {
@@ -15321,6 +15341,7 @@ impl Dialect {
                                                     true_value: empty,
                                                     false_value: Some(seq),
                                                     original_name: None,
+                                                    inferred_type: None,
                                                 },
                                             )))
                                         }
@@ -15701,6 +15722,7 @@ impl Dialect {
                                             order_by: None,
                                             distinct: false,
                                             filter: None,
+                                            inferred_type: None,
                                         }),
                                     )),
                                     DialectType::SQLite => Ok(Expression::GroupConcat(Box::new(
@@ -15710,6 +15732,7 @@ impl Dialect {
                                             order_by: None,
                                             distinct: false,
                                             filter: None,
+                                            inferred_type: None,
                                         },
                                     ))),
                                     DialectType::PostgreSQL | DialectType::Redshift => {
@@ -15721,6 +15744,7 @@ impl Dialect {
                                                 distinct: false,
                                                 filter: None,
                                                 limit: None,
+                                                inferred_type: None,
                                             },
                                         )))
                                     }
@@ -18317,6 +18341,7 @@ impl Dialect {
                                                         distinct,
                                                         filter: None,
                                                         limit: None,
+                                                        inferred_type: None,
                                                     },
                                                 )),
                                                 order_by,
@@ -18335,6 +18360,7 @@ impl Dialect {
                                                 order_by: Some(order_by),
                                                 distinct,
                                                 filter: None,
+                                                inferred_type: None,
                                             },
                                         )))
                                     }
@@ -18347,6 +18373,7 @@ impl Dialect {
                                                 order_by: None,
                                                 distinct,
                                                 filter: None,
+                                                inferred_type: None,
                                             },
                                         )))
                                     }
@@ -18360,6 +18387,7 @@ impl Dialect {
                                                 distinct,
                                                 filter: None,
                                                 limit: None,
+                                                inferred_type: None,
                                             },
                                         )))
                                     }
@@ -18373,6 +18401,7 @@ impl Dialect {
                                                 distinct,
                                                 filter: None,
                                                 limit: None,
+                                                inferred_type: None,
                                             },
                                         )))
                                     }
@@ -18395,6 +18424,7 @@ impl Dialect {
                                             order_by: sa.order_by,
                                             distinct: sa.distinct,
                                             filter: sa.filter,
+                                            inferred_type: None,
                                         },
                                     )))
                                 }
@@ -18407,6 +18437,7 @@ impl Dialect {
                                             order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
                                             distinct: sa.distinct,
                                             filter: sa.filter,
+                                            inferred_type: None,
                                         },
                                     )))
                                 }
@@ -18420,6 +18451,7 @@ impl Dialect {
                                             order_by: sa.order_by,
                                             distinct: sa.distinct,
                                             filter: None,
+                                            inferred_type: None,
                                         },
                                     )))
                                 }
@@ -18542,6 +18574,7 @@ impl Dialect {
                                         order_by: gc.order_by,
                                         distinct: gc.distinct,
                                         filter: gc.filter,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -18584,6 +18617,7 @@ impl Dialect {
                                         distinct: gc.distinct,
                                         filter: gc.filter,
                                         limit: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -18601,6 +18635,7 @@ impl Dialect {
                                         distinct: false, // TSQL doesn't support DISTINCT in STRING_AGG
                                         filter: gc.filter,
                                         limit: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -18616,6 +18651,7 @@ impl Dialect {
                                         order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
                                         distinct: gc.distinct,
                                         filter: gc.filter,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -18630,6 +18666,7 @@ impl Dialect {
                                         order_by: gc.order_by,
                                         distinct: gc.distinct,
                                         filter: None,
+                                        inferred_type: None,
                                     },
                                 )))
                             }
@@ -27936,6 +27973,7 @@ impl Dialect {
                             true_value: div_expr,
                             false_value: Some(Expression::Null(crate::expressions::Null)),
                             original_name: Some("IFF".to_string()),
+                            inferred_type: None,
                         })))
                     }
                     DialectType::Presto | DialectType::Trino => {
@@ -27960,6 +27998,7 @@ impl Dialect {
                             true_value: cast_div,
                             false_value: Some(Expression::Null(crate::expressions::Null)),
                             original_name: None,
+                            inferred_type: None,
                         })))
                     }
                     _ => {
@@ -27969,6 +28008,7 @@ impl Dialect {
                             true_value: div_expr,
                             false_value: Some(Expression::Null(crate::expressions::Null)),
                             original_name: None,
+                            inferred_type: None,
                         })))
                     }
                 }

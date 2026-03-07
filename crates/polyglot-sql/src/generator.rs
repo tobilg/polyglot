@@ -41,6 +41,7 @@ use crate::DialectType;
 pub struct Generator {
     config: GeneratorConfig,
     output: String,
+    unsupported_messages: Vec<String>,
     indent_level: usize,
     /// Athena dialect: true when generating Hive-style DDL (uses backticks)
     /// false when generating Trino-style DML/CREATE VIEW (uses double quotes)
@@ -92,6 +93,20 @@ pub enum NotInStyle {
     Prefix,
     /// Emit `x NOT IN (...)` in generic mode (canonical SQL style).
     Infix,
+}
+
+/// Controls how the generator reacts when it encounters unsupported output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnsupportedLevel {
+    /// Ignore unsupported diagnostics and continue generation.
+    Ignore,
+    /// Collect unsupported diagnostics and continue generation.
+    #[default]
+    Warn,
+    /// Collect unsupported diagnostics and raise after generation completes.
+    Raise,
+    /// Raise immediately when the first unsupported feature is encountered.
+    Immediate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +202,10 @@ pub struct GeneratorConfig {
     pub dialect: Option<crate::dialects::DialectType>,
     /// Source dialect type (used during transpilation to distinguish identity vs cross-dialect)
     pub source_dialect: Option<crate::dialects::DialectType>,
+    /// How unsupported generation should be handled.
+    pub unsupported_level: UnsupportedLevel,
+    /// Maximum number of unsupported diagnostics to include in raised errors.
+    pub max_unsupported: usize,
     /// How to output function names (UPPER, lower, or as-is)
     pub normalize_functions: NormalizeFunctions,
     /// String escape character
@@ -490,6 +509,8 @@ impl Default for GeneratorConfig {
             normalize_identifiers: false,
             dialect: None,
             source_dialect: None,
+            unsupported_level: UnsupportedLevel::Warn,
+            max_unsupported: 3,
             normalize_functions: NormalizeFunctions::Upper,
             string_escape: '\'',
             case_sensitive_identifiers: false,
@@ -2107,6 +2128,7 @@ impl Generator {
         Self {
             config,
             output: String::new(),
+            unsupported_messages: Vec::new(),
             indent_level: 0,
             athena_hive_context: false,
             sqlite_inline_pk_columns: std::collections::HashSet::new(),
@@ -2309,8 +2331,57 @@ impl Generator {
     /// resets the internal buffer.
     pub fn generate(&mut self, expr: &Expression) -> Result<String> {
         self.output.clear();
+        self.unsupported_messages.clear();
         self.generate_expression(expr)?;
+        if self.config.unsupported_level == UnsupportedLevel::Raise
+            && !self.unsupported_messages.is_empty()
+        {
+            return Err(crate::error::Error::generate(
+                self.format_unsupported_messages(),
+            ));
+        }
         Ok(std::mem::take(&mut self.output))
+    }
+
+    /// Returns the unsupported diagnostics collected during the most recent generate call.
+    pub fn unsupported_messages(&self) -> &[String] {
+        &self.unsupported_messages
+    }
+
+    fn unsupported(&mut self, message: impl Into<String>) -> Result<()> {
+        let message = message.into();
+        if self.config.unsupported_level == UnsupportedLevel::Immediate {
+            return Err(crate::error::Error::generate(message));
+        }
+        self.unsupported_messages.push(message);
+        Ok(())
+    }
+
+    fn write_unsupported_comment(&mut self, message: &str) -> Result<()> {
+        self.unsupported(message.to_string())?;
+        self.write("/* ");
+        self.write(message);
+        self.write(" */");
+        Ok(())
+    }
+
+    fn format_unsupported_messages(&self) -> String {
+        let limit = self.config.max_unsupported.max(1);
+        if self.unsupported_messages.len() <= limit {
+            return self.unsupported_messages.join("; ");
+        }
+
+        let mut messages = self
+            .unsupported_messages
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        messages.push(format!(
+            "... and {} more",
+            self.unsupported_messages.len() - limit
+        ));
+        messages.join("; ")
     }
 
     /// Convenience: generate SQL with the default configuration (no dialect, compact output).
@@ -3862,11 +3933,7 @@ impl Generator {
             Expression::XMLTable(e) => self.generate_xml_table(e),
             Expression::Xor(e) => self.generate_xor(e),
             Expression::Zipf(e) => self.generate_zipf(e),
-            _ => {
-                // Fallback for unimplemented expressions
-                self.write(&format!("/* unimplemented: {:?} */", expr));
-                Ok(())
-            }
+            _ => self.write_unsupported_comment("unsupported expression"),
         }
     }
 
@@ -14539,7 +14606,9 @@ impl Generator {
             } else {
                 self.write_space();
             }
-            self.write("/* CONNECT BY requires manual conversion to recursive CTE */");
+            self.write_unsupported_comment(
+                "CONNECT BY requires manual conversion to recursive CTE",
+            )?;
         }
 
         // Generate START WITH if present (before CONNECT BY)
@@ -14612,7 +14681,7 @@ impl Generator {
         }
 
         if !supports_match_recognize {
-            self.write("/* MATCH_RECOGNIZE not supported in this dialect */");
+            self.write_unsupported_comment("MATCH_RECOGNIZE not supported in this dialect")?;
             return Ok(());
         }
 

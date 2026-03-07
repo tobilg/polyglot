@@ -126,6 +126,7 @@ impl DialectImpl for ExasolDialect {
                 order_by: f.order_by,
                 distinct: f.distinct,
                 filter: f.filter,
+                inferred_type: None,
             }))),
 
             // Generic function transformations
