@@ -7493,6 +7493,51 @@ impl Generator {
             self.generate_expression(&on_prop.this)?;
         }
 
+        // BigQuery: WITH PARTITION COLUMNS (col_name col_type, ...)
+        if !ct.with_partition_columns.is_empty() {
+            if self.config.pretty {
+                self.write_newline();
+            } else {
+                self.write_space();
+            }
+            self.write_keyword("WITH PARTITION COLUMNS");
+            self.write(" (");
+            if self.config.pretty {
+                self.write_newline();
+                self.indent_level += 1;
+                for (i, col) in ct.with_partition_columns.iter().enumerate() {
+                    if i > 0 {
+                        self.write(",");
+                        self.write_newline();
+                    }
+                    self.write_indent();
+                    self.generate_column_def(col)?;
+                }
+                self.indent_level -= 1;
+                self.write_newline();
+            } else {
+                for (i, col) in ct.with_partition_columns.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_column_def(col)?;
+                }
+            }
+            self.write(")");
+        }
+
+        // BigQuery: WITH CONNECTION `project.region.connection`
+        if let Some(ref conn) = ct.with_connection {
+            if self.config.pretty {
+                self.write_newline();
+            } else {
+                self.write_space();
+            }
+            self.write_keyword("WITH CONNECTION");
+            self.write_space();
+            self.generate_table(conn)?;
+        }
+
         // Output SchemaCommentProperty BEFORE WITH properties (Presto/Hive/Spark style)
         // For ClickHouse, SchemaCommentProperty goes after AS SELECT, handled later
         if !is_clickhouse {
