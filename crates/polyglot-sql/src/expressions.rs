@@ -5841,6 +5841,15 @@ pub struct CreateTable {
     /// StarRocks: ROLLUP (r1(col1, col2), r2(col1))
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollup: Option<RollupProperty>,
+    /// WITH PARTITION COLUMNS (col_name col_type, ...) — currently used by BigQuery
+    /// for hive-partitioned external tables. Not dialect-prefixed since the syntax
+    /// could appear in other engines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub with_partition_columns: Vec<ColumnDef>,
+    /// WITH CONNECTION `project.region.connection` — currently used by BigQuery
+    /// for external tables that reference a Cloud Resource connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub with_connection: Option<TableRef>,
 }
 
 /// Teradata index specification for CREATE TABLE
@@ -5907,6 +5916,8 @@ impl CreateTable {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            with_partition_columns: Vec::new(),
+            with_connection: None,
         }
     }
 }
