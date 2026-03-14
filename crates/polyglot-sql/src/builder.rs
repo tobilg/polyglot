@@ -1617,6 +1617,8 @@ impl SelectBuilder {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            with_partition_columns: vec![],
+            with_connection: None,
         }))
     }
 
