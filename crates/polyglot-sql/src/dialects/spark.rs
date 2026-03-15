@@ -920,6 +920,15 @@ impl SparkDialect {
                 f.args,
             )))),
 
+            // BIT_GET -> GETBIT
+            "BIT_GET" => Ok(Expression::Function(Box::new(Function::new(
+                "GETBIT".to_string(),
+                f.args,
+            )))),
+
+            // CURDATE -> CURRENT_DATE
+            "CURDATE" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
         }

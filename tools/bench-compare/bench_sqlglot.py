@@ -74,45 +74,62 @@ COMPLEX_SELECT = (
 
 SQLGLOT_SHORT = "SELECT 1 AS a, CASE WHEN 1 THEN 1 WHEN 2 THEN 2 ELSE 3 END AS b, c FROM x"
 
-SQLGLOT_LONG = """
-SELECT
-  "e"."employee_id" AS "Employee #",
-  "e"."first_name" || ' ' || "e"."last_name" AS "Name",
-  "e"."email" AS "Email",
-  "e"."phone_number" AS "Phone",
-  TO_CHAR("e"."hire_date", 'MM/DD/YYYY') AS "Hire Date",
-  TO_CHAR("e"."salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') AS "Salary",
-  "e"."commission_pct" AS "Commission %",
-  'works as ' || "j"."job_title" || ' in ' || "d"."department_name" || ' department (manager: ' || "dm"."first_name" || ' ' || "dm"."last_name" || ') and immediate supervisor: ' || "m"."first_name" || ' ' || "m"."last_name" AS "Current Job",
-  TO_CHAR("j"."min_salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') || ' - ' || TO_CHAR("j"."max_salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') AS "Current Salary",
-  "l"."street_address" || ', ' || "l"."postal_code" || ', ' || "l"."city" || ', ' || "l"."state_province" || ', ' || "c"."country_name" || ' (' || "r"."region_name" || ')' AS "Location",
-  "jh"."job_id" AS "History Job ID",
-  'worked from ' || TO_CHAR("jh"."start_date", 'MM/DD/YYYY') || ' to ' || TO_CHAR("jh"."end_date", 'MM/DD/YYYY') || ' as ' || "jj"."job_title" || ' in ' || "dd"."department_name" || ' department' AS "History Job Title",
-  case when 1 then 1 when 2 then 2 when 3 then 3 when 4 then 4 when 5 then 5 else a(b(c + 1 * 3 % 4)) end
-FROM "employees" AS e
-JOIN "jobs" AS j
-  ON "e"."job_id" = "j"."job_id"
-LEFT JOIN "employees" AS m
-  ON "e"."manager_id" = "m"."employee_id"
-LEFT JOIN "departments" AS d
-  ON "d"."department_id" = "e"."department_id"
-LEFT JOIN "employees" AS dm
-  ON "d"."manager_id" = "dm"."employee_id"
-LEFT JOIN "locations" AS l
-  ON "d"."location_id" = "l"."location_id"
-LEFT JOIN "countries" AS c
-  ON "l"."country_id" = "c"."country_id"
-LEFT JOIN "regions" AS r
-  ON "c"."region_id" = "r"."region_id"
-LEFT JOIN "job_history" AS jh
-  ON "e"."employee_id" = "jh"."employee_id"
-LEFT JOIN "jobs" AS jj
-  ON "jj"."job_id" = "jh"."job_id"
-LEFT JOIN "departments" AS dd
-  ON "dd"."department_id" = "jh"."department_id"
-ORDER BY
-  "e"."employee_id"
-"""
+SQLGLOT_DEEP_ARITHMETIC = "SELECT 1+"
+SQLGLOT_DEEP_ARITHMETIC += "+".join(str(i) for i in range(500))
+SQLGLOT_DEEP_ARITHMETIC += " AS a, 2*"
+SQLGLOT_DEEP_ARITHMETIC += "*".join(str(i) for i in range(500))
+SQLGLOT_DEEP_ARITHMETIC += " AS b FROM x"
+
+SQLGLOT_LARGE_IN = (
+    "SELECT * FROM t WHERE x IN (" + ", ".join(f"'s{i}'" for i in range(20000)) + ")"
+    " OR y IN (" + ", ".join(str(i) for i in range(20000)) + ")"
+)
+
+SQLGLOT_VALUES = "INSERT INTO t VALUES " + ", ".join(
+    "(" + ", ".join(f"'s{i}_{j}'" if j % 2 else str(i * 20 + j) for j in range(20)) + ")"
+    for i in range(2000)
+)
+
+SQLGLOT_MANY_JOINS = "SELECT * FROM t0" + "".join(
+    f"\nJOIN t{i} ON t{i}.id = t{i - 1}.id" for i in range(1, 200)
+)
+
+SQLGLOT_MANY_UNIONS = "\nUNION ALL\n".join(f"SELECT {i} AS a, 's{i}' AS b FROM t{i}" for i in range(500))
+
+SQLGLOT_NESTED_SUBQUERIES = (
+    "SELECT * FROM " + "".join("(SELECT * FROM " for _ in range(20)) + "t" + ")" * 20
+)
+
+SQLGLOT_MANY_COLUMNS = "SELECT " + ", ".join(f"c{i}" for i in range(1000)) + " FROM t"
+
+SQLGLOT_LARGE_CASE = (
+    "SELECT CASE " + " ".join(f"WHEN x = {i} THEN {i}" for i in range(1000)) + " ELSE -1 END FROM t"
+)
+
+SQLGLOT_COMPLEX_WHERE = "SELECT * FROM t WHERE " + " AND ".join(
+    f"(c{i} > {i} OR c{i} LIKE '%s{i}%' OR c{i} BETWEEN {i} AND {i+10} OR c{i} IS NULL)"
+    for i in range(200)
+)
+
+SQLGLOT_MANY_CTES = (
+    "WITH "
+    + ", ".join(f"t{i} AS (SELECT {i} AS a FROM t{i-1 if i else 'base'})" for i in range(200))
+    + " SELECT * FROM t199"
+)
+
+SQLGLOT_MANY_WINDOWS = (
+    "SELECT "
+    + ", ".join(
+        f"SUM(c{i}) OVER (PARTITION BY p{i % 10} ORDER BY o{i % 5}) AS w{i}" for i in range(200)
+    )
+    + " FROM t"
+)
+
+SQLGLOT_NESTED_FUNCTIONS = "SELECT " + "COALESCE(" * 20 + "x" + ", NULL)" * 20 + " FROM t"
+
+SQLGLOT_LARGE_STRINGS = "SELECT " + ", ".join(f"'{'x' * 100}'" for i in range(500)) + " FROM t"
+
+SQLGLOT_MANY_NUMBERS = "SELECT " + ", ".join(str(i) for i in range(10000)) + " FROM t"
 
 SQLGLOT_TPCH = """
 WITH "_e_0" AS (
@@ -208,12 +225,6 @@ ORDER BY
   "part"."p_partkey"
 LIMIT 100
 """
-
-# 500 chained additions + 500 chained multiplications (matches sqlglot/benchmarks/parse.py)
-SQLGLOT_CRAZY = (
-    "SELECT 1+" + "+".join(str(i) for i in range(500)) + " AS a, "
-    "2*" + "*".join(str(i) for i in range(500)) + " AS b FROM x"
-)
 
 WARMUP = 5
 
@@ -332,9 +343,21 @@ def main():
         ("medium", MEDIUM_SELECT, 500),
         ("complex", COMPLEX_SELECT, 100),
         ("sg_short", SQLGLOT_SHORT, 1000),
-        ("sg_long", SQLGLOT_LONG, 500),
         ("sg_tpch", SQLGLOT_TPCH, 100),
-        ("sg_crazy", SQLGLOT_CRAZY, 50),
+        ("sg_deep_arithmetic", SQLGLOT_DEEP_ARITHMETIC, 50),
+        ("sg_large_in", SQLGLOT_LARGE_IN, 10),
+        ("sg_values", SQLGLOT_VALUES, 10),
+        ("sg_many_joins", SQLGLOT_MANY_JOINS, 50),
+        ("sg_many_unions", SQLGLOT_MANY_UNIONS, 20),
+        ("sg_nested_subqueries", SQLGLOT_NESTED_SUBQUERIES, 500),
+        ("sg_many_columns", SQLGLOT_MANY_COLUMNS, 100),
+        ("sg_large_case", SQLGLOT_LARGE_CASE, 20),
+        ("sg_complex_where", SQLGLOT_COMPLEX_WHERE, 20),
+        ("sg_many_ctes", SQLGLOT_MANY_CTES, 50),
+        ("sg_many_windows", SQLGLOT_MANY_WINDOWS, 50),
+        ("sg_nested_functions", SQLGLOT_NESTED_FUNCTIONS, 500),
+        ("sg_large_strings", SQLGLOT_LARGE_STRINGS, 50),
+        ("sg_many_numbers", SQLGLOT_MANY_NUMBERS, 20),
     ]
 
     dialect_pairs = [

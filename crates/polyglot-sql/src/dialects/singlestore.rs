@@ -299,6 +299,11 @@ impl SingleStoreDialect {
                 f.args,
             )))),
 
+            // CURTIME -> CURRENT_TIME
+            "CURTIME" => Ok(Expression::CurrentTime(crate::expressions::CurrentTime {
+                precision: None,
+            })),
+
             // LOCATE is native in SingleStore
             "LOCATE" => Ok(Expression::Function(Box::new(f))),
 

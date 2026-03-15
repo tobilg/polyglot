@@ -129,6 +129,13 @@ impl DialectImpl for ExasolDialect {
                 inferred_type: None,
             }))),
 
+            // USER (no parens) -> CURRENT_USER
+            Expression::Column(col)
+                if col.table.is_none() && col.name.name.eq_ignore_ascii_case("USER") =>
+            {
+                Ok(Expression::CurrentUser(Box::new(crate::expressions::CurrentUser { this: None })))
+            }
+
             // Generic function transformations
             Expression::Function(f) => self.transform_function(*f),
 
@@ -342,6 +349,20 @@ impl ExasolDialect {
                 // For now, pass through
                 Ok(Expression::Function(Box::new(f)))
             }
+
+            // CURDATE -> CURRENT_DATE
+            "CURDATE" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+
+            // USER / USER() -> CURRENT_USER
+            "USER" if f.args.is_empty() => Ok(Expression::CurrentUser(Box::new(crate::expressions::CurrentUser { this: None }))),
+
+            // NOW -> CURRENT_TIMESTAMP
+            "NOW" => Ok(Expression::CurrentTimestamp(
+                crate::expressions::CurrentTimestamp {
+                    precision: None,
+                    sysdate: false,
+                },
+            )),
 
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),

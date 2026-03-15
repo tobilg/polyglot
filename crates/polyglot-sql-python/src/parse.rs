@@ -1,7 +1,8 @@
-use crate::errors::{map_parse_error, parse_statement_count_error};
+use crate::errors::parse_statement_count_error;
 use crate::expr::PyExpression;
 use crate::helpers::{
-    normalize_error_level, reject_parse_into, resolve_read_or_dialect, to_python_object,
+    normalize_error_level, parse_on_large_stack, reject_parse_into, resolve_read_or_dialect,
+    to_python_object,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
@@ -16,7 +17,7 @@ pub fn parse(
 ) -> PyResult<Py<PyAny>> {
     let dialect = resolve_read_or_dialect(read, dialect)?;
     let _ = normalize_error_level(error_level)?;
-    let expressions = py.detach(|| dialect.parse(sql)).map_err(map_parse_error)?;
+    let expressions = parse_on_large_stack(py, &dialect, sql)?;
     to_python_object(py, &expressions)
 }
 
@@ -30,14 +31,12 @@ pub fn parse_expr(
 ) -> PyResult<Vec<PyExpression>> {
     let dialect = resolve_read_or_dialect(read, dialect)?;
     let _ = normalize_error_level(error_level)?;
-    py.detach(|| dialect.parse(sql))
-        .map_err(map_parse_error)
-        .map(|expressions| {
-            expressions
-                .into_iter()
-                .map(PyExpression::from_inner)
-                .collect()
-        })
+    parse_on_large_stack(py, &dialect, sql).map(|expressions| {
+        expressions
+            .into_iter()
+            .map(PyExpression::from_inner)
+            .collect()
+    })
 }
 
 #[pyfunction(signature = (sql, read = None, dialect = None, *, into = None, error_level = None))]
@@ -52,7 +51,7 @@ pub fn parse_one(
     let dialect = resolve_read_or_dialect(read, dialect)?;
     reject_parse_into(into)?;
     let _ = normalize_error_level(error_level)?;
-    let mut expressions = py.detach(|| dialect.parse(sql)).map_err(map_parse_error)?;
+    let mut expressions = parse_on_large_stack(py, &dialect, sql)?;
 
     if expressions.len() != 1 {
         return Err(parse_statement_count_error(expressions.len()));
@@ -74,7 +73,7 @@ pub fn parse_one_expr(
     let dialect = resolve_read_or_dialect(read, dialect)?;
     reject_parse_into(into)?;
     let _ = normalize_error_level(error_level)?;
-    let mut expressions = py.detach(|| dialect.parse(sql)).map_err(map_parse_error)?;
+    let mut expressions = parse_on_large_stack(py, &dialect, sql)?;
 
     if expressions.len() != 1 {
         return Err(parse_statement_count_error(expressions.len()));

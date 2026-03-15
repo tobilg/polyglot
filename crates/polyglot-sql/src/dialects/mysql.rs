@@ -1081,6 +1081,17 @@ impl MySQLDialect {
                 f.args,
             )))),
 
+            // CURTIME -> CURRENT_TIME
+            "CURTIME" => Ok(Expression::CurrentTime(crate::expressions::CurrentTime {
+                precision: None,
+            })),
+
+            // TRUNC -> TRUNCATE in MySQL
+            "TRUNC" => Ok(Expression::Function(Box::new(Function::new(
+                "TRUNCATE".to_string(),
+                f.args,
+            )))),
+
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
         }

@@ -1,11 +1,99 @@
 use crate::errors::{parse_statement_count_error, unknown_dialect_error, GenerateError};
 use crate::expr::PyExpression;
-use polyglot_sql::{dialects::Dialect, Expression};
-use pyo3::exceptions::{PyNotImplementedError, PyValueError};
+use polyglot_sql::dialects::Dialect;
+use polyglot_sql::Expression;
+use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use pythonize::{depythonize, pythonize};
 use serde::Serialize;
+use std::sync::{mpsc, Mutex, OnceLock};
+
+/// Stack size for the persistent worker thread (64 MB).
+const WORKER_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+type ParseTask = Box<dyn FnOnce() + Send>;
+
+/// A persistent worker thread with a large stack.
+struct Worker {
+    sender: mpsc::Sender<ParseTask>,
+}
+
+impl Worker {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel::<ParseTask>();
+        std::thread::Builder::new()
+            .name("polyglot-worker".into())
+            .stack_size(WORKER_STACK_SIZE)
+            .spawn(move || {
+                while let Ok(task) = rx.recv() {
+                    task();
+                }
+            })
+            .expect("failed to spawn polyglot worker thread");
+        Self { sender: tx }
+    }
+}
+
+static WORKER: OnceLock<Mutex<Worker>> = OnceLock::new();
+
+fn get_worker() -> &'static Mutex<Worker> {
+    WORKER.get_or_init(|| Mutex::new(Worker::new()))
+}
+
+/// Wrapper around `mpsc::Receiver` that implements `Send` + `Sync` so it
+/// satisfies PyO3's `Ungil` bound inside `py.detach()`.
+///
+/// Safety: the receiver is only used by one thread (the calling thread inside
+/// `detach`), so the `Sync` impl is sound — no concurrent access occurs.
+struct UnsafeSyncReceiver<T>(mpsc::Receiver<T>);
+unsafe impl<T: Send> Sync for UnsafeSyncReceiver<T> {}
+
+/// Run a closure on a persistent thread with a 64 MB stack.
+/// Releases the GIL while waiting for the result.
+pub fn run_on_large_stack<T, F>(py: Python<'_>, f: F) -> PyResult<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (result_tx, result_rx) = mpsc::channel();
+    let result_rx = UnsafeSyncReceiver(result_rx);
+
+    {
+        let worker = get_worker()
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("worker thread lock poisoned"))?;
+        worker
+            .sender
+            .send(Box::new(move || {
+                let result = f();
+                let _ = result_tx.send(result);
+            }))
+            .map_err(|_| PyRuntimeError::new_err("worker thread has stopped"))?;
+    }
+
+    py.detach(move || {
+        result_rx
+            .0
+            .recv()
+            .map_err(|_| PyRuntimeError::new_err("worker thread panicked"))
+    })
+}
+
+/// Parse SQL on a persistent thread with a large stack, returning the parsed expressions.
+pub fn parse_on_large_stack(
+    py: Python<'_>,
+    dialect: &Dialect,
+    sql: &str,
+) -> PyResult<Vec<Expression>> {
+    let dialect_type = dialect.dialect_type();
+    let sql_owned = sql.to_owned();
+    run_on_large_stack(py, move || {
+        let d = Dialect::get(dialect_type);
+        d.parse(&sql_owned)
+    })?
+    .map_err(crate::errors::map_parse_error)
+}
 
 pub fn resolve_dialect(name: &str) -> PyResult<Dialect> {
     Dialect::get_by_name(name).ok_or_else(|| unknown_dialect_error(name))

@@ -526,6 +526,12 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
         }
         Expression::In(i) => {
             children.push(("this", &i.this));
+            if let Some(ref query) = i.query {
+                children.push(("query", query));
+            }
+            if let Some(ref unnest) = i.unnest {
+                children.push(("unnest", unnest));
+            }
         }
         Expression::Case(c) => {
             if let Some(ref operand) = &c.operand {
@@ -1080,6 +1086,43 @@ pub fn get_tables(expr: &Expression) -> Vec<&Expression> {
     expr.find_all(|e| matches!(e, Expression::Table(_)))
 }
 
+/// Extracts the underlying [`Expression::Table`] from a MERGE field that may
+/// be a bare `Table`, an `Alias` wrapping a `Table`, or an `Identifier`.
+/// Returns `None` if the expression doesn't contain a recognisable table.
+fn unwrap_merge_table(expr: &Expression) -> Option<&Expression> {
+    match expr {
+        Expression::Table(_) => Some(expr),
+        Expression::Alias(alias) => match &alias.this {
+            Expression::Table(_) => Some(&alias.this),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Returns the target table of a MERGE statement (the `Merge.this` field),
+/// unwrapping any alias wrapper to yield the underlying [`Expression::Table`].
+///
+/// Returns `None` if `expr` is not a `Merge` or the target isn't a recognisable table.
+pub fn get_merge_target(expr: &Expression) -> Option<&Expression> {
+    match expr {
+        Expression::Merge(m) => unwrap_merge_table(&m.this),
+        _ => None,
+    }
+}
+
+/// Returns the source table of a MERGE statement (the `Merge.using` field),
+/// unwrapping any alias wrapper to yield the underlying [`Expression::Table`].
+///
+/// Returns `None` if `expr` is not a `Merge`, the source isn't a recognisable
+/// table (e.g. it's a subquery), or the source is otherwise unresolvable.
+pub fn get_merge_source(expr: &Expression) -> Option<&Expression> {
+    match expr {
+        Expression::Merge(m) => unwrap_merge_table(&m.using),
+        _ => None,
+    }
+}
+
 /// Returns `true` if the expression tree contains any aggregate function calls.
 pub fn contains_aggregate(expr: &Expression) -> bool {
     expr.contains(is_aggregate)
@@ -1113,6 +1156,7 @@ macro_rules! is_type {
 is_type!(is_insert, Expression::Insert(_));
 is_type!(is_update, Expression::Update(_));
 is_type!(is_delete, Expression::Delete(_));
+is_type!(is_merge, Expression::Merge(_));
 is_type!(is_union, Expression::Union(_));
 is_type!(is_intersect, Expression::Intersect(_));
 is_type!(is_except, Expression::Except(_));
@@ -1194,7 +1238,7 @@ is_type!(is_drop_view, Expression::DropView(_));
 // Composite predicates
 // ---------------------------------------------------------------------------
 
-/// Returns `true` if `expr` is a query statement (SELECT, INSERT, UPDATE, or DELETE).
+/// Returns `true` if `expr` is a query statement (SELECT, INSERT, UPDATE, DELETE, or MERGE).
 pub fn is_query(expr: &Expression) -> bool {
     matches!(
         expr,
@@ -1202,6 +1246,7 @@ pub fn is_query(expr: &Expression) -> bool {
             | Expression::Insert(_)
             | Expression::Update(_)
             | Expression::Delete(_)
+            | Expression::Merge(_)
     )
 }
 
@@ -1816,5 +1861,111 @@ mod tests {
 
         let ancestors = ctx.ancestors_of(3);
         assert_eq!(ancestors, vec![2, 0]); // Add, then Eq
+    }
+
+    #[test]
+    fn test_get_merge_target_and_source() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::Generic);
+
+        // MERGE with aliased target and source tables
+        let sql = "MERGE INTO orders o USING customers c ON o.customer_id = c.id WHEN MATCHED THEN UPDATE SET amount = amount + 100";
+        let exprs = dialect.parse(sql).unwrap();
+        let expr = &exprs[0];
+
+        assert!(is_merge(expr));
+        assert!(is_query(expr));
+
+        let target = get_merge_target(expr).expect("should find target table");
+        assert!(matches!(target, Expression::Table(_)));
+        if let Expression::Table(t) = target {
+            assert_eq!(t.name.name, "orders");
+        }
+
+        let source = get_merge_source(expr).expect("should find source table");
+        assert!(matches!(source, Expression::Table(_)));
+        if let Expression::Table(t) = source {
+            assert_eq!(t.name.name, "customers");
+        }
+    }
+
+    #[test]
+    fn test_get_merge_source_subquery_returns_none() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::Generic);
+
+        // MERGE with subquery source — get_merge_source should return None
+        let sql = "MERGE INTO orders o USING (SELECT * FROM customers) c ON o.customer_id = c.id WHEN MATCHED THEN DELETE";
+        let exprs = dialect.parse(sql).unwrap();
+        let expr = &exprs[0];
+
+        assert!(get_merge_target(expr).is_some());
+        assert!(get_merge_source(expr).is_none());
+    }
+
+    #[test]
+    fn test_get_merge_on_non_merge_returns_none() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::Generic);
+        let exprs = dialect.parse("SELECT 1").unwrap();
+        assert!(get_merge_target(&exprs[0]).is_none());
+        assert!(get_merge_source(&exprs[0]).is_none());
+    }
+
+    #[test]
+    fn test_get_tables_finds_tables_inside_in_subquery() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::Generic);
+        let sql = "SELECT id, name FROM customers WHERE id IN (SELECT customer_id FROM orders WHERE amount > 1000)";
+        let exprs = dialect.parse(sql).unwrap();
+        let tables = get_tables(&exprs[0]);
+        let names: Vec<&str> = tables
+            .iter()
+            .filter_map(|e| {
+                if let Expression::Table(t) = e {
+                    Some(t.name.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(names.contains(&"customers"), "should find outer table");
+        assert!(names.contains(&"orders"), "should find subquery table");
+    }
+
+    #[test]
+    fn test_get_tables_finds_tables_inside_exists_subquery() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::Generic);
+        let sql = "SELECT * FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)";
+        let exprs = dialect.parse(sql).unwrap();
+        let tables = get_tables(&exprs[0]);
+        let names: Vec<&str> = tables
+            .iter()
+            .filter_map(|e| {
+                if let Expression::Table(t) = e {
+                    Some(t.name.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(names.contains(&"customers"), "should find outer table");
+        assert!(names.contains(&"orders"), "should find EXISTS subquery table");
+    }
+
+    #[test]
+    fn test_get_tables_finds_tables_in_correlated_subquery() {
+        let dialect = crate::Dialect::get(crate::dialects::DialectType::TSQL);
+        let sql = "SELECT id, name FROM customers WHERE id IN (SELECT customer_id FROM orders WHERE amount > 1000)";
+        let exprs = dialect.parse(sql).unwrap();
+        let tables = get_tables(&exprs[0]);
+        let names: Vec<&str> = tables
+            .iter()
+            .filter_map(|e| {
+                if let Expression::Table(t) = e {
+                    Some(t.name.name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(names.contains(&"customers"), "TSQL: should find outer table");
+        assert!(names.contains(&"orders"), "TSQL: should find subquery table");
     }
 }

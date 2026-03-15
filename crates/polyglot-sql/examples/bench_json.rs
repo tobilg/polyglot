@@ -72,46 +72,6 @@ LIMIT 1000 OFFSET 0";
 const SQLGLOT_SHORT: &str =
     "SELECT 1 AS a, CASE WHEN 1 THEN 1 WHEN 2 THEN 2 ELSE 3 END AS b, c FROM x";
 
-const SQLGLOT_LONG: &str = r#"
-SELECT
-  "e"."employee_id" AS "Employee #",
-  "e"."first_name" || ' ' || "e"."last_name" AS "Name",
-  "e"."email" AS "Email",
-  "e"."phone_number" AS "Phone",
-  TO_CHAR("e"."hire_date", 'MM/DD/YYYY') AS "Hire Date",
-  TO_CHAR("e"."salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') AS "Salary",
-  "e"."commission_pct" AS "Commission %",
-  'works as ' || "j"."job_title" || ' in ' || "d"."department_name" || ' department (manager: ' || "dm"."first_name" || ' ' || "dm"."last_name" || ') and immediate supervisor: ' || "m"."first_name" || ' ' || "m"."last_name" AS "Current Job",
-  TO_CHAR("j"."min_salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') || ' - ' || TO_CHAR("j"."max_salary", 'L99G999D99', 'NLS_NUMERIC_CHARACTERS = ''.,'' NLS_CURRENCY = ''$''') AS "Current Salary",
-  "l"."street_address" || ', ' || "l"."postal_code" || ', ' || "l"."city" || ', ' || "l"."state_province" || ', ' || "c"."country_name" || ' (' || "r"."region_name" || ')' AS "Location",
-  "jh"."job_id" AS "History Job ID",
-  'worked from ' || TO_CHAR("jh"."start_date", 'MM/DD/YYYY') || ' to ' || TO_CHAR("jh"."end_date", 'MM/DD/YYYY') || ' as ' || "jj"."job_title" || ' in ' || "dd"."department_name" || ' department' AS "History Job Title",
-  case when 1 then 1 when 2 then 2 when 3 then 3 when 4 then 4 when 5 then 5 else a(b(c + 1 * 3 % 4)) end
-FROM "employees" AS e
-JOIN "jobs" AS j
-  ON "e"."job_id" = "j"."job_id"
-LEFT JOIN "employees" AS m
-  ON "e"."manager_id" = "m"."employee_id"
-LEFT JOIN "departments" AS d
-  ON "d"."department_id" = "e"."department_id"
-LEFT JOIN "employees" AS dm
-  ON "d"."manager_id" = "dm"."employee_id"
-LEFT JOIN "locations" AS l
-  ON "d"."location_id" = "l"."location_id"
-LEFT JOIN "countries" AS c
-  ON "l"."country_id" = "c"."country_id"
-LEFT JOIN "regions" AS r
-  ON "c"."region_id" = "r"."region_id"
-LEFT JOIN "job_history" AS jh
-  ON "e"."employee_id" = "jh"."employee_id"
-LEFT JOIN "jobs" AS jj
-  ON "jj"."job_id" = "jh"."job_id"
-LEFT JOIN "departments" AS dd
-  ON "dd"."department_id" = "jh"."department_id"
-ORDER BY
-  "e"."employee_id"
-"#;
-
 const SQLGLOT_TPCH: &str = r#"
 WITH "_e_0" AS (
   SELECT
@@ -207,14 +167,143 @@ ORDER BY
 LIMIT 100
 "#;
 
-/// Build the "crazy" query from sqlglot benchmarks: 500 chained additions + 500 chained multiplications.
-fn build_crazy_query() -> String {
+/// Build the "deep_arithmetic" query: 500 chained additions + 500 chained multiplications.
+fn build_deep_arithmetic() -> String {
     let nums: Vec<String> = (0..500).map(|i| i.to_string()).collect();
     format!(
         "SELECT 1+{} AS a, 2*{} AS b FROM x",
         nums.join("+"),
         nums.join("*"),
     )
+}
+
+/// Build the "large_in" query: 20k string IN + 20k numeric IN.
+fn build_large_in() -> String {
+    let str_items: Vec<String> = (0..20000).map(|i| format!("'s{i}'")).collect();
+    let num_items: Vec<String> = (0..20000).map(|i| i.to_string()).collect();
+    format!(
+        "SELECT * FROM t WHERE x IN ({}) OR y IN ({})",
+        str_items.join(", "),
+        num_items.join(", "),
+    )
+}
+
+/// Build the "values" query: INSERT with 2000 rows x 20 columns.
+fn build_values() -> String {
+    let rows: Vec<String> = (0..2000)
+        .map(|i| {
+            let cols: Vec<String> = (0..20)
+                .map(|j| {
+                    if j % 2 != 0 {
+                        format!("'s{i}_{j}'")
+                    } else {
+                        (i * 20 + j).to_string()
+                    }
+                })
+                .collect();
+            format!("({})", cols.join(", "))
+        })
+        .collect();
+    format!("INSERT INTO t VALUES {}", rows.join(", "))
+}
+
+/// Build the "many_joins" query: 200 JOINs.
+fn build_many_joins() -> String {
+    let joins: Vec<String> = (1..200)
+        .map(|i| format!("\nJOIN t{i} ON t{i}.id = t{}.id", i - 1))
+        .collect();
+    format!("SELECT * FROM t0{}", joins.join(""))
+}
+
+/// Build the "many_unions" query: 500 UNION ALL.
+fn build_many_unions() -> String {
+    let selects: Vec<String> = (0..500)
+        .map(|i| format!("SELECT {i} AS a, 's{i}' AS b FROM t{i}"))
+        .collect();
+    selects.join("\nUNION ALL\n")
+}
+
+/// Build the "nested_subqueries" query: 20 levels of nested subqueries.
+fn build_nested_subqueries() -> String {
+    let open = "(SELECT * FROM ".repeat(20);
+    let close = ")".repeat(20);
+    format!("SELECT * FROM {open}t{close}")
+}
+
+/// Build the "many_columns" query: 1000 columns.
+fn build_many_columns() -> String {
+    let cols: Vec<String> = (0..1000).map(|i| format!("c{i}")).collect();
+    format!("SELECT {} FROM t", cols.join(", "))
+}
+
+/// Build the "large_case" query: 1000 WHEN clauses.
+fn build_large_case() -> String {
+    let whens: Vec<String> = (0..1000)
+        .map(|i| format!("WHEN x = {i} THEN {i}"))
+        .collect();
+    format!("SELECT CASE {} ELSE -1 END FROM t", whens.join(" "))
+}
+
+/// Build the "complex_where" query: 200 complex conditions.
+fn build_complex_where() -> String {
+    let conds: Vec<String> = (0..200)
+        .map(|i| {
+            format!(
+                "(c{i} > {i} OR c{i} LIKE '%s{i}%' OR c{i} BETWEEN {i} AND {} OR c{i} IS NULL)",
+                i + 10
+            )
+        })
+        .collect();
+    format!("SELECT * FROM t WHERE {}", conds.join(" AND "))
+}
+
+/// Build the "many_ctes" query: 200 CTEs.
+fn build_many_ctes() -> String {
+    let ctes: Vec<String> = (0..200)
+        .map(|i| {
+            let from = if i == 0 {
+                "tbase".to_string()
+            } else {
+                format!("t{}", i - 1)
+            };
+            format!("t{i} AS (SELECT {i} AS a FROM {from})")
+        })
+        .collect();
+    format!("WITH {} SELECT * FROM t199", ctes.join(", "))
+}
+
+/// Build the "many_windows" query: 200 window functions.
+fn build_many_windows() -> String {
+    let cols: Vec<String> = (0..200)
+        .map(|i| {
+            format!(
+                "SUM(c{i}) OVER (PARTITION BY p{} ORDER BY o{}) AS w{i}",
+                i % 10,
+                i % 5
+            )
+        })
+        .collect();
+    format!("SELECT {} FROM t", cols.join(", "))
+}
+
+/// Build the "nested_functions" query: 20 levels of nested COALESCE.
+fn build_nested_functions() -> String {
+    let open = "COALESCE(".repeat(20);
+    let close = ", NULL)".repeat(20);
+    format!("SELECT {open}x{close} FROM t")
+}
+
+/// Build the "large_strings" query: 500 large string literals.
+fn build_large_strings() -> String {
+    let x100 = "x".repeat(100);
+    let cols: Vec<String> = (0..500).map(|_| format!("'{x100}'")).collect();
+    format!("SELECT {} FROM t", cols.join(", "))
+}
+
+/// Build the "many_numbers" query: 10000 number literals.
+fn build_many_numbers() -> String {
+    let nums: Vec<String> = (0..10000).map(|i| i.to_string()).collect();
+    format!("SELECT {} FROM t", nums.join(", "))
 }
 
 const WARMUP: usize = 5;
@@ -372,8 +461,8 @@ fn bench_transpile(
 }
 
 fn main() {
-    // The sg_crazy query (500 chained operators) needs deep recursion in the
-    // recursive-descent parser. Spawn on a thread with an 8 MB stack.
+    // The sg_deep_arithmetic query (500 chained operators) needs deep recursion
+    // in the recursive-descent parser. Spawn on a thread with a large stack.
     let child = std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(run_benchmarks)
@@ -382,15 +471,41 @@ fn main() {
 }
 
 fn run_benchmarks() {
-    let crazy = build_crazy_query();
+    let deep_arithmetic = build_deep_arithmetic();
+    let large_in = build_large_in();
+    let values = build_values();
+    let many_joins = build_many_joins();
+    let many_unions = build_many_unions();
+    let nested_subqueries = build_nested_subqueries();
+    let many_columns = build_many_columns();
+    let large_case = build_large_case();
+    let complex_where = build_complex_where();
+    let many_ctes = build_many_ctes();
+    let many_windows = build_many_windows();
+    let nested_functions = build_nested_functions();
+    let large_strings = build_large_strings();
+    let many_numbers = build_many_numbers();
+
     let queries: Vec<(&str, &str, usize)> = vec![
         ("simple", SIMPLE_SELECT, 1000),
         ("medium", MEDIUM_SELECT, 500),
         ("complex", COMPLEX_SELECT, 100),
         ("sg_short", SQLGLOT_SHORT, 1000),
-        ("sg_long", SQLGLOT_LONG, 500),
         ("sg_tpch", SQLGLOT_TPCH, 100),
-        ("sg_crazy", &crazy, 50),
+        ("sg_deep_arithmetic", &deep_arithmetic, 50),
+        ("sg_large_in", &large_in, 10),
+        ("sg_values", &values, 10),
+        ("sg_many_joins", &many_joins, 50),
+        ("sg_many_unions", &many_unions, 20),
+        ("sg_nested_subqueries", &nested_subqueries, 500),
+        ("sg_many_columns", &many_columns, 100),
+        ("sg_large_case", &large_case, 20),
+        ("sg_complex_where", &complex_where, 20),
+        ("sg_many_ctes", &many_ctes, 50),
+        ("sg_many_windows", &many_windows, 50),
+        ("sg_nested_functions", &nested_functions, 500),
+        ("sg_large_strings", &large_strings, 50),
+        ("sg_many_numbers", &many_numbers, 20),
     ];
 
     let dialect_pairs: Vec<(&str, DialectType, DialectType)> = vec![

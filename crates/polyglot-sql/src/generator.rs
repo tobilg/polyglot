@@ -1398,7 +1398,9 @@ mod reserved_keywords {
         ]);
         set.remove("at");
         set.remove("key");
+        set.remove("range");
         set.remove("row");
+        set.remove("values");
         set
     });
 
@@ -3302,7 +3304,7 @@ impl Generator {
                 Ok(())
             }
             Expression::Execute(exec) => {
-                self.write_keyword("EXEC");
+                self.write_keyword("EXECUTE");
                 self.write_space();
                 self.generate_expression(&exec.this)?;
                 for (i, param) in exec.parameters.iter().enumerate() {
@@ -3312,8 +3314,11 @@ impl Generator {
                         self.write(", ");
                     }
                     self.write(&param.name);
-                    self.write("=");
-                    self.generate_expression(&param.value)?;
+                    // Only write = value for named parameters (not positional)
+                    if !param.positional {
+                        self.write(" = ");
+                        self.generate_expression(&param.value)?;
+                    }
                 }
                 Ok(())
             }
@@ -3940,6 +3945,65 @@ impl Generator {
     fn generate_select(&mut self, select: &Select) -> Result<()> {
         use crate::dialects::DialectType;
 
+        // Redshift-style EXCLUDE: for dialects other than Redshift, wrap in a derived table
+        // e.g., SELECT *, col4 EXCLUDE (col2, col3) FROM t
+        //   → SELECT * EXCLUDE (col2, col3) FROM (SELECT *, col4 FROM t)
+        if let Some(exclude) = &select.exclude {
+            if !exclude.is_empty()
+                && !matches!(self.config.dialect, Some(DialectType::Redshift))
+            {
+                // Build the inner select (same as original but without exclude)
+                let mut inner_select = select.clone();
+                inner_select.exclude = None;
+                let inner_expr = Expression::Select(Box::new(inner_select));
+
+                // Build the subquery
+                let subquery = crate::expressions::Subquery {
+                    this: inner_expr,
+                    alias: None,
+                    column_aliases: Vec::new(),
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    lateral: false,
+                    modifiers_inside: false,
+                    trailing_comments: Vec::new(),
+                    inferred_type: None,
+                };
+
+                // Build the outer select: SELECT * EXCLUDE (cols) FROM (inner)
+                let star = Expression::Star(crate::expressions::Star {
+                    table: None,
+                    except: Some(
+                        exclude.iter().map(|e| {
+                            match e {
+                                Expression::Column(col) => col.name.clone(),
+                                Expression::Identifier(id) => id.clone(),
+                                _ => crate::expressions::Identifier::new("unknown".to_string()),
+                            }
+                        }).collect()
+                    ),
+                    replace: None,
+                    rename: None,
+                    trailing_comments: Vec::new(),
+                    span: None,
+                });
+
+                let outer_select = Select {
+                    expressions: vec![star],
+                    from: Some(crate::expressions::From {
+                        expressions: vec![Expression::Subquery(Box::new(subquery))],
+                    }),
+                    ..Select::new()
+                };
+
+                return self.generate_select(&outer_select);
+            }
+        }
+
         // Output leading comments before SELECT
         for comment in &select.leading_comments {
             self.write_formatted_comment(comment);
@@ -4099,6 +4163,30 @@ impl Generator {
             self.indent_level -= 1;
         }
 
+        // Redshift-style EXCLUDE clause at the end of the projection list
+        // For Redshift dialect: append EXCLUDE (col1, col2) after the expressions
+        // For other dialects (DuckDB, Snowflake): this is handled by wrapping in a derived table
+        // (done after the full select is generated below)
+        if let Some(exclude) = &select.exclude {
+            if !exclude.is_empty()
+                && matches!(
+                    self.config.dialect,
+                    Some(DialectType::Redshift)
+                )
+            {
+                self.write_space();
+                self.write_keyword("EXCLUDE");
+                self.write(" (");
+                for (i, col) in exclude.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(col)?;
+                }
+                self.write(")");
+            }
+        }
+
         // INTO clause (SELECT ... INTO table_name)
         // Also handles Oracle PL/SQL: BULK COLLECT INTO v1, v2, ...
         if let Some(into) = &select.into {
@@ -4221,8 +4309,8 @@ impl Generator {
         }
 
         // LATERAL VIEW clauses (Hive/Spark)
-        for lateral_view in &select.lateral_views {
-            self.generate_lateral_view(lateral_view)?;
+        for (lv_idx, lateral_view) in select.lateral_views.iter().enumerate() {
+            self.generate_lateral_view(lateral_view, lv_idx)?;
         }
 
         // PREWHERE (ClickHouse)
@@ -5409,6 +5497,7 @@ impl Generator {
                 JoinKind::Array => self.write_keyword("ARRAY JOIN"),
                 JoinKind::LeftArray => self.write_keyword("LEFT ARRAY JOIN"),
                 JoinKind::Paste => self.write_keyword("PASTE JOIN"),
+                JoinKind::Positional => self.write_keyword("POSITIONAL JOIN"),
             }
         }
 
@@ -5597,8 +5686,8 @@ impl Generator {
         }
 
         // Generate LATERAL VIEW clauses (Hive/Spark)
-        for lv in &jt.lateral_views {
-            self.generate_lateral_view(lv)?;
+        for (lv_idx, lv) in jt.lateral_views.iter().enumerate() {
+            self.generate_lateral_view(lv, lv_idx)?;
         }
 
         self.write(")");
@@ -5614,7 +5703,7 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_lateral_view(&mut self, lv: &LateralView) -> Result<()> {
+    fn generate_lateral_view(&mut self, lv: &LateralView, lv_index: usize) -> Result<()> {
         use crate::dialects::DialectType;
 
         if self.config.pretty {
@@ -5647,27 +5736,29 @@ impl Generator {
         );
 
         // Check if we need POSEXPLODE -> UNNEST WITH ORDINALITY
-        let (is_posexplode, func_args) = match &lv.this {
+        let (is_posexplode, is_inline, func_args) = match &lv.this {
             Expression::Explode(uf) => {
                 // Expression::Explode is the dedicated EXPLODE expression type
-                (false, vec![uf.this.clone()])
+                (false, false, vec![uf.this.clone()])
             }
             Expression::Unnest(uf) => {
                 let mut args = vec![uf.this.clone()];
                 args.extend(uf.expressions.clone());
-                (false, args)
+                (false, false, args)
             }
             Expression::Function(func) => {
                 let name = func.name.to_uppercase();
                 if name == "POSEXPLODE" || name == "POSEXPLODE_OUTER" {
-                    (true, func.args.clone())
-                } else if name == "EXPLODE" || name == "EXPLODE_OUTER" || name == "INLINE" {
-                    (false, func.args.clone())
+                    (true, false, func.args.clone())
+                } else if name == "INLINE" {
+                    (false, true, func.args.clone())
+                } else if name == "EXPLODE" || name == "EXPLODE_OUTER" {
+                    (false, false, func.args.clone())
                 } else {
-                    (false, vec![])
+                    (false, false, vec![])
                 }
             }
-            _ => (false, vec![]),
+            _ => (false, false, vec![]),
         };
 
         if use_lateral_join {
@@ -5797,6 +5888,55 @@ impl Generator {
                     self.write(", ");
                     self.generate_identifier(&pos_alias)?;
                     self.write("))");
+                } else if is_inline && matches!(self.config.dialect, Some(DialectType::DuckDB)) {
+                    // INLINE -> LATERAL (SELECT UNNEST(arg, max_depth => 2)) AS alias
+                    self.write_keyword("LATERAL");
+                    self.write(" (");
+                    self.write_keyword("SELECT");
+                    self.write_space();
+                    self.write_keyword("UNNEST");
+                    self.write("(");
+                    for (i, arg) in unnest_args.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.generate_expression(arg)?;
+                    }
+                    self.write(", ");
+                    self.write_keyword("max_depth");
+                    self.write(" => 2))");
+
+                    // Add table and column aliases
+                    if let Some(alias) = &lv.table_alias {
+                        self.write_space();
+                        self.write_keyword("AS");
+                        self.write_space();
+                        self.generate_identifier(alias)?;
+                        if !lv.column_aliases.is_empty() {
+                            self.write("(");
+                            for (i, col) in lv.column_aliases.iter().enumerate() {
+                                if i > 0 {
+                                    self.write(", ");
+                                }
+                                self.generate_identifier(col)?;
+                            }
+                            self.write(")");
+                        }
+                    } else if !lv.column_aliases.is_empty() {
+                        // Auto-generate alias like _u_N
+                        self.write_space();
+                        self.write_keyword("AS");
+                        self.write_space();
+                        self.write(&format!("_u_{}", lv_index));
+                        self.write("(");
+                        for (i, col) in lv.column_aliases.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.generate_identifier(col)?;
+                        }
+                        self.write(")");
+                    }
                 } else {
                     self.write_keyword("UNNEST");
                     self.write("(");
@@ -9388,6 +9528,31 @@ impl Generator {
     }
 
     fn generate_drop_table(&mut self, dt: &DropTable) -> Result<()> {
+        // TSQL: IF NOT OBJECT_ID(...) IS NULL BEGIN DROP TABLE ...; END
+        if let Some(ref object_id_args) = dt.object_id_args {
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric)
+            ) {
+                self.write_keyword("IF NOT OBJECT_ID");
+                self.write("(");
+                self.write(object_id_args);
+                self.write(")");
+                self.write_space();
+                self.write_keyword("IS NULL BEGIN DROP TABLE");
+                self.write_space();
+                for (i, table) in dt.names.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_table(table)?;
+                }
+                self.write("; ");
+                self.write_keyword("END");
+                return Ok(());
+            }
+        }
+
         // Athena: DROP TABLE uses Hive engine (backticks)
         let saved_athena_hive_context = self.athena_hive_context;
         if matches!(
@@ -12110,6 +12275,7 @@ impl Generator {
                             self.write(" ");
                         }
                         self.generate_expression(stmt)?;
+                        self.write(";");
                     }
                     self.write(" END");
                 }
@@ -12434,6 +12600,7 @@ impl Generator {
                             self.write(" ");
                         }
                         self.generate_expression(stmt)?;
+                        self.write(";");
                     }
                     self.write(" END");
                 }
@@ -12976,21 +13143,28 @@ impl Generator {
             }
         }
 
-        self.write_space();
-        self.write_keyword("FOR EACH");
-        self.write_space();
-        match ct.for_each {
-            TriggerForEach::Row => self.write_keyword("ROW"),
-            TriggerForEach::Statement => self.write_keyword("STATEMENT"),
+        if let Some(for_each) = ct.for_each {
+            self.write_space();
+            self.write_keyword("FOR EACH");
+            self.write_space();
+            match for_each {
+                TriggerForEach::Row => self.write_keyword("ROW"),
+                TriggerForEach::Statement => self.write_keyword("STATEMENT"),
+            }
         }
 
         // When clause
         if let Some(when) = &ct.when {
             self.write_space();
             self.write_keyword("WHEN");
-            self.write(" (");
-            self.generate_expression(when)?;
-            self.write(")");
+            if ct.when_paren {
+                self.write(" (");
+                self.generate_expression(when)?;
+                self.write(")");
+            } else {
+                self.write_space();
+                self.generate_expression(when)?;
+            }
         }
 
         // Body
@@ -15260,10 +15434,13 @@ impl Generator {
             }
         }
 
-        // Output TSQL FOR SYSTEM_TIME temporal clause
-        if let Some(ref system_time) = table.system_time {
-            self.write_space();
-            self.write(system_time);
+        // Output TSQL FOR SYSTEM_TIME temporal clause (before alias, except BigQuery)
+        let system_time_post_alias = matches!(self.config.dialect, Some(DialectType::BigQuery));
+        if !system_time_post_alias {
+            if let Some(ref system_time) = table.system_time {
+                self.write_space();
+                self.write(system_time);
+            }
         }
 
         // Output Presto/Trino time travel: FOR VERSION AS OF / FOR TIMESTAMP AS OF
@@ -15311,6 +15488,7 @@ impl Generator {
                         | Some(DialectType::Redshift)
                         | Some(DialectType::Snowflake)
                         | Some(DialectType::BigQuery)
+                        | Some(DialectType::DuckDB)
                         | Some(DialectType::Presto)
                         | Some(DialectType::Trino)
                         | Some(DialectType::TSQL)
@@ -15341,6 +15519,14 @@ impl Generator {
                     self.generate_identifier(col_alias)?;
                 }
                 self.write(")");
+            }
+        }
+
+        // BigQuery: FOR SYSTEM_TIME AS OF after alias
+        if system_time_post_alias {
+            if let Some(ref system_time) = table.system_time {
+                self.write_space();
+                self.write(system_time);
             }
         }
 
@@ -17910,6 +18096,13 @@ impl Generator {
         self.write_keyword("CURRENT_TIME");
         if let Some(precision) = f.precision {
             self.write(&format!("({})", precision));
+        } else if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::MySQL)
+                | Some(crate::dialects::DialectType::SingleStore)
+                | Some(crate::dialects::DialectType::TiDB)
+        ) {
+            self.write("()");
         }
         Ok(())
     }
@@ -17951,6 +18144,7 @@ impl Generator {
                 | Some(crate::dialects::DialectType::ClickHouse)
                 | Some(crate::dialects::DialectType::BigQuery)
                 | Some(crate::dialects::DialectType::Snowflake)
+                | Some(crate::dialects::DialectType::Exasol)
         ) {
             self.write("()");
         }
@@ -18757,16 +18951,34 @@ impl Generator {
                 self.generate_expression(default)?;
             }
         }
-        // IGNORE NULLS inside parens for dialects like BigQuery
-        if f.ignore_nulls && self.config.ignore_nulls_in_func {
-            self.write_space();
-            self.write_keyword("IGNORE NULLS");
+        // IGNORE NULLS / RESPECT NULLS inside parens for dialects like BigQuery
+        if self.config.ignore_nulls_in_func {
+            match f.ignore_nulls {
+                Some(true) => {
+                    self.write_space();
+                    self.write_keyword("IGNORE NULLS");
+                }
+                Some(false) => {
+                    self.write_space();
+                    self.write_keyword("RESPECT NULLS");
+                }
+                None => {}
+            }
         }
         self.write(")");
-        // IGNORE NULLS outside parens for other dialects
-        if f.ignore_nulls && !self.config.ignore_nulls_in_func {
-            self.write_space();
-            self.write_keyword("IGNORE NULLS");
+        // IGNORE NULLS / RESPECT NULLS outside parens for other dialects
+        if !self.config.ignore_nulls_in_func {
+            match f.ignore_nulls {
+                Some(true) => {
+                    self.write_space();
+                    self.write_keyword("IGNORE NULLS");
+                }
+                Some(false) => {
+                    self.write_space();
+                    self.write_keyword("RESPECT NULLS");
+                }
+                None => {}
+            }
         }
         Ok(())
     }
@@ -26130,8 +26342,14 @@ impl Generator {
         // CURRENT_SCHEMAS(include_implicit)
         self.write_keyword("CURRENT_SCHEMAS");
         self.write("(");
-        if let Some(this) = &e.this {
-            self.generate_expression(this)?;
+        // Snowflake: drop the argument (CURRENT_SCHEMAS() takes no args)
+        if !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            if let Some(this) = &e.this {
+                self.generate_expression(this)?;
+            }
         }
         self.write(")");
         Ok(())
@@ -26435,35 +26653,25 @@ impl Generator {
                     self.write(kind);
                 }
                 Some(DialectType::TSQL) => {
-                    // TSQL: Check for complex TABLE constraints that should be passed through unchanged
-                    // Python sqlglot falls back to Command for TABLE declarations with CLUSTERED,
-                    // NONCLUSTERED, or INDEX constraints
+                    // TSQL DECLARE: no AS keyword (sqlglot convention)
+                    // Normalize INT to INTEGER for simple declarations
+                    // Complex TABLE declarations (with CLUSTERED/INDEX) are preserved as-is
                     let is_complex_table = kind.starts_with("TABLE")
                         && (kind.contains("CLUSTERED") || kind.contains("INDEX"));
-
                     if is_complex_table {
-                        // Complex TABLE declarations: preserve as-is (no AS, no INT normalization)
                         self.write(kind);
+                    } else if kind == "INT" {
+                        self.write("INTEGER");
+                    } else if kind.starts_with("TABLE") {
+                        // Normalize INT to INTEGER inside simple TABLE column definitions
+                        let normalized = kind
+                            .replace(" INT ", " INTEGER ")
+                            .replace(" INT,", " INTEGER,")
+                            .replace(" INT)", " INTEGER)")
+                            .replace("(INT ", "(INTEGER ");
+                        self.write(&normalized);
                     } else {
-                        // Simple declarations: add AS (except for CURSOR) and normalize INT
-                        if !kind.starts_with("CURSOR") {
-                            self.write_keyword("AS");
-                            self.write_space();
-                        }
-                        // Normalize INT to INTEGER for TSQL DECLARE statements
-                        if kind == "INT" {
-                            self.write("INTEGER");
-                        } else if kind.starts_with("TABLE") {
-                            // Normalize INT to INTEGER inside TABLE column definitions
-                            let normalized = kind
-                                .replace(" INT ", " INTEGER ")
-                                .replace(" INT,", " INTEGER,")
-                                .replace(" INT)", " INTEGER)")
-                                .replace("(INT ", "(INTEGER ");
-                            self.write(&normalized);
-                        } else {
-                            self.write(kind);
-                        }
+                        self.write(kind);
                     }
                 }
                 _ => {
@@ -35647,8 +35855,12 @@ impl Generator {
     }
 
     fn generate_utc_timestamp(&mut self, _e: &UtcTimestamp) -> Result<()> {
-        // UTC_TIMESTAMP
-        self.write_keyword("UTC_TIMESTAMP");
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            self.write_keyword("CURRENT_TIMESTAMP");
+            self.write("('UTC')");
+        } else {
+            self.write_keyword("UTC_TIMESTAMP");
+        }
         Ok(())
     }
 
@@ -35732,7 +35944,7 @@ impl Generator {
         use crate::dialects::DialectType;
         let skip_for = matches!(
             self.config.dialect,
-            Some(DialectType::Hive) | Some(DialectType::Spark)
+            Some(DialectType::Hive) | Some(DialectType::Spark) | Some(DialectType::Databricks)
         );
         if !skip_for {
             self.write_keyword("FOR");

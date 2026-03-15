@@ -292,19 +292,17 @@ impl OracleDialect {
                 f.args,
             )))),
 
-            // TRUNC with single date argument: add default 'DD' unit
-            // In Oracle, TRUNC(date) defaults to truncating to day ('DD')
-            // Python sqlglot: "TRUNC": lambda args: exp.DateTrunc(unit=seq_get(args, 1) or exp.Literal.string("DD"), ...)
-            "TRUNC" if f.args.len() == 1 => {
+            // TRUNC is native to Oracle (for both date and number truncation)
+            // For date truncation with a single temporal arg, add default 'DD' unit
+            "TRUNC" if f.args.len() == 1 && Self::is_temporal_expr(&f.args[0]) => {
                 let mut args = f.args;
-                args.push(Expression::Literal(crate::expressions::Literal::String(
-                    "DD".to_string(),
-                )));
+                args.push(Expression::Literal(crate::expressions::Literal::String("DD".to_string())));
                 Ok(Expression::Function(Box::new(Function::new(
                     "TRUNC".to_string(),
                     args,
                 ))))
             }
+            "TRUNC" => Ok(Expression::Function(Box::new(f))),
 
             // EXTRACT is native to Oracle
             "EXTRACT" => Ok(Expression::Function(Box::new(f))),
@@ -457,5 +455,19 @@ impl OracleDialect {
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),
         }
+    }
+
+    /// Check if an expression is a temporal/date-time expression
+    fn is_temporal_expr(expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::CurrentTimestamp(_)
+                | Expression::CurrentDate(_)
+                | Expression::CurrentTime(_)
+                | Expression::Localtimestamp(_)
+        ) || matches!(expr, Expression::Function(f) if {
+            let name = f.name.to_uppercase();
+            name == "SYSDATE" || name == "SYSTIMESTAMP" || name == "TO_DATE" || name == "TO_TIMESTAMP"
+        })
     }
 }

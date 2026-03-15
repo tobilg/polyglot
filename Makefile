@@ -12,7 +12,7 @@
         build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
         develop-python test-python build-python typecheck-python \
         python-docs-build python-docs-preview python-docs-deploy \
-        bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full \
+        bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full bench-simple bench-simple-full \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
         bump-version
@@ -22,10 +22,10 @@
 # =============================================================================
 
 SQLGLOT_REPO := https://github.com/tobymao/sqlglot.git
-SQLGLOT_REF := v28.10.1
+SQLGLOT_REF := v29.0.1
 
 CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
-CLICKHOUSE_REF := v26.1.3.52-stable
+CLICKHOUSE_REF := v26.2.4.23-stable
 
 # Default target
 help:
@@ -79,6 +79,8 @@ help:
 	@echo "  make bench-parse         - Parse benchmark (core-only: polyglot + sqlglot)"
 	@echo "  make bench-parse-quick   - Parse benchmark fast mode (core-only + quick)"
 	@echo "  make bench-parse-full    - Parse benchmark (all available parsers)"
+	@echo "  make bench-simple        - Simple parse benchmark (core-only, median-of-5)"
+	@echo "  make bench-simple-full   - Simple parse benchmark (all available parsers)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
@@ -341,6 +343,16 @@ bench-parse-quick:
 bench-parse-full:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet
+
+# Simple parse benchmark (core): polyglot-sql vs sqlglot, median-of-5
+bench-simple:
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
+
+# Simple parse benchmark (full): include optional third-party parsers
+bench-simple-full:
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
 
 # =============================================================================
 # Build

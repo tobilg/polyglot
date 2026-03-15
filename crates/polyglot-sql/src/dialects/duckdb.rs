@@ -1861,6 +1861,40 @@ impl DuckDBDialect {
                 },
             )),
 
+            // TODAY -> CURRENT_DATE
+            "TODAY" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+
+            // CURDATE -> CURRENT_DATE
+            "CURDATE" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
+
+            // GET_CURRENT_TIME -> CURRENT_TIME
+            "GET_CURRENT_TIME" => Ok(Expression::CurrentTime(crate::expressions::CurrentTime {
+                precision: None,
+            })),
+
+            // CURRENT_LOCALTIMESTAMP -> LOCALTIMESTAMP
+            "CURRENT_LOCALTIMESTAMP" => {
+                Ok(Expression::Localtimestamp(Box::new(
+                    crate::expressions::Localtimestamp { this: None },
+                )))
+            }
+
+            // REGEXP_EXTRACT_ALL: strip default group_idx=0
+            "REGEXP_EXTRACT_ALL" if f.args.len() == 3 => {
+                // If third arg is literal 0, strip it
+                if matches!(&f.args[2], Expression::Literal(crate::expressions::Literal::Number(n)) if n == "0") {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "REGEXP_EXTRACT_ALL".to_string(),
+                        vec![f.args[0].clone(), f.args[1].clone()],
+                    ))))
+                } else {
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "REGEXP_EXTRACT_ALL".to_string(),
+                        f.args,
+                    ))))
+                }
+            }
+
             // CURRENT_DATE is native
             "CURRENT_DATE" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
 
@@ -5353,6 +5387,7 @@ impl DuckDBDialect {
             }
 
             // SEQ1/SEQ2/SEQ4/SEQ8 -> (ROW_NUMBER() OVER (ORDER BY 1 NULLS FIRST) - 1) % range
+            // When FROM clause is RANGE(n), a post-transform replaces this with `range % N`
             "SEQ1" | "SEQ2" | "SEQ4" | "SEQ8" => {
                 let (range, half): (u128, u128) = match name_upper.as_str() {
                     "SEQ1" => (256, 128),

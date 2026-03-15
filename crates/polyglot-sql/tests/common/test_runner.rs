@@ -121,11 +121,6 @@ pub fn dialect_identity_test(
         return Err("No statements parsed".to_string());
     }
 
-    // Apply dialect transforms before generating (matches Python SQLGlot behavior)
-    let transformed = d
-        .transform(ast[0].clone())
-        .map_err(|e| format!("Transform error: {}", e))?;
-
     let expected_output = expected.unwrap_or(sql);
 
     // Use pretty printing if expected output contains newlines
@@ -169,19 +164,29 @@ pub fn dialect_identity_test(
             .next()
             .map_or(false, |c| c.is_ascii_lowercase());
 
-    let output = d
-        .generate_with_overrides(&transformed, |config| {
-            if use_pretty {
-                config.pretty = true;
-            }
-            if use_identify {
-                config.always_quote_identifiers = true;
-            }
-            if use_lowercase {
-                config.uppercase_keywords = false;
-            }
-        })
-        .map_err(|e| format!("Generate error: {}", e))?;
+    // Handle multiple statements (e.g., "SELECT 1; SELECT 2")
+    let mut outputs = Vec::new();
+    for stmt in &ast {
+        // Apply dialect transforms before generating (matches Python SQLGlot behavior)
+        let transformed = d
+            .transform(stmt.clone())
+            .map_err(|e| format!("Transform error: {}", e))?;
+        let out = d
+            .generate_with_overrides(&transformed, |config| {
+                if use_pretty {
+                    config.pretty = true;
+                }
+                if use_identify {
+                    config.always_quote_identifiers = true;
+                }
+                if use_lowercase {
+                    config.uppercase_keywords = false;
+                }
+            })
+            .map_err(|e| format!("Generate error: {}", e))?;
+        outputs.push(out);
+    }
+    let output = outputs.join("; ");
 
     if output != expected_output {
         return Err(format!(

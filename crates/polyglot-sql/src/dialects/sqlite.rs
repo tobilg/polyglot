@@ -444,6 +444,12 @@ impl SQLiteDialect {
                 Ok(result)
             }
 
+            // TRUNC: SQLite doesn't support decimals arg, strip second arg
+            "TRUNC" if f.args.len() > 1 => Ok(Expression::Function(Box::new(Function::new(
+                "TRUNC".to_string(),
+                vec![f.args[0].clone()],
+            )))),
+
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
         }

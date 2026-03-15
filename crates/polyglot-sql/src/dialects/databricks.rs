@@ -681,6 +681,12 @@ impl DatabricksDialect {
                 ))))
             }
 
+            // BIT_GET -> GETBIT
+            "BIT_GET" => Ok(Expression::Function(Box::new(Function::new(
+                "GETBIT".to_string(),
+                f.args,
+            )))),
+
             // Pass through everything else
             _ => Ok(Expression::Function(Box::new(f))),
         }

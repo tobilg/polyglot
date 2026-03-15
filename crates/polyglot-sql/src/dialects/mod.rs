@@ -1532,6 +1532,22 @@ where
             Expression::PipeOperator(pipe)
         }
 
+        // ArrayExcept/ArrayContains/ArrayDistinct: recurse into children
+        Expression::ArrayExcept(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            f.expression = transform_recursive(f.expression, transform_fn)?;
+            Expression::ArrayExcept(f)
+        }
+        Expression::ArrayContains(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            f.expression = transform_recursive(f.expression, transform_fn)?;
+            Expression::ArrayContains(f)
+        }
+        Expression::ArrayDistinct(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::ArrayDistinct(f)
+        }
+
         // Pass through leaf nodes unchanged
         other => other,
     };
@@ -2624,6 +2640,14 @@ impl Dialect {
                 };
 
                 let transformed = target_dialect.transform(normalized)?;
+
+                // DuckDB target: when FROM is RANGE(n), replace SEQ's ROW_NUMBER pattern with `range`
+                let transformed = if matches!(target, DialectType::DuckDB) {
+                    Self::seq_rownum_to_range(transformed)?
+                } else {
+                    transformed
+                };
+
                 let mut sql = if pretty {
                     target_dialect.generate_pretty_with_source(&transformed, self.dialect_type)?
                 } else {
@@ -2644,6 +2668,121 @@ impl Dialect {
 // Transpile-only methods: cross-dialect normalization and helpers
 #[cfg(feature = "transpile")]
 impl Dialect {
+    /// For DuckDB target: when FROM clause contains RANGE(n), replace
+    /// `(ROW_NUMBER() OVER (ORDER BY 1 NULLS FIRST) - 1)` with `range` in select expressions.
+    /// This handles SEQ1/2/4/8 → RANGE transpilation from Snowflake.
+    fn seq_rownum_to_range(expr: Expression) -> Result<Expression> {
+        if let Expression::Select(mut select) = expr {
+            // Check if FROM contains a RANGE function
+            let has_range_from = if let Some(ref from) = select.from {
+                from.expressions.iter().any(|e| {
+                    // Check for direct RANGE(...) or aliased RANGE(...)
+                    match e {
+                        Expression::Function(f) => f.name.eq_ignore_ascii_case("RANGE"),
+                        Expression::Alias(a) => {
+                            matches!(&a.this, Expression::Function(f) if f.name.eq_ignore_ascii_case("RANGE"))
+                        }
+                        _ => false,
+                    }
+                })
+            } else {
+                false
+            };
+
+            if has_range_from {
+                // Replace the ROW_NUMBER pattern in select expressions
+                select.expressions = select.expressions.into_iter().map(|e| {
+                    Self::replace_rownum_with_range(e)
+                }).collect();
+            }
+
+            Ok(Expression::Select(select))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    /// Replace `(ROW_NUMBER() OVER (...) - 1)` with `range` column reference
+    fn replace_rownum_with_range(expr: Expression) -> Expression {
+        match expr {
+            // Match: (ROW_NUMBER() OVER (...) - 1) % N → range % N
+            Expression::Mod(op) => {
+                let new_left = Self::try_replace_rownum_paren(&op.left);
+                Expression::Mod(Box::new(crate::expressions::BinaryOp {
+                    left: new_left,
+                    right: op.right,
+                    left_comments: op.left_comments,
+                    operator_comments: op.operator_comments,
+                    trailing_comments: op.trailing_comments,
+                    inferred_type: op.inferred_type,
+                }))
+            }
+            // Match: (CASE WHEN (ROW...) % N >= ... THEN ... ELSE ... END)
+            Expression::Paren(p) => {
+                let inner = Self::replace_rownum_with_range(p.this);
+                Expression::Paren(Box::new(crate::expressions::Paren {
+                    this: inner,
+                    trailing_comments: p.trailing_comments,
+                }))
+            }
+            Expression::Case(mut c) => {
+                // Replace ROW_NUMBER in WHEN conditions and THEN expressions
+                c.whens = c.whens.into_iter().map(|(cond, then)| {
+                    (Self::replace_rownum_with_range(cond), Self::replace_rownum_with_range(then))
+                }).collect();
+                if let Some(else_) = c.else_ {
+                    c.else_ = Some(Self::replace_rownum_with_range(else_));
+                }
+                Expression::Case(c)
+            }
+            Expression::Gte(op) => {
+                Expression::Gte(Box::new(crate::expressions::BinaryOp {
+                    left: Self::replace_rownum_with_range(op.left),
+                    right: op.right,
+                    left_comments: op.left_comments,
+                    operator_comments: op.operator_comments,
+                    trailing_comments: op.trailing_comments,
+                    inferred_type: op.inferred_type,
+                }))
+            }
+            Expression::Sub(op) => {
+                Expression::Sub(Box::new(crate::expressions::BinaryOp {
+                    left: Self::replace_rownum_with_range(op.left),
+                    right: op.right,
+                    left_comments: op.left_comments,
+                    operator_comments: op.operator_comments,
+                    trailing_comments: op.trailing_comments,
+                    inferred_type: op.inferred_type,
+                }))
+            }
+            Expression::Alias(mut a) => {
+                a.this = Self::replace_rownum_with_range(a.this);
+                Expression::Alias(a)
+            }
+            other => other,
+        }
+    }
+
+    /// Check if an expression is `(ROW_NUMBER() OVER (...) - 1)` and replace with `range`
+    fn try_replace_rownum_paren(expr: &Expression) -> Expression {
+        if let Expression::Paren(ref p) = expr {
+            if let Expression::Sub(ref sub) = p.this {
+                if let Expression::WindowFunction(ref wf) = sub.left {
+                    if let Expression::Function(ref f) = wf.this {
+                        if f.name.eq_ignore_ascii_case("ROW_NUMBER") {
+                            if let Expression::Literal(crate::expressions::Literal::Number(ref n)) = sub.right {
+                                if n == "1" {
+                                    return Expression::column("range");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        expr.clone()
+    }
+
     /// Transform BigQuery GENERATE_DATE_ARRAY in UNNEST for Snowflake target.
     /// Converts:
     ///   SELECT ..., alias, ... FROM t CROSS JOIN UNNEST(GENERATE_DATE_ARRAY(start, end, INTERVAL '1' unit)) AS alias
@@ -3709,6 +3848,17 @@ impl Dialect {
             ParseJsonStrip,     // PARSE_JSON(x) -> x (strip wrapper)
             ArraySizeDrill,     // ARRAY_SIZE -> REPEATED_COUNT for Drill
             WeekOfYearToWeekIso, // WEEKOFYEAR -> WEEKISO for Snowflake cross-dialect
+            RegexpSubstrSnowflakeToDuckDB, // REGEXP_SUBSTR(s, p, ...) -> REGEXP_EXTRACT variants for DuckDB
+            RegexpSubstrSnowflakeIdentity, // REGEXP_SUBSTR/REGEXP_SUBSTR_ALL strip trailing group=0 for Snowflake identity
+            RegexpSubstrAllSnowflakeToDuckDB, // REGEXP_SUBSTR_ALL(s, p, ...) -> REGEXP_EXTRACT_ALL variants for DuckDB
+            RegexpCountSnowflakeToDuckDB, // REGEXP_COUNT(s, p, ...) -> LENGTH(REGEXP_EXTRACT_ALL(...)) for DuckDB
+            RegexpInstrSnowflakeToDuckDB, // REGEXP_INSTR(s, p, ...) -> complex CASE expression for DuckDB
+            RegexpReplacePositionSnowflakeToDuckDB, // REGEXP_REPLACE(s, p, r, pos, occ) -> DuckDB form
+            RlikeSnowflakeToDuckDB, // RLIKE(a, b[, flags]) -> REGEXP_MATCHES(a, anchored_pattern) for DuckDB
+            RegexpExtractAllToSnowflake, // BigQuery REGEXP_EXTRACT_ALL -> REGEXP_SUBSTR_ALL for Snowflake
+            ArrayExceptConvert, // ARRAY_EXCEPT -> DuckDB complex CASE / Snowflake ARRAY_EXCEPT / Presto ARRAY_EXCEPT
+            ArrayDistinctConvert, // ARRAY_DISTINCT -> DuckDB LIST_DISTINCT with NULL-aware CASE
+            ArrayContainsDuckDBConvert, // ARRAY_CONTAINS -> DuckDB CASE with NULL-aware check
         }
 
         // Handle SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake/etc.
@@ -5461,6 +5611,50 @@ impl Dialect {
                         {
                             // Snowflake REGEXP_REPLACE with position arg -> DuckDB needs 'g' flag
                             Action::RegexpReplaceSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB)
+                            && name == "REGEXP_REPLACE"
+                            && f.args.len() == 5
+                        {
+                            // Snowflake REGEXP_REPLACE(s, p, r, pos, occ) -> DuckDB
+                            Action::RegexpReplacePositionSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB)
+                            && name == "REGEXP_SUBSTR"
+                        {
+                            // Snowflake REGEXP_SUBSTR -> DuckDB REGEXP_EXTRACT variants
+                            Action::RegexpSubstrSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::Snowflake)
+                            && (name == "REGEXP_SUBSTR" || name == "REGEXP_SUBSTR_ALL")
+                            && f.args.len() == 6
+                        {
+                            // Snowflake identity: strip trailing group=0
+                            Action::RegexpSubstrSnowflakeIdentity
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB)
+                            && name == "REGEXP_SUBSTR_ALL"
+                        {
+                            // Snowflake REGEXP_SUBSTR_ALL -> DuckDB REGEXP_EXTRACT_ALL variants
+                            Action::RegexpSubstrAllSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB)
+                            && name == "REGEXP_COUNT"
+                        {
+                            // Snowflake REGEXP_COUNT -> DuckDB LENGTH(REGEXP_EXTRACT_ALL(...))
+                            Action::RegexpCountSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB)
+                            && name == "REGEXP_INSTR"
+                        {
+                            // Snowflake REGEXP_INSTR -> DuckDB complex CASE expression
+                            Action::RegexpInstrSnowflakeToDuckDB
+                        } else if matches!(source, DialectType::BigQuery)
+                            && matches!(target, DialectType::Snowflake)
+                            && name == "REGEXP_EXTRACT_ALL"
+                        {
+                            // BigQuery REGEXP_EXTRACT_ALL -> Snowflake REGEXP_SUBSTR_ALL
+                            Action::RegexpExtractAllToSnowflake
                         } else if name == "_BQ_TO_HEX" {
                             // Internal marker from TO_HEX conversion - bare (no LOWER/UPPER wrapper)
                             Action::BigQueryToHexBare
@@ -5669,6 +5863,11 @@ impl Dialect {
                                 | "JSON_REMOVE"
                                 | "JSON_SET"
                                 | "LEVENSHTEIN"
+                                | "CURRENT_VERSION"
+                                | "ARRAY_MAX"
+                                | "ARRAY_MIN"
+                                | "JAROWINKLER_SIMILARITY"
+                                | "CURRENT_SCHEMAS"
                                     => Action::GenericFunctionNormalize,
                                 // Canonical date functions -> dialect-specific
                                 "TS_OR_DS_TO_DATE" => Action::TsOrDsToDateConvert,
@@ -5719,8 +5918,9 @@ impl Dialect {
                                     && matches!(target, DialectType::Snowflake)
                                     && f.args.len() == 1
                                     && matches!(&f.args[0], Expression::Select(s) if s.kind.as_deref() == Some("STRUCT")) => Action::BigQueryArraySelectAsStructToSnowflake,
-                                "ARRAY" if matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::BigQuery | DialectType::DuckDB | DialectType::ClickHouse | DialectType::StarRocks) => Action::ArraySyntaxConvert,
-                                "TRUNC" if f.args.len() == 2 && matches!(target, DialectType::Presto | DialectType::Trino | DialectType::ClickHouse) => Action::TruncToDateTrunc,
+                                "ARRAY" if matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::BigQuery | DialectType::DuckDB | DialectType::Snowflake | DialectType::ClickHouse | DialectType::StarRocks) => Action::ArraySyntaxConvert,
+                                "TRUNC" if f.args.len() == 2 && matches!(&f.args[1], Expression::Literal(Literal::String(_))) && matches!(target, DialectType::Presto | DialectType::Trino | DialectType::ClickHouse) => Action::TruncToDateTrunc,
+                                "TRUNC" | "TRUNCATE" if f.args.len() <= 2 && !matches!(f.args.get(1), Some(Expression::Literal(Literal::String(_)))) => Action::GenericFunctionNormalize,
                                 // DATE_TRUNC('unit', x) from Generic source -> arg swap for BigQuery/Doris/Spark/MySQL
                                 "DATE_TRUNC" if f.args.len() == 2
                                     && matches!(source, DialectType::Generic)
@@ -6380,6 +6580,14 @@ impl Dialect {
                         }
                     }
                     // BigQuery APPROX_QUANTILES(x, n) -> APPROX_QUANTILE(x, [quantiles]) for DuckDB
+                    // Snowflake RLIKE does full-string match; DuckDB REGEXP_MATCHES is partial
+                    // So anchor the pattern with ^(...) $ for Snowflake -> DuckDB
+                    Expression::RegexpLike(_)
+                        if matches!(source, DialectType::Snowflake)
+                            && matches!(target, DialectType::DuckDB) =>
+                    {
+                        Action::RlikeSnowflakeToDuckDB
+                    }
                     // RegexpLike from non-DuckDB sources -> REGEXP_MATCHES for DuckDB target
                     // DuckDB's ~ is a full match, but other dialects' REGEXP/RLIKE is a partial match
                     Expression::RegexpLike(_)
@@ -7106,9 +7314,32 @@ impl Dialect {
                         if matches!(
                             target,
                             DialectType::Presto | DialectType::Trino | DialectType::Snowflake
-                        ) =>
+                        ) && !(matches!(source, DialectType::Snowflake) && matches!(target, DialectType::Snowflake)) =>
                     {
                         Action::ArrayContainsConvert
+                    }
+                    // ARRAY_CONTAINS -> DuckDB NULL-aware CASE (from Snowflake source with check_null semantics)
+                    Expression::ArrayContains(_)
+                        if matches!(target, DialectType::DuckDB)
+                            && matches!(source, DialectType::Snowflake) =>
+                    {
+                        Action::ArrayContainsDuckDBConvert
+                    }
+                    // ARRAY_EXCEPT -> target-specific conversion
+                    Expression::ArrayExcept(_)
+                        if matches!(
+                            target,
+                            DialectType::DuckDB | DialectType::Snowflake | DialectType::Presto | DialectType::Trino | DialectType::Athena
+                        ) =>
+                    {
+                        Action::ArrayExceptConvert
+                    }
+                    // ARRAY_DISTINCT -> DuckDB LIST_DISTINCT with NULL-aware CASE
+                    Expression::ArrayDistinct(_)
+                        if matches!(target, DialectType::DuckDB)
+                            && matches!(source, DialectType::Snowflake) =>
+                    {
+                        Action::ArrayDistinctConvert
                     }
                     // StrPosition with position -> complex expansion for Presto/DuckDB
                     // STRPOS doesn't support a position arg in these dialects
@@ -8008,6 +8239,732 @@ impl Dialect {
                                 )),
                             ],
                         ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpReplacePositionSnowflakeToDuckDB => {
+                    // Snowflake REGEXP_REPLACE(s, p, r, pos, occ) -> DuckDB form
+                    // pos=1, occ=1 -> REGEXP_REPLACE(s, p, r) (single replace, no 'g')
+                    // pos>1, occ=0 -> SUBSTRING(s, 1, pos-1) || REGEXP_REPLACE(SUBSTRING(s, pos), p, r, 'g')
+                    // pos>1, occ=1 -> SUBSTRING(s, 1, pos-1) || REGEXP_REPLACE(SUBSTRING(s, pos), p, r)
+                    // pos=1, occ=0 -> REGEXP_REPLACE(s, p, r, 'g') (replace all)
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        let subject = args.remove(0);
+                        let pattern = args.remove(0);
+                        let replacement = args.remove(0);
+                        let position = args.remove(0);
+                        let occurrence = args.remove(0);
+
+                        let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                        let is_occ_0 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "0");
+                        let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+
+                        if is_pos_1 && is_occ_1 {
+                            // REGEXP_REPLACE(s, p, r) - single replace, no flags
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "REGEXP_REPLACE".to_string(),
+                                vec![subject, pattern, replacement],
+                            ))))
+                        } else if is_pos_1 && is_occ_0 {
+                            // REGEXP_REPLACE(s, p, r, 'g') - global replace
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "REGEXP_REPLACE".to_string(),
+                                vec![
+                                    subject,
+                                    pattern,
+                                    replacement,
+                                    Expression::Literal(Literal::String("g".to_string())),
+                                ],
+                            ))))
+                        } else {
+                            // pos>1: SUBSTRING(s, 1, pos-1) || REGEXP_REPLACE(SUBSTRING(s, pos), p, r[, 'g'])
+                            // Pre-compute pos-1 when position is a numeric literal
+                            let pos_minus_1 = if let Expression::Literal(Literal::Number(ref n)) = position {
+                                if let Ok(val) = n.parse::<i64>() {
+                                    Expression::number(val - 1)
+                                } else {
+                                    Expression::Sub(Box::new(BinaryOp::new(
+                                        position.clone(),
+                                        Expression::number(1),
+                                    )))
+                                }
+                            } else {
+                                Expression::Sub(Box::new(BinaryOp::new(
+                                    position.clone(),
+                                    Expression::number(1),
+                                )))
+                            };
+                            let prefix = Expression::Function(Box::new(Function::new(
+                                "SUBSTRING".to_string(),
+                                vec![subject.clone(), Expression::number(1), pos_minus_1],
+                            )));
+                            let suffix_subject = Expression::Function(Box::new(Function::new(
+                                "SUBSTRING".to_string(),
+                                vec![subject, position],
+                            )));
+                            let mut replace_args = vec![suffix_subject, pattern, replacement];
+                            if is_occ_0 {
+                                replace_args.push(Expression::Literal(Literal::String(
+                                    "g".to_string(),
+                                )));
+                            }
+                            let replace_expr = Expression::Function(Box::new(Function::new(
+                                "REGEXP_REPLACE".to_string(),
+                                replace_args,
+                            )));
+                            Ok(Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                this: Box::new(prefix),
+                                expression: Box::new(replace_expr),
+                                safe: None,
+                            })))
+                        }
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpSubstrSnowflakeToDuckDB => {
+                    // Snowflake REGEXP_SUBSTR -> DuckDB REGEXP_EXTRACT variants
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        let arg_count = args.len();
+                        match arg_count {
+                            // REGEXP_SUBSTR(s, p) -> REGEXP_EXTRACT(s, p)
+                            0..=2 => {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT".to_string(),
+                                    args,
+                                ))))
+                            }
+                            // REGEXP_SUBSTR(s, p, pos) -> REGEXP_EXTRACT(NULLIF(SUBSTRING(s, pos), ''), p)
+                            3 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let position = args.remove(0);
+                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                if is_pos_1 {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT".to_string(),
+                                        vec![subject, pattern],
+                                    ))))
+                                } else {
+                                    let substring_expr = Expression::Function(Box::new(
+                                        Function::new(
+                                            "SUBSTRING".to_string(),
+                                            vec![subject, position],
+                                        ),
+                                    ));
+                                    let nullif_expr = Expression::Function(Box::new(
+                                        Function::new(
+                                            "NULLIF".to_string(),
+                                            vec![
+                                                substring_expr,
+                                                Expression::Literal(Literal::String(
+                                                    String::new(),
+                                                )),
+                                            ],
+                                        ),
+                                    ));
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT".to_string(),
+                                        vec![nullif_expr, pattern],
+                                    ))))
+                                }
+                            }
+                            // REGEXP_SUBSTR(s, p, pos, occ) -> depends on pos and occ
+                            4 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let position = args.remove(0);
+                                let occurrence = args.remove(0);
+                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+
+                                let effective_subject = if is_pos_1 {
+                                    subject
+                                } else {
+                                    let substring_expr = Expression::Function(Box::new(
+                                        Function::new(
+                                            "SUBSTRING".to_string(),
+                                            vec![subject, position],
+                                        ),
+                                    ));
+                                    Expression::Function(Box::new(Function::new(
+                                        "NULLIF".to_string(),
+                                        vec![
+                                            substring_expr,
+                                            Expression::Literal(Literal::String(String::new())),
+                                        ],
+                                    )))
+                                };
+
+                                if is_occ_1 {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT".to_string(),
+                                        vec![effective_subject, pattern],
+                                    ))))
+                                } else {
+                                    // ARRAY_EXTRACT(REGEXP_EXTRACT_ALL(s, p), occ)
+                                    let extract_all = Expression::Function(Box::new(
+                                        Function::new(
+                                            "REGEXP_EXTRACT_ALL".to_string(),
+                                            vec![effective_subject, pattern],
+                                        ),
+                                    ));
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "ARRAY_EXTRACT".to_string(),
+                                        vec![extract_all, occurrence],
+                                    ))))
+                                }
+                            }
+                            // REGEXP_SUBSTR(s, p, 1, 1, 'e') -> REGEXP_EXTRACT(s, p)
+                            5 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let _position = args.remove(0);
+                                let _occurrence = args.remove(0);
+                                let _flags = args.remove(0);
+                                // Strip 'e' flag, convert to REGEXP_EXTRACT
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT".to_string(),
+                                    vec![subject, pattern],
+                                ))))
+                            }
+                            // REGEXP_SUBSTR(s, p, 1, 1, 'e', group) -> REGEXP_EXTRACT(s, p[, group])
+                            _ => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let _position = args.remove(0);
+                                let _occurrence = args.remove(0);
+                                let _flags = args.remove(0);
+                                let group = args.remove(0);
+                                let is_group_0 = matches!(&group, Expression::Literal(Literal::Number(n)) if n == "0");
+                                if is_group_0 {
+                                    // Strip group=0 (default)
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT".to_string(),
+                                        vec![subject, pattern],
+                                    ))))
+                                } else {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT".to_string(),
+                                        vec![subject, pattern, group],
+                                    ))))
+                                }
+                            }
+                        }
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpSubstrSnowflakeIdentity => {
+                    // Snowflake→Snowflake: REGEXP_SUBSTR/REGEXP_SUBSTR_ALL with 6 args
+                    // Strip trailing group=0
+                    if let Expression::Function(f) = e {
+                        let func_name = f.name.clone();
+                        let mut args = f.args;
+                        if args.len() == 6 {
+                            let is_group_0 = matches!(&args[5], Expression::Literal(Literal::Number(n)) if n == "0");
+                            if is_group_0 {
+                                args.truncate(5);
+                            }
+                        }
+                        Ok(Expression::Function(Box::new(Function::new(
+                            func_name,
+                            args,
+                        ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpSubstrAllSnowflakeToDuckDB => {
+                    // Snowflake REGEXP_SUBSTR_ALL -> DuckDB REGEXP_EXTRACT_ALL variants
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        let arg_count = args.len();
+                        match arg_count {
+                            // REGEXP_SUBSTR_ALL(s, p) -> REGEXP_EXTRACT_ALL(s, p)
+                            0..=2 => {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT_ALL".to_string(),
+                                    args,
+                                ))))
+                            }
+                            // REGEXP_SUBSTR_ALL(s, p, pos) -> REGEXP_EXTRACT_ALL(SUBSTRING(s, pos), p)
+                            3 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let position = args.remove(0);
+                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                if is_pos_1 {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT_ALL".to_string(),
+                                        vec![subject, pattern],
+                                    ))))
+                                } else {
+                                    let substring_expr = Expression::Function(Box::new(
+                                        Function::new(
+                                            "SUBSTRING".to_string(),
+                                            vec![subject, position],
+                                        ),
+                                    ));
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT_ALL".to_string(),
+                                        vec![substring_expr, pattern],
+                                    ))))
+                                }
+                            }
+                            // REGEXP_SUBSTR_ALL(s, p, 1, occ) -> REGEXP_EXTRACT_ALL(s, p)[occ:]
+                            4 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let position = args.remove(0);
+                                let occurrence = args.remove(0);
+                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+
+                                let effective_subject = if is_pos_1 {
+                                    subject
+                                } else {
+                                    Expression::Function(Box::new(Function::new(
+                                        "SUBSTRING".to_string(),
+                                        vec![subject, position],
+                                    )))
+                                };
+
+                                if is_occ_1 {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT_ALL".to_string(),
+                                        vec![effective_subject, pattern],
+                                    ))))
+                                } else {
+                                    // REGEXP_EXTRACT_ALL(s, p)[occ:]
+                                    let extract_all = Expression::Function(Box::new(
+                                        Function::new(
+                                            "REGEXP_EXTRACT_ALL".to_string(),
+                                            vec![effective_subject, pattern],
+                                        ),
+                                    ));
+                                    Ok(Expression::ArraySlice(Box::new(
+                                        crate::expressions::ArraySlice {
+                                            this: extract_all,
+                                            start: Some(occurrence),
+                                            end: None,
+                                        },
+                                    )))
+                                }
+                            }
+                            // REGEXP_SUBSTR_ALL(s, p, 1, 1, 'e') -> REGEXP_EXTRACT_ALL(s, p)
+                            5 => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let _position = args.remove(0);
+                                let _occurrence = args.remove(0);
+                                let _flags = args.remove(0);
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT_ALL".to_string(),
+                                    vec![subject, pattern],
+                                ))))
+                            }
+                            // REGEXP_SUBSTR_ALL(s, p, 1, 1, 'e', 0) -> REGEXP_EXTRACT_ALL(s, p)
+                            _ => {
+                                let subject = args.remove(0);
+                                let pattern = args.remove(0);
+                                let _position = args.remove(0);
+                                let _occurrence = args.remove(0);
+                                let _flags = args.remove(0);
+                                let group = args.remove(0);
+                                let is_group_0 = matches!(&group, Expression::Literal(Literal::Number(n)) if n == "0");
+                                if is_group_0 {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT_ALL".to_string(),
+                                        vec![subject, pattern],
+                                    ))))
+                                } else {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "REGEXP_EXTRACT_ALL".to_string(),
+                                        vec![subject, pattern, group],
+                                    ))))
+                                }
+                            }
+                        }
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpCountSnowflakeToDuckDB => {
+                    // Snowflake REGEXP_COUNT(s, p[, pos[, flags]]) ->
+                    // DuckDB: CASE WHEN p = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(s, p)) END
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        let arg_count = args.len();
+                        let subject = args.remove(0);
+                        let pattern = args.remove(0);
+
+                        // Handle position arg
+                        let effective_subject = if arg_count >= 3 {
+                            let position = args.remove(0);
+                            Expression::Function(Box::new(Function::new(
+                                "SUBSTRING".to_string(),
+                                vec![subject, position],
+                            )))
+                        } else {
+                            subject
+                        };
+
+                        // Handle flags arg -> embed as (?flags) prefix in pattern
+                        let effective_pattern = if arg_count >= 4 {
+                            let flags = args.remove(0);
+                            match &flags {
+                                Expression::Literal(Literal::String(f_str)) if !f_str.is_empty() => {
+                                    // Always use concatenation: '(?flags)' || pattern
+                                    let prefix = Expression::Literal(Literal::String(
+                                        format!("(?{})", f_str),
+                                    ));
+                                    Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                        this: Box::new(prefix),
+                                        expression: Box::new(pattern.clone()),
+                                        safe: None,
+                                    }))
+                                }
+                                _ => pattern.clone(),
+                            }
+                        } else {
+                            pattern.clone()
+                        };
+
+                        // Build: CASE WHEN p = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(s, p)) END
+                        let extract_all = Expression::Function(Box::new(Function::new(
+                            "REGEXP_EXTRACT_ALL".to_string(),
+                            vec![effective_subject, effective_pattern.clone()],
+                        )));
+                        let length_expr = Expression::Length(Box::new(
+                            crate::expressions::UnaryFunc {
+                                this: extract_all,
+                                original_name: None,
+                                inferred_type: None,
+                            },
+                        ));
+                        let condition = Expression::Eq(Box::new(BinaryOp::new(
+                            effective_pattern,
+                            Expression::Literal(Literal::String(String::new())),
+                        )));
+                        Ok(Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![(condition, Expression::number(0))],
+                            else_: Some(length_expr),
+                            comments: vec![],
+                            inferred_type: None,
+                        })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpInstrSnowflakeToDuckDB => {
+                    // Snowflake REGEXP_INSTR(s, p[, pos[, occ[, option[, flags[, group]]]]]) ->
+                    // DuckDB: CASE WHEN s IS NULL OR p IS NULL [OR ...] THEN NULL
+                    //              WHEN p = '' THEN 0
+                    //              WHEN LENGTH(REGEXP_EXTRACT_ALL(eff_s, eff_p)) < occ THEN 0
+                    //              ELSE 1 + COALESCE(LIST_SUM(LIST_TRANSFORM(STRING_SPLIT_REGEX(eff_s, eff_p)[1:occ], x -> LENGTH(x))), 0)
+                    //                     + COALESCE(LIST_SUM(LIST_TRANSFORM(REGEXP_EXTRACT_ALL(eff_s, eff_p)[1:occ - 1], x -> LENGTH(x))), 0)
+                    //                     + pos_offset
+                    //         END
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        let subject = args.remove(0);
+                        let pattern = if !args.is_empty() { args.remove(0) } else {
+                            Expression::Literal(Literal::String(String::new()))
+                        };
+
+                        // Collect all original args for NULL checks
+                        let position = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                        let occurrence = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                        let option = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                        let flags = if !args.is_empty() { Some(args.remove(0)) } else { None };
+                        let _group = if !args.is_empty() { Some(args.remove(0)) } else { None };
+
+                        let is_pos_1 = position.as_ref().map_or(true, |p| matches!(p, Expression::Literal(Literal::Number(n)) if n == "1"));
+                        let occurrence_expr = occurrence.clone().unwrap_or(Expression::number(1));
+
+                        // Build NULL check: subject IS NULL OR pattern IS NULL [OR pos IS NULL ...]
+                        let mut null_checks: Vec<Expression> = vec![
+                            Expression::Is(Box::new(BinaryOp::new(
+                                subject.clone(),
+                                Expression::Null(Null),
+                            ))),
+                            Expression::Is(Box::new(BinaryOp::new(
+                                pattern.clone(),
+                                Expression::Null(Null),
+                            ))),
+                        ];
+                        // Add NULL checks for all provided optional args
+                        for opt_arg in [&position, &occurrence, &option, &flags].iter() {
+                            if let Some(arg) = opt_arg {
+                                null_checks.push(Expression::Is(Box::new(BinaryOp::new(
+                                    (*arg).clone(),
+                                    Expression::Null(Null),
+                                ))));
+                            }
+                        }
+                        // Chain with OR
+                        let null_condition = null_checks.into_iter().reduce(|a, b| {
+                            Expression::Or(Box::new(BinaryOp::new(a, b)))
+                        }).unwrap();
+
+                        // Effective subject (apply position offset)
+                        let effective_subject = if is_pos_1 {
+                            subject.clone()
+                        } else {
+                            let pos = position.clone().unwrap_or(Expression::number(1));
+                            Expression::Function(Box::new(Function::new(
+                                "SUBSTRING".to_string(),
+                                vec![subject.clone(), pos],
+                            )))
+                        };
+
+                        // Effective pattern (apply flags if present)
+                        let effective_pattern = if let Some(ref fl) = flags {
+                            if let Expression::Literal(Literal::String(f_str)) = fl {
+                                if !f_str.is_empty() {
+                                    let prefix = Expression::Literal(Literal::String(
+                                        format!("(?{})", f_str),
+                                    ));
+                                    Expression::DPipe(Box::new(crate::expressions::DPipe {
+                                        this: Box::new(prefix),
+                                        expression: Box::new(pattern.clone()),
+                                        safe: None,
+                                    }))
+                                } else {
+                                    pattern.clone()
+                                }
+                            } else {
+                                pattern.clone()
+                            }
+                        } else {
+                            pattern.clone()
+                        };
+
+                        // WHEN pattern = '' THEN 0
+                        let empty_pattern_check = Expression::Eq(Box::new(BinaryOp::new(
+                            effective_pattern.clone(),
+                            Expression::Literal(Literal::String(String::new())),
+                        )));
+
+                        // WHEN LENGTH(REGEXP_EXTRACT_ALL(eff_s, eff_p)) < occ THEN 0
+                        let match_count_check = Expression::Lt(Box::new(BinaryOp::new(
+                            Expression::Length(Box::new(crate::expressions::UnaryFunc {
+                                this: Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT_ALL".to_string(),
+                                    vec![effective_subject.clone(), effective_pattern.clone()],
+                                ))),
+                                original_name: None,
+                                inferred_type: None,
+                            })),
+                            occurrence_expr.clone(),
+                        )));
+
+                        // Helper: build LENGTH lambda for LIST_TRANSFORM
+                        let make_len_lambda = || Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                            parameters: vec![crate::expressions::Identifier::new("x")],
+                            body: Expression::Length(Box::new(crate::expressions::UnaryFunc {
+                                this: Expression::Identifier(crate::expressions::Identifier::new("x")),
+                                original_name: None,
+                                inferred_type: None,
+                            })),
+                            colon: false,
+                            parameter_types: vec![],
+                        }));
+
+                        // COALESCE(LIST_SUM(LIST_TRANSFORM(STRING_SPLIT_REGEX(s, p)[1:occ], x -> LENGTH(x))), 0)
+                        let split_sliced = Expression::ArraySlice(Box::new(
+                            crate::expressions::ArraySlice {
+                                this: Expression::Function(Box::new(Function::new(
+                                    "STRING_SPLIT_REGEX".to_string(),
+                                    vec![effective_subject.clone(), effective_pattern.clone()],
+                                ))),
+                                start: Some(Expression::number(1)),
+                                end: Some(occurrence_expr.clone()),
+                            },
+                        ));
+                        let split_sum = Expression::Function(Box::new(Function::new(
+                            "COALESCE".to_string(),
+                            vec![
+                                Expression::Function(Box::new(Function::new(
+                                    "LIST_SUM".to_string(),
+                                    vec![Expression::Function(Box::new(Function::new(
+                                        "LIST_TRANSFORM".to_string(),
+                                        vec![split_sliced, make_len_lambda()],
+                                    )))],
+                                ))),
+                                Expression::number(0),
+                            ],
+                        )));
+
+                        // COALESCE(LIST_SUM(LIST_TRANSFORM(REGEXP_EXTRACT_ALL(s, p)[1:occ - 1], x -> LENGTH(x))), 0)
+                        let extract_sliced = Expression::ArraySlice(Box::new(
+                            crate::expressions::ArraySlice {
+                                this: Expression::Function(Box::new(Function::new(
+                                    "REGEXP_EXTRACT_ALL".to_string(),
+                                    vec![effective_subject.clone(), effective_pattern.clone()],
+                                ))),
+                                start: Some(Expression::number(1)),
+                                end: Some(Expression::Sub(Box::new(BinaryOp::new(
+                                    occurrence_expr.clone(),
+                                    Expression::number(1),
+                                )))),
+                            },
+                        ));
+                        let extract_sum = Expression::Function(Box::new(Function::new(
+                            "COALESCE".to_string(),
+                            vec![
+                                Expression::Function(Box::new(Function::new(
+                                    "LIST_SUM".to_string(),
+                                    vec![Expression::Function(Box::new(Function::new(
+                                        "LIST_TRANSFORM".to_string(),
+                                        vec![extract_sliced, make_len_lambda()],
+                                    )))],
+                                ))),
+                                Expression::number(0),
+                            ],
+                        )));
+
+                        // Position offset: pos - 1 when pos > 1, else 0
+                        let pos_offset: Expression = if !is_pos_1 {
+                            let pos = position.clone().unwrap_or(Expression::number(1));
+                            Expression::Sub(Box::new(BinaryOp::new(
+                                pos,
+                                Expression::number(1),
+                            )))
+                        } else {
+                            Expression::number(0)
+                        };
+
+                        // ELSE: 1 + split_sum + extract_sum + pos_offset
+                        let else_expr = Expression::Add(Box::new(BinaryOp::new(
+                            Expression::Add(Box::new(BinaryOp::new(
+                                Expression::Add(Box::new(BinaryOp::new(
+                                    Expression::number(1),
+                                    split_sum,
+                                ))),
+                                extract_sum,
+                            ))),
+                            pos_offset,
+                        )));
+
+                        Ok(Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![
+                                (null_condition, Expression::Null(Null)),
+                                (empty_pattern_check, Expression::number(0)),
+                                (match_count_check, Expression::number(0)),
+                            ],
+                            else_: Some(else_expr),
+                            comments: vec![],
+                            inferred_type: None,
+                        })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RlikeSnowflakeToDuckDB => {
+                    // Snowflake RLIKE(a, b[, flags]) -> DuckDB REGEXP_MATCHES(a, '^(' || (b) || ')$'[, flags])
+                    // Snowflake RLIKE does full-string match; DuckDB REGEXP_MATCHES does partial match
+                    // So we anchor the pattern with ^ and $
+                    // Can come as Expression::RegexpLike (from Snowflake transform_expr) or
+                    // Expression::Function("RLIKE", args) (if not transformed yet)
+                    let (subject, pattern, flags) = match e {
+                        Expression::RegexpLike(ref rl) => {
+                            (rl.this.clone(), rl.pattern.clone(), rl.flags.clone())
+                        }
+                        Expression::Function(ref f) if f.args.len() >= 2 => {
+                            let s = f.args[0].clone();
+                            let p = f.args[1].clone();
+                            let fl = f.args.get(2).cloned();
+                            (s, p, fl)
+                        }
+                        _ => return Ok(e),
+                    };
+
+                    // Build anchored pattern: '^(' || (pattern) || ')$'
+                    let prefix = Expression::Literal(Literal::String("^(".to_string()));
+                    let suffix = Expression::Literal(Literal::String(")$".to_string()));
+                    let paren_pattern = Expression::Paren(Box::new(Paren {
+                        this: pattern,
+                        trailing_comments: vec![],
+                    }));
+                    let left_concat = Expression::DPipe(Box::new(
+                        crate::expressions::DPipe {
+                            this: Box::new(prefix),
+                            expression: Box::new(paren_pattern),
+                            safe: None,
+                        },
+                    ));
+                    let anchored = Expression::DPipe(Box::new(
+                        crate::expressions::DPipe {
+                            this: Box::new(left_concat),
+                            expression: Box::new(suffix),
+                            safe: None,
+                        },
+                    ));
+
+                    let mut result_args = vec![subject, anchored];
+                    if let Some(fl) = flags {
+                        result_args.push(fl);
+                    }
+                    Ok(Expression::Function(Box::new(Function::new(
+                        "REGEXP_MATCHES".to_string(),
+                        result_args,
+                    ))))
+                }
+
+                Action::RegexpExtractAllToSnowflake => {
+                    // BigQuery REGEXP_EXTRACT_ALL(s, p) -> Snowflake REGEXP_SUBSTR_ALL(s, p)
+                    // With capture group: REGEXP_SUBSTR_ALL(s, p, 1, 1, 'c', 1)
+                    if let Expression::Function(f) = e {
+                        let mut args = f.args;
+                        if args.len() >= 2 {
+                            let str_expr = args.remove(0);
+                            let pattern = args.remove(0);
+
+                            let has_groups = match &pattern {
+                                Expression::Literal(Literal::String(s)) => {
+                                    s.contains('(') && s.contains(')')
+                                }
+                                _ => false,
+                            };
+
+                            if has_groups {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_SUBSTR_ALL".to_string(),
+                                    vec![
+                                        str_expr,
+                                        pattern,
+                                        Expression::number(1),
+                                        Expression::number(1),
+                                        Expression::Literal(Literal::String("c".to_string())),
+                                        Expression::number(1),
+                                    ],
+                                ))))
+                            } else {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "REGEXP_SUBSTR_ALL".to_string(),
+                                    vec![str_expr, pattern],
+                                ))))
+                            }
+                        } else {
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "REGEXP_SUBSTR_ALL".to_string(),
+                                args,
+                            ))))
+                        }
                     } else {
                         Ok(e)
                     }
@@ -15091,6 +16048,62 @@ impl Dialect {
                             "LIST_CONTAINS" | "LIST_HAS" | "ARRAY_CONTAINS"
                                 if f.args.len() == 2 =>
                             {
+                                // When coming from Snowflake source: ARRAY_CONTAINS(value, array)
+                                // args[0]=value, args[1]=array. For DuckDB target, swap and add NULL-aware CASE.
+                                if matches!(target, DialectType::DuckDB)
+                                    && matches!(source, DialectType::Snowflake)
+                                    && f.name.eq_ignore_ascii_case("ARRAY_CONTAINS")
+                                {
+                                    let value = f.args[0].clone();
+                                    let array = f.args[1].clone();
+
+                                    // value IS NULL
+                                    let value_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                        this: value.clone(),
+                                        not: false,
+                                        postfix_form: false,
+                                    }));
+
+                                    // ARRAY_LENGTH(array)
+                                    let array_length = Expression::Function(Box::new(Function::new(
+                                        "ARRAY_LENGTH".to_string(),
+                                        vec![array.clone()],
+                                    )));
+                                    // LIST_COUNT(array)
+                                    let list_count = Expression::Function(Box::new(Function::new(
+                                        "LIST_COUNT".to_string(),
+                                        vec![array.clone()],
+                                    )));
+                                    // ARRAY_LENGTH(array) <> LIST_COUNT(array)
+                                    let neq = Expression::Neq(Box::new(crate::expressions::BinaryOp {
+                                        left: array_length,
+                                        right: list_count,
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    }));
+                                    // NULLIF(ARRAY_LENGTH(array) <> LIST_COUNT(array), FALSE)
+                                    let nullif = Expression::Nullif(Box::new(crate::expressions::Nullif {
+                                        this: Box::new(neq),
+                                        expression: Box::new(Expression::Boolean(crate::expressions::BooleanLiteral { value: false })),
+                                    }));
+
+                                    // ARRAY_CONTAINS(array, value) - DuckDB syntax: array first, value second
+                                    let array_contains = Expression::Function(Box::new(Function::new(
+                                        "ARRAY_CONTAINS".to_string(),
+                                        vec![array, value],
+                                    )));
+
+                                    // CASE WHEN value IS NULL THEN NULLIF(...) ELSE ARRAY_CONTAINS(array, value) END
+                                    return Ok(Expression::Case(Box::new(Case {
+                                        operand: None,
+                                        whens: vec![(value_is_null, nullif)],
+                                        else_: Some(array_contains),
+                                        comments: Vec::new(),
+                                        inferred_type: None,
+                                    })));
+                                }
                                 match target {
                                     DialectType::PostgreSQL | DialectType::Redshift => {
                                         // CASE WHEN needle IS NULL THEN NULL ELSE COALESCE(needle = ANY(arr), FALSE) END
@@ -17524,6 +18537,161 @@ impl Dialect {
                                     _ => Ok(Expression::Function(f)),
                                 }
                             }
+                            // ARRAY_MAX(x) -> arrayMax(x) for ClickHouse, LIST_MAX(x) for DuckDB
+                            "ARRAY_MAX" => {
+                                let name = match target {
+                                    DialectType::ClickHouse => "arrayMax",
+                                    DialectType::DuckDB => "LIST_MAX",
+                                    _ => "ARRAY_MAX",
+                                };
+                                let mut new_f = *f;
+                                new_f.name = name.to_string();
+                                Ok(Expression::Function(Box::new(new_f)))
+                            }
+                            // ARRAY_MIN(x) -> arrayMin(x) for ClickHouse, LIST_MIN(x) for DuckDB
+                            "ARRAY_MIN" => {
+                                let name = match target {
+                                    DialectType::ClickHouse => "arrayMin",
+                                    DialectType::DuckDB => "LIST_MIN",
+                                    _ => "ARRAY_MIN",
+                                };
+                                let mut new_f = *f;
+                                new_f.name = name.to_string();
+                                Ok(Expression::Function(Box::new(new_f)))
+                            }
+                            // JAROWINKLER_SIMILARITY(a, b) -> jaroWinklerSimilarity(UPPER(a), UPPER(b)) for ClickHouse
+                            // -> JARO_WINKLER_SIMILARITY(UPPER(a), UPPER(b)) for DuckDB
+                            "JAROWINKLER_SIMILARITY" if f.args.len() == 2 => {
+                                let mut args = f.args;
+                                let b = args.pop().unwrap();
+                                let a = args.pop().unwrap();
+                                match target {
+                                    DialectType::ClickHouse => {
+                                        let upper_a = Expression::Upper(Box::new(crate::expressions::UnaryFunc::new(a)));
+                                        let upper_b = Expression::Upper(Box::new(crate::expressions::UnaryFunc::new(b)));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "jaroWinklerSimilarity".to_string(),
+                                            vec![upper_a, upper_b],
+                                        ))))
+                                    }
+                                    DialectType::DuckDB => {
+                                        let upper_a = Expression::Upper(Box::new(crate::expressions::UnaryFunc::new(a)));
+                                        let upper_b = Expression::Upper(Box::new(crate::expressions::UnaryFunc::new(b)));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "JARO_WINKLER_SIMILARITY".to_string(),
+                                            vec![upper_a, upper_b],
+                                        ))))
+                                    }
+                                    _ => {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "JAROWINKLER_SIMILARITY".to_string(),
+                                            vec![a, b],
+                                        ))))
+                                    }
+                                }
+                            }
+                            // CURRENT_SCHEMAS(x) -> CURRENT_SCHEMAS() for Snowflake (drop arg)
+                            "CURRENT_SCHEMAS" => match target {
+                                DialectType::Snowflake => {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "CURRENT_SCHEMAS".to_string(),
+                                        vec![],
+                                    ))))
+                                }
+                                _ => Ok(Expression::Function(f)),
+                            },
+                            // TRUNC/TRUNCATE (numeric) -> dialect-specific
+                            "TRUNC" | "TRUNCATE" if f.args.len() <= 2 => {
+                                match target {
+                                    DialectType::TSQL | DialectType::Fabric => {
+                                        // ROUND(x, decimals, 1) - the 1 flag means truncation
+                                        let mut args = f.args;
+                                        let this = if args.is_empty() {
+                                            return Ok(Expression::Function(Box::new(Function::new(
+                                                "TRUNC".to_string(), args,
+                                            ))));
+                                        } else {
+                                            args.remove(0)
+                                        };
+                                        let decimals = if args.is_empty() {
+                                            Expression::Literal(Literal::Number("0".to_string()))
+                                        } else {
+                                            args.remove(0)
+                                        };
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "ROUND".to_string(),
+                                            vec![this, decimals, Expression::Literal(Literal::Number("1".to_string()))],
+                                        ))))
+                                    }
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                        // TRUNCATE(x, decimals)
+                                        let mut new_f = *f;
+                                        new_f.name = "TRUNCATE".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::MySQL | DialectType::SingleStore | DialectType::TiDB => {
+                                        // TRUNCATE(x, decimals)
+                                        let mut new_f = *f;
+                                        new_f.name = "TRUNCATE".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::DuckDB => {
+                                        // TRUNC(x) - drop decimals
+                                        let this = f.args.into_iter().next().unwrap_or(
+                                            Expression::Literal(Literal::Number("0".to_string()))
+                                        );
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "TRUNC".to_string(),
+                                            vec![this],
+                                        ))))
+                                    }
+                                    DialectType::ClickHouse => {
+                                        // trunc(x, decimals) - lowercase
+                                        let mut new_f = *f;
+                                        new_f.name = "trunc".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                    DialectType::Spark | DialectType::Databricks => {
+                                        // Spark: TRUNC is date-only; numeric TRUNC → CAST(x AS BIGINT)
+                                        let this = f.args.into_iter().next().unwrap_or(
+                                            Expression::Literal(Literal::Number("0".to_string()))
+                                        );
+                                        Ok(Expression::Cast(Box::new(crate::expressions::Cast {
+                                            this,
+                                            to: crate::expressions::DataType::BigInt { length: None },
+                                            double_colon_syntax: false,
+                                            trailing_comments: Vec::new(),
+                                            format: None,
+                                            default: None,
+                                            inferred_type: None,
+                                        })))
+                                    }
+                                    _ => {
+                                        // TRUNC(x, decimals) for PostgreSQL, Oracle, Snowflake, etc.
+                                        let mut new_f = *f;
+                                        new_f.name = "TRUNC".to_string();
+                                        Ok(Expression::Function(Box::new(new_f)))
+                                    }
+                                }
+                            }
+                            // CURRENT_VERSION() -> VERSION() for most dialects
+                            "CURRENT_VERSION" => match target {
+                                DialectType::Snowflake
+                                | DialectType::Databricks
+                                | DialectType::StarRocks => {
+                                    Ok(Expression::Function(f))
+                                }
+                                DialectType::SQLite => {
+                                    let mut new_f = *f;
+                                    new_f.name = "SQLITE_VERSION".to_string();
+                                    Ok(Expression::Function(Box::new(new_f)))
+                                }
+                                _ => {
+                                    let mut new_f = *f;
+                                    new_f.name = "VERSION".to_string();
+                                    Ok(Expression::Function(Box::new(new_f)))
+                                }
+                            },
                             // ARRAY_REVERSE(x) -> arrayReverse(x) for ClickHouse
                             "ARRAY_REVERSE" => match target {
                                 DialectType::ClickHouse => {
@@ -19514,6 +20682,7 @@ impl Dialect {
                                 target,
                                 DialectType::BigQuery
                                     | DialectType::DuckDB
+                                    | DialectType::Snowflake
                                     | DialectType::ClickHouse
                                     | DialectType::StarRocks
                             );
@@ -20928,9 +22097,365 @@ impl Dialect {
                     }
                 }
 
+                Action::ArrayExceptConvert => {
+                    if let Expression::ArrayExcept(f) = e {
+                        let source_arr = f.this;
+                        let exclude_arr = f.expression;
+                        match target {
+                            DialectType::DuckDB => {
+                                // ARRAY_EXCEPT(source, exclude) -> complex CASE expression for DuckDB:
+                                // CASE WHEN source IS NULL OR exclude IS NULL THEN NULL
+                                // ELSE LIST_TRANSFORM(LIST_FILTER(LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source))),
+                                //   pair -> (LENGTH(LIST_FILTER(source[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1]))
+                                //           > LENGTH(LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])))),
+                                //   pair -> pair[1])
+                                // END
+
+                                // Build: source IS NULL
+                                let source_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                    this: source_arr.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                // Build: exclude IS NULL
+                                let exclude_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                    this: exclude_arr.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                // source IS NULL OR exclude IS NULL
+                                let null_check = Expression::Or(Box::new(crate::expressions::BinaryOp {
+                                    left: source_is_null,
+                                    right: exclude_is_null,
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // GENERATE_SERIES(1, LENGTH(source))
+                                let length_source = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![source_arr.clone()],
+                                )));
+                                let gen_series = Expression::Function(Box::new(Function::new(
+                                    "GENERATE_SERIES".to_string(),
+                                    vec![Expression::number(1), length_source],
+                                )));
+
+                                // LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source)))
+                                let list_zip = Expression::Function(Box::new(Function::new(
+                                    "LIST_ZIP".to_string(),
+                                    vec![source_arr.clone(), gen_series],
+                                )));
+
+                                // pair[1] - first element of pair
+                                let pair_col = Expression::column("pair");
+                                let pair_1 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(1),
+                                }));
+                                // pair[2] - second element of pair (index)
+                                let pair_2 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(2),
+                                }));
+
+                                // source[1:pair[2]] - slice from 1 to pair[2]
+                                let source_slice = Expression::ArraySlice(Box::new(crate::expressions::ArraySlice {
+                                    this: source_arr.clone(),
+                                    start: Some(Expression::number(1)),
+                                    end: Some(pair_2.clone()),
+                                }));
+
+                                // e column for lambda
+                                let e_col = Expression::column("e");
+
+                                // e IS NOT DISTINCT FROM pair[1] (for source slice filter)
+                                let is_not_distinct_1 = Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
+                                    left: e_col.clone(),
+                                    right: pair_1.clone(),
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // LIST_FILTER(source[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1])
+                                let lambda_1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: is_not_distinct_1,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+                                let list_filter_source_slice = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![source_slice, lambda_1],
+                                )));
+                                // LENGTH(LIST_FILTER(source[1:pair[2]], e -> ...))
+                                let len_source_slice = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![list_filter_source_slice],
+                                )));
+
+                                // e IS NOT DISTINCT FROM pair[1] (for exclude filter)
+                                let is_not_distinct_2 = Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
+                                    left: e_col.clone(),
+                                    right: pair_1.clone(),
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])
+                                let lambda_2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: is_not_distinct_2,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+                                let list_filter_exclude = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![exclude_arr.clone(), lambda_2],
+                                )));
+                                // LENGTH(LIST_FILTER(exclude, e -> ...))
+                                let len_exclude = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![list_filter_exclude],
+                                )));
+
+                                // LENGTH(...) > LENGTH(...)
+                                let gt_expr = Expression::Gt(Box::new(crate::expressions::BinaryOp {
+                                    left: len_source_slice,
+                                    right: len_exclude,
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // Wrap in parens for the lambda body
+                                let gt_paren = Expression::Paren(Box::new(crate::expressions::Paren {
+                                    this: gt_expr,
+                                    trailing_comments: vec![],
+                                }));
+
+                                // pair -> (LENGTH(...) > LENGTH(...))
+                                let filter_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: gt_paren,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(LIST_ZIP(...), pair -> (...))
+                                let list_filter_outer = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![list_zip, filter_lambda],
+                                )));
+
+                                // pair -> pair[1]  (for LIST_TRANSFORM)
+                                let transform_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: pair_1.clone(),
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_TRANSFORM(LIST_FILTER(...), pair -> pair[1])
+                                let list_transform = Expression::Function(Box::new(Function::new(
+                                    "LIST_TRANSFORM".to_string(),
+                                    vec![list_filter_outer, transform_lambda],
+                                )));
+
+                                // CASE WHEN ... IS NULL ... THEN NULL ELSE LIST_TRANSFORM(...) END
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None,
+                                    whens: vec![(
+                                        null_check,
+                                        Expression::Null(Null),
+                                    )],
+                                    else_: Some(list_transform),
+                                    comments: Vec::new(),
+                                    inferred_type: None,
+                                })))
+                            }
+                            DialectType::Snowflake => {
+                                // Snowflake: ARRAY_EXCEPT(source, exclude) - keep as-is
+                                Ok(Expression::ArrayExcept(Box::new(crate::expressions::BinaryFunc {
+                                    this: source_arr,
+                                    expression: exclude_arr,
+                                    original_name: None,
+                                    inferred_type: None,
+                                })))
+                            }
+                            DialectType::Presto | DialectType::Trino | DialectType::Athena => {
+                                // Presto/Trino: ARRAY_EXCEPT(source, exclude) - keep function name, array syntax already converted
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "ARRAY_EXCEPT".to_string(),
+                                    vec![source_arr, exclude_arr],
+                                ))))
+                            }
+                            _ => Ok(Expression::ArrayExcept(Box::new(crate::expressions::BinaryFunc {
+                                this: source_arr,
+                                expression: exclude_arr,
+                                original_name: None,
+                                inferred_type: None,
+                            }))),
+                        }
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::ArrayDistinctConvert => {
+                    // ARRAY_DISTINCT(arr) -> DuckDB NULL-aware CASE:
+                    // CASE WHEN ARRAY_LENGTH(arr) <> LIST_COUNT(arr)
+                    //   THEN LIST_APPEND(LIST_DISTINCT(LIST_FILTER(arr, _u -> NOT _u IS NULL)), NULL)
+                    //   ELSE LIST_DISTINCT(arr)
+                    // END
+                    if let Expression::ArrayDistinct(f) = e {
+                        let arr = f.this;
+
+                        // ARRAY_LENGTH(arr)
+                        let array_length = Expression::Function(Box::new(Function::new(
+                            "ARRAY_LENGTH".to_string(),
+                            vec![arr.clone()],
+                        )));
+                        // LIST_COUNT(arr)
+                        let list_count = Expression::Function(Box::new(Function::new(
+                            "LIST_COUNT".to_string(),
+                            vec![arr.clone()],
+                        )));
+                        // ARRAY_LENGTH(arr) <> LIST_COUNT(arr)
+                        let neq = Expression::Neq(Box::new(crate::expressions::BinaryOp {
+                            left: array_length,
+                            right: list_count,
+                            left_comments: vec![],
+                            operator_comments: vec![],
+                            trailing_comments: vec![],
+                            inferred_type: None,
+                        }));
+
+                        // _u column
+                        let u_col = Expression::column("_u");
+                        // NOT _u IS NULL
+                        let u_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                            this: u_col.clone(),
+                            not: false,
+                            postfix_form: false,
+                        }));
+                        let not_u_is_null = Expression::Not(Box::new(crate::expressions::UnaryOp {
+                            this: u_is_null,
+                            inferred_type: None,
+                        }));
+                        // _u -> NOT _u IS NULL
+                        let filter_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                            parameters: vec![crate::expressions::Identifier::new("_u")],
+                            body: not_u_is_null,
+                            colon: false,
+                            parameter_types: vec![],
+                        }));
+                        // LIST_FILTER(arr, _u -> NOT _u IS NULL)
+                        let list_filter = Expression::Function(Box::new(Function::new(
+                            "LIST_FILTER".to_string(),
+                            vec![arr.clone(), filter_lambda],
+                        )));
+                        // LIST_DISTINCT(LIST_FILTER(arr, ...))
+                        let list_distinct_filtered = Expression::Function(Box::new(Function::new(
+                            "LIST_DISTINCT".to_string(),
+                            vec![list_filter],
+                        )));
+                        // LIST_APPEND(LIST_DISTINCT(LIST_FILTER(...)), NULL)
+                        let list_append = Expression::Function(Box::new(Function::new(
+                            "LIST_APPEND".to_string(),
+                            vec![list_distinct_filtered, Expression::Null(Null)],
+                        )));
+
+                        // LIST_DISTINCT(arr)
+                        let list_distinct = Expression::Function(Box::new(Function::new(
+                            "LIST_DISTINCT".to_string(),
+                            vec![arr],
+                        )));
+
+                        // CASE WHEN neq THEN list_append ELSE list_distinct END
+                        Ok(Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![(neq, list_append)],
+                            else_: Some(list_distinct),
+                            comments: Vec::new(),
+                            inferred_type: None,
+                        })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::ArrayContainsDuckDBConvert => {
+                    // Snowflake ARRAY_CONTAINS(value, array) -> DuckDB NULL-aware:
+                    // CASE WHEN value IS NULL
+                    //   THEN NULLIF(ARRAY_LENGTH(array) <> LIST_COUNT(array), FALSE)
+                    //   ELSE ARRAY_CONTAINS(array, value)
+                    // END
+                    // Note: In Rust AST from Snowflake parse, this=value (first arg), expression=array (second arg)
+                    if let Expression::ArrayContains(f) = e {
+                        let value = f.this;
+                        let array = f.expression;
+
+                        // value IS NULL
+                        let value_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                            this: value.clone(),
+                            not: false,
+                            postfix_form: false,
+                        }));
+
+                        // ARRAY_LENGTH(array)
+                        let array_length = Expression::Function(Box::new(Function::new(
+                            "ARRAY_LENGTH".to_string(),
+                            vec![array.clone()],
+                        )));
+                        // LIST_COUNT(array)
+                        let list_count = Expression::Function(Box::new(Function::new(
+                            "LIST_COUNT".to_string(),
+                            vec![array.clone()],
+                        )));
+                        // ARRAY_LENGTH(array) <> LIST_COUNT(array)
+                        let neq = Expression::Neq(Box::new(crate::expressions::BinaryOp {
+                            left: array_length,
+                            right: list_count,
+                            left_comments: vec![],
+                            operator_comments: vec![],
+                            trailing_comments: vec![],
+                            inferred_type: None,
+                        }));
+                        // NULLIF(ARRAY_LENGTH(array) <> LIST_COUNT(array), FALSE)
+                        let nullif = Expression::Nullif(Box::new(crate::expressions::Nullif {
+                            this: Box::new(neq),
+                            expression: Box::new(Expression::Boolean(crate::expressions::BooleanLiteral { value: false })),
+                        }));
+
+                        // ARRAY_CONTAINS(array, value) - DuckDB syntax: array first, value second
+                        let array_contains = Expression::Function(Box::new(Function::new(
+                            "ARRAY_CONTAINS".to_string(),
+                            vec![array, value],
+                        )));
+
+                        // CASE WHEN value IS NULL THEN NULLIF(...) ELSE ARRAY_CONTAINS(array, value) END
+                        Ok(Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![(value_is_null, nullif)],
+                            else_: Some(array_contains),
+                            comments: Vec::new(),
+                            inferred_type: None,
+                        })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
                 Action::StrPositionExpand => {
                     // StrPosition with position arg -> complex STRPOS expansion for Presto/DuckDB
-                    // LOCATE(substr, str, pos) / STRPOS(str, substr, pos) ->
                     // For Presto: IF(STRPOS(SUBSTRING(str, pos), substr) = 0, 0, STRPOS(SUBSTRING(str, pos), substr) + pos - 1)
                     // For DuckDB: CASE WHEN STRPOS(SUBSTRING(str, pos), substr) = 0 THEN 0 ELSE STRPOS(SUBSTRING(str, pos), substr) + pos - 1 END
                     if let Expression::StrPosition(sp) = e {
@@ -32138,5 +33663,411 @@ mod tests {
             result[0],
             "SELECT CASE WHEN col IS NULL THEN 3 ELSE 4 END FROM t",
         );
+    }
+
+    // =========================================================================
+    // REGEXP function transpilation tests
+    // =========================================================================
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_2arg() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern')", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_3arg_pos1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern', 1)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_3arg_pos_gt1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern', 3)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_EXTRACT(NULLIF(SUBSTRING(s, 3), ''), 'pattern')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_4arg_occ_gt1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern', 1, 3)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT ARRAY_EXTRACT(REGEXP_EXTRACT_ALL(s, 'pattern'), 3)"
+        );
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_5arg_e_flag() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e')",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_to_duckdb_6arg_group0() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e', 0)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_snowflake_identity_strip_group0() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e', 0)",
+                DialectType::Snowflake,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_substr_all_snowflake_to_duckdb_2arg() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_SUBSTR_ALL(s, 'pattern')", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT_ALL(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_all_snowflake_to_duckdb_3arg_pos_gt1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 3)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_EXTRACT_ALL(SUBSTRING(s, 3), 'pattern')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_substr_all_snowflake_to_duckdb_5arg_e_flag() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e')",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT_ALL(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_all_snowflake_to_duckdb_6arg_group0() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e', 0)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_EXTRACT_ALL(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_substr_all_snowflake_identity_strip_group0() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e', 0)",
+                DialectType::Snowflake,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_count_snowflake_to_duckdb_2arg() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_COUNT(s, 'pattern')", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT CASE WHEN 'pattern' = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(s, 'pattern')) END"
+        );
+    }
+
+    #[test]
+    fn test_regexp_count_snowflake_to_duckdb_3arg() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT REGEXP_COUNT(s, 'pattern', 3)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT CASE WHEN 'pattern' = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(SUBSTRING(s, 3), 'pattern')) END"
+        );
+    }
+
+    #[test]
+    fn test_regexp_count_snowflake_to_duckdb_4arg_flags() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_COUNT(s, 'pattern', 1, 'i')",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT CASE WHEN '(?i)' || 'pattern' = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(SUBSTRING(s, 1), '(?i)' || 'pattern')) END"
+        );
+    }
+
+    #[test]
+    fn test_regexp_count_snowflake_to_duckdb_4arg_flags_literal_string() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_COUNT('Hello World', 'L', 1, 'im')",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT CASE WHEN '(?im)' || 'L' = '' THEN 0 ELSE LENGTH(REGEXP_EXTRACT_ALL(SUBSTRING('Hello World', 1), '(?im)' || 'L')) END"
+        );
+    }
+
+    #[test]
+    fn test_regexp_replace_snowflake_to_duckdb_5arg_pos1_occ1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 1, 1)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_REPLACE(s, 'pattern', 'repl')");
+    }
+
+    #[test]
+    fn test_regexp_replace_snowflake_to_duckdb_5arg_pos_gt1_occ0() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 3, 0)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT SUBSTRING(s, 1, 2) || REGEXP_REPLACE(SUBSTRING(s, 3), 'pattern', 'repl', 'g')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_replace_snowflake_to_duckdb_5arg_pos_gt1_occ1() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 3, 1)",
+                DialectType::DuckDB,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT SUBSTRING(s, 1, 2) || REGEXP_REPLACE(SUBSTRING(s, 3), 'pattern', 'repl')"
+        );
+    }
+
+    #[test]
+    fn test_rlike_snowflake_to_duckdb_2arg() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT RLIKE(a, b)", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_MATCHES(a, '^(' || (b) || ')$')"
+        );
+    }
+
+    #[test]
+    fn test_rlike_snowflake_to_duckdb_3arg_flags() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT RLIKE(a, b, 'i')", DialectType::DuckDB)
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_MATCHES(a, '^(' || (b) || ')$', 'i')"
+        );
+    }
+
+    #[test]
+    fn test_regexp_extract_all_bigquery_to_snowflake_no_capture() {
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_EXTRACT_ALL(s, 'pattern')",
+                DialectType::Snowflake,
+            )
+            .unwrap();
+        assert_eq!(result[0], "SELECT REGEXP_SUBSTR_ALL(s, 'pattern')");
+    }
+
+    #[test]
+    fn test_regexp_extract_all_bigquery_to_snowflake_with_capture() {
+        let dialect = Dialect::get(DialectType::BigQuery);
+        let result = dialect
+            .transpile_to(
+                "SELECT REGEXP_EXTRACT_ALL(s, '(a)[0-9]')",
+                DialectType::Snowflake,
+            )
+            .unwrap();
+        assert_eq!(
+            result[0],
+            "SELECT REGEXP_SUBSTR_ALL(s, '(a)[0-9]', 1, 1, 'c', 1)"
+        );
+    }
+
+    #[test]
+    fn test_regexp_instr_snowflake_to_duckdb_2arg() {
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let dialect = Dialect::get(DialectType::Snowflake);
+                let result = dialect
+                    .transpile_to("SELECT REGEXP_INSTR(s, 'pattern')", DialectType::DuckDB)
+                    .unwrap();
+                // Should produce a CASE WHEN expression
+                assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN in result: {}", result[0]);
+                assert!(result[0].contains("LIST_SUM"), "Expected LIST_SUM in result: {}", result[0]);
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_array_except_generic_to_duckdb() {
+        // Use larger stack to avoid overflow from deeply nested expression Drop
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let dialect = Dialect::get(DialectType::Generic);
+                let result = dialect
+                    .transpile_to("SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))", DialectType::DuckDB)
+                    .unwrap();
+                eprintln!("ARRAY_EXCEPT Generic->DuckDB: {}", result[0]);
+                assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN: {}", result[0]);
+                assert!(result[0].contains("LIST_TRANSFORM"), "Expected LIST_TRANSFORM: {}", result[0]);
+                assert!(result[0].contains("LIST_FILTER"), "Expected LIST_FILTER: {}", result[0]);
+                assert!(result[0].contains("LIST_ZIP"), "Expected LIST_ZIP: {}", result[0]);
+                assert!(result[0].contains("GENERATE_SERIES"), "Expected GENERATE_SERIES: {}", result[0]);
+                assert!(result[0].contains("IS NOT DISTINCT FROM"), "Expected IS NOT DISTINCT FROM: {}", result[0]);
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_array_except_generic_to_snowflake() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect
+            .transpile_to("SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))", DialectType::Snowflake)
+            .unwrap();
+        eprintln!("ARRAY_EXCEPT Generic->Snowflake: {}", result[0]);
+        assert_eq!(result[0], "SELECT ARRAY_EXCEPT([1, 2, 3], [2])");
+    }
+
+    #[test]
+    fn test_array_except_generic_to_presto() {
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect
+            .transpile_to("SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))", DialectType::Presto)
+            .unwrap();
+        eprintln!("ARRAY_EXCEPT Generic->Presto: {}", result[0]);
+        assert_eq!(result[0], "SELECT ARRAY_EXCEPT(ARRAY[1, 2, 3], ARRAY[2])");
+    }
+
+    #[test]
+    fn test_array_except_snowflake_to_duckdb() {
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let dialect = Dialect::get(DialectType::Snowflake);
+                let result = dialect
+                    .transpile_to("SELECT ARRAY_EXCEPT([1, 2, 3], [2])", DialectType::DuckDB)
+                    .unwrap();
+                eprintln!("ARRAY_EXCEPT Snowflake->DuckDB: {}", result[0]);
+                assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN: {}", result[0]);
+                assert!(result[0].contains("LIST_TRANSFORM"), "Expected LIST_TRANSFORM: {}", result[0]);
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_array_contains_snowflake_to_snowflake() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT ARRAY_CONTAINS(x, [1, NULL, 3])", DialectType::Snowflake)
+            .unwrap();
+        eprintln!("ARRAY_CONTAINS Snowflake->Snowflake: {}", result[0]);
+        assert_eq!(result[0], "SELECT ARRAY_CONTAINS(x, [1, NULL, 3])");
+    }
+
+    #[test]
+    fn test_array_contains_snowflake_to_duckdb() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT ARRAY_CONTAINS(x, [1, NULL, 3])", DialectType::DuckDB)
+            .unwrap();
+        eprintln!("ARRAY_CONTAINS Snowflake->DuckDB: {}", result[0]);
+        assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN: {}", result[0]);
+        assert!(result[0].contains("NULLIF"), "Expected NULLIF: {}", result[0]);
+        assert!(result[0].contains("ARRAY_CONTAINS"), "Expected ARRAY_CONTAINS: {}", result[0]);
+    }
+
+    #[test]
+    fn test_array_distinct_snowflake_to_duckdb() {
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile_to("SELECT ARRAY_DISTINCT([1, 2, 2, 3, 1])", DialectType::DuckDB)
+            .unwrap();
+        eprintln!("ARRAY_DISTINCT Snowflake->DuckDB: {}", result[0]);
+        assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN: {}", result[0]);
+        assert!(result[0].contains("LIST_DISTINCT"), "Expected LIST_DISTINCT: {}", result[0]);
+        assert!(result[0].contains("LIST_APPEND"), "Expected LIST_APPEND: {}", result[0]);
+        assert!(result[0].contains("LIST_FILTER"), "Expected LIST_FILTER: {}", result[0]);
     }
 }

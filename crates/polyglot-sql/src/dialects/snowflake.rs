@@ -2707,11 +2707,8 @@ impl SnowflakeDialect {
                 f.args,
             )))),
 
-            // REGEXP_SUBSTR_ALL -> REGEXP_EXTRACT_ALL
-            "REGEXP_SUBSTR_ALL" => Ok(Expression::Function(Box::new(Function::new(
-                "REGEXP_EXTRACT_ALL".to_string(),
-                f.args,
-            )))),
+            // REGEXP_SUBSTR_ALL is native to Snowflake
+            "REGEXP_SUBSTR_ALL" => Ok(Expression::Function(Box::new(f))),
 
             // GET_PATH - transform path argument:
             // - Convert colon notation to dot notation (y[0]:z -> y[0].z)
@@ -3855,9 +3852,10 @@ mod tests {
     #[test]
     fn test_array_to_array_construct() {
         let result = transpile_to_snowflake("SELECT ARRAY(1, 2, 3)");
+        // ARRAY(1, 2, 3) from Generic -> Snowflake uses [] bracket notation
         assert!(
-            result.contains("ARRAY_CONSTRUCT"),
-            "Expected ARRAY_CONSTRUCT, got: {}",
+            result.contains("[1, 2, 3]"),
+            "Expected [1, 2, 3], got: {}",
             result
         );
     }

@@ -2245,6 +2245,10 @@ pub struct Select {
     /// TSQL OPTION clause (e.g., OPTION(LABEL = 'foo'))
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option: Option<String>,
+    /// Redshift-style EXCLUDE clause at the end of the projection list
+    /// e.g., SELECT *, 4 AS col4 EXCLUDE (col2, col3) FROM ...
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<Expression>>,
 }
 
 impl Select {
@@ -2286,6 +2290,7 @@ impl Select {
             operation_modifiers: Vec::new(),
             qualify_after_window: false,
             option: None,
+            exclude: None,
         }
     }
 
@@ -3574,6 +3579,8 @@ pub enum JoinKind {
     LeftArray,
     // ClickHouse PASTE JOIN (positional join)
     Paste,
+    // DuckDB POSITIONAL JOIN
+    Positional,
 }
 
 impl Default for JoinKind {
@@ -4545,6 +4552,9 @@ pub struct ExecuteParameter {
     pub name: String,
     /// Parameter value
     pub value: Expression,
+    /// Whether this is a positional parameter (no = sign)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub positional: bool,
 }
 
 /// KILL statement (MySQL/MariaDB)
@@ -5139,7 +5149,9 @@ pub struct LeadLagFunc {
     pub this: Expression,
     pub offset: Option<Expression>,
     pub default: Option<Expression>,
-    pub ignore_nulls: bool,
+    /// None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_nulls: Option<bool>,
 }
 
 /// FIRST_VALUE / LAST_VALUE function
@@ -6427,6 +6439,10 @@ pub struct DropTable {
     /// Comments that appear before the DROP keyword (e.g., leading line comments)
     #[serde(default)]
     pub leading_comments: Vec<String>,
+    /// TSQL: OBJECT_ID arguments for reconstructing IF OBJECT_ID(...) IS NOT NULL pattern
+    /// When set, TSQL generator outputs IF NOT OBJECT_ID(...) IS NULL BEGIN DROP TABLE ...; END
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_id_args: Option<String>,
 }
 
 impl DropTable {
@@ -6438,6 +6454,7 @@ impl DropTable {
             cascade_constraints: false,
             purge: false,
             leading_comments: Vec::new(),
+            object_id_args: None,
         }
     }
 }
@@ -7870,8 +7887,12 @@ pub struct CreateTrigger {
     pub table: TableRef,
     pub timing: TriggerTiming,
     pub events: Vec<TriggerEvent>,
-    pub for_each: TriggerForEach,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_each: Option<TriggerForEach>,
     pub when: Option<Expression>,
+    /// Whether the WHEN clause was parenthesized in the original SQL
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub when_paren: bool,
     pub body: TriggerBody,
     pub or_replace: bool,
     pub constraint: bool,
@@ -7937,8 +7958,9 @@ impl CreateTrigger {
             table: TableRef::new(table),
             timing: TriggerTiming::Before,
             events: Vec::new(),
-            for_each: TriggerForEach::Row,
+            for_each: Some(TriggerForEach::Row),
             when: None,
+            when_paren: false,
             body: TriggerBody::Execute {
                 function: TableRef::new(""),
                 args: Vec::new(),

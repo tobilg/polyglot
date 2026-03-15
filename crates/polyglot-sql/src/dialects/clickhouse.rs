@@ -354,9 +354,17 @@ impl DialectImpl for ClickHouseDialect {
 }
 
 impl ClickHouseDialect {
+}
+
+impl ClickHouseDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
+            // UTCTimestamp() -> CURRENT_TIMESTAMP('UTC')
+            "UTCTIMESTAMP" => Ok(Expression::UtcTimestamp(Box::new(
+                crate::expressions::UtcTimestamp { this: None },
+            ))),
+
             "CURRENTDATABASE" | "CURRENT_DATABASE" => Ok(Expression::Function(Box::new(
                 Function::new("CURRENT_DATABASE".to_string(), f.args),
             ))),
@@ -638,7 +646,6 @@ impl ClickHouseDialect {
     }
 
     fn transform_cast(&self, c: Cast) -> Result<Expression> {
-        // ClickHouse type mappings are handled in the generator
         Ok(Expression::Cast(Box::new(c)))
     }
 }

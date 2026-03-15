@@ -1495,7 +1495,83 @@ impl Parser {
         };
 
         // Parse select expressions
-        let expressions = self.parse_select_expressions()?;
+        let mut expressions = self.parse_select_expressions()?;
+
+        // Redshift: EXCLUDE clause at the end of the projection list
+        // e.g., SELECT *, 4 AS col4 EXCLUDE (col2, col3) FROM ...
+        // e.g., SELECT col1, *, col2 EXCLUDE(col3) FROM ...
+        // e.g., SELECT *, 4 AS col4 EXCLUDE col2, col3 FROM ...
+        // In Python sqlglot, this is handled by overriding _parse_projections in the Redshift parser.
+        // The EXCLUDE clause is separate from * EXCLUDE — it applies to the entire projection list.
+        let exclude = if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Redshift)
+        ) {
+            // Check if previous token was EXCLUDE (parsed as implicit alias).
+            // e.g., SELECT *, 4 AS col4 EXCLUDE col2, col3 FROM ...
+            //   → "col4 EXCLUDE" was parsed as (col4 aliased-as EXCLUDE), then "col2" as next projection
+            //   → We need to strip the EXCLUDE alias from the last projection and retreat
+            // Also handle: EXCLUDE was consumed as a bare column name if no AS was present
+            let mut retreat_for_exclude = false;
+            if let Some(last_expr) = expressions.last() {
+                // Case: "4 AS col4 EXCLUDE" without parens — parsed as separate column "EXCLUDE"
+                // Actually with the comma break, this won't happen. But "col2 EXCLUDE(col3)" might.
+                match last_expr {
+                    Expression::Alias(alias) if alias.alias.name.eq_ignore_ascii_case("EXCLUDE") => {
+                        // The last expression is "something AS EXCLUDE" or implicit alias EXCLUDE
+                        // Strip the alias and check if EXCLUDE is followed by paren or identifier
+                        if self.check(TokenType::LParen) || self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                            // Strip the EXCLUDE alias from the last expression
+                            let stripped = alias.this.clone();
+                            if let Some(last) = expressions.last_mut() {
+                                *last = stripped;
+                            }
+                            retreat_for_exclude = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if retreat_for_exclude || self.check(TokenType::Exclude) {
+                if !retreat_for_exclude {
+                    self.advance(); // consume EXCLUDE
+                }
+                // Parse EXCLUDE columns - with or without parens
+                let mut exclude_cols = Vec::new();
+                if self.match_token(TokenType::LParen) {
+                    // Parenthesized list: EXCLUDE (col1, col2, ...)
+                    loop {
+                        let col_expr = self.parse_expression()?;
+                        exclude_cols.push(col_expr);
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    self.match_token(TokenType::RParen);
+                } else {
+                    // Non-parenthesized: EXCLUDE col1, col2, ...
+                    // Parse comma-separated identifiers until FROM or other clause boundary
+                    loop {
+                        if self.is_at_end() || self.check(TokenType::From) || self.check(TokenType::Where)
+                            || self.check(TokenType::Semicolon) || self.check(TokenType::RParen)
+                        {
+                            break;
+                        }
+                        let col_expr = self.parse_expression()?;
+                        exclude_cols.push(col_expr);
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+                if exclude_cols.is_empty() { None } else { Some(exclude_cols) }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Parse INTO clause (SELECT ... INTO [TEMPORARY|UNLOGGED] table_name)
         // Also handles Oracle PL/SQL: BULK COLLECT INTO v1, v2, ...
@@ -2063,6 +2139,7 @@ impl Parser {
             operation_modifiers,
             qualify_after_window,
             option,
+            exclude,
         };
 
         // Check for set operations (UNION, INTERSECT, EXCEPT)
@@ -3047,6 +3124,7 @@ impl Parser {
             operation_modifiers: Vec::new(),
             qualify_after_window: false,
             option: None,
+            exclude: None,
         };
 
         // Check for set operations (UNION, INTERSECT, EXCEPT)
@@ -3393,6 +3471,7 @@ impl Parser {
                 || self.check(TokenType::Merge)
                 || self.check(TokenType::Describe)
                 || (self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN"))
+                || (self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SUMMARIZE"))
             {
                 let query = self.parse_statement()?;
                 self.expect(TokenType::RParen)?;
@@ -4344,13 +4423,14 @@ impl Parser {
             }
         }
 
-        // Check for TSQL FOR SYSTEM_TIME temporal clause
+        // Check for TSQL FOR SYSTEM_TIME temporal clause (not BigQuery - handled post-alias)
         // Syntax: FOR SYSTEM_TIME AS OF expr
         //         FOR SYSTEM_TIME FROM expr TO expr
         //         FOR SYSTEM_TIME BETWEEN expr AND expr
         //         FOR SYSTEM_TIME CONTAINED IN (expr, expr)
         //         FOR SYSTEM_TIME ALL
-        if self.check(TokenType::For)
+        if !matches!(self.config.dialect, Some(crate::dialects::DialectType::BigQuery))
+            && self.check(TokenType::For)
             && self.current + 1 < self.tokens.len()
             && self.tokens[self.current + 1]
                 .text
@@ -4880,7 +4960,9 @@ impl Parser {
                 && !(self.check_identifier("LOCK") && self.check_next(TokenType::In))
                 // ClickHouse: PARALLEL WITH is a statement separator, not a table alias
                 && !(self.check_identifier("PARALLEL") && self.check_next(TokenType::With)
-                     && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))))
+                     && matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)))
+                // DuckDB: POSITIONAL JOIN is a join method, not a table alias
+                && !(self.check_identifier("POSITIONAL") && self.check_next(TokenType::Join))))
             || self.is_command_keyword_as_alias()
             // ClickHouse: allow FIRST/LAST as implicit table aliases
             // (they're keywords used in NULLS FIRST/LAST but also valid as identifiers)
@@ -5169,6 +5251,50 @@ impl Parser {
         if has_only {
             if let Expression::Table(ref mut table) = expr {
                 table.only = true;
+            }
+        }
+
+        // BigQuery: FOR SYSTEM_TIME AS OF after alias
+        // e.g., FROM foo AS t0 FOR SYSTEM_TIME AS OF '2026-01-01'
+        if self.check(TokenType::For)
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("SYSTEM_TIME")
+        {
+            self.advance(); // consume FOR
+            self.advance(); // consume SYSTEM_TIME
+            if self.match_token(TokenType::As) && self.check_keyword_text("OF") {
+                self.advance(); // consume OF
+                let start = self.current;
+                // Collect expression tokens until clause boundary
+                while !self.is_at_end()
+                    && !self.check(TokenType::Semicolon)
+                    && !self.check(TokenType::Where)
+                    && !self.check(TokenType::Join)
+                    && !self.check(TokenType::Left)
+                    && !self.check(TokenType::Right)
+                    && !self.check(TokenType::Inner)
+                    && !self.check(TokenType::Outer)
+                    && !self.check(TokenType::Full)
+                    && !self.check(TokenType::Cross)
+                    && !self.check(TokenType::Order)
+                    && !self.check(TokenType::Group)
+                    && !self.check(TokenType::Having)
+                    && !self.check(TokenType::Limit)
+                    && !self.check(TokenType::Union)
+                    && !self.check(TokenType::Except)
+                    && !self.check(TokenType::Intersect)
+                    && !self.check(TokenType::Comma)
+                    && !self.check(TokenType::RParen)
+                {
+                    self.advance();
+                }
+                let expr_text = self.tokens_to_sql(start, self.current);
+                let system_time_str = format!("FOR SYSTEM_TIME AS OF {}", expr_text);
+                if let Expression::Table(ref mut table) = expr {
+                    table.system_time = Some(system_time_str);
+                }
             }
         }
 
@@ -6505,6 +6631,10 @@ impl Parser {
             Some((JoinKind::Semi, true, false, false, None))
         } else if self.match_token(TokenType::Anti) {
             Some((JoinKind::Anti, true, false, false, None))
+        } else if self.check_identifier("POSITIONAL") && self.check_next(TokenType::Join) {
+            // DuckDB POSITIONAL JOIN
+            self.advance(); // consume POSITIONAL
+            Some((JoinKind::Positional, true, false, false, None))
         } else if self.match_token(TokenType::StraightJoin) {
             // STRAIGHT_JOIN in MySQL - doesn't need JOIN keyword after it
             Some((JoinKind::Straight, false, false, false, None))
@@ -10489,6 +10619,7 @@ impl Parser {
 
     /// Parse a CREATE statement
     fn parse_create(&mut self) -> Result<Expression> {
+        let create_pos = self.current; // position of CREATE token
         let create_token = self.expect(TokenType::Create)?;
         let leading_comments = create_token.comments;
 
@@ -10665,10 +10796,10 @@ impl Parser {
             TokenType::Function => self.parse_create_function(or_replace, temporary, false),
             TokenType::Procedure => self.parse_create_procedure(or_replace),
             TokenType::Sequence => self.parse_create_sequence(temporary, or_replace),
-            TokenType::Trigger => self.parse_create_trigger(or_replace, false),
+            TokenType::Trigger => self.parse_create_trigger(or_replace, false, create_pos),
             TokenType::Constraint => {
                 self.advance(); // consume CONSTRAINT
-                self.parse_create_trigger(or_replace, true)
+                self.parse_create_trigger(or_replace, true, create_pos)
             }
             TokenType::Type => self.parse_create_type(),
             TokenType::Domain => self.parse_create_domain(),
@@ -16718,6 +16849,7 @@ impl Parser {
             cascade_constraints,
             purge,
             leading_comments,
+            object_id_args: None,
         })))
     }
 
@@ -21342,16 +21474,31 @@ impl Parser {
                 format!("@{}", token.text)
             };
 
-            // Expect = for named parameter
-            self.expect(TokenType::Eq)?;
-
-            // Parse the value
-            let value = self.parse_primary()?;
-
-            parameters.push(ExecuteParameter {
-                name: param_name,
-                value,
-            });
+            // Check for = (named parameter) or positional parameter
+            if self.match_token(TokenType::Eq) {
+                // Named parameter: @param = value
+                let value = self.parse_primary()?;
+                parameters.push(ExecuteParameter {
+                    name: param_name,
+                    value,
+                    positional: false,
+                });
+            } else {
+                // Positional parameter: @var (no = sign)
+                // Positional parameter: @var (no = sign)
+                parameters.push(ExecuteParameter {
+                    name: param_name.clone(),
+                    value: Expression::Column(Column {
+                        name: Identifier::new(&param_name),
+                        table: None,
+                        join_mark: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                        inferred_type: None,
+                    }),
+                    positional: true,
+                });
+            }
 
             // Check for comma to continue
             if !self.match_token(TokenType::Comma) {
@@ -23678,10 +23825,23 @@ impl Parser {
     }
 
     /// Parse CREATE TRIGGER statement
-    fn parse_create_trigger(&mut self, or_replace: bool, constraint: bool) -> Result<Expression> {
+    fn parse_create_trigger(
+        &mut self,
+        or_replace: bool,
+        constraint: bool,
+        create_pos: usize,
+    ) -> Result<Expression> {
         self.expect(TokenType::Trigger)?;
 
-        let name = Identifier::new(self.expect_identifier()?);
+        let name = self.expect_identifier_with_quoted()?;
+
+        // TSQL triggers: CREATE TRIGGER name ON table AFTER INSERT AS BEGIN...END
+        // These have ON before timing, unlike standard triggers.
+        // Fall back to Command for these (matches Python sqlglot behavior).
+        if self.check(TokenType::On) && !constraint {
+            self.current = create_pos;
+            return self.fallback_to_command(create_pos);
+        }
 
         // Parse timing (BEFORE, AFTER, INSTEAD OF)
         let timing = if self.match_token(TokenType::Before) {
@@ -23692,7 +23852,9 @@ impl Parser {
             self.expect(TokenType::Of)?;
             TriggerTiming::InsteadOf
         } else {
-            return Err(self.parse_error("Expected BEFORE, AFTER, or INSTEAD OF in trigger"));
+            // Fall back to Command for unknown trigger syntax
+            self.current = create_pos;
+            return self.fallback_to_command(create_pos);
         };
 
         // Parse events
@@ -23782,28 +23944,30 @@ impl Parser {
             }
         }
 
-        // Parse FOR EACH ROW/STATEMENT
+        // Parse FOR EACH ROW/STATEMENT (optional)
         let for_each = if self.match_token(TokenType::For) {
             self.match_token(TokenType::Each);
             if self.match_token(TokenType::Row) {
-                TriggerForEach::Row
+                Some(TriggerForEach::Row)
             } else if self.match_token(TokenType::Statement) {
-                TriggerForEach::Statement
+                Some(TriggerForEach::Statement)
             } else {
-                TriggerForEach::Row
+                Some(TriggerForEach::Row)
             }
         } else {
-            TriggerForEach::Statement
+            None
         };
 
-        // Parse optional WHEN clause
-        let when = if self.match_token(TokenType::When) {
-            self.expect(TokenType::LParen)?;
+        // Parse optional WHEN clause (parentheses are optional, e.g. SQLite)
+        let (when, when_paren) = if self.match_token(TokenType::When) {
+            let has_paren = self.match_token(TokenType::LParen);
             let expr = self.parse_expression()?;
-            self.expect(TokenType::RParen)?;
-            Some(expr)
+            if has_paren {
+                self.expect(TokenType::RParen)?;
+            }
+            (Some(expr), has_paren)
         } else {
-            None
+            (None, false)
         };
 
         // Parse trigger body
@@ -23827,7 +23991,12 @@ impl Parser {
                 args,
             }
         } else if self.match_token(TokenType::Begin) {
-            let mut block_content = String::new();
+            // Record start position (first token after BEGIN)
+            let body_start = if !self.is_at_end() {
+                self.tokens[self.current].span.start
+            } else {
+                0
+            };
             let mut depth = 1;
             while depth > 0 && !self.is_at_end() {
                 let tok = self.advance();
@@ -23839,10 +24008,21 @@ impl Parser {
                         break;
                     }
                 }
-                block_content.push_str(&tok.text);
-                block_content.push(' ');
             }
-            TriggerBody::Block(block_content.trim().to_string())
+            // Extract verbatim text from source if available
+            let block_content = if let Some(ref source) = self.source {
+                // End position is the start of the END token
+                let body_end = if self.current > 0 {
+                    self.tokens[self.current - 1].span.start
+                } else {
+                    body_start
+                };
+                source[body_start..body_end].trim().to_string()
+            } else {
+                // Fallback: no source available
+                String::new()
+            };
+            TriggerBody::Block(block_content)
         } else {
             return Err(self.parse_error("Expected EXECUTE or BEGIN in trigger body"));
         };
@@ -23854,6 +24034,7 @@ impl Parser {
             events,
             for_each,
             when,
+            when_paren,
             body,
             or_replace,
             constraint,
@@ -29029,9 +29210,13 @@ impl Parser {
         // This handles: IF age < 18 THEN 'minor' ELSE 'adult' ENDIF
         // IMPORTANT: This must be checked BEFORE is_safe_keyword_as_identifier() which would
         // treat IF as a column name when not followed by ( or .
+        // For TSQL/Fabric: IF (cond) BEGIN ... END is an IF statement, not function
         if self.check(TokenType::If)
-            && !self.check_next(TokenType::LParen)
             && !self.check_next(TokenType::Dot)
+            && (!self.check_next(TokenType::LParen) || matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric)
+            ))
         {
             let saved_pos = self.current;
             self.advance(); // consume IF
@@ -32679,8 +32864,14 @@ impl Parser {
                     (None, None)
                 };
                 self.expect(TokenType::RParen)?;
-                // Check for IGNORE NULLS
-                let ignore_nulls = self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]);
+                // Check for IGNORE NULLS / RESPECT NULLS
+                let ignore_nulls = if self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]) {
+                    Some(true)
+                } else if self.match_keywords(&[TokenType::Respect, TokenType::Nulls]) {
+                    Some(false)
+                } else {
+                    None
+                };
                 let func = LeadLagFunc {
                     this,
                     offset,
@@ -37266,7 +37457,29 @@ impl Parser {
         }
 
         // PostgreSQL array syntax: TYPE[], TYPE[N], TYPE[N][M], etc.
-        self.maybe_parse_array_dimensions(result_type)
+        let result_type = self.maybe_parse_array_dimensions(result_type)?;
+
+        // ClickHouse: mark string-like standard types as non-nullable by converting to Custom
+        // This prevents the generator from wrapping them in Nullable() during identity transforms.
+        // Types parsed from other dialects remain standard and will get Nullable wrapping when
+        // transpiling to ClickHouse.
+        if matches!(self.config.dialect, Some(crate::dialects::DialectType::ClickHouse)) {
+            return Ok(Self::clickhouse_mark_non_nullable(result_type));
+        }
+
+        Ok(result_type)
+    }
+
+    /// Convert standard types to Custom equivalents for ClickHouse to prevent Nullable wrapping.
+    /// This mirrors Python sqlglot's behavior of marking ClickHouse-parsed types as non-nullable.
+    fn clickhouse_mark_non_nullable(dt: DataType) -> DataType {
+        match dt {
+            DataType::Text => DataType::Custom { name: "String".to_string() },
+            DataType::VarChar { .. } => DataType::Custom { name: "String".to_string() },
+            DataType::Char { .. } => DataType::Custom { name: "String".to_string() },
+            DataType::String { .. } => DataType::Custom { name: "String".to_string() },
+            _ => dt,
+        }
     }
 
     /// Parse a data type for cast syntax (::TYPE)
@@ -41888,6 +42101,38 @@ impl Parser {
         )
     }
 
+    /// Fallback to Command expression from a saved position.
+    /// Extracts verbatim SQL text from source if available, consuming tokens until semicolon/EOF.
+    fn fallback_to_command(&mut self, start_pos: usize) -> Result<Expression> {
+        let start_span = self.tokens[start_pos].span.start;
+        // Consume until semicolon or end
+        while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+            self.advance();
+        }
+        let command_text = if let Some(ref source) = self.source {
+            let end_span = if self.current > 0 {
+                self.tokens[self.current - 1].span.end
+            } else {
+                start_span
+            };
+            source[start_span..end_span].trim().to_string()
+        } else {
+            // Fallback: join token texts
+            let mut parts = Vec::new();
+            for i in start_pos..self.current {
+                if self.tokens[i].token_type == TokenType::String {
+                    parts.push(format!("'{}'", self.tokens[i].text.replace('\'', "''")));
+                } else {
+                    parts.push(self.tokens[i].text.clone());
+                }
+            }
+            parts.join(" ")
+        };
+        Ok(Expression::Command(Box::new(Command {
+            this: command_text,
+        })))
+    }
+
     /// parse_assignment - Parses assignment expressions (variable := value)
     /// Python: _parse_assignment
     pub fn parse_assignment(&mut self) -> Result<Option<Expression>> {
@@ -43811,6 +44056,11 @@ impl Parser {
     /// Also handles: DECLARE @var TABLE (col_defs)
     #[allow(unused_variables, unused_mut)]
     pub fn parse_declareitem(&mut self) -> Result<Option<Expression>> {
+        // Consume optional VAR or VARIABLE keyword (Spark/Databricks)
+        if self.check_identifier("VAR") || self.check_identifier("VARIABLE") {
+            self.advance();
+        }
+
         // Parse the variable name (starts with @ or is a cursor name)
         let var = if let Some(v) = self.parse_id_var()? {
             v
@@ -45165,8 +45415,9 @@ impl Parser {
 
     /// Helper to parse comma-separated expression list for SEMANTIC_VIEW clauses
     /// Stops at METRICS, DIMENSIONS, FACTS, WHERE, or )
+    /// Each element can have an optional AS alias: expr AS name
     fn parse_semantic_view_list(&mut self) -> Result<Vec<Expression>> {
-        let first = self.parse_expression()?;
+        let first = self.parse_semantic_view_element()?;
         let mut exprs = vec![first];
         while self.match_token(TokenType::Comma) {
             // Check if next token is a keyword that starts a new clause
@@ -45178,9 +45429,30 @@ impl Parser {
             {
                 break;
             }
-            exprs.push(self.parse_expression()?);
+            exprs.push(self.parse_semantic_view_element()?);
         }
         Ok(exprs)
+    }
+
+    /// Parse a single SEMANTIC_VIEW element: expression [AS alias]
+    fn parse_semantic_view_element(&mut self) -> Result<Expression> {
+        let expr = self.parse_disjunction()?.ok_or_else(|| {
+            self.parse_error("Expected expression in SEMANTIC_VIEW clause")
+        })?;
+        // Check for optional explicit AS alias
+        if self.match_token(TokenType::As) {
+            let alias = self.expect_identifier_or_keyword_with_quoted()?;
+            Ok(Expression::Alias(Box::new(crate::expressions::Alias {
+                this: expr,
+                alias,
+                column_aliases: Vec::new(),
+                pre_alias_comments: Vec::new(),
+                trailing_comments: Vec::new(),
+                inferred_type: None,
+            })))
+        } else {
+            Ok(expr)
+        }
     }
 
     /// parse_grant_principal - Implemented from Python _parse_grant_principal
@@ -45764,6 +46036,55 @@ impl Parser {
     /// IF(condition, true_value, false_value) - function style
     /// IF condition THEN true_value ELSE false_value END - statement style
     pub fn parse_if(&mut self) -> Result<Option<Expression>> {
+        // TSQL/Fabric: IF (cond) BEGIN ... END is a statement, not a function.
+        // Parse condition, strip outer parens, then capture rest as command.
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric)
+        ) && self.check(TokenType::LParen) {
+            // Parse the parenthesized condition using balanced paren matching
+            let cond_start = self.current;
+            self.advance(); // consume opening (
+            let mut depth = 1;
+            while depth > 0 && !self.is_at_end() {
+                if self.check(TokenType::LParen) {
+                    depth += 1;
+                } else if self.check(TokenType::RParen) {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                self.advance();
+            }
+            // Extract condition text from source (inside outer parens)
+            let cond_text = if let Some(ref source) = self.source {
+                let inner_start = self.tokens[cond_start + 1].span.start;
+                let inner_end = self.tokens[self.current].span.start;
+                source[inner_start..inner_end].trim().to_string()
+            } else {
+                self.tokens_to_sql(cond_start + 1, self.current)
+            };
+            self.advance(); // consume closing )
+
+            // Now collect the rest (BEGIN...END) as raw text
+            let body_start = self.current;
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                self.advance();
+            }
+            let body_text = if let Some(ref source) = self.source {
+                let start_span = self.tokens[body_start].span.start;
+                let end_span = if self.current > 0 { self.tokens[self.current - 1].span.end } else { start_span };
+                source[start_span..end_span].trim().to_string()
+            } else {
+                self.tokens_to_sql(body_start, self.current)
+            };
+            let command_text = format!("IF {} {}", cond_text, body_text);
+            return Ok(Some(Expression::Command(Box::new(crate::expressions::Command {
+                this: command_text,
+            }))));
+        }
+
         // Function style: IF(cond, true, false)
         if self.match_token(TokenType::LParen) {
             // ClickHouse: if() with zero args is valid (used in test queries)
@@ -45817,40 +46138,66 @@ impl Parser {
             }
         }
 
-        // TSQL: IF OBJECT_ID(...) IS NOT NULL DROP TABLE x -> DROP TABLE IF EXISTS x
+        // TSQL: IF OBJECT_ID(...) IS NOT NULL [BEGIN] DROP TABLE x [; END] -> DROP TABLE IF EXISTS x
         if matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::TSQL) | Some(crate::dialects::DialectType::Fabric)
         ) {
             let saved = self.current;
             if self.match_text_seq(&["OBJECT_ID"]) {
-                // Parse the wrapped args (we don't care about the actual args)
-                if self.match_token(TokenType::LParen) {
-                    let _ = self.parse_expression_list();
+                // Capture the OBJECT_ID arguments text for TSQL round-trip
+                let object_id_args_text = if self.match_token(TokenType::LParen) {
+                    let args_start = self.current;
+                    let args = self.parse_expression_list()?;
+                    // Reconstruct args text from source
+                    let args_text = if let Some(ref source) = self.source {
+                        let start_span = self.tokens[args_start].span.start;
+                        let end_span = self.tokens[self.current].span.start;
+                        source[start_span..end_span].trim().to_string()
+                    } else {
+                        // Fallback: generate from parsed expressions
+                        args.iter()
+                            .map(|a| format!("{:?}", a))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
                     let _ = self.match_token(TokenType::RParen);
-                }
-                if self.match_text_seq(&["IS", "NOT", "NULL"]) && self.check(TokenType::Drop) {
-                    // Parse DROP TABLE, forcing if_exists = true
-                    self.advance(); // consume DROP
-                    if self.match_token(TokenType::Table) {
-                        // Parse table names
-                        let mut names = Vec::new();
-                        loop {
-                            names.push(self.parse_table_ref()?);
-                            if !self.match_token(TokenType::Comma) {
-                                break;
+                    Some(args_text)
+                } else {
+                    None
+                };
+                if self.match_text_seq(&["IS", "NOT", "NULL"]) {
+                    // Check for DROP directly or BEGIN ... DROP ... END
+                    let has_begin = self.match_token(TokenType::Begin);
+                    if self.check(TokenType::Drop) {
+                        // Parse DROP TABLE, forcing if_exists = true
+                        self.advance(); // consume DROP
+                        if self.match_token(TokenType::Table) {
+                            // Parse table names
+                            let mut names = Vec::new();
+                            loop {
+                                names.push(self.parse_table_ref()?);
+                                if !self.match_token(TokenType::Comma) {
+                                    break;
+                                }
                             }
+                            // If we had BEGIN, consume optional ; and END
+                            if has_begin {
+                                let _ = self.match_token(TokenType::Semicolon);
+                                let _ = self.match_token(TokenType::End);
+                            }
+                            return Ok(Some(Expression::DropTable(Box::new(
+                                crate::expressions::DropTable {
+                                    names,
+                                    if_exists: true,
+                                    cascade: false,
+                                    cascade_constraints: false,
+                                    purge: false,
+                                    leading_comments: Vec::new(),
+                                    object_id_args: object_id_args_text,
+                                },
+                            ))));
                         }
-                        return Ok(Some(Expression::DropTable(Box::new(
-                            crate::expressions::DropTable {
-                                names,
-                                if_exists: true,
-                                cascade: false,
-                                cascade_constraints: false,
-                                purge: false,
-                                leading_comments: Vec::new(),
-                            },
-                        ))));
                     }
                 }
                 // Retreat if pattern didn't match
@@ -49423,6 +49770,7 @@ impl Parser {
                 operation_modifiers: Vec::new(),
                 qualify_after_window: false,
                 option: None,
+                exclude: None,
             }))));
         }
         if self.match_text_seq(&["GROUP", "AND"]) {
@@ -49544,6 +49892,7 @@ impl Parser {
                 operation_modifiers: Vec::new(),
                 qualify_after_window: false,
                 option: None,
+                exclude: None,
             }))));
         }
         Ok(None)
@@ -50421,8 +50770,8 @@ impl Parser {
                     if let Some(pk) = self.parse_primary_key_impl(false, true)? {
                         properties.push(pk);
                     }
-                } else if let Some(expr) = self.parse_field()? {
-                    // ClickHouse DICTIONARY: PRIMARY KEY key, val (comma-separated without parens)
+                } else if let Some(expr) = self.parse_conjunction()? {
+                    // ClickHouse: PRIMARY KEY expr (e.g., PRIMARY KEY tuple(), PRIMARY KEY id)
                     let mut exprs = vec![expr];
                     while self.match_token(TokenType::Comma) {
                         if let Some(next_expr) = self.parse_field()? {
@@ -57422,5 +57771,32 @@ mod clickhouse_parser_regression_tests {
             "Expected condition to be And, got {:?}",
             std::mem::discriminant(&if_func.condition)
         );
+    }
+
+    #[test]
+    fn test_parse_interval_bare_number_duckdb() {
+        use crate::dialects::{Dialect, DialectType};
+        let sql = "SELECT CAST('2018-01-01 00:00:00' AS DATE) + INTERVAL 3 DAY";
+        let d = Dialect::get(DialectType::DuckDB);
+        match d.parse(sql) {
+            Ok(result) => {
+                assert!(!result.is_empty(), "Should parse to at least one statement");
+                // Test transpilation to DuckDB target - should normalize number to quoted string
+                let output_duckdb = d.transpile_to(sql, DialectType::DuckDB).unwrap();
+                assert_eq!(
+                    output_duckdb[0],
+                    "SELECT CAST('2018-01-01 00:00:00' AS DATE) + INTERVAL '3' DAY",
+                    "DuckDB output should have quoted interval value"
+                );
+                // Test transpilation to Hive target
+                let output_hive = d.transpile_to(sql, DialectType::Hive).unwrap();
+                assert_eq!(
+                    output_hive[0],
+                    "SELECT CAST('2018-01-01 00:00:00' AS DATE) + INTERVAL '3' DAY",
+                    "Hive output should have quoted interval value"
+                );
+            }
+            Err(e) => panic!("Failed to parse DuckDB INTERVAL 3 DAY: {}", e),
+        }
     }
 }
