@@ -824,6 +824,13 @@ fn qualify_single_column(
             if resolver.table_exists_in_schema(table_name) {
                 return Ok(());
             }
+            // The column is already qualified with a table alias not in this
+            // scope or schema (e.g. alias `l` for `lineitem` from an inner
+            // subquery scope).  Allow it if the column itself exists in some
+            // schema table, indicating it was validly qualified elsewhere.
+            if resolver.column_exists_in_outer_schema_table(&col.name.name) {
+                return Ok(());
+            }
             return Err(QualifyColumnsError::UnknownTable(table_name.clone()));
         }
 
@@ -848,6 +855,13 @@ fn qualify_single_column(
     }
 
     if !allow_partial {
+        // Before erroring, check if this column could be a correlated reference
+        // (i.e., it belongs to a table in the schema but not in the current scope).
+        // This handles cases like `o_orderkey` in a correlated EXISTS subquery
+        // where `orders` is only in the outer scope.
+        if resolver.column_exists_in_outer_schema_table(&col.name.name) {
+            return Ok(());
+        }
         return Err(QualifyColumnsError::UnknownColumn(col.name.name.clone()));
     }
 
@@ -3144,6 +3158,26 @@ mod tests {
             sql.contains("t1.a"),
             "column should be qualified with table name: {sql}"
         );
+
+        // test that columns in agg functions also get qualified
+        let expr = parse("SELECT MAX(a) FROM raw.t1");
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+        assert!(
+            sql.contains("t1.a"),
+            "column in function should be qualified with table name: {sql}"
+        );
+
+        // test that columns in scalar functions also get qualified
+        let expr = parse("SELECT ABS(a) FROM raw.t1");
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+        assert!(
+            sql.contains("t1.a"),
+            "column in function should be qualified with table name: {sql}"
+        );
     }
 
     #[test]
@@ -3180,6 +3214,49 @@ mod tests {
         );
         assert!(
             sql.contains("t2.id"),
+            "inner column should be qualified: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_scalar_subquery_with_unqualified_columns() {
+        let expr =
+            parse("SELECT t1_id, (SELECT AVG(val) FROM t2 WHERE t2_id = t1_id) AS avg_val FROM t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("t1_id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("t2_id".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("t1.t1_id"),
+            "outer column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("t2.t2_id"),
+            "inner column should be qualified: {sql}"
+        );
+
+        assert!(
+            sql.contains("t2.val"),
             "inner column should be qualified: {sql}"
         );
     }

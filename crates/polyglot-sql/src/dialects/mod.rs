@@ -1513,19 +1513,102 @@ where
             Expression::Filter(f)
         }
 
-        // BitwiseOrAgg/BitwiseAndAgg/BitwiseXorAgg: recurse into the aggregate argument
-        Expression::BitwiseOrAgg(mut f) => {
+        // Aggregate functions (AggFunc-based): recurse into the aggregate argument.
+        // Note: Stddev, StddevSamp, Variance, ArrayAgg, BitwiseOrAgg, BitwiseAndAgg,
+        // BitwiseXorAgg are already handled above.
+        Expression::Sum(mut f) => {
             f.this = transform_recursive(f.this, transform_fn)?;
-            Expression::BitwiseOrAgg(f)
+            Expression::Sum(f)
         }
-        Expression::BitwiseAndAgg(mut f) => {
+        Expression::Avg(mut f) => {
             f.this = transform_recursive(f.this, transform_fn)?;
-            Expression::BitwiseAndAgg(f)
+            Expression::Avg(f)
         }
-        Expression::BitwiseXorAgg(mut f) => {
+        Expression::Min(mut f) => {
             f.this = transform_recursive(f.this, transform_fn)?;
-            Expression::BitwiseXorAgg(f)
+            Expression::Min(f)
         }
+        Expression::Max(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::Max(f)
+        }
+        Expression::CountIf(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::CountIf(f)
+        }
+        Expression::StddevPop(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::StddevPop(f)
+        }
+        Expression::VarPop(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::VarPop(f)
+        }
+        Expression::VarSamp(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::VarSamp(f)
+        }
+        Expression::Median(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::Median(f)
+        }
+        Expression::Mode(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::Mode(f)
+        }
+        Expression::First(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::First(f)
+        }
+        Expression::Last(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::Last(f)
+        }
+        Expression::AnyValue(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::AnyValue(f)
+        }
+        Expression::ApproxDistinct(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::ApproxDistinct(f)
+        }
+        Expression::ApproxCountDistinct(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::ApproxCountDistinct(f)
+        }
+        Expression::LogicalAnd(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::LogicalAnd(f)
+        }
+        Expression::LogicalOr(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::LogicalOr(f)
+        }
+        Expression::Skewness(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::Skewness(f)
+        }
+        Expression::ArrayConcatAgg(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::ArrayConcatAgg(f)
+        }
+        Expression::ArrayUniqueAgg(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::ArrayUniqueAgg(f)
+        }
+        Expression::BoolXorAgg(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            Expression::BoolXorAgg(f)
+        }
+
+        // Count has its own struct with an Option<Expression> `this` field
+        Expression::Count(mut c) => {
+            if let Some(this) = c.this.take() {
+                c.this = Some(transform_recursive(this, transform_fn)?);
+            }
+            Expression::Count(c)
+        }
+
         Expression::PipeOperator(mut pipe) => {
             pipe.this = transform_recursive(pipe.this, transform_fn)?;
             pipe.expression = transform_recursive(pipe.expression, transform_fn)?;

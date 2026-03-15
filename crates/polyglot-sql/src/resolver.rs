@@ -111,6 +111,33 @@ impl<'a> Resolver<'a> {
         self.schema.column_names(table_name).is_ok()
     }
 
+    /// Check if a column exists in any schema table that is NOT in the current scope.
+    /// Used to detect correlated references to outer scope tables for unqualified columns.
+    pub fn column_exists_in_outer_schema_table(&self, column_name: &str) -> bool {
+        let scope_source_tables: HashSet<String> = self
+            .scope
+            .sources
+            .values()
+            .filter_map(|src| {
+                if let Expression::Table(table) = &src.expression {
+                    Some(qualified_table_name(table))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for table_name in self.schema.table_names() {
+            if scope_source_tables.contains(&table_name) {
+                continue;
+            }
+            if self.schema.has_column(&table_name, column_name) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Get all available columns across all sources in this scope
     pub fn all_columns(&mut self) -> &HashSet<String> {
         if self.all_columns_cache.is_none() {
