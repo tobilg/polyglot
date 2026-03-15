@@ -68,6 +68,9 @@ pub trait Schema {
 
     /// Get the nesting depth of the schema
     fn depth(&self) -> usize;
+
+    /// Get all table names in the schema
+    fn table_names(&self) -> Vec<String>;
 }
 
 /// A column with its type and visibility
@@ -403,6 +406,10 @@ impl Schema for MappingSchema {
 
     fn depth(&self) -> usize {
         self.cached_depth
+    }
+
+    fn table_names(&self) -> Vec<String> {
+        self.mapping.keys().cloned().collect()
     }
 }
 

@@ -1331,6 +1331,10 @@ impl SqlSchema for TypeInferenceSchema<'_> {
     fn depth(&self) -> usize {
         1
     }
+
+    fn table_names(&self) -> Vec<String> {
+        self.schema_map.keys().cloned().collect()
+    }
 }
 
 fn infer_expression_type_family(
