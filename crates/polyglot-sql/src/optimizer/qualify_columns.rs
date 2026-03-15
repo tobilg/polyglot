@@ -3183,6 +3183,44 @@ mod tests {
     #[test]
     fn test_qualify_columns_correlated_scalar_subquery() {
         let expr =
+            parse("SELECT id, (SELECT AVG(val) FROM t2 WHERE t2.id = t1.id) AS avg_val FROM t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("id".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("t1.id"),
+            "outer column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("t2.id"),
+            "inner column should be qualified: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_scalar_subquery_with_unqualified_columns() {
+        let expr =
             parse("SELECT t1_id, (SELECT AVG(val) FROM t2 WHERE t2_id = t1_id) AS avg_val FROM t1");
 
         let mut schema = MappingSchema::new();
