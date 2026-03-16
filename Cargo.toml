@@ -46,6 +46,12 @@ codegen-units = 1   # Better optimization
 panic = "abort"     # Smaller binary
 strip = true        # Strip symbols
 
+[profile.bench]
+inherits = "release"
+opt-level = 3
+lto = true
+codegen-units = 1
+
 [profile.ffi_release]
 inherits = "release"
 panic = "unwind"

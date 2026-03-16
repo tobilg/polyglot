@@ -537,14 +537,14 @@ fn resolve_unqualified_column(
     // Multiple sources — can't resolve without schema info, add unqualified node
     let child = LineageNode::new(
         col_name.to_string(),
-        Expression::Column(crate::expressions::Column {
+        Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(col_name.to_string()),
             table: None,
             join_mark: false,
             trailing_comments: vec![],
             span: None,
             inferred_type: None,
-        }),
+        })),
         node.source.clone(),
     );
     node.downstream.push(child);
@@ -793,15 +793,15 @@ fn find_child_scope_in<'a>(
 fn make_table_column_node(table: &str, column: &str) -> LineageNode {
     let mut node = LineageNode::new(
         format!("{}.{}", table, column),
-        Expression::Column(crate::expressions::Column {
+        Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(column.to_string()),
             table: Some(crate::expressions::Identifier::new(table.to_string())),
             join_mark: false,
             trailing_comments: vec![],
             span: None,
             inferred_type: None,
-        }),
-        Expression::Table(crate::expressions::TableRef::new(table)),
+        })),
+        Expression::Table(Box::new(crate::expressions::TableRef::new(table))),
     );
     node.source_name = table.to_string();
     node
@@ -826,14 +826,14 @@ fn make_table_column_node_from_source(
 ) -> LineageNode {
     let mut node = LineageNode::new(
         format!("{}.{}", table_alias, column),
-        Expression::Column(crate::expressions::Column {
+        Expression::Column(Box::new(crate::expressions::Column {
             name: crate::expressions::Identifier::new(column.to_string()),
             table: Some(crate::expressions::Identifier::new(table_alias.to_string())),
             join_mark: false,
             trailing_comments: vec![],
             span: None,
             inferred_type: None,
-        }),
+        })),
         source.clone(),
     );
 

@@ -265,7 +265,7 @@ impl PrestoDialect {
         match expr {
             Expression::Column(c) => {
                 if c.table.is_some() {
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: c.name,
                         table: None,
                         join_mark: c.join_mark,
@@ -278,7 +278,7 @@ impl PrestoDialect {
                 }
             }
             // DotAccess: db.t2.c -> c (strip all qualifiers, keep only the final field name)
-            Expression::Dot(d) => Expression::Column(Column {
+            Expression::Dot(d) => Expression::boxed_column(Column {
                 name: d.field,
                 table: None,
                 join_mark: false,

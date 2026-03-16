@@ -1096,7 +1096,7 @@ impl DialectImpl for DuckDBDialect {
             Expression::Column(ref c) if c.name.name.starts_with('@') && c.table.is_none() => {
                 let col_name = &c.name.name[1..]; // strip leading @
                 Ok(Expression::Abs(Box::new(UnaryFunc {
-                    this: Expression::Column(Column {
+                    this: Expression::boxed_column(Column {
                         name: Identifier::new(col_name),
                         table: None,
                         join_mark: false,
@@ -1134,7 +1134,7 @@ impl DialectImpl for DuckDBDialect {
                                         if s.contains('.') {
                                             // t.col → Column { name: col, table: t }
                                             let parts: Vec<&str> = s.splitn(2, '.').collect();
-                                            Some(Expression::Column(Column {
+                                            Some(Expression::boxed_column(Column {
                                                 name: Identifier::new(parts[1]),
                                                 table: Some(Identifier::new(parts[0])),
                                                 join_mark: false,
@@ -1143,7 +1143,7 @@ impl DialectImpl for DuckDBDialect {
                                                 inferred_type: None,
                                             }))
                                         } else {
-                                            Some(Expression::Column(Column {
+                                            Some(Expression::boxed_column(Column {
                                                 name: Identifier::new(s.as_str()),
                                                 table: None,
                                                 join_mark: false,
@@ -1653,7 +1653,7 @@ impl DuckDBDialect {
                     parameters: vec![Identifier::new("_u".to_string())],
                     body: Expression::Not(Box::new(crate::expressions::UnaryOp {
                         this: Expression::IsNull(Box::new(crate::expressions::IsNull {
-                            this: Expression::Column(Column {
+                            this: Expression::boxed_column(Column {
                                 table: None,
                                 name: Identifier::new("_u".to_string()),
                                 join_mark: false,
@@ -5886,7 +5886,7 @@ impl DuckDBDialect {
                 )));
 
                 let k_ident = Identifier::new("__k");
-                let k_ref = Expression::Column(Column {
+                let k_ref = Expression::boxed_column(Column {
                     table: None,
                     name: k_ident.clone(),
                     join_mark: false,
@@ -5935,7 +5935,7 @@ impl DuckDBDialect {
                 )));
 
                 let x_ident = Identifier::new("__x");
-                let x_ref = Expression::Column(Column {
+                let x_ref = Expression::boxed_column(Column {
                     table: None,
                     name: x_ident.clone(),
                     join_mark: false,
@@ -6114,7 +6114,7 @@ impl DuckDBDialect {
                 )));
 
                 let i_ident = Identifier::new("__i");
-                let i_ref = Expression::Column(Column {
+                let i_ref = Expression::boxed_column(Column {
                     table: None,
                     name: i_ident.clone(),
                     join_mark: false,

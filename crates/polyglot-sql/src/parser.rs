@@ -618,7 +618,7 @@ impl Parser {
             // Before consuming the semicolon, capture its leading comments
             // and attach them to the statement (e.g., SELECT foo\n/* comment */\n;)
             if self.check(TokenType::Semicolon) {
-                let semi_comments = self.current_leading_comments();
+                let semi_comments = self.current_leading_comments().to_vec();
                 if !semi_comments.is_empty() {
                     stmt = Expression::Annotated(Box::new(Annotated {
                         this: stmt,
@@ -633,7 +633,7 @@ impl Parser {
                 Some(crate::dialects::DialectType::ClickHouse)
             ) && self.check(TokenType::Settings)
             {
-                self.advance(); // consume SETTINGS
+                self.skip(); // consume SETTINGS
                 let _ = self.parse_settings_property()?;
             }
 
@@ -643,12 +643,12 @@ impl Parser {
                 Some(crate::dialects::DialectType::ClickHouse)
             ) && self.check(TokenType::Format)
             {
-                self.advance(); // consume FORMAT
+                self.skip(); // consume FORMAT
                                 // Accept any identifier/keyword/Null as format name
                 if self.check(TokenType::Null) {
-                    self.advance();
+                    self.skip();
                 } else if self.is_identifier_token() || self.check_keyword() {
-                    self.advance();
+                    self.skip();
                 }
             }
 
@@ -659,8 +659,8 @@ impl Parser {
             ) && self.check_identifier("PARALLEL")
                 && self.check_next(TokenType::With)
             {
-                self.advance(); // consume PARALLEL
-                self.advance(); // consume WITH
+                self.skip(); // consume PARALLEL
+                self.skip(); // consume WITH
                 statements.push(stmt);
                 continue;
             }
@@ -677,7 +677,7 @@ impl Parser {
                     // This matches Python sqlglot's _parse_as_command behavior for
                     // ClickHouse-specific syntax that we don't fully parse yet.
                     while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                        self.advance();
+                        self.skip();
                     }
                 } else {
                     return Err(self.parse_error("Invalid expression / Unexpected token"));
@@ -776,7 +776,7 @@ impl Parser {
             TokenType::Cache => self.parse_cache(),
             TokenType::Uncache => self.parse_uncache(),
             TokenType::Refresh => {
-                self.advance(); // consume REFRESH
+                self.skip(); // consume REFRESH
                 self.parse_refresh()?
                     .ok_or_else(|| self.parse_error("Failed to parse REFRESH statement"))
             }
@@ -785,7 +785,7 @@ impl Parser {
             TokenType::Revoke => self.parse_revoke(),
             TokenType::Comment => self.parse_comment(),
             TokenType::Merge => {
-                self.advance(); // consume MERGE
+                self.skip(); // consume MERGE
                 self.parse_merge()?
                     .ok_or_else(|| self.parse_error("Failed to parse MERGE statement"))
             }
@@ -797,7 +797,7 @@ impl Parser {
                 ) =>
             {
                 // Teradata: DATABASE tduser -> USE tduser
-                self.advance(); // consume DATABASE
+                self.skip(); // consume DATABASE
                 let name = self.expect_identifier_or_keyword()?;
                 Ok(Expression::Use(Box::new(Use {
                     kind: None,
@@ -813,7 +813,7 @@ impl Parser {
                 self.parse_locking_statement()
             }
             TokenType::Command => {
-                self.advance(); // consume command keyword
+                self.skip(); // consume command keyword
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse COMMAND statement"))
             }
@@ -824,7 +824,7 @@ impl Parser {
                         | Some(crate::dialects::DialectType::ClickHouse)
                 ) =>
             {
-                self.advance(); // consume RENAME
+                self.skip(); // consume RENAME
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse RENAME statement"))
             }
@@ -841,7 +841,7 @@ impl Parser {
                 ) {
                     self.parse_end_transaction()
                 } else {
-                    self.advance(); // consume END
+                    self.skip(); // consume END
                     Ok(Expression::Command(Box::new(Command {
                         this: "END".to_string(),
                     })))
@@ -858,7 +858,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) =>
             {
-                self.advance(); // consume KILL
+                self.skip(); // consume KILL
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse KILL statement"))
             }
@@ -869,7 +869,7 @@ impl Parser {
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) {
-                    self.advance(); // consume EXECUTE
+                    self.skip(); // consume EXECUTE
                     self.parse_command()?
                         .ok_or_else(|| self.parse_error("Failed to parse EXECUTE statement"))
                 } else {
@@ -877,7 +877,7 @@ impl Parser {
                 }
             }
             TokenType::Declare => {
-                self.advance(); // consume DECLARE
+                self.skip(); // consume DECLARE
                 self.parse_declare()?
                     .ok_or_else(|| self.parse_error("Failed to parse DECLARE statement"))
             }
@@ -902,7 +902,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume EXCHANGE
+                self.skip(); // consume EXCHANGE
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse EXCHANGE statement"))
             }
@@ -915,18 +915,18 @@ impl Parser {
                 if self.peek().text.eq_ignore_ascii_case("LOCK")
                     || self.peek().text.eq_ignore_ascii_case("UNLOCK") =>
             {
-                self.advance(); // consume LOCK/UNLOCK
+                self.skip(); // consume LOCK/UNLOCK
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse LOCK/UNLOCK statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("ANALYZE") => {
-                self.advance(); // consume ANALYZE
+                self.skip(); // consume ANALYZE
                 self.parse_analyze()?
                     .ok_or_else(|| self.parse_error("Failed to parse ANALYZE statement"))
             }
             // TSQL: PRINT expression
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("PRINT") => {
-                self.advance(); // consume PRINT
+                self.skip(); // consume PRINT
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse PRINT statement"))
             }
@@ -937,7 +937,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) =>
             {
-                self.advance(); // consume CHECK
+                self.skip(); // consume CHECK
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse CHECK statement"))
             }
@@ -948,7 +948,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) =>
             {
-                self.advance(); // consume SETTINGS
+                self.skip(); // consume SETTINGS
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse SETTINGS statement"))
             }
@@ -959,7 +959,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) =>
             {
-                self.advance(); // consume SYSTEM
+                self.skip(); // consume SYSTEM
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse SYSTEM statement"))
             }
@@ -971,7 +971,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume RENAME
+                self.skip(); // consume RENAME
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse RENAME statement"))
             }
@@ -983,7 +983,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume OPTIMIZE
+                self.skip(); // consume OPTIMIZE
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse OPTIMIZE statement"))
             }
@@ -994,7 +994,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && !self.check_next(TokenType::LParen) =>
             {
-                self.advance(); // consume EXISTS
+                self.skip(); // consume EXISTS
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse EXISTS statement"))
             }
@@ -1006,13 +1006,13 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume EXISTS
+                self.skip(); // consume EXISTS
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse EXISTS statement"))
             }
             // DuckDB: ATTACH [DATABASE] [IF NOT EXISTS] 'path' [AS alias] [(options)]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("ATTACH") => {
-                self.advance(); // consume ATTACH
+                self.skip(); // consume ATTACH
                 if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
@@ -1031,7 +1031,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume UNDROP
+                self.skip(); // consume UNDROP
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse UNDROP statement"))
             }
@@ -1043,71 +1043,71 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) =>
             {
-                self.advance(); // consume DETACH
+                self.skip(); // consume DETACH
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse DETACH statement"))
             }
             // DuckDB: DETACH [DATABASE] [IF EXISTS] name
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH") => {
-                self.advance(); // consume DETACH
+                self.skip(); // consume DETACH
                 self.parse_attach_detach(false)
             }
             // DuckDB: INSTALL extension [FROM source]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("INSTALL") => {
-                self.advance(); // consume INSTALL
+                self.skip(); // consume INSTALL
                 self.parse_install(false)
             }
             // DuckDB: FORCE INSTALL extension | FORCE CHECKPOINT db
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("FORCE") => {
-                self.advance(); // consume FORCE
+                self.skip(); // consume FORCE
                 self.parse_force_statement()
             }
             // DuckDB: SUMMARIZE [TABLE] expression
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("SUMMARIZE") => {
-                self.advance(); // consume SUMMARIZE
+                self.skip(); // consume SUMMARIZE
                 self.parse_summarize_statement()
             }
             // DuckDB: RESET [SESSION|GLOBAL|LOCAL] variable
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("RESET") => {
-                self.advance(); // consume RESET
+                self.skip(); // consume RESET
                 self.parse_as_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse RESET statement"))
             }
             // DuckDB statement-level PIVOT/UNPIVOT/PIVOT_WIDER syntax
             TokenType::Pivot => {
-                self.advance(); // consume PIVOT
+                self.skip(); // consume PIVOT
                 self.parse_simplified_pivot(false)?
                     .ok_or_else(|| self.parse_error("Failed to parse PIVOT statement"))
             }
             TokenType::Unpivot => {
-                self.advance(); // consume UNPIVOT
+                self.skip(); // consume UNPIVOT
                 self.parse_simplified_pivot(true)?
                     .ok_or_else(|| self.parse_error("Failed to parse UNPIVOT statement"))
             }
             // DuckDB: PIVOT_WIDER is an alias for PIVOT
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("PIVOT_WIDER") => {
-                self.advance(); // consume PIVOT_WIDER
+                self.skip(); // consume PIVOT_WIDER
                 self.parse_simplified_pivot(false)?
                     .ok_or_else(|| self.parse_error("Failed to parse PIVOT_WIDER statement"))
             }
             // BigQuery procedural FOR...IN...DO loop
             TokenType::For => {
-                self.advance(); // consume FOR
+                self.skip(); // consume FOR
                 self.parse_for_in()
             }
             // BigQuery/procedural LOOP, REPEAT, WHILE control flow statements
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("LOOP") => {
-                self.advance(); // consume LOOP
+                self.skip(); // consume LOOP
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse LOOP statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("REPEAT") => {
-                self.advance(); // consume REPEAT
+                self.skip(); // consume REPEAT
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse REPEAT statement"))
             }
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("WHILE") => {
-                self.advance(); // consume WHILE
+                self.skip(); // consume WHILE
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse WHILE statement"))
             }
@@ -1143,7 +1143,7 @@ impl Parser {
                     || next_is_explain
                 {
                     // Parse parenthesized query: (SELECT ...) ORDER BY x LIMIT y OFFSET z
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let inner = self.parse_statement()?;
                     self.expect(TokenType::RParen)?;
                     // Wrap in Subquery to preserve parentheses when used in set operations
@@ -1170,7 +1170,7 @@ impl Parser {
                     // Nested parentheses - could be ((SELECT...)) or ((a, b))
                     // For deeply nested queries like (((SELECT 1) UNION SELECT 1) UNION SELECT 1),
                     // recurse into parse_statement to handle the inner parenthesized query with set ops
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let inner = self.parse_statement()?;
                     // Check for set operations inside the outer parens
                     let result = self.parse_set_operation(inner)?;
@@ -1192,10 +1192,10 @@ impl Parser {
                     }));
                     // Check for set operations after the outer parenthesized query
                     let result = self.parse_set_operation(subquery)?;
-                    let pre_alias_comments = self.previous_trailing_comments();
+                    let pre_alias_comments = self.previous_trailing_comments().to_vec();
                     if self.match_token(TokenType::As) {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        let trailing_comments = self.previous_trailing_comments();
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
                         Ok(Expression::Alias(Box::new(Alias {
                             this: result,
                             alias,
@@ -1213,7 +1213,7 @@ impl Parser {
                     // Regular parenthesized expression like (a, b) or (x)
                     // Let parse_expression handle it
                     let expr = self.parse_expression()?;
-                    let pre_alias_comments = self.previous_trailing_comments();
+                    let pre_alias_comments = self.previous_trailing_comments().to_vec();
                     if self.match_token(TokenType::As) {
                         // Check for tuple alias: AS ("a", "b", ...)
                         if self.match_token(TokenType::LParen) {
@@ -1226,7 +1226,7 @@ impl Parser {
                                 }
                             }
                             self.expect(TokenType::RParen)?;
-                            let trailing_comments = self.previous_trailing_comments();
+                            let trailing_comments = self.previous_trailing_comments().to_vec();
                             Ok(Expression::Alias(Box::new(Alias {
                                 this: expr,
                                 alias: Identifier::empty(),
@@ -1237,7 +1237,7 @@ impl Parser {
                             })))
                         } else {
                             let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                            let trailing_comments = self.previous_trailing_comments();
+                            let trailing_comments = self.previous_trailing_comments().to_vec();
                             Ok(Expression::Alias(Box::new(Alias {
                                 this: expr,
                                 alias,
@@ -1254,15 +1254,15 @@ impl Parser {
             }
             _ => {
                 // Capture leading comments from the first token before parsing
-                let leading_comments = self.current_leading_comments();
+                let leading_comments = self.current_leading_comments().to_vec();
                 // Parse expression and check for optional alias
                 let expr = self.parse_expression()?;
                 // Capture any comments between expression and AS keyword
-                let pre_alias_comments = self.previous_trailing_comments();
+                let pre_alias_comments = self.previous_trailing_comments().to_vec();
                 if self.match_token(TokenType::As) {
                     // Capture comments from AS token (e.g., AS /* foo */ (a, b, c))
                     // These go into trailing_comments (after the alias), not pre_alias_comments
-                    let as_comments = self.previous_trailing_comments();
+                    let as_comments = self.previous_trailing_comments().to_vec();
                     // Check for tuple alias: AS ("a", "b", ...)
                     if self.match_token(TokenType::LParen) {
                         let mut column_aliases = Vec::new();
@@ -1275,7 +1275,7 @@ impl Parser {
                         }
                         self.expect(TokenType::RParen)?;
                         let mut trailing_comments = as_comments;
-                        trailing_comments.extend(self.previous_trailing_comments());
+                        trailing_comments.extend_from_slice(self.previous_trailing_comments());
                         Ok(Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias: Identifier::empty(),
@@ -1286,7 +1286,7 @@ impl Parser {
                         })))
                     } else {
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        let mut trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = self.previous_trailing_comments().to_vec();
                         // If there were leading comments on the expression (from a separate line),
                         // add them as trailing comments after the alias
                         trailing_comments.extend(leading_comments.iter().cloned());
@@ -1305,7 +1305,7 @@ impl Parser {
                     // Implicit alias (without AS) - e.g., "1. x" or "1.x" -> "1. AS x"
                     // This handles cases like PostgreSQL's "1.x" which parses as float 1. with alias x
                     let alias_text = self.advance().text.clone();
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(Expression::Alias(Box::new(Alias {
                         this: expr,
                         alias: Identifier::new(alias_text),
@@ -1403,12 +1403,12 @@ impl Parser {
             }
         } else if self.check_identifier("DISTINCTROW") {
             // MySQL DISTINCTROW - equivalent to DISTINCT
-            self.advance();
+            self.skip();
             (true, None)
         } else {
             // Only consume ALL if it's the SELECT ALL modifier, not if it's a column reference like "all.count"
             if self.check(TokenType::All) && !self.check_next(TokenType::Dot) {
-                self.advance();
+                self.skip();
             }
             (false, None)
         };
@@ -1463,12 +1463,12 @@ impl Parser {
             ];
             loop {
                 if self.check(TokenType::StraightJoin) {
-                    self.advance();
+                    self.skip();
                     operation_modifiers.push("STRAIGHT_JOIN".to_string());
                 } else if self.check(TokenType::Var) {
-                    let upper = self.peek().text.to_uppercase();
+                    let upper = self.peek().text.to_ascii_uppercase();
                     if MYSQL_MODIFIERS.contains(&upper.as_str()) {
-                        self.advance();
+                        self.skip();
                         operation_modifiers.push(upper);
                     } else {
                         break;
@@ -1535,7 +1535,7 @@ impl Parser {
 
             if retreat_for_exclude || self.check(TokenType::Exclude) {
                 if !retreat_for_exclude {
-                    self.advance(); // consume EXCLUDE
+                    self.skip(); // consume EXCLUDE
                 }
                 // Parse EXCLUDE columns - with or without parens
                 let mut exclude_cols = Vec::new();
@@ -1610,7 +1610,7 @@ impl Parser {
             // Oracle PL/SQL: SELECT ... INTO var1, var2, ... FROM ...
             // If followed by comma, parse additional target variables
             if self.match_token(TokenType::Comma) {
-                let mut target_expressions = vec![Expression::Table(table_name)];
+                let mut target_expressions = vec![Expression::Table(Box::new(table_name))];
                 target_expressions.push(self.parse_expression()?);
                 while self.match_token(TokenType::Comma) {
                     target_expressions.push(self.parse_expression()?);
@@ -1624,7 +1624,7 @@ impl Parser {
                 })
             } else {
                 Some(SelectInto {
-                    this: Expression::Table(table_name),
+                    this: Expression::Table(Box::new(table_name)),
                     temporary,
                     unlogged,
                     bulk_collect: false,
@@ -1689,7 +1689,7 @@ impl Parser {
 
         // Parse GROUP BY
         let group_by = if self.check(TokenType::Group) {
-            let group_comments = self.current_leading_comments();
+            let group_comments = self.current_leading_comments().to_vec();
             if self.match_keywords(&[TokenType::Group, TokenType::By]) {
                 let mut gb = self.parse_group_by()?;
                 gb.comments = group_comments;
@@ -1706,7 +1706,7 @@ impl Parser {
                 || self.check_next(TokenType::Cube))
         {
             // ClickHouse: WITH TOTALS/ROLLUP/CUBE without GROUP BY
-            self.advance(); // consume WITH
+            self.skip(); // consume WITH
             let totals = self.match_identifier("TOTALS");
             let mut expressions = Vec::new();
             if self.match_token(TokenType::Rollup) {
@@ -1720,8 +1720,8 @@ impl Parser {
             }
             // Check for chained WITH TOTALS after WITH ROLLUP/CUBE
             if !totals && self.check(TokenType::With) && self.check_next_identifier("TOTALS") {
-                self.advance();
-                self.advance();
+                self.skip();
+                self.skip();
             }
             Some(GroupBy {
                 expressions,
@@ -1735,8 +1735,8 @@ impl Parser {
 
         // Parse HAVING
         let having = if self.check(TokenType::Having) {
-            let having_comments = self.current_leading_comments();
-            self.advance(); // consume HAVING
+            let having_comments = self.current_leading_comments().to_vec();
+            self.skip(); // consume HAVING
             Some(Having {
                 this: self.parse_expression()?,
                 comments: having_comments,
@@ -1764,7 +1764,7 @@ impl Parser {
                 && (self.tokens[next_pos].token_type == TokenType::Var
                     || self.tokens[next_pos].token_type == TokenType::Identifier)
         } {
-            self.advance(); // consume WINDOW
+            self.skip(); // consume WINDOW
             Some(self.parse_named_windows()?)
         } else {
             None
@@ -1803,7 +1803,7 @@ impl Parser {
 
         // Parse ORDER BY or ORDER SIBLINGS BY (Oracle) - comes after SORT BY
         let order_by = if self.check(TokenType::Order) {
-            let order_comments = self.current_leading_comments();
+            let order_comments = self.current_leading_comments().to_vec();
             if self.match_keywords(&[TokenType::Order, TokenType::Siblings, TokenType::By]) {
                 // ORDER SIBLINGS BY (Oracle hierarchical queries)
                 let mut ob = self.parse_order_by_with_siblings(true)?;
@@ -1825,9 +1825,9 @@ impl Parser {
         // Capture trailing comments from the token before LIMIT (e.g., WHERE condition's last token)
         // These comments should be emitted after the LIMIT value, not before LIMIT.
         let pre_limit_comments = if self.check(TokenType::Limit) {
-            let mut comments = self.previous_trailing_comments();
+            let mut comments = self.previous_trailing_comments().to_vec();
             // Also capture leading comments on the LIMIT token (comments on a separate line before LIMIT)
-            comments.extend(self.current_leading_comments());
+            comments.extend_from_slice(self.current_leading_comments());
             comments
         } else {
             Vec::new()
@@ -1851,7 +1851,7 @@ impl Parser {
                     Ok(expr) => {
                         if self.check(TokenType::Percent) && self.is_percent_modifier() {
                             // Found PERCENT keyword or % symbol used as PERCENT modifier
-                            self.advance();
+                            self.skip();
                             (expr, true)
                         } else {
                             // No PERCENT - backtrack and use full parse_expression
@@ -1860,7 +1860,7 @@ impl Parser {
                             // Check again for PERCENT keyword (e.g., after complex expression)
                             let has_pct =
                                 if self.check(TokenType::Percent) && self.is_percent_modifier() {
-                                    self.advance();
+                                    self.skip();
                                     true
                                 } else {
                                     false
@@ -1874,7 +1874,7 @@ impl Parser {
                         let full_expr = self.parse_expression()?;
                         let has_pct =
                             if self.check(TokenType::Percent) && self.is_percent_modifier() {
-                                self.advance();
+                                self.skip();
                                 true
                             } else {
                                 false
@@ -2011,8 +2011,8 @@ impl Parser {
 
         // TSQL: OPTION clause (e.g., OPTION(LABEL = 'foo', HASH JOIN))
         let option = if self.check_identifier("OPTION") && self.check_next(TokenType::LParen) {
-            self.advance(); // consume OPTION
-            self.advance(); // consume (
+            self.skip(); // consume OPTION
+            self.skip(); // consume (
             let mut content = String::from("OPTION(");
             let mut depth = 1;
             while !self.is_at_end() && depth > 0 {
@@ -2088,7 +2088,7 @@ impl Parser {
                         && !self.check(TokenType::Settings)
                     {
                         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                            self.advance();
+                            self.skip();
                         }
                     }
                     continue;
@@ -2235,7 +2235,7 @@ impl Parser {
             // But first check for Snowflake-style CTE: WITH t (SELECT ...) - no AS keyword
             // In that case, LParen is followed by SELECT, not column names
             let columns = if self.check(TokenType::LParen) && !self.check_next(TokenType::Select) {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let cols = self.parse_identifier_list()?;
                 self.expect(TokenType::RParen)?;
                 cols
@@ -2258,7 +2258,7 @@ impl Parser {
             if matches!(self.config.dialect, Some(DialectType::ClickHouse))
                 && self.check(TokenType::Arrow)
             {
-                self.advance(); // consume ->
+                self.skip(); // consume ->
                 let body = self.parse_expression()?;
                 let lambda = Expression::Lambda(Box::new(LambdaExpr {
                     parameters: vec![name.clone()],
@@ -2300,7 +2300,7 @@ impl Parser {
             let cte_comments = if self.match_token(TokenType::As) {
                 // Capture trailing comments from the AS token
                 // e.g., "WITH a AS /* comment */ (...)" -> comment goes after alias
-                self.previous_trailing_comments()
+                self.previous_trailing_comments().to_vec()
             } else {
                 Vec::new()
             };
@@ -2333,7 +2333,7 @@ impl Parser {
                 // Check for WITH merging: WITH a AS (...) WITH b AS (...) -> merged
                 // If the next token is WITH (not followed by nothing), continue parsing CTEs
                 if self.check(TokenType::With) {
-                    self.advance(); // consume the redundant WITH keyword
+                    self.skip(); // consume the redundant WITH keyword
                                     // Check if this WITH is also RECURSIVE
                     if self.match_token(TokenType::Recursive) && !recursive {
                         // If second WITH is RECURSIVE but first wasn't, ignore (keep non-recursive)
@@ -2481,8 +2481,8 @@ impl Parser {
 
             // Handle star
             if self.check(TokenType::Star) {
-                self.advance();
-                let star_trailing_comments = self.previous_trailing_comments();
+                self.skip();
+                let star_trailing_comments = self.previous_trailing_comments().to_vec();
                 let star = self.parse_star_modifiers_with_comments(None, star_trailing_comments)?;
                 let mut star_expr = Expression::Star(star);
                 // ClickHouse: * APPLY(func) or * APPLY func or * APPLY(x -> expr) column transformer
@@ -2491,7 +2491,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) {
                     while self.check(TokenType::Apply) {
-                        self.advance(); // consume APPLY
+                        self.skip(); // consume APPLY
                         let apply_expr = if self.match_token(TokenType::LParen) {
                             // Could be APPLY(func_name) or APPLY(x -> expr)
                             let expr = self.parse_expression()?;
@@ -2521,7 +2521,7 @@ impl Parser {
                     self.parse_star_modifiers(None)?;
                     // Continue with more APPLYs
                     while self.check(TokenType::Apply) {
-                        self.advance();
+                        self.skip();
                         let apply_expr = if self.match_token(TokenType::LParen) {
                             let expr = self.parse_expression()?;
                             self.expect(TokenType::RParen)?;
@@ -2564,7 +2564,7 @@ impl Parser {
                     let left = star_expr;
                     // Use parse_comparison / parse_is chain
                     if self.check(TokenType::Is) {
-                        self.advance(); // consume IS
+                        self.skip(); // consume IS
                         let not = self.match_token(TokenType::Not);
                         if self.match_token(TokenType::Null) {
                             star_expr = if not {
@@ -2622,7 +2622,7 @@ impl Parser {
             } else {
                 // Capture leading comments from the first token before parsing
                 // These are comments on a separate line before the expression
-                let leading_comments = self.current_leading_comments();
+                let leading_comments = self.current_leading_comments().to_vec();
                 let expr = self.parse_expression()?;
 
                 // ClickHouse: COLUMNS(id, value) EXCEPT (id) REPLACE (5 AS id) APPLY func
@@ -2650,7 +2650,7 @@ impl Parser {
                         loop {
                             if self.check(TokenType::Except) || self.check(TokenType::Exclude) {
                                 // Parse EXCEPT/EXCLUDE modifier
-                                self.advance();
+                                self.skip();
                                 self.match_identifier("STRICT");
                                 if self.match_token(TokenType::LParen) {
                                     loop {
@@ -2670,7 +2670,7 @@ impl Parser {
                                 }
                             } else if self.check(TokenType::Replace) {
                                 // Parse REPLACE modifier: REPLACE (expr AS alias, ...)
-                                self.advance();
+                                self.skip();
                                 self.match_identifier("STRICT");
                                 if self.match_token(TokenType::LParen) {
                                     loop {
@@ -2682,7 +2682,7 @@ impl Parser {
                                             if self.is_identifier_token()
                                                 || self.is_safe_keyword_as_identifier()
                                             {
-                                                self.advance();
+                                                self.skip();
                                             }
                                         }
                                         if !self.match_token(TokenType::Comma) {
@@ -2696,13 +2696,13 @@ impl Parser {
                                         if self.is_identifier_token()
                                             || self.is_safe_keyword_as_identifier()
                                         {
-                                            self.advance();
+                                            self.skip();
                                         }
                                     }
                                 }
                             } else if self.check(TokenType::Apply) {
                                 // Parse APPLY transformer
-                                self.advance();
+                                self.skip();
                                 let apply_expr = if self.match_token(TokenType::LParen) {
                                     let e = self.parse_expression()?;
                                     self.expect(TokenType::RParen)?;
@@ -2727,7 +2727,7 @@ impl Parser {
                 };
 
                 // Capture comments between expression and potential AS
-                let pre_alias_comments = self.previous_trailing_comments();
+                let pre_alias_comments = self.previous_trailing_comments().to_vec();
 
                 // DuckDB prefix alias syntax: identifier: expression (e.g., "foo: 1" means "1 AS foo")
                 // Check if the expression is a simple identifier followed by a colon
@@ -2740,11 +2740,11 @@ impl Parser {
                     };
                     if let Some(alias) = alias_ident {
                         // Consume the colon
-                        self.advance();
-                        let colon_comments = self.previous_trailing_comments();
+                        self.skip();
+                        let colon_comments = self.previous_trailing_comments().to_vec();
                         // Parse the actual value expression
                         let value = self.parse_expression()?;
-                        let value_trailing = self.previous_trailing_comments();
+                        let value_trailing = self.previous_trailing_comments().to_vec();
                         // For colon-alias (foo: expr), comments between alias and colon should
                         // become trailing comments (placed after the alias in output).
                         // Comments after the value expression are also trailing.
@@ -2767,7 +2767,7 @@ impl Parser {
                 } else if self.match_token(TokenType::As) {
                     // Capture comments from AS token (e.g., AS /* foo */ (a, b, c))
                     // These go into trailing_comments (after the alias), not pre_alias_comments
-                    let as_comments = self.previous_trailing_comments();
+                    let as_comments = self.previous_trailing_comments().to_vec();
                     // Check for column aliases: AS (col1, col2) - used by POSEXPLODE etc.
                     if self.match_token(TokenType::LParen) {
                         let mut column_aliases = Vec::new();
@@ -2785,7 +2785,7 @@ impl Parser {
                         }
                         self.match_token(TokenType::RParen);
                         let mut trailing_comments = as_comments;
-                        trailing_comments.extend(self.previous_trailing_comments());
+                        trailing_comments.extend_from_slice(self.previous_trailing_comments());
                         Expression::Alias(Box::new(Alias {
                             this: expr,
                             alias: Identifier::new(String::new()),
@@ -2798,7 +2798,7 @@ impl Parser {
                         // Allow keywords as aliases (e.g., SELECT 1 AS filter)
                         // Use _with_quoted to preserve quoted alias
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        let mut trailing_comments = self.previous_trailing_comments();
+                        let mut trailing_comments = self.previous_trailing_comments().to_vec();
                         // If parse_comparison stored pending leading comments (no comparison
                         // followed), use those. Otherwise use the leading_comments we captured
                         // before parse_expression(). Both come from the same token, so we
@@ -2850,7 +2850,7 @@ impl Parser {
                     let alias_token = self.advance();
                     let alias_text = alias_token.text.clone();
                     let is_quoted = alias_token.token_type == TokenType::QuotedIdentifier;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Alias(Box::new(Alias {
                         this: expr,
                         alias: Identifier {
@@ -2993,7 +2993,7 @@ impl Parser {
 
         // Check if there's an explicit SELECT clause after FROM
         let expressions = if self.check(TokenType::Select) {
-            self.advance(); // consume SELECT
+            self.skip(); // consume SELECT
             self.parse_select_expressions()?
         } else {
             // No explicit SELECT means SELECT *
@@ -3216,8 +3216,8 @@ impl Parser {
             // ClickHouse: `values` as a table name (not followed by LParen)
             let token = self.advance();
             let ident = Identifier::new(token.text);
-            let trailing_comments = self.previous_trailing_comments();
-            Expression::Table(TableRef {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            Expression::boxed_table(TableRef {
                 name: ident,
                 schema: None,
                 catalog: None,
@@ -3308,7 +3308,7 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
 
                 // Handle UNNEST specially to create UnnestFunc expression
-                let mut func_expr = if first_name.to_uppercase() == "UNNEST" {
+                let mut func_expr = if first_name.eq_ignore_ascii_case("UNNEST") {
                     let mut args_iter = args.into_iter();
                     let this = args_iter
                         .next()
@@ -3344,7 +3344,7 @@ impl Parser {
                         })))
                     } else if self.check(TokenType::Offset) || self.check_identifier("OFFSET") {
                         // BigQuery: WITH OFFSET [AS alias]
-                        self.advance(); // consume OFFSET
+                        self.skip(); // consume OFFSET
                                         // Check for optional offset alias: WITH OFFSET AS y or WITH OFFSET y
                         if matches!(
                             self.config.dialect,
@@ -3460,7 +3460,7 @@ impl Parser {
                     cluster_by: None,
                     lateral: false,
                     modifiers_inside: false,
-                    trailing_comments: self.previous_trailing_comments(),
+                    trailing_comments: self.previous_trailing_comments().to_vec(),
                     inferred_type: None,
                 }))
             } else if self.check(TokenType::Select)
@@ -3475,7 +3475,7 @@ impl Parser {
             {
                 let query = self.parse_statement()?;
                 self.expect(TokenType::RParen)?;
-                let trailing = self.previous_trailing_comments();
+                let trailing = self.previous_trailing_comments().to_vec();
                 // Check for set operations after parenthesized query
                 // If there's a set operation, wrap query in Subquery first to preserve parens
                 // e.g., (SELECT 1) UNION (SELECT 2) - the left operand needs Subquery wrapper
@@ -3740,7 +3740,7 @@ impl Parser {
                     cluster_by: None,
                     lateral: false,
                     modifiers_inside: false,
-                    trailing_comments: self.previous_trailing_comments(),
+                    trailing_comments: self.previous_trailing_comments().to_vec(),
                     inferred_type: None,
                 }))
             }
@@ -3774,10 +3774,10 @@ impl Parser {
             {
                 // Parse the alias identifier
                 let alias_ident = self.parse_bigquery_table_part()?;
-                let pre_alias_comments = self.previous_trailing_comments();
+                let pre_alias_comments = self.previous_trailing_comments().to_vec();
                 // Consume the colon
                 self.expect(TokenType::Colon)?;
-                let colon_comments = self.previous_trailing_comments();
+                let colon_comments = self.previous_trailing_comments().to_vec();
                 // Parse the actual table expression recursively
                 let mut table_expr = self.parse_table_expression()?;
                 // Merge comments
@@ -3834,10 +3834,10 @@ impl Parser {
                 // Handle TSQL a..b syntax (database..table with empty schema)
                 if self.check(TokenType::Dot) {
                     // Two consecutive dots: a..b means catalog..table (empty schema)
-                    self.advance(); // consume second dot
+                    self.skip(); // consume second dot
                     let table_ident = self.parse_bigquery_table_part()?;
-                    let trailing_comments = self.previous_trailing_comments();
-                    return Ok(Expression::Table(TableRef {
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    return Ok(Expression::boxed_table(TableRef {
                         catalog: Some(first_ident),
                         schema: Some(Identifier::new("")), // Empty schema represents ..
                         name: table_ident,
@@ -3866,9 +3866,9 @@ impl Parser {
                     Some(crate::dialects::DialectType::BigQuery)
                 ) && self.check(TokenType::Star)
                 {
-                    self.advance(); // consume *
-                    let trailing_comments = self.previous_trailing_comments();
-                    return Ok(Expression::Table(TableRef {
+                    self.skip(); // consume *
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    return Ok(Expression::boxed_table(TableRef {
                         catalog: None,
                         schema: Some(first_ident),
                         name: Identifier::new("*"),
@@ -3902,9 +3902,9 @@ impl Parser {
                         Some(crate::dialects::DialectType::BigQuery)
                     ) && self.check(TokenType::Star)
                     {
-                        self.advance(); // consume *
-                        let trailing_comments = self.previous_trailing_comments();
-                        return Ok(Expression::Table(TableRef {
+                        self.skip(); // consume *
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
+                        return Ok(Expression::boxed_table(TableRef {
                             catalog: Some(first_ident),
                             schema: Some(second_ident),
                             name: Identifier::new("*"),
@@ -3940,12 +3940,12 @@ impl Parser {
                         ) && self.check(TokenType::Star)
                             && self.is_connected()
                         {
-                            self.advance(); // consume *
+                            self.skip(); // consume *
                             table_name.name.push('*');
                         }
-                        let trailing_comments = self.previous_trailing_comments();
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
                         // For 4-part names, combine first two parts as catalog, third as schema
-                        Expression::Table(TableRef {
+                        Expression::boxed_table(TableRef {
                             catalog: Some(Identifier::new(format!(
                                 "{}.{}",
                                 first_name, second_name
@@ -3976,7 +3976,7 @@ impl Parser {
                             self.parse_function_arguments()?
                         };
                         self.expect(TokenType::RParen)?;
-                        let trailing_comments = self.previous_trailing_comments();
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
                         Expression::Function(Box::new(Function {
                             name: format!("{}.{}.{}", first_name, second_name, third_name),
                             args,
@@ -3998,11 +3998,11 @@ impl Parser {
                         ) && self.check(TokenType::Star)
                             && self.is_connected()
                         {
-                            self.advance(); // consume *
+                            self.skip(); // consume *
                             table_name.name.push('*');
                         }
-                        let trailing_comments = self.previous_trailing_comments();
-                        Expression::Table(TableRef {
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
+                        Expression::boxed_table(TableRef {
                             catalog: Some(first_ident),
                             schema: Some(second_ident),
                             name: table_name,
@@ -4031,7 +4031,7 @@ impl Parser {
                         self.parse_function_arguments()?
                     };
                     self.expect(TokenType::RParen)?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Function(Box::new(Function {
                         name: format!("{}.{}", first_name, second_name),
                         args,
@@ -4053,11 +4053,11 @@ impl Parser {
                     ) && self.check(TokenType::Star)
                         && self.is_connected()
                     {
-                        self.advance(); // consume *
+                        self.skip(); // consume *
                         table_name.name.push('*');
                     }
-                    let trailing_comments = self.previous_trailing_comments();
-                    Expression::Table(TableRef {
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    Expression::boxed_table(TableRef {
                         catalog: None,
                         schema: Some(first_ident),
                         name: table_name,
@@ -4080,7 +4080,7 @@ impl Parser {
                 }
             } else if self.match_token(TokenType::LParen) {
                 // Handle JSON_TABLE specially - it has COLUMNS clause syntax
-                if first_name.to_uppercase() == "JSON_TABLE" {
+                if first_name.eq_ignore_ascii_case("JSON_TABLE") {
                     // Parse the JSON expression (use parse_bitwise to avoid consuming FORMAT)
                     let this = self
                         .parse_bitwise()?
@@ -4152,7 +4152,7 @@ impl Parser {
                         error_handling,
                         empty_handling,
                     }))
-                } else if first_name.to_uppercase() == "XMLTABLE" {
+                } else if first_name.eq_ignore_ascii_case("XMLTABLE") {
                     // Handle XMLTABLE specially - it has COLUMNS clause syntax
                     // XMLTABLE([XMLNAMESPACES(...),] '/xpath' PASSING xml_doc COLUMNS ...)
                     if let Some(xml_table) = self.parse_xml_table()? {
@@ -4161,7 +4161,7 @@ impl Parser {
                     } else {
                         return Err(self.parse_error("Failed to parse XMLTABLE"));
                     }
-                } else if first_name.to_uppercase() == "OPENJSON" {
+                } else if first_name.eq_ignore_ascii_case("OPENJSON") {
                     // Handle OPENJSON specially - it has WITH clause for column definitions
                     // OPENJSON(json[, path]) [WITH (col1 type1 'path' [AS JSON], ...)]
                     if let Some(openjson_expr) = self.parse_open_json()? {
@@ -4169,7 +4169,7 @@ impl Parser {
                     } else {
                         return Err(self.parse_error("Failed to parse OPENJSON"));
                     }
-                } else if first_name.to_uppercase() == "SEMANTIC_VIEW" {
+                } else if first_name.eq_ignore_ascii_case("SEMANTIC_VIEW") {
                     // Handle SEMANTIC_VIEW specially - it has METRICS/DIMENSIONS/FACTS/WHERE syntax
                     // SEMANTIC_VIEW(table METRICS a.b, a.c DIMENSIONS a.b, a.c WHERE expr)
                     let semantic_view = self.parse_semantic_view()?;
@@ -4183,7 +4183,7 @@ impl Parser {
                     // contain a subquery as the argument
                     let query = self.parse_statement()?;
                     self.expect(TokenType::RParen)?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Function(Box::new(Function {
                         name: first_name.to_string(),
                         args: vec![query],
@@ -4203,10 +4203,10 @@ impl Parser {
                         self.parse_function_arguments()?
                     };
                     self.expect(TokenType::RParen)?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
 
                     // Handle UNNEST specially to create UnnestFunc expression
-                    if first_name.to_uppercase() == "UNNEST" {
+                    if first_name.eq_ignore_ascii_case("UNNEST") {
                         // Check for WITH ORDINALITY (Presto) or WITH OFFSET (BigQuery)
                         // Both are semantically the same - provide an ordinal/offset column
                         let with_ordinality = self
@@ -4280,11 +4280,11 @@ impl Parser {
                 ) && self.check(TokenType::Star)
                     && self.is_connected()
                 {
-                    self.advance(); // consume *
+                    self.skip(); // consume *
                     table_name.name.push('*');
                 }
-                let trailing_comments = self.previous_trailing_comments();
-                Expression::Table(TableRef {
+                let trailing_comments = self.previous_trailing_comments().to_vec();
+                Expression::boxed_table(TableRef {
                     catalog: None,
                     schema: None,
                     name: table_name,
@@ -4311,7 +4311,7 @@ impl Parser {
                 param
             } else {
                 // Spark/Databricks widget template variable: {name}
-                self.advance(); // consume {
+                self.skip(); // consume {
                 if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                     let name_token = self.advance();
                     self.expect(TokenType::RBrace)?;
@@ -4330,8 +4330,8 @@ impl Parser {
         } else if self.check(TokenType::Dollar) && self.check_next(TokenType::LBrace) {
             // Template variable as table reference: ${variable_name} or ${kind:name}
             // This is used in Databricks/Hive for parameterized queries
-            self.advance(); // consume $
-            self.advance(); // consume {
+            self.skip(); // consume $
+            self.skip(); // consume {
             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                 let name_token = self.advance();
                 // Check for ${kind:name} syntax (e.g., ${hiveconf:some_var})
@@ -4367,8 +4367,8 @@ impl Parser {
                 trailing_comments: Vec::new(),
                 span: None,
             };
-            let trailing_comments = self.previous_trailing_comments();
-            Expression::Table(TableRef {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            Expression::boxed_table(TableRef {
                 catalog: None,
                 schema: None,
                 name: table_name,
@@ -4436,12 +4436,12 @@ impl Parser {
                 .text
                 .eq_ignore_ascii_case("SYSTEM_TIME")
         {
-            self.advance(); // consume FOR
-            self.advance(); // consume SYSTEM_TIME
+            self.skip(); // consume FOR
+            self.skip(); // consume SYSTEM_TIME
             let system_time_str = if self.match_token(TokenType::As) {
                 // AS OF expr
                 if self.check_keyword_text("OF") {
-                    self.advance(); // consume OF
+                    self.skip(); // consume OF
                     let start = self.current;
                     // Collect expression tokens until we hit a clause boundary
                     while !self.is_at_end()
@@ -4468,7 +4468,7 @@ impl Parser {
                         && !self.check(TokenType::Pivot)
                         && !self.check(TokenType::Unpivot)
                     {
-                        self.advance();
+                        self.skip();
                     }
                     let expr_text = self.tokens_to_sql_uppercased(start, self.current);
                     format!("FOR SYSTEM_TIME AS OF {}", expr_text)
@@ -4479,10 +4479,10 @@ impl Parser {
                 // BETWEEN expr AND expr
                 let start = self.current;
                 while !self.is_at_end() && !self.check(TokenType::And) {
-                    self.advance();
+                    self.skip();
                 }
                 let expr1_text = self.tokens_to_sql_uppercased(start, self.current);
-                self.advance(); // consume AND
+                self.skip(); // consume AND
                 let start2 = self.current;
                 while !self.is_at_end()
                     && !self.check(TokenType::Semicolon)
@@ -4508,7 +4508,7 @@ impl Parser {
                     && !self.check(TokenType::Pivot)
                     && !self.check(TokenType::Unpivot)
                 {
-                    self.advance();
+                    self.skip();
                 }
                 let expr2_text = self.tokens_to_sql_uppercased(start2, self.current);
                 format!("FOR SYSTEM_TIME BETWEEN {} AND {}", expr1_text, expr2_text)
@@ -4516,10 +4516,10 @@ impl Parser {
                 // FROM expr TO expr
                 let start = self.current;
                 while !self.is_at_end() && !self.check(TokenType::To) {
-                    self.advance();
+                    self.skip();
                 }
                 let expr1_text = self.tokens_to_sql_uppercased(start, self.current);
-                self.advance(); // consume TO
+                self.skip(); // consume TO
                 let start2 = self.current;
                 while !self.is_at_end()
                     && !self.check(TokenType::Semicolon)
@@ -4528,12 +4528,12 @@ impl Parser {
                     && !self.check(TokenType::Comma)
                     && !self.check(TokenType::RParen)
                 {
-                    self.advance();
+                    self.skip();
                 }
                 let expr2_text = self.tokens_to_sql_uppercased(start2, self.current);
                 format!("FOR SYSTEM_TIME FROM {} TO {}", expr1_text, expr2_text)
             } else if self.check_identifier("CONTAINED") {
-                self.advance(); // consume CONTAINED
+                self.skip(); // consume CONTAINED
                 self.expect(TokenType::In)?;
                 self.expect(TokenType::LParen)?;
                 let start = self.current;
@@ -4548,7 +4548,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 let inner_text = self.tokens_to_sql_uppercased(start, self.current);
                 self.expect(TokenType::RParen)?;
@@ -4567,14 +4567,14 @@ impl Parser {
         // Syntax: FOR VERSION AS OF <snapshot_id>
         //         FOR TIMESTAMP AS OF <timestamp_expr>
         if self.check(TokenType::For) && self.current + 1 < self.tokens.len() {
-            let next_text = self.tokens[self.current + 1].text.to_uppercase();
-            if next_text == "VERSION" || next_text == "TIMESTAMP" {
-                self.advance(); // consume FOR
-                let version_kind = self.advance().text.to_uppercase(); // consume VERSION or TIMESTAMP
+            let next_text = &self.tokens[self.current + 1].text;
+            if next_text.eq_ignore_ascii_case("VERSION") || next_text.eq_ignore_ascii_case("TIMESTAMP") {
+                self.skip(); // consume FOR
+                let version_kind = self.advance().text.to_ascii_uppercase(); // consume VERSION or TIMESTAMP
 
                 // Expect AS OF
                 if self.match_token(TokenType::As) && self.check_keyword_text("OF") {
-                    self.advance(); // consume OF
+                    self.skip(); // consume OF
 
                     // Parse the expression value
                     if let Some(value_expr) = self.parse_bitwise()? {
@@ -4595,17 +4595,17 @@ impl Parser {
         // Syntax: TIMESTAMP AS OF <timestamp_expr>
         //         VERSION AS OF <snapshot_id>
         if self.current < self.tokens.len() {
-            let current_text = self.tokens[self.current].text.to_uppercase();
-            if (current_text == "TIMESTAMP" || current_text == "VERSION")
+            let current_text = &self.tokens[self.current].text;
+            if (current_text.eq_ignore_ascii_case("TIMESTAMP") || current_text.eq_ignore_ascii_case("VERSION"))
                 && self.current + 2 < self.tokens.len()
                 && self.tokens[self.current + 1].token_type == TokenType::As
                 && self.tokens[self.current + 2]
                     .text
                     .eq_ignore_ascii_case("OF")
             {
-                let version_kind = self.advance().text.to_uppercase(); // consume TIMESTAMP or VERSION
-                self.advance(); // consume AS
-                self.advance(); // consume OF
+                let version_kind = self.advance().text.to_ascii_uppercase(); // consume TIMESTAMP or VERSION
+                self.skip(); // consume AS
+                self.skip(); // consume OF
 
                 // Parse the expression value
                 if let Some(value_expr) = self.parse_bitwise()? {
@@ -4699,8 +4699,8 @@ impl Parser {
             // Peek ahead to see if next token after USE/IGNORE/FORCE is INDEX or KEY
             let next_idx = self.current + 1;
             let is_index_hint = next_idx < self.tokens.len() && {
-                let next_text = self.tokens[next_idx].text.to_uppercase();
-                next_text == "INDEX" || next_text == "KEY"
+                let next_text = &self.tokens[next_idx].text;
+                next_text.eq_ignore_ascii_case("INDEX") || next_text.eq_ignore_ascii_case("KEY")
             };
             if is_index_hint {
                 if let Expression::Table(ref mut table) = expr {
@@ -4720,7 +4720,7 @@ impl Parser {
 
         // Check for SQLite INDEXED BY or NOT INDEXED table hints
         if self.check_identifier("INDEXED") {
-            self.advance(); // consume INDEXED
+            self.skip(); // consume INDEXED
             self.expect(TokenType::By)?;
             // Parse index name (can be qualified: schema.index)
             let first_part = self.expect_identifier_or_keyword()?;
@@ -4739,8 +4739,8 @@ impl Parser {
                 }));
             }
         } else if self.check(TokenType::Not) && self.check_next_identifier("INDEXED") {
-            self.advance(); // consume NOT
-            self.advance(); // consume INDEXED
+            self.skip(); // consume NOT
+            self.skip(); // consume INDEXED
             if let Expression::Table(ref mut table) = expr {
                 table.hints.push(Expression::Identifier(Identifier {
                     name: "NOT INDEXED".to_string(),
@@ -4754,20 +4754,20 @@ impl Parser {
         // Check for PIVOT (can be followed by UNPIVOT)
         // Only treat as PIVOT clause when followed by ( — otherwise it's a table alias
         if self.check(TokenType::Pivot) && self.check_next(TokenType::LParen) {
-            self.advance(); // consume PIVOT
+            self.skip(); // consume PIVOT
             expr = self.parse_pivot(expr)?;
         }
         // Check for UNPIVOT (can follow PIVOT or be standalone)
         // Only treat as UNPIVOT clause when followed by (, INCLUDE, or EXCLUDE — otherwise it's a table alias
         if self.check(TokenType::Unpivot) && self.is_unpivot_clause_start() {
-            self.advance(); // consume UNPIVOT
+            self.skip(); // consume UNPIVOT
             expr = self.parse_unpivot(expr)?;
         }
         // Check for MATCH_RECOGNIZE
         else if self.check(TokenType::MatchRecognize)
             && !matches!(&expr, Expression::Pivot(_) | Expression::Unpivot(_))
         {
-            self.advance();
+            self.skip();
             expr = self.parse_match_recognize(Some(expr))?;
         }
 
@@ -4775,7 +4775,7 @@ impl Parser {
         if self.match_token(TokenType::As) {
             // Handle AS (col1, col2) without alias name - used by POSEXPLODE etc.
             if self.check(TokenType::LParen) {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let mut column_aliases = Vec::new();
                 loop {
                     if self.check(TokenType::RParen) {
@@ -5104,7 +5104,7 @@ impl Parser {
                 }
             }
             if is_col_list && col_count >= 1 {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let mut aliases = Vec::new();
                 loop {
                     aliases.push(Identifier::new(self.advance().text.clone()));
@@ -5132,7 +5132,7 @@ impl Parser {
 
         // Check for SQLite INDEXED BY after alias: t AS t INDEXED BY idx
         if self.check_identifier("INDEXED") {
-            self.advance(); // consume INDEXED
+            self.skip(); // consume INDEXED
             self.expect(TokenType::By)?;
             let first_part = self.expect_identifier_or_keyword()?;
             let index_name = if self.match_token(TokenType::Dot) {
@@ -5154,10 +5154,10 @@ impl Parser {
         // Check for PIVOT/UNPIVOT after alias (some dialects allow this order)
         // Only treat as PIVOT/UNPIVOT clause when followed by ( — otherwise it's a table alias
         if self.check(TokenType::Pivot) && self.check_next(TokenType::LParen) {
-            self.advance(); // consume PIVOT
+            self.skip(); // consume PIVOT
             expr = self.parse_pivot(expr)?;
         } else if self.check(TokenType::Unpivot) && self.is_unpivot_clause_start() {
-            self.advance(); // consume UNPIVOT
+            self.skip(); // consume UNPIVOT
             expr = self.parse_unpivot(expr)?;
         }
 
@@ -5183,7 +5183,7 @@ impl Parser {
                     let col_name = parts.join(".");
                     let alias_expr = if let Some(alias) = t.alias {
                         Expression::Alias(Box::new(Alias {
-                            this: Expression::Column(Column {
+                            this: Expression::boxed_column(Column {
                                 name: Identifier::new(&col_name),
                                 table: None,
                                 join_mark: false,
@@ -5198,7 +5198,7 @@ impl Parser {
                             inferred_type: None,
                         }))
                     } else {
-                        Expression::Column(Column {
+                        Expression::boxed_column(Column {
                             name: Identifier::new(&col_name),
                             table: None,
                             join_mark: false,
@@ -5222,7 +5222,7 @@ impl Parser {
         if self.check(TokenType::TableSample) || self.check(TokenType::Sample) {
             if let Some(sample) = self.parse_table_level_sample()? {
                 // Capture trailing comments after the SAMPLE clause (e.g., -- 25% of rows in table1)
-                let post_sample_comments = self.previous_trailing_comments();
+                let post_sample_comments = self.previous_trailing_comments().to_vec();
                 if let Expression::Table(ref mut table) = expr {
                     table.table_sample = Some(Box::new(sample));
                     if !post_sample_comments.is_empty() {
@@ -5262,10 +5262,10 @@ impl Parser {
                 .text
                 .eq_ignore_ascii_case("SYSTEM_TIME")
         {
-            self.advance(); // consume FOR
-            self.advance(); // consume SYSTEM_TIME
+            self.skip(); // consume FOR
+            self.skip(); // consume SYSTEM_TIME
             if self.match_token(TokenType::As) && self.check_keyword_text("OF") {
-                self.advance(); // consume OF
+                self.skip(); // consume OF
                 let start = self.current;
                 // Collect expression tokens until clause boundary
                 while !self.is_at_end()
@@ -5288,7 +5288,7 @@ impl Parser {
                     && !self.check(TokenType::Comma)
                     && !self.check(TokenType::RParen)
                 {
-                    self.advance();
+                    self.skip();
                 }
                 let expr_text = self.tokens_to_sql(start, self.current);
                 let system_time_str = format!("FOR SYSTEM_TIME AS OF {}", expr_text);
@@ -5309,7 +5309,7 @@ impl Parser {
                 // Case 1: Single quoted identifier containing INFORMATION_SCHEMA (e.g., `proj.dataset.INFORMATION_SCHEMA.SOME_VIEW`)
                 // Add an alias that is the same as the table name (only if no alias)
                 if table.schema.is_none() && table.catalog.is_none() && table.alias.is_none() {
-                    let name_upper = table.name.name.to_uppercase();
+                    let name_upper = table.name.name.to_ascii_uppercase();
                     if name_upper.contains("INFORMATION_SCHEMA.") {
                         // Set alias to be the full quoted table name
                         table.alias = Some(table.name.clone());
@@ -5582,7 +5582,7 @@ impl Parser {
                 let col_expr = if self.check(TokenType::LParen) {
                     // Could be a tuple of columns for multi-value unpivot
                     let saved = self.current;
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                                     // Try parsing as identifier list (tuple of columns)
                     let mut tuple_cols = Vec::new();
                     let first = self.expect_identifier_or_keyword();
@@ -5764,7 +5764,7 @@ impl Parser {
                 let mut name = ident.name.clone();
 
                 while self.check(TokenType::Dash) && self.is_connected_dash() {
-                    self.advance(); // consume dash
+                    self.skip(); // consume dash
                     name.push('-');
                     // Consume the next part
                     let part = self.advance().clone();
@@ -5842,8 +5842,8 @@ impl Parser {
     fn parse_table_ref(&mut self) -> Result<TableRef> {
         // Check for Snowflake IDENTIFIER() function: IDENTIFIER('string') or IDENTIFIER($var)
         if self.check_identifier("IDENTIFIER") && self.check_next(TokenType::LParen) {
-            self.advance(); // consume IDENTIFIER
-            self.advance(); // consume (
+            self.skip(); // consume IDENTIFIER
+            self.skip(); // consume (
                             // Parse the argument: either a string literal, a variable ($foo), or identifier
             let arg = if self.check(TokenType::String) {
                 let s = self.advance().text.clone();
@@ -5854,7 +5854,7 @@ impl Parser {
                 Expression::Var(Box::new(crate::expressions::Var { this: var }))
             } else if self.check(TokenType::Dollar) {
                 // $foo style variable - Dollar followed by identifier
-                self.advance(); // consume $
+                self.skip(); // consume $
                 let var_name = self.expect_identifier()?;
                 Expression::Var(Box::new(crate::expressions::Var {
                     this: format!("${}", var_name),
@@ -5865,7 +5865,7 @@ impl Parser {
                 Expression::Identifier(Identifier::new(ident))
             };
             self.expect(TokenType::RParen)?;
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             // Create a Function expression to represent IDENTIFIER(arg)
             let identifier_func = Expression::Function(Box::new(crate::expressions::Function {
                 name: "IDENTIFIER".to_string(),
@@ -5907,9 +5907,9 @@ impl Parser {
             // Handle TSQL a..b syntax (database..table with empty schema)
             if self.check(TokenType::Dot) {
                 // Two consecutive dots: a..b means catalog..table (empty schema)
-                self.advance(); // consume second dot
+                self.skip(); // consume second dot
                 let table = self.parse_bigquery_table_part()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Ok(TableRef {
                     catalog: Some(first),
                     schema: Some(Identifier::new("")), // Empty schema represents ..
@@ -5938,8 +5938,8 @@ impl Parser {
                     Some(crate::dialects::DialectType::BigQuery)
                 ) && self.check(TokenType::Star)
                 {
-                    self.advance(); // consume *
-                    let trailing_comments = self.previous_trailing_comments();
+                    self.skip(); // consume *
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     return Ok(TableRef {
                         catalog: None,
                         schema: Some(first),
@@ -5970,8 +5970,8 @@ impl Parser {
                         Some(crate::dialects::DialectType::BigQuery)
                     ) && self.check(TokenType::Star)
                     {
-                        self.advance(); // consume *
-                        let trailing_comments = self.previous_trailing_comments();
+                        self.skip(); // consume *
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
                         return Ok(TableRef {
                             catalog: Some(first),
                             schema: Some(table),
@@ -5994,7 +5994,7 @@ impl Parser {
                         });
                     }
                     let actual_table = self.parse_bigquery_table_part()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(TableRef {
                         catalog: Some(first),
                         schema: Some(table),
@@ -6016,7 +6016,7 @@ impl Parser {
                         span: None,
                     })
                 } else {
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(TableRef {
                         catalog: None,
                         schema: Some(first),
@@ -6040,7 +6040,7 @@ impl Parser {
                 }
             }
         } else {
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             Ok(TableRef {
                 catalog: None,
                 schema: None,
@@ -6068,7 +6068,7 @@ impl Parser {
     fn parse_datetime_field(&mut self) -> Result<DateTimeField> {
         let token = self.advance();
         let original_name = token.text.clone();
-        let name = original_name.to_uppercase();
+        let name = original_name.to_ascii_uppercase();
         match name.as_str() {
             "YEAR" => Ok(DateTimeField::Year),
             "MONTH" => Ok(DateTimeField::Month),
@@ -6153,7 +6153,7 @@ impl Parser {
                 }
                 // Snowflake: DIRECTED keyword before JOIN (e.g., CROSS DIRECTED JOIN)
                 let directed = if needs_join_keyword && self.check_identifier("DIRECTED") {
-                    self.advance();
+                    self.skip();
                     true
                 } else {
                     false
@@ -6424,14 +6424,14 @@ impl Parser {
                 } else {
                     JoinKind::Array
                 };
-                self.advance(); // consume ARRAY
+                self.skip(); // consume ARRAY
                                 // JOIN will be consumed by caller
                 return Some((array_kind, true, false, false, None));
             }
 
             // ClickHouse: PASTE JOIN (positional join, no ON/USING)
             if self.check_identifier("PASTE") && self.check_next(TokenType::Join) {
-                self.advance(); // consume PASTE
+                self.skip(); // consume PASTE
                                 // JOIN will be consumed by caller
                 return Some((JoinKind::Paste, true, false, false, None));
             }
@@ -6477,7 +6477,7 @@ impl Parser {
             // Check if INNER is followed by a set operation (BigQuery INNER UNION/INTERSECT/EXCEPT)
             // In that case, don't treat it as a JOIN keyword
             let saved = self.current;
-            self.advance(); // consume INNER
+            self.skip(); // consume INNER
             if self.check(TokenType::Union)
                 || self.check(TokenType::Intersect)
                 || self.check(TokenType::Except)
@@ -6491,14 +6491,14 @@ impl Parser {
         } else if self.check(TokenType::Left) {
             // Check if LEFT is followed by a set operation (BigQuery LEFT UNION/INTERSECT/EXCEPT)
             let saved = self.current;
-            self.advance(); // consume LEFT
+            self.skip(); // consume LEFT
                             // LEFT can be followed by OUTER/INNER then set op, or directly by set op
             let at_set_op = self.check(TokenType::Union)
                 || self.check(TokenType::Intersect)
                 || self.check(TokenType::Except);
             let at_inner_set_op = self.check(TokenType::Inner) && {
                 let saved2 = self.current;
-                self.advance();
+                self.skip();
                 let is_setop = self.check(TokenType::Union)
                     || self.check(TokenType::Intersect)
                     || self.check(TokenType::Except);
@@ -6528,13 +6528,13 @@ impl Parser {
         } else if self.check(TokenType::Right) {
             // Check if RIGHT is followed by a set operation (BigQuery RIGHT UNION/INTERSECT/EXCEPT)
             let saved = self.current;
-            self.advance(); // consume RIGHT
+            self.skip(); // consume RIGHT
             let at_set_op = self.check(TokenType::Union)
                 || self.check(TokenType::Intersect)
                 || self.check(TokenType::Except);
             let at_inner_set_op = self.check(TokenType::Inner) && {
                 let saved2 = self.current;
-                self.advance();
+                self.skip();
                 let is_setop = self.check(TokenType::Union)
                     || self.check(TokenType::Intersect)
                     || self.check(TokenType::Except);
@@ -6562,13 +6562,13 @@ impl Parser {
         } else if self.check(TokenType::Full) {
             // Check if FULL is followed by a set operation (BigQuery FULL UNION/INTERSECT/EXCEPT)
             let saved = self.current;
-            self.advance(); // consume FULL
+            self.skip(); // consume FULL
             let at_set_op = self.check(TokenType::Union)
                 || self.check(TokenType::Intersect)
                 || self.check(TokenType::Except);
             let at_inner_set_op = self.check(TokenType::Inner) && {
                 let saved2 = self.current;
-                self.advance();
+                self.skip();
                 let is_setop = self.check(TokenType::Union)
                     || self.check(TokenType::Intersect)
                     || self.check(TokenType::Except);
@@ -6624,7 +6624,7 @@ impl Parser {
                 // LATERAL VIEW is not a JOIN type, return None
                 None
             } else {
-                self.advance(); // Consume LATERAL
+                self.skip(); // Consume LATERAL
                 Some((JoinKind::Lateral, true, false, false, None))
             }
         } else if self.match_token(TokenType::Semi) {
@@ -6633,7 +6633,7 @@ impl Parser {
             Some((JoinKind::Anti, true, false, false, None))
         } else if self.check_identifier("POSITIONAL") && self.check_next(TokenType::Join) {
             // DuckDB POSITIONAL JOIN
-            self.advance(); // consume POSITIONAL
+            self.skip(); // consume POSITIONAL
             Some((JoinKind::Positional, true, false, false, None))
         } else if self.match_token(TokenType::StraightJoin) {
             // STRAIGHT_JOIN in MySQL - doesn't need JOIN keyword after it
@@ -6651,13 +6651,13 @@ impl Parser {
     /// Parse TSQL join hints: LOOP, HASH, MERGE, REMOTE
     fn parse_tsql_join_hint(&mut self) -> Option<String> {
         if self.check_identifier("LOOP") {
-            self.advance();
+            self.skip();
             Some("LOOP".to_string())
         } else if self.check_identifier("HASH") {
-            self.advance();
+            self.skip();
             Some("HASH".to_string())
         } else if self.check_identifier("REMOTE") {
-            self.advance();
+            self.skip();
             Some("REMOTE".to_string())
         } else if self.check(TokenType::Merge) && {
             // Be careful: MERGE is also a keyword for MERGE statement
@@ -6665,7 +6665,7 @@ impl Parser {
             let next_pos = self.current + 1;
             next_pos < self.tokens.len() && self.tokens[next_pos].token_type == TokenType::Join
         } {
-            self.advance();
+            self.skip();
             Some("MERGE".to_string())
         } else {
             None
@@ -6708,7 +6708,7 @@ impl Parser {
             let mut totals = false;
             // Process WITH ROLLUP/CUBE
             if self.check_next(TokenType::Cube) || self.check_next(TokenType::Rollup) {
-                self.advance(); // consume WITH
+                self.skip(); // consume WITH
                 if self.match_token(TokenType::Cube) {
                     expressions.push(Expression::Cube(Box::new(Cube {
                         expressions: Vec::new(),
@@ -6721,8 +6721,8 @@ impl Parser {
             }
             // Check for WITH TOTALS (possibly chained after ROLLUP/CUBE)
             if self.check(TokenType::With) && self.check_next_identifier("TOTALS") {
-                self.advance(); // WITH
-                self.advance(); // TOTALS
+                self.skip(); // WITH
+                self.skip(); // TOTALS
                 totals = true;
             }
             return Ok(GroupBy {
@@ -6740,8 +6740,8 @@ impl Parser {
                     .peek_nth(1)
                     .map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
                 && {
-                    self.advance();
-                    self.advance();
+                    self.skip();
+                    self.skip();
                     true
                 } {
                 // GROUPING SETS (...)
@@ -6802,7 +6802,7 @@ impl Parser {
             ) && self.check(TokenType::As)
                 && !self.check_next(TokenType::LParen)
             {
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                 let alias = self.expect_identifier_or_keyword_with_quoted()?;
                 Expression::Alias(Box::new(Alias::new(expr, alias)))
             } else {
@@ -6834,7 +6834,7 @@ impl Parser {
         if self.check(TokenType::With)
             && (self.check_next(TokenType::Cube) || self.check_next(TokenType::Rollup))
         {
-            self.advance(); // consume WITH
+            self.skip(); // consume WITH
             if self.match_token(TokenType::Cube) {
                 // WITH CUBE - add Cube with empty expressions
                 expressions.push(Expression::Cube(Box::new(Cube {
@@ -6850,8 +6850,8 @@ impl Parser {
 
         // ClickHouse: WITH TOTALS
         let totals = if self.check(TokenType::With) && self.check_next_identifier("TOTALS") {
-            self.advance(); // consume WITH
-            self.advance(); // consume TOTALS
+            self.skip(); // consume WITH
+            self.skip(); // consume TOTALS
             true
         } else {
             false
@@ -6876,8 +6876,8 @@ impl Parser {
                     .peek_nth(1)
                     .map_or(false, |t| t.text.eq_ignore_ascii_case("SETS"))
                 && {
-                    self.advance();
-                    self.advance();
+                    self.skip();
+                    self.skip();
                     true
                 } {
                 // Nested GROUPING SETS (...)
@@ -6929,10 +6929,10 @@ impl Parser {
                 }))
             } else if self.check(TokenType::LParen) {
                 // This could be a tuple like (x, y) or empty ()
-                self.advance(); // consume (
+                self.skip(); // consume (
                 if self.check(TokenType::RParen) {
                     // Empty tuple ()
-                    self.advance();
+                    self.skip();
                     Expression::Tuple(Box::new(Tuple {
                         expressions: Vec::new(),
                     }))
@@ -6977,7 +6977,7 @@ impl Parser {
                 && !self.check_next(TokenType::Select)
                 && !self.check_next(TokenType::With)
             {
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                 let alias = self.expect_identifier_or_keyword_with_quoted()?;
                 Expression::Alias(Box::new(Alias::new(expr, alias)))
             } else {
@@ -7405,27 +7405,27 @@ impl Parser {
                 )
             } else if self.check(TokenType::For) && self.check_next_identifier("XML") {
                 // FOR XML (T-SQL) - parse XML options
-                self.advance(); // consume FOR
-                self.advance(); // consume XML
+                self.skip(); // consume FOR
+                self.skip(); // consume XML
                 for_xml = self.parse_for_xml_options()?;
                 break; // FOR XML is always the last clause
             } else if self.check(TokenType::For) && self.check_next_identifier("SHARE") {
                 // FOR SHARE
-                self.advance(); // consume FOR
-                self.advance(); // consume SHARE
+                self.skip(); // consume FOR
+                self.skip(); // consume SHARE
                 (None, None)
             } else if self.check_identifier("LOCK") && self.check_next(TokenType::In) {
                 // LOCK IN SHARE MODE (MySQL) -> converted to FOR SHARE
-                self.advance(); // consume LOCK
-                self.advance(); // consume IN
+                self.skip(); // consume LOCK
+                self.skip(); // consume IN
                 if self.match_identifier("SHARE") {
                     let _ = self.match_identifier("MODE");
                 }
                 (None, None)
             } else if self.check(TokenType::For) && self.check_next(TokenType::Key) {
                 // FOR KEY SHARE (PostgreSQL)
-                self.advance(); // consume FOR
-                self.advance(); // consume KEY
+                self.skip(); // consume FOR
+                self.skip(); // consume KEY
                 if !self.match_identifier("SHARE") {
                     break; // Not a valid lock clause
                 }
@@ -7437,8 +7437,8 @@ impl Parser {
                 )
             } else if self.check(TokenType::For) && self.check_next(TokenType::No) {
                 // FOR NO KEY UPDATE (PostgreSQL)
-                self.advance(); // consume FOR
-                self.advance(); // consume NO
+                self.skip(); // consume FOR
+                self.skip(); // consume NO
                 if !self.match_identifier("KEY") || !self.match_token(TokenType::Update) {
                     break; // Not a valid lock clause
                 }
@@ -7461,7 +7461,7 @@ impl Parser {
                 loop {
                     // Parse table reference (can be schema.table or just table)
                     let table = self.parse_table_ref()?;
-                    tables.push(Expression::Table(table));
+                    tables.push(Expression::Table(Box::new(table)));
                     if !self.match_token(TokenType::Comma) {
                         break;
                     }
@@ -7776,7 +7776,7 @@ impl Parser {
             return Ok(None);
         }
 
-        self.advance();
+        self.skip();
 
         let this = if self.match_token(TokenType::LParen) {
             let expr = self.parse_expression()?;
@@ -7895,15 +7895,15 @@ impl Parser {
     /// Parse row semantics in MATCH_RECOGNIZE
     fn parse_match_recognize_rows(&mut self) -> Result<Option<MatchRecognizeRows>> {
         // ONE ROW PER MATCH
-        if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ONE" {
-            self.advance(); // consume ONE
+        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ONE") {
+            self.skip(); // consume ONE
             if !self.match_token(TokenType::Row) {
                 return Err(self.parse_error("Expected ROW after ONE"));
             }
-            if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "PER") {
+            if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PER")) {
                 return Err(self.parse_error("Expected PER after ONE ROW"));
             }
-            self.advance(); // consume PER
+            self.skip(); // consume PER
             if !self.match_token(TokenType::Match) {
                 return Err(self.parse_error("Expected MATCH after ONE ROW PER"));
             }
@@ -7915,33 +7915,33 @@ impl Parser {
             if !self.match_token(TokenType::Rows) {
                 return Err(self.parse_error("Expected ROWS after ALL"));
             }
-            if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "PER") {
+            if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PER")) {
                 return Err(self.parse_error("Expected PER after ALL ROWS"));
             }
-            self.advance(); // consume PER
+            self.skip(); // consume PER
             if !self.match_token(TokenType::Match) {
                 return Err(self.parse_error("Expected MATCH after ALL ROWS PER"));
             }
 
             // Check for optional modifiers
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "SHOW" {
-                self.advance();
-                if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "EMPTY" {
-                    self.advance();
-                    if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "MATCHES" {
-                        self.advance();
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SHOW") {
+                self.skip();
+                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EMPTY") {
+                    self.skip();
+                    if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("MATCHES") {
+                        self.skip();
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchShowEmptyMatches));
                     }
                 }
                 return Err(self.parse_error("Expected EMPTY MATCHES after SHOW"));
             }
 
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "OMIT" {
-                self.advance();
-                if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "EMPTY" {
-                    self.advance();
-                    if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "MATCHES" {
-                        self.advance();
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OMIT") {
+                self.skip();
+                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EMPTY") {
+                    self.skip();
+                    if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("MATCHES") {
+                        self.skip();
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchOmitEmptyMatches));
                     }
                 }
@@ -7949,8 +7949,8 @@ impl Parser {
             }
 
             if self.match_token(TokenType::With) {
-                if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "UNMATCHED" {
-                    self.advance();
+                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("UNMATCHED") {
+                    self.skip();
                     if self.match_token(TokenType::Rows) {
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchWithUnmatchedRows));
                     }
@@ -7975,14 +7975,14 @@ impl Parser {
         }
 
         // Check for SKIP (it might be an identifier)
-        if !(self.check(TokenType::Var) && self.peek().text.to_uppercase() == "SKIP") {
+        if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SKIP")) {
             return Err(self.parse_error("Expected SKIP after AFTER MATCH"));
         }
-        self.advance(); // consume SKIP
+        self.skip(); // consume SKIP
 
         // PAST LAST ROW
-        if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "PAST" {
-            self.advance();
+        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PAST") {
+            self.skip();
             if self.match_token(TokenType::Last) {
                 if self.match_token(TokenType::Row) {
                     return Ok(Some(MatchRecognizeAfter::PastLastRow));
@@ -7993,8 +7993,8 @@ impl Parser {
 
         // TO NEXT ROW / TO FIRST x / TO LAST x
         if self.match_token(TokenType::To) {
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "NEXT" {
-                self.advance();
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("NEXT") {
+                self.skip();
                 if self.match_token(TokenType::Row) {
                     return Ok(Some(MatchRecognizeAfter::ToNextRow));
                 }
@@ -8245,8 +8245,8 @@ impl Parser {
             && self.current + 1 < self.tokens.len()
             && self.tokens[self.current + 1].token_type == TokenType::Sample
         {
-            self.advance(); // consume USING
-            self.advance(); // consume SAMPLE
+            self.skip(); // consume USING
+            self.skip(); // consume SAMPLE
             true
         } else {
             false
@@ -8274,7 +8274,7 @@ impl Parser {
             } else if self.match_token(TokenType::Row) {
                 (SampleMethod::Row, true, true)
             } else if self.check_identifier("RESERVOIR") {
-                self.advance();
+                self.skip();
                 (SampleMethod::Reservoir, true, true)
             } else {
                 // Default to BERNOULLI for both SAMPLE and TABLESAMPLE
@@ -8324,7 +8324,7 @@ impl Parser {
         // Check for PERCENT/ROWS suffix after size (if not already part of the number)
         // Both "%" and "PERCENT" tokens map to TokenType::Percent - accept both as PERCENT modifier
         let (method, unit_after_size, is_percent) = if self.check(TokenType::Percent) {
-            self.advance(); // consume PERCENT or %
+            self.skip(); // consume PERCENT or %
                             // If method was already explicitly specified (e.g., SYSTEM), keep it
                             // PERCENT here is just the unit, not the sampling method
             if method_before_size {
@@ -8354,18 +8354,18 @@ impl Parser {
         // e.g., "10 PERCENT (bernoulli)" or "10% (system, 377)"
         let (method, seed, use_seed_keyword, explicit_method) =
             if is_using_sample && self.check(TokenType::LParen) {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                                 // Parse method name as identifier or keyword token
                                 // BERNOULLI, SYSTEM, RESERVOIR can be tokenized as keywords, not identifiers
                 let method_from_parens =
                     if self.check_identifier("BERNOULLI") || self.check(TokenType::Bernoulli) {
-                        self.advance();
+                        self.skip();
                         Some(SampleMethod::Bernoulli)
                     } else if self.check_identifier("SYSTEM") || self.check(TokenType::System) {
-                        self.advance();
+                        self.skip();
                         Some(SampleMethod::System)
                     } else if self.check_identifier("RESERVOIR") {
-                        self.advance();
+                        self.skip();
                         Some(SampleMethod::Reservoir)
                     } else {
                         None
@@ -8524,7 +8524,7 @@ impl Parser {
 
         // Parse method name (optional for table-level TABLESAMPLE)
         let (method, explicit_method, method_before_size) = if self.check_identifier("RESERVOIR") {
-            self.advance();
+            self.skip();
             (SampleMethod::Reservoir, true, true)
         } else if self.match_token(TokenType::Bernoulli) {
             (SampleMethod::Bernoulli, true, true)
@@ -8577,8 +8577,8 @@ impl Parser {
 
         // Check for PERCENT/ROWS suffix or % symbol
         let (method, unit_after_size, is_percent) =
-            if self.check(TokenType::Percent) && self.peek().text.to_uppercase() == "PERCENT" {
-                self.advance();
+            if self.check(TokenType::Percent) && self.peek().text.eq_ignore_ascii_case("PERCENT") {
+                self.skip();
                 // If no explicit method, use Percent to represent "PERCENT" unit
                 if explicit_method {
                     (method, true, true)
@@ -8594,7 +8594,7 @@ impl Parser {
                 }
             } else if self.check(TokenType::Percent) && self.peek().text == "%" {
                 // 20% -> consume the %, treat as PERCENT unit
-                self.advance();
+                self.skip();
                 if explicit_method {
                     (method, true, true)
                 } else {
@@ -8652,7 +8652,7 @@ impl Parser {
             || self.check(TokenType::Intersect)
             || self.check(TokenType::Except)
         {
-            self.current_leading_comments()
+            self.current_leading_comments().to_vec()
         } else {
             Vec::new()
         };
@@ -8821,7 +8821,7 @@ impl Parser {
             // Only consume if followed by UNION/INTERSECT/EXCEPT (or INNER which would be followed by them)
             let saved = self.current;
             let side_token = self.advance();
-            let side_text = side_token.text.to_uppercase();
+            let side_text = side_token.text.to_ascii_uppercase();
 
             // Check if followed by set operation or INNER
             if self.check(TokenType::Union)
@@ -8840,7 +8840,7 @@ impl Parser {
         // Check for kind: INNER
         if self.check(TokenType::Inner) {
             let saved = self.current;
-            self.advance(); // consume INNER
+            self.skip(); // consume INNER
 
             // Check if followed by set operation
             if self.check(TokenType::Union)
@@ -8896,7 +8896,7 @@ impl Parser {
                 .parse_identifier_list()?
                 .into_iter()
                 .map(|id| {
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: id,
                         table: None,
                         join_mark: false,
@@ -9248,7 +9248,7 @@ impl Parser {
         let table = if self.match_token(TokenType::Dot) {
             let schema = table_name;
             let name = self.expect_identifier_or_keyword_with_quoted()?;
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             TableRef {
                 name,
                 schema: Some(schema),
@@ -9270,7 +9270,7 @@ impl Parser {
                 span: None,
             }
         } else {
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             TableRef {
                 name: table_name,
                 schema: None,
@@ -9331,8 +9331,8 @@ impl Parser {
         let mut partition_by_expr: Option<Box<Expression>> = None;
         let partition = if self.check(TokenType::Partition) && self.check_next(TokenType::By) {
             // ClickHouse PARTITION BY expr
-            self.advance(); // consume PARTITION
-            self.advance(); // consume BY
+            self.skip(); // consume PARTITION
+            self.skip(); // consume BY
             partition_by_expr = Some(Box::new(self.parse_expression()?));
             Vec::new()
         } else if self.match_token(TokenType::Partition) {
@@ -9394,11 +9394,11 @@ impl Parser {
                     || (peek1 == Some(TokenType::Var)
                         && self
                             .peek_nth(1)
-                            .map(|t| t.text.to_uppercase() == "COLUMNS")
+                            .map(|t| t.text.eq_ignore_ascii_case("COLUMNS"))
                             .unwrap_or(false))
             } {
                 // Consume balanced parens and skip entire column specification
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let mut depth = 1i32;
                 while !self.is_at_end() && depth > 0 {
                     if self.check(TokenType::LParen) {
@@ -9410,12 +9410,12 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 self.expect(TokenType::RParen)?;
                 Vec::new() // Treat as "all columns"
             } else {
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let cols = self.parse_identifier_list()?;
                 self.expect(TokenType::RParen)?;
                 cols
@@ -9447,18 +9447,17 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check(TokenType::Format)
             && self.peek_nth(1).is_some_and(|t| {
-                let upper = t.text.to_uppercase();
-                upper != "VALUES"
+                !t.text.eq_ignore_ascii_case("VALUES")
                     && (t.token_type == TokenType::Var || t.token_type == TokenType::Identifier)
             })
         {
             // ClickHouse: FORMAT <format_name> followed by raw data (CSV, JSON, TSV, etc.)
             // Skip everything to next semicolon or end — the data is not SQL
-            self.advance(); // consume FORMAT
+            self.skip(); // consume FORMAT
             let format_name = self.advance().text.clone(); // consume format name
                                                            // Consume all remaining tokens until semicolon (raw data)
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                self.advance();
+                self.skip();
             }
             // Store as empty values with the format name in the query as a command
             (
@@ -9564,7 +9563,7 @@ impl Parser {
             let source_table = if self.match_token(TokenType::Dot) {
                 let schema = source_name;
                 let name = self.expect_identifier_with_quoted()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 TableRef {
                     name,
                     schema: Some(schema),
@@ -9586,7 +9585,7 @@ impl Parser {
                     span: None,
                 }
             } else {
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 TableRef {
                     name: source_name,
                     schema: None,
@@ -9608,7 +9607,7 @@ impl Parser {
                     span: None,
                 }
             };
-            Some(Expression::Table(source_table))
+            Some(Expression::Table(Box::new(source_table)))
         } else {
             None
         };
@@ -9637,7 +9636,7 @@ impl Parser {
                     // Handle qualified column: table.column
                     let column = if self.match_token(TokenType::Dot) {
                         let col = self.expect_identifier_with_quoted()?;
-                        Expression::Column(Column {
+                        Expression::boxed_column(Column {
                             name: col,
                             table: Some(col_name),
                             join_mark: false,
@@ -9771,7 +9770,7 @@ impl Parser {
                 // Handle qualified column: table.column
                 let column = if self.match_token(TokenType::Dot) {
                     let col = self.expect_identifier_with_quoted()?;
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: col,
                         table: Some(col_name),
                         join_mark: false,
@@ -10064,7 +10063,7 @@ impl Parser {
         } else {
             TableRef::from_identifier(first_name)
         };
-        table.trailing_comments = self.previous_trailing_comments();
+        table.trailing_comments = self.previous_trailing_comments().to_vec();
 
         // Optional alias (with or without AS)
         if self.match_token(TokenType::As) {
@@ -10151,7 +10150,7 @@ impl Parser {
             self.try_parse_join_kind()
         {
             if self.check(TokenType::Join) {
-                self.advance(); // consume JOIN
+                self.skip(); // consume JOIN
             }
             // Parse joined table
             let first_name = self.expect_identifier_with_quoted()?;
@@ -10222,7 +10221,7 @@ impl Parser {
                 None
             };
             table_joins.push(Join {
-                this: Expression::Table(join_table),
+                this: Expression::Table(Box::new(join_table)),
                 on: on_condition,
                 using: Vec::new(),
                 kind,
@@ -10358,7 +10357,7 @@ impl Parser {
         let mut tables = Vec::new();
         let mut early_output = None;
         let _has_from = if self.check(TokenType::From) {
-            self.advance(); // consume FROM
+            self.skip(); // consume FROM
             true
         } else {
             // MySQL multi-table: DELETE t1[, t2, ...] FROM ...
@@ -10377,7 +10376,7 @@ impl Parser {
                 early_output = Some(self.parse_output_clause()?);
             }
             if self.check(TokenType::From) {
-                self.advance(); // consume FROM
+                self.skip(); // consume FROM
                 true
             } else {
                 // BigQuery-style: DELETE table WHERE ... (no FROM)
@@ -10473,7 +10472,7 @@ impl Parser {
                         && self.tokens[self.current + 1].token_type == TokenType::Values;
                     let subquery = if is_values {
                         // Parse (VALUES ...) as parenthesized VALUES
-                        self.advance(); // consume (
+                        self.skip(); // consume (
                         let values = self.parse_values()?;
                         self.expect(TokenType::RParen)?;
                         Expression::Paren(Box::new(Paren {
@@ -10550,8 +10549,8 @@ impl Parser {
                 .peek_nth(1)
                 .is_some_and(|t| t.text.eq_ignore_ascii_case("PARTITION"))
         {
-            self.advance(); // consume IN
-            self.advance(); // consume PARTITION
+            self.skip(); // consume IN
+            self.skip(); // consume PARTITION
                             // Consume partition expression (string or identifier)
             let _partition = self.parse_primary()?;
         }
@@ -10642,12 +10641,12 @@ impl Parser {
             || self.match_identifier("DEFINER")
             || self.match_identifier("SQL")
         {
-            let option_name = self.previous().text.to_uppercase();
+            let option_name = self.previous().text.to_ascii_uppercase();
 
             if option_name == "ALGORITHM" && self.match_token(TokenType::Eq) {
                 // ALGORITHM=UNDEFINED|MERGE|TEMPTABLE
                 let value = self.expect_identifier_or_keyword()?;
-                algorithm = Some(value.to_uppercase());
+                algorithm = Some(value.to_ascii_uppercase());
             } else if option_name == "DEFINER" && self.match_token(TokenType::Eq) {
                 // DEFINER=user@host (can include @ and %)
                 let mut definer_value = String::new();
@@ -10676,28 +10675,28 @@ impl Parser {
 
         // Handle table modifiers: DYNAMIC, ICEBERG, EXTERNAL, HYBRID, TRANSIENT (Snowflake), UNLOGGED (PostgreSQL)
         let mut table_modifier: Option<String> = if self.check_identifier("DYNAMIC") {
-            self.advance();
+            self.skip();
             Some("DYNAMIC".to_string())
         } else if self.check_identifier("ICEBERG") {
-            self.advance();
+            self.skip();
             Some("ICEBERG".to_string())
         } else if self.check_identifier("EXTERNAL") {
-            self.advance();
+            self.skip();
             Some("EXTERNAL".to_string())
         } else if self.check_identifier("HYBRID") {
-            self.advance();
+            self.skip();
             Some("HYBRID".to_string())
         } else if self.check_identifier("TRANSIENT") {
-            self.advance();
+            self.skip();
             Some("TRANSIENT".to_string())
         } else if self.check_identifier("UNLOGGED") {
-            self.advance();
+            self.skip();
             Some("UNLOGGED".to_string())
         } else if self.check_identifier("DICTIONARY") {
-            self.advance();
+            self.skip();
             Some("DICTIONARY".to_string())
         } else if self.check(TokenType::Dictionary) {
-            self.advance();
+            self.skip();
             Some("DICTIONARY".to_string())
         } else {
             None
@@ -10711,15 +10710,15 @@ impl Parser {
             let mut parts = Vec::new();
             loop {
                 if self.match_token(TokenType::Set) {
-                    parts.push(self.previous().text.to_uppercase());
+                    parts.push(self.previous().text.to_ascii_uppercase());
                 } else if self.match_identifier("MULTISET") {
-                    parts.push(self.previous().text.to_uppercase());
+                    parts.push(self.previous().text.to_ascii_uppercase());
                 } else if self.match_identifier("VOLATILE") {
-                    parts.push(self.previous().text.to_uppercase());
+                    parts.push(self.previous().text.to_ascii_uppercase());
                 } else if self.match_identifier("GLOBAL") {
-                    parts.push(self.previous().text.to_uppercase());
+                    parts.push(self.previous().text.to_ascii_uppercase());
                 } else if self.match_token(TokenType::Temporary) {
-                    parts.push(self.previous().text.to_uppercase());
+                    parts.push(self.previous().text.to_ascii_uppercase());
                 } else {
                     break;
                 }
@@ -10744,7 +10743,7 @@ impl Parser {
                 if self.current + 1 < self.tokens.len()
                     && self.tokens[self.current + 1].token_type == TokenType::Function
                 {
-                    self.advance(); // consume TABLE
+                    self.skip(); // consume TABLE
                     return self.parse_create_function(or_replace, temporary, true);
                 }
                 let modifier = if materialized {
@@ -10767,20 +10766,20 @@ impl Parser {
                 secure,
             ),
             TokenType::Unique => {
-                self.advance(); // consume UNIQUE
+                self.skip(); // consume UNIQUE
                                 // Check for CLUSTERED/NONCLUSTERED after UNIQUE (TSQL)
                 let clustered = if self.check_identifier("CLUSTERED") {
-                    self.advance();
+                    self.skip();
                     Some("CLUSTERED".to_string())
                 } else if self.check_identifier("NONCLUSTERED") {
-                    self.advance();
+                    self.skip();
                     Some("NONCLUSTERED".to_string())
                 } else {
                     None
                 };
                 // Check for COLUMNSTORE (TSQL: CREATE UNIQUE NONCLUSTERED COLUMNSTORE INDEX)
                 if self.check_identifier("COLUMNSTORE") {
-                    self.advance();
+                    self.skip();
                     // Prepend COLUMNSTORE to clustered
                     let clustered = clustered
                         .map(|c| format!("{} COLUMNSTORE", c))
@@ -10798,7 +10797,7 @@ impl Parser {
             TokenType::Sequence => self.parse_create_sequence(temporary, or_replace),
             TokenType::Trigger => self.parse_create_trigger(or_replace, false, create_pos),
             TokenType::Constraint => {
-                self.advance(); // consume CONSTRAINT
+                self.skip(); // consume CONSTRAINT
                 self.parse_create_trigger(or_replace, true, create_pos)
             }
             TokenType::Type => self.parse_create_type(),
@@ -10806,10 +10805,10 @@ impl Parser {
             _ => {
                 // Handle TSQL CLUSTERED/NONCLUSTERED [COLUMNSTORE] INDEX
                 if self.check_identifier("CLUSTERED") || self.check_identifier("NONCLUSTERED") {
-                    let clustered_text = self.advance().text.to_uppercase();
+                    let clustered_text = self.advance().text.to_ascii_uppercase();
                     // Check for COLUMNSTORE after CLUSTERED/NONCLUSTERED
                     let clustered = if self.check_identifier("COLUMNSTORE") {
-                        self.advance();
+                        self.skip();
                         Some(format!("{} COLUMNSTORE", clustered_text))
                     } else {
                         Some(clustered_text)
@@ -10823,7 +10822,7 @@ impl Parser {
                         && self.tokens[pos + 1].token_type == TokenType::Index;
                     result
                 } {
-                    self.advance(); // consume COLUMNSTORE
+                    self.skip(); // consume COLUMNSTORE
                                     // COLUMNSTORE without prefix implies NONCLUSTERED
                     return self.parse_create_index_with_clustered(
                         false,
@@ -10852,7 +10851,7 @@ impl Parser {
                 {
                     let start = self.current;
                     while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                        self.advance();
+                        self.skip();
                     }
                     let sql = self.tokens_to_sql(start, self.current);
                     let mut prefix = String::from("CREATE");
@@ -10921,7 +10920,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check_identifier("UUID")
         {
-            self.advance(); // consume UUID
+            self.skip(); // consume UUID
             let _ = self.advance(); // consume UUID string value
         }
 
@@ -10957,12 +10956,12 @@ impl Parser {
         ) && self.check_identifier("EMPTY")
         {
             if self.check_next(TokenType::As) {
-                self.advance(); // consume EMPTY
-                self.advance(); // consume AS
+                self.skip(); // consume EMPTY
+                self.skip(); // consume AS
                                 // Consume rest as Command
                 let start = self.current;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                    self.advance();
+                    self.skip();
                 }
                 let rest_sql = self.tokens_to_sql(start, self.current);
                 let mut prefix = String::from("CREATE TABLE");
@@ -10983,13 +10982,13 @@ impl Parser {
         let shallow_clone = self.check_identifier("SHALLOW");
         let deep_clone = self.check_identifier("DEEP");
         if shallow_clone || deep_clone {
-            self.advance(); // consume SHALLOW or DEEP
+            self.skip(); // consume SHALLOW or DEEP
         }
         // Also handle COPY (BigQuery: CREATE TABLE ... COPY source_table)
         // But NOT "COPY GRANTS" which is a Snowflake property
         let is_copy = self.check(TokenType::Copy) && !self.check_next_identifier("GRANTS");
         if self.check_identifier("CLONE") || is_copy {
-            self.advance(); // consume CLONE or COPY
+            self.skip(); // consume CLONE or COPY
                             // ClickHouse: CLONE AS source_table (AS is part of the syntax, not an alias)
             if matches!(
                 self.config.dialect,
@@ -11001,7 +11000,7 @@ impl Parser {
             // Parse optional AT or BEFORE time travel clause
             // Note: BEFORE is a keyword token, AT is an identifier
             let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-                let keyword = self.previous().text.to_uppercase();
+                let keyword = self.previous().text.to_ascii_uppercase();
                 self.expect(TokenType::LParen)?;
                 // Parse the content: OFFSET => value or TIMESTAMP => value
                 let mut result = format!("{} (", keyword);
@@ -11149,7 +11148,7 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     redshift_ctas_properties.push(Expression::DistKeyProperty(Box::new(
                         DistKeyProperty {
-                            this: Box::new(Expression::Column(Column {
+                            this: Box::new(Expression::boxed_column(Column {
                                 name: Identifier::new(col),
                                 table: None,
                                 join_mark: false,
@@ -11162,12 +11161,12 @@ impl Parser {
                 }
             } else if self.check_identifier("COMPOUND") || self.check_identifier("INTERLEAVED") {
                 // COMPOUND SORTKEY(col, ...) or INTERLEAVED SORTKEY(col, ...)
-                let modifier = self.advance().text.to_uppercase();
+                let modifier = self.advance().text.to_ascii_uppercase();
                 if self.match_identifier("SORTKEY") && self.match_token(TokenType::LParen) {
                     let mut cols = Vec::new();
                     loop {
                         let col = self.expect_identifier()?;
-                        cols.push(Expression::Column(Column {
+                        cols.push(Expression::boxed_column(Column {
                             name: Identifier::new(col),
                             table: None,
                             join_mark: false,
@@ -11202,7 +11201,7 @@ impl Parser {
                     let mut cols = Vec::new();
                     loop {
                         let col = self.expect_identifier()?;
-                        cols.push(Expression::Column(Column {
+                        cols.push(Expression::boxed_column(Column {
                             name: Identifier::new(col),
                             table: None,
                             join_mark: false,
@@ -11227,7 +11226,7 @@ impl Parser {
             } else if self.match_identifier("DISTSTYLE") {
                 // DISTSTYLE ALL|EVEN|AUTO|KEY
                 if self.match_texts(&["ALL", "EVEN", "AUTO", "KEY"]) {
-                    let style = self.previous().text.to_uppercase();
+                    let style = self.previous().text.to_ascii_uppercase();
                     redshift_ctas_properties.push(Expression::DistStyleProperty(Box::new(
                         DistStyleProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: style }))),
@@ -11237,7 +11236,7 @@ impl Parser {
             } else if self.match_identifier("BACKUP") {
                 // BACKUP YES|NO
                 if self.match_texts(&["YES", "NO"]) {
-                    let value = self.previous().text.to_uppercase();
+                    let value = self.previous().text.to_ascii_uppercase();
                     redshift_ctas_properties.push(Expression::BackupProperty(Box::new(
                         BackupProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: value }))),
@@ -11396,8 +11395,8 @@ impl Parser {
             ) && self.check(TokenType::On)
                 && self.check_next(TokenType::Commit)
             {
-                self.advance(); // ON
-                self.advance(); // COMMIT
+                self.skip(); // ON
+                self.skip(); // COMMIT
                 if self.match_keywords(&[TokenType::Preserve, TokenType::Rows]) {
                     Some(OnCommit::PreserveRows)
                 } else if self.match_keywords(&[TokenType::Delete, TokenType::Rows]) {
@@ -11526,7 +11525,7 @@ impl Parser {
                         // Capture value
                         let value = if self.check(TokenType::String) {
                             let v = format!("'{}'", self.peek().text);
-                            self.advance();
+                            self.skip();
                             v
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
@@ -11589,7 +11588,7 @@ impl Parser {
 
         // MySQL: CREATE TABLE A LIKE B (without parentheses)
         if self.check(TokenType::Like) {
-            self.advance(); // consume LIKE
+            self.skip(); // consume LIKE
             let source_ref = self.parse_table_ref()?;
             return Ok(Expression::CreateTable(Box::new(CreateTable {
                 name,
@@ -11728,7 +11727,7 @@ impl Parser {
         // Check if (SELECT ...) or (WITH ...) follows - this is CTAS without explicit AS keyword
         if self.check(TokenType::LParen) {
             let saved = self.current;
-            self.advance(); // consume (
+            self.skip(); // consume (
             let is_ctas = self.check(TokenType::Select) || self.check(TokenType::With);
             self.current = saved;
             if is_ctas {
@@ -11801,7 +11800,7 @@ impl Parser {
             let saved = self.current;
             let is_name_only_list =
                 if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    self.advance();
+                    self.skip();
                     let result = self.check(TokenType::Comma) || self.check(TokenType::RParen);
                     self.current = saved;
                     result
@@ -11843,7 +11842,7 @@ impl Parser {
         // Parse COMMENT before WITH properties (Presto: CREATE TABLE x (...) COMMENT 'text' WITH (...))
         let pre_with_comment = if self.check(TokenType::Comment) {
             let saved = self.current;
-            self.advance(); // consume COMMENT
+            self.skip(); // consume COMMENT
             if self.check(TokenType::String) {
                 let comment_text = self.advance().text.clone();
                 Some(comment_text)
@@ -11860,10 +11859,10 @@ impl Parser {
         let with_properties_after = if self.check(TokenType::With) {
             // Lookahead: check if this is WITH(SYSTEM_VERSIONING=...)
             let saved = self.current;
-            self.advance(); // consume WITH
+            self.skip(); // consume WITH
             let is_system_versioning = if self.check(TokenType::LParen) {
                 let saved2 = self.current;
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let result = self.check_identifier("SYSTEM_VERSIONING");
                 self.current = saved2; // retreat to before (
                 result
@@ -11916,7 +11915,7 @@ impl Parser {
                         // Capture value - could be string, identifier, stage path @..., keyword, or parenthesized options
                         let value = if self.check(TokenType::LParen) {
                             // Parenthesized option list like file_format = (type = parquet compression = gzip)
-                            self.advance(); // consume (
+                            self.skip(); // consume (
                             let mut options = String::from("(");
                             let mut depth = 1;
                             while !self.is_at_end() && depth > 0 {
@@ -11938,11 +11937,11 @@ impl Parser {
                             options
                         } else if self.check(TokenType::String) {
                             let v = format!("'{}'", self.peek().text);
-                            self.advance();
+                            self.skip();
                             v
                         } else if self.check(TokenType::DAt) {
                             // Stage path like @s1/logs/
-                            self.advance(); // consume @
+                            self.skip(); // consume @
                             let mut path = String::from("@");
                             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                                 path.push_str(&self.advance().text);
@@ -11952,21 +11951,20 @@ impl Parser {
                                 // Peek ahead to see if next identifier is a Snowflake option keyword
                                 if self.current + 1 < self.tokens.len() {
                                     let next = &self.tokens[self.current + 1];
-                                    let next_text_upper = next.text.to_uppercase();
-                                    if next_text_upper == "FILE_FORMAT"
-                                        || next_text_upper == "PARTITION_TYPE"
-                                        || next_text_upper == "AUTO_REFRESH"
-                                        || next_text_upper == "LOCATION"
-                                        || next_text_upper == "PARTITION"
-                                        || next_text_upper == "WAREHOUSE"
+                                    if next.text.eq_ignore_ascii_case("FILE_FORMAT")
+                                        || next.text.eq_ignore_ascii_case("PARTITION_TYPE")
+                                        || next.text.eq_ignore_ascii_case("AUTO_REFRESH")
+                                        || next.text.eq_ignore_ascii_case("LOCATION")
+                                        || next.text.eq_ignore_ascii_case("PARTITION")
+                                        || next.text.eq_ignore_ascii_case("WAREHOUSE")
                                     {
                                         // Consume the trailing slash before the keyword
-                                        self.advance();
+                                        self.skip();
                                         path.push('/');
                                         break;
                                     }
                                 }
-                                self.advance();
+                                self.skip();
                                 path.push('/');
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
@@ -11984,21 +11982,20 @@ impl Parser {
                                 // Peek ahead to see if next identifier is a Snowflake option keyword
                                 if self.current + 1 < self.tokens.len() {
                                     let next = &self.tokens[self.current + 1];
-                                    let next_text_upper = next.text.to_uppercase();
-                                    if next_text_upper == "FILE_FORMAT"
-                                        || next_text_upper == "PARTITION_TYPE"
-                                        || next_text_upper == "AUTO_REFRESH"
-                                        || next_text_upper == "LOCATION"
-                                        || next_text_upper == "PARTITION"
-                                        || next_text_upper == "WAREHOUSE"
+                                    if next.text.eq_ignore_ascii_case("FILE_FORMAT")
+                                        || next.text.eq_ignore_ascii_case("PARTITION_TYPE")
+                                        || next.text.eq_ignore_ascii_case("AUTO_REFRESH")
+                                        || next.text.eq_ignore_ascii_case("LOCATION")
+                                        || next.text.eq_ignore_ascii_case("PARTITION")
+                                        || next.text.eq_ignore_ascii_case("WAREHOUSE")
                                     {
                                         // Consume the trailing slash before the keyword
-                                        self.advance();
+                                        self.skip();
                                         path.push('/');
                                         break;
                                     }
                                 }
-                                self.advance();
+                                self.skip();
                                 path.push('/');
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
@@ -12196,7 +12193,7 @@ impl Parser {
             } else if self.match_identifier("DISTSTYLE") {
                 // DISTSTYLE ALL|EVEN|AUTO|KEY
                 if self.match_texts(&["ALL", "EVEN", "AUTO", "KEY"]) {
-                    let style = self.previous().text.to_uppercase();
+                    let style = self.previous().text.to_ascii_uppercase();
                     table_properties.push(Expression::DistStyleProperty(Box::new(
                         DistStyleProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: style }))),
@@ -12206,7 +12203,7 @@ impl Parser {
             } else if self.match_identifier("BACKUP") {
                 // BACKUP YES|NO
                 if self.match_texts(&["YES", "NO"]) {
-                    let value = self.previous().text.to_uppercase();
+                    let value = self.previous().text.to_ascii_uppercase();
                     table_properties.push(Expression::BackupProperty(Box::new(BackupProperty {
                         this: Box::new(Expression::Var(Box::new(Var { this: value }))),
                     })));
@@ -12222,7 +12219,7 @@ impl Parser {
                 // Consume optional comma separator between index specs (only if followed by an index keyword)
                 if self.check(TokenType::Comma) {
                     let saved_comma = self.current;
-                    self.advance(); // consume comma
+                    self.skip(); // consume comma
                     let is_index_keyword = self.check(TokenType::Unique)
                         || self.check(TokenType::PrimaryKey)
                         || self.check(TokenType::Index)
@@ -12240,7 +12237,7 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         cols.into_iter()
                             .map(|id| {
-                                Expression::Column(Column {
+                                Expression::boxed_column(Column {
                                     name: id,
                                     table: None,
                                     join_mark: false,
@@ -12283,7 +12280,7 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         cols.into_iter()
                             .map(|id| {
-                                Expression::Column(Column {
+                                Expression::boxed_column(Column {
                                     name: id,
                                     table: None,
                                     join_mark: false,
@@ -12320,7 +12317,7 @@ impl Parser {
                         self.expect(TokenType::RParen)?;
                         cols.into_iter()
                             .map(|id| {
-                                Expression::Column(Column {
+                                Expression::boxed_column(Column {
                                     name: id,
                                     table: None,
                                     join_mark: false,
@@ -12359,8 +12356,8 @@ impl Parser {
                 && self.check(TokenType::On)
                 && self.check_next(TokenType::Commit)
             {
-                self.advance(); // ON
-                self.advance(); // COMMIT
+                self.skip(); // ON
+                self.skip(); // COMMIT
                 if self.match_keywords(&[TokenType::Preserve, TokenType::Rows]) {
                     on_commit = Some(OnCommit::PreserveRows);
                 } else if self.match_keywords(&[TokenType::Delete, TokenType::Rows]) {
@@ -12430,16 +12427,16 @@ impl Parser {
                 };
                 if is_partition_by {
                     let partition_kind = if self.check(TokenType::Range) {
-                        self.advance();
+                        self.skip();
                         Some("RANGE".to_string())
                     } else if self.check(TokenType::List) {
-                        self.advance();
+                        self.skip();
                         Some("LIST".to_string())
                     } else if (self.check(TokenType::Identifier) || self.check(TokenType::Var))
                         && self.check_next(TokenType::LParen)
                     {
                         // Only treat identifier as partition method (like HASH) if followed by (
-                        Some(self.advance().text.to_uppercase())
+                        Some(self.advance().text.to_ascii_uppercase())
                     } else {
                         // No explicit partition method (RANGE/LIST/HASH), just PARTITION BY (cols)
                         None
@@ -12527,7 +12524,7 @@ impl Parser {
                             None => "PARTITION BY ".to_string(),
                         };
                         if self.check(TokenType::LParen) {
-                            self.advance();
+                            self.skip();
                             raw_sql.push('(');
                             let mut depth = 1;
                             let mut last_tok_type: Option<TokenType> = None;
@@ -12581,7 +12578,7 @@ impl Parser {
                                 raw_sql.push_str(&tok.text);
                                 // Handle function calls: PARTITION BY DATE(col)
                                 if self.check(TokenType::LParen) {
-                                    self.advance();
+                                    self.skip();
                                     raw_sql.push('(');
                                     let mut depth = 1;
                                     while !self.is_at_end() && depth > 0 {
@@ -12677,7 +12674,7 @@ impl Parser {
                     if self.match_token(TokenType::Eq) {
                         let value = if self.check(TokenType::LParen) {
                             // Parenthesized option list
-                            self.advance();
+                            self.skip();
                             let mut options = String::from("(");
                             let mut depth = 1;
                             while !self.is_at_end() && depth > 0 {
@@ -12698,11 +12695,11 @@ impl Parser {
                             options
                         } else if self.check(TokenType::String) {
                             let v = format!("'{}'", self.peek().text);
-                            self.advance();
+                            self.skip();
                             v
                         } else if self.check(TokenType::DAt) {
                             // Stage path like @s1/logs/
-                            self.advance();
+                            self.skip();
                             let mut path = String::from("@");
                             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                                 path.push_str(&self.advance().text);
@@ -12710,20 +12707,19 @@ impl Parser {
                             while self.check(TokenType::Slash) {
                                 if self.current + 1 < self.tokens.len() {
                                     let next = &self.tokens[self.current + 1];
-                                    let next_text_upper = next.text.to_uppercase();
-                                    if next_text_upper == "FILE_FORMAT"
-                                        || next_text_upper == "PARTITION_TYPE"
-                                        || next_text_upper == "AUTO_REFRESH"
-                                        || next_text_upper == "LOCATION"
-                                        || next_text_upper == "PARTITION"
-                                        || next_text_upper == "WAREHOUSE"
+                                    if next.text.eq_ignore_ascii_case("FILE_FORMAT")
+                                        || next.text.eq_ignore_ascii_case("PARTITION_TYPE")
+                                        || next.text.eq_ignore_ascii_case("AUTO_REFRESH")
+                                        || next.text.eq_ignore_ascii_case("LOCATION")
+                                        || next.text.eq_ignore_ascii_case("PARTITION")
+                                        || next.text.eq_ignore_ascii_case("WAREHOUSE")
                                     {
-                                        self.advance();
+                                        self.skip();
                                         path.push('/');
                                         break;
                                     }
                                 }
-                                self.advance();
+                                self.skip();
                                 path.push('/');
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
@@ -12737,20 +12733,19 @@ impl Parser {
                             while self.check(TokenType::Slash) {
                                 if self.current + 1 < self.tokens.len() {
                                     let next = &self.tokens[self.current + 1];
-                                    let next_text_upper = next.text.to_uppercase();
-                                    if next_text_upper == "FILE_FORMAT"
-                                        || next_text_upper == "PARTITION_TYPE"
-                                        || next_text_upper == "AUTO_REFRESH"
-                                        || next_text_upper == "LOCATION"
-                                        || next_text_upper == "PARTITION"
-                                        || next_text_upper == "WAREHOUSE"
+                                    if next.text.eq_ignore_ascii_case("FILE_FORMAT")
+                                        || next.text.eq_ignore_ascii_case("PARTITION_TYPE")
+                                        || next.text.eq_ignore_ascii_case("AUTO_REFRESH")
+                                        || next.text.eq_ignore_ascii_case("LOCATION")
+                                        || next.text.eq_ignore_ascii_case("PARTITION")
+                                        || next.text.eq_ignore_ascii_case("WAREHOUSE")
                                     {
-                                        self.advance();
+                                        self.skip();
                                         path.push('/');
                                         break;
                                     }
                                 }
-                                self.advance();
+                                self.skip();
                                 path.push('/');
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
@@ -12868,7 +12863,7 @@ impl Parser {
                         && self.tokens[first_inside + 1].token_type == TokenType::Default));
 
             if is_column_defs {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                                 // Use special parsing for partition column specs - they don't have data types,
                                 // just column names with constraint overrides like DEFAULT
                 let (cols, constrs) = self.parse_partition_column_specs()?;
@@ -12901,7 +12896,7 @@ impl Parser {
 
         let partition_of_expr =
             Expression::PartitionedOfProperty(Box::new(PartitionedOfProperty {
-                this: Box::new(Expression::Table(parent_table)),
+                this: Box::new(Expression::Table(Box::new(parent_table))),
                 expression: Box::new(partition_bound),
             }));
 
@@ -12915,13 +12910,13 @@ impl Parser {
             // Parse RANGE/LIST/HASH(columns)
             let partition_kind = if self.check(TokenType::Identifier) || self.check(TokenType::Var)
             {
-                let kind_text = self.advance().text.to_uppercase();
+                let kind_text = self.advance().text.to_ascii_uppercase();
                 kind_text
             } else if self.check(TokenType::Range) {
-                self.advance();
+                self.skip();
                 "RANGE".to_string()
             } else if self.check(TokenType::List) {
-                self.advance();
+                self.skip();
                 "LIST".to_string()
             } else {
                 "RANGE".to_string()
@@ -12929,7 +12924,7 @@ impl Parser {
             // Parse (columns)
             let mut raw_sql = format!("PARTITION BY {}", partition_kind);
             if self.check(TokenType::LParen) {
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 raw_sql.push('(');
                 let mut depth = 1;
                 while !self.is_at_end() && depth > 0 {
@@ -13217,8 +13212,8 @@ impl Parser {
             let mut key = self.expect_identifier_or_keyword()?;
 
             // Handle multi-word keys like "PARTITIONED BY" -> "PARTITIONED_BY"
-            if key.to_uppercase() == "PARTITIONED" && self.check(TokenType::By) {
-                self.advance(); // consume BY
+            if key.eq_ignore_ascii_case("PARTITIONED") && self.check(TokenType::By) {
+                self.skip(); // consume BY
                 key = "PARTITIONED_BY".to_string();
             }
 
@@ -13229,7 +13224,7 @@ impl Parser {
             let value = if self.check(TokenType::String) {
                 // Store string with quotes to preserve format
                 let val = format!("'{}'", self.peek().text);
-                self.advance();
+                self.skip();
                 val
             } else if self.match_token(TokenType::LParen) {
                 // Handle PARTITIONED_BY=(x INT, y INT) or similar
@@ -13267,7 +13262,7 @@ impl Parser {
                                 token_type,
                                 TokenType::LParen | TokenType::RParen | TokenType::Comma
                             ));
-                    self.advance();
+                    self.skip();
                 }
                 self.expect(TokenType::RParen)?;
                 result.push(')');
@@ -13361,7 +13356,7 @@ impl Parser {
             ) && self.check(TokenType::Index)
             {
                 // ClickHouse: INDEX name expr TYPE type_func(args) GRANULARITY n
-                self.advance(); // consume INDEX
+                self.skip(); // consume INDEX
                 let name = self.expect_identifier_or_keyword_with_quoted()?;
                 // Use parse_conjunction to handle comparisons like c0 < (SELECT _table)
                 let expression = self.parse_conjunction()?.ok_or_else(|| {
@@ -13380,7 +13375,7 @@ impl Parser {
                         let type_name = self.advance().text.clone();
                         if self.check(TokenType::LParen) {
                             // It's a function call like set(100)
-                            self.advance(); // consume (
+                            self.skip(); // consume (
                             let mut args = Vec::new();
                             if !self.check(TokenType::RParen) {
                                 args.push(self.parse_expression()?);
@@ -13458,7 +13453,7 @@ impl Parser {
                 }
             } else if self.check_identifier("INITIALLY") {
                 // PostgreSQL: INITIALLY DEFERRED / INITIALLY IMMEDIATE as table-level setting
-                self.advance(); // consume INITIALLY
+                self.skip(); // consume INITIALLY
                 if self.match_identifier("DEFERRED") {
                     constraints.push(TableConstraint::InitiallyDeferred { deferred: true });
                 } else if self.match_identifier("IMMEDIATE") {
@@ -13472,7 +13467,7 @@ impl Parser {
             ) && self.check_identifier("PROJECTION")
             {
                 // ClickHouse: PROJECTION name (SELECT ...) or PROJECTION name INDEX expr TYPE type_name
-                self.advance(); // consume PROJECTION
+                self.skip(); // consume PROJECTION
                 let name = self.expect_identifier_or_keyword_with_quoted()?;
                 if self.match_token(TokenType::LParen) {
                     let expression = self.parse_statement()?;
@@ -13482,8 +13477,8 @@ impl Parser {
                         && self.current + 1 < self.tokens.len()
                         && self.tokens[self.current + 1].token_type == TokenType::Settings
                     {
-                        self.advance(); // consume WITH
-                        self.advance(); // consume SETTINGS
+                        self.skip(); // consume WITH
+                        self.skip(); // consume SETTINGS
                         if self.match_token(TokenType::LParen) {
                             // Consume key=value pairs
                             loop {
@@ -13493,7 +13488,7 @@ impl Parser {
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
                                 {
-                                    self.advance(); // key
+                                    self.skip(); // key
                                 }
                                 if self.match_token(TokenType::Eq) {
                                     let _ = self.parse_primary()?; // value
@@ -13570,10 +13565,10 @@ impl Parser {
         // Parse optional INCLUDING/EXCLUDING modifiers
         loop {
             if self.match_identifier("INCLUDING") {
-                let prop = self.expect_identifier_or_keyword()?.to_uppercase();
+                let prop = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
                 options.push((LikeOptionAction::Including, prop));
             } else if self.match_identifier("EXCLUDING") {
-                let prop = self.expect_identifier_or_keyword()?.to_uppercase();
+                let prop = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
                 options.push((LikeOptionAction::Excluding, prop));
             } else {
                 break;
@@ -13622,7 +13617,7 @@ impl Parser {
             );
             col_def.name = name;
             // Consume AS and parse computed column expression
-            self.advance(); // consume AS
+            self.skip(); // consume AS
             if self.check(TokenType::LParen) {
                 self.parse_as_computed_column(&mut col_def)?;
             }
@@ -13660,7 +13655,7 @@ impl Parser {
             || self.match_identifier("ZEROFILL")
             || self.match_identifier("SIGNED")
         {
-            let modifier = self.previous().text.to_uppercase();
+            let modifier = self.previous().text.to_ascii_uppercase();
             if modifier == "UNSIGNED" {
                 col_def.unsigned = true;
             } else if modifier == "ZEROFILL" {
@@ -13939,7 +13934,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 let codec_text = self.tokens_to_sql(start, self.current);
                 self.expect(TokenType::RParen)?;
@@ -13958,7 +13953,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 self.expect(TokenType::RParen)?;
                 // Statistics info is stored but we don't need it for transpilation
@@ -13991,7 +13986,7 @@ impl Parser {
                 }
             } else if self.check(TokenType::Materialized) && !self.check_next(TokenType::View) {
                 // ClickHouse: MATERIALIZED expr (but not MATERIALIZED VIEW)
-                self.advance(); // consume MATERIALIZED
+                self.skip(); // consume MATERIALIZED
                 let expr = self.parse_or()?;
                 col_def.materialized_expr = Some(Box::new(expr));
             } else if self.match_identifier("ALIAS") {
@@ -14004,7 +13999,7 @@ impl Parser {
             ) && self.check_identifier("EXPRESSION")
             {
                 // ClickHouse dictionary column: EXPRESSION expr
-                self.advance(); // consume EXPRESSION
+                self.skip(); // consume EXPRESSION
                 let expr = self.parse_or()?;
                 col_def.materialized_expr = Some(Box::new(expr));
             } else if matches!(
@@ -14029,7 +14024,7 @@ impl Parser {
             {
                 // ClickHouse: SETTINGS (key = value, ...) on column definition
                 // Only match parenthesized form; non-parenthesized SETTINGS is statement-level
-                self.advance(); // consume SETTINGS
+                self.skip(); // consume SETTINGS
                 self.expect(TokenType::LParen)?;
                 let mut depth = 1i32;
                 while !self.is_at_end() && depth > 0 {
@@ -14042,7 +14037,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 self.expect(TokenType::RParen)?;
             } else {
@@ -14067,8 +14062,8 @@ impl Parser {
             if self.check_next_identifier("DEFERRABLE")
                 || self.check_next_identifier("CASESPECIFIC")
             {
-                self.advance(); // consume NOT
-                self.advance(); // consume DEFERRABLE/CASESPECIFIC
+                self.skip(); // consume NOT
+                self.skip(); // consume DEFERRABLE/CASESPECIFIC
                 return true;
             }
         }
@@ -14241,7 +14236,7 @@ impl Parser {
                 }
                 let mut is_terminal = false;
                 if let Some((last_text, last_type)) = current_tokens.last() {
-                    let last_upper = last_text.to_uppercase();
+                    let last_upper = last_text.to_ascii_uppercase();
                     is_terminal = matches!(last_type, TokenType::Number | TokenType::String)
                         || matches!(
                             last_upper.as_str(),
@@ -14369,7 +14364,7 @@ impl Parser {
         // Check what follows AS
         if self.check(TokenType::Row) {
             // GENERATED ALWAYS AS ROW START|END [HIDDEN]
-            self.advance(); // consume ROW
+            self.skip(); // consume ROW
             let start = if self.match_token(TokenType::Start) {
                 true
             } else {
@@ -14388,7 +14383,7 @@ impl Parser {
                 .push(ConstraintType::GeneratedAsRow);
         } else if self.check(TokenType::Identity) {
             // GENERATED [BY DEFAULT | ALWAYS] AS IDENTITY [(...)]
-            self.advance(); // consume IDENTITY
+            self.skip(); // consume IDENTITY
 
             let mut start = None;
             let mut increment = None;
@@ -14416,7 +14411,7 @@ impl Parser {
                     } else if self.check(TokenType::RParen) {
                         break;
                     } else {
-                        self.advance();
+                        self.skip();
                     }
                 }
                 self.expect(TokenType::RParen)?;
@@ -14438,7 +14433,7 @@ impl Parser {
                 .push(ConstraintType::GeneratedAsIdentity);
         } else if self.check(TokenType::LParen) {
             // GENERATED ALWAYS AS (expr) [STORED|VIRTUAL]
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let expr = self.parse_expression()?;
             self.expect(TokenType::RParen)?;
 
@@ -14514,8 +14509,8 @@ impl Parser {
             {
                 let tok = self.peek();
                 // Check for AUTO keyword (SingleStore: PERSISTED AUTO)
-                if tok.text.to_uppercase() == "AUTO" {
-                    self.advance(); // consume AUTO
+                if tok.text.eq_ignore_ascii_case("AUTO") {
+                    self.skip(); // consume AUTO
                     None // AUTO is not a data type, just a modifier
                 } else if tok.token_type.is_keyword()
                     || tok.token_type == TokenType::Identifier
@@ -14595,10 +14590,10 @@ impl Parser {
             // DEFAULT CHARSET=val or DEFAULT CHARACTER SET=val
             if self.check(TokenType::Default) {
                 let saved = self.current;
-                self.advance(); // consume DEFAULT
+                self.skip(); // consume DEFAULT
                 if self.check_identifier("CHARSET") || self.check_identifier("CHARACTER") {
                     let is_character = self.check_identifier("CHARACTER");
-                    let key_part = self.advance().text.to_uppercase();
+                    let key_part = self.advance().text.to_ascii_uppercase();
                     if is_character {
                         // CHARACTER SET
                         self.match_token(TokenType::Set);
@@ -14606,7 +14601,7 @@ impl Parser {
                     if self.match_token(TokenType::Eq) {
                         let value = if self.check(TokenType::String) {
                             let v = format!("'{}'", self.peek().text);
-                            self.advance();
+                            self.skip();
                             v
                         } else if self.is_identifier_token()
                             || self.is_safe_keyword_as_identifier()
@@ -14651,11 +14646,11 @@ impl Parser {
                 || self.check_identifier("ENCRYPTION");
 
             if is_known_option {
-                let key = self.advance().text.to_uppercase();
+                let key = self.advance().text.to_ascii_uppercase();
                 if self.match_token(TokenType::Eq) {
                     let value = if self.check(TokenType::String) {
                         let v = format!("'{}'", self.peek().text);
-                        self.advance();
+                        self.skip();
                         v
                     } else if self.check(TokenType::Number) {
                         self.advance().text
@@ -14673,17 +14668,17 @@ impl Parser {
             // COMMENT='val' (Comment is a keyword token type)
             if self.check(TokenType::Comment) {
                 let saved = self.current;
-                self.advance(); // consume COMMENT
+                self.skip(); // consume COMMENT
                 if self.match_token(TokenType::Eq) {
                     if self.check(TokenType::String) {
                         let v = format!("'{}'", self.peek().text);
-                        self.advance();
+                        self.skip();
                         options.push(("COMMENT".to_string(), v));
                         continue;
                     }
                 } else if self.check(TokenType::String) {
                     let v = format!("'{}'", self.peek().text);
-                    self.advance();
+                    self.skip();
                     options.push(("COMMENT".to_string(), v));
                     continue;
                 }
@@ -14695,7 +14690,7 @@ impl Parser {
             if self.check_identifier("CHARACTER") || self.check_identifier("CHARSET") {
                 let saved = self.current;
                 let is_character = self.check_identifier("CHARACTER");
-                self.advance(); // consume CHARACTER or CHARSET
+                self.skip(); // consume CHARACTER or CHARSET
                 if is_character {
                     // CHARACTER SET
                     if !self.match_token(TokenType::Set) {
@@ -14706,7 +14701,7 @@ impl Parser {
                 if self.match_token(TokenType::Eq) {
                     let value = if self.check(TokenType::String) {
                         let v = format!("'{}'", self.peek().text);
-                        self.advance();
+                        self.skip();
                         v
                     } else if self.is_identifier_token()
                         || self.is_safe_keyword_as_identifier()
@@ -14976,7 +14971,7 @@ impl Parser {
                                 || self.check(TokenType::Date)
                                 || self.check(TokenType::Timestamp)
                             {
-                                let type_text = self.peek().text.to_uppercase();
+                                let type_text = self.peek().text.to_ascii_uppercase();
                                 let is_type = matches!(
                                     type_text.as_str(),
                                     "INT"
@@ -15096,7 +15091,7 @@ impl Parser {
             if self.match_token(TokenType::With) {
                 if self.match_token(TokenType::LParen) {
                     if self.check_identifier("SYSTEM_VERSIONING") {
-                        self.advance(); // consume SYSTEM_VERSIONING
+                        self.skip(); // consume SYSTEM_VERSIONING
                         self.expect(TokenType::Eq)?;
 
                         let on = if self.match_token(TokenType::On) {
@@ -15122,7 +15117,7 @@ impl Parser {
                                     self.expect(TokenType::Eq)?;
                                     // Parse table reference (could be [dbo].[table])
                                     let table_ref = self.parse_table_ref()?;
-                                    history_table = Some(Expression::Table(table_ref));
+                                    history_table = Some(Expression::Table(Box::new(table_ref)));
                                 } else if self.match_identifier("DATA_CONSISTENCY_CHECK") {
                                     self.expect(TokenType::Eq)?;
                                     let val = self.expect_identifier_or_keyword()?;
@@ -15132,7 +15127,7 @@ impl Parser {
                                 } else if self.check(TokenType::RParen) {
                                     break;
                                 } else {
-                                    self.advance();
+                                    self.skip();
                                 }
                                 self.match_token(TokenType::Comma);
                             }
@@ -15213,10 +15208,10 @@ impl Parser {
 
             // Check for TSQL CLUSTERED/NONCLUSTERED modifier
             let clustered = if self.check_identifier("CLUSTERED") {
-                self.advance();
+                self.skip();
                 Some("CLUSTERED".to_string())
             } else if self.check_identifier("NONCLUSTERED") {
-                self.advance();
+                self.skip();
                 Some("NONCLUSTERED".to_string())
             } else {
                 None
@@ -15315,10 +15310,10 @@ impl Parser {
 
             // Check for TSQL CLUSTERED/NONCLUSTERED modifier
             let clustered = if self.check_identifier("CLUSTERED") {
-                self.advance();
+                self.skip();
                 Some("CLUSTERED".to_string())
             } else if self.check_identifier("NONCLUSTERED") {
-                self.advance();
+                self.skip();
                 Some("NONCLUSTERED".to_string())
             } else {
                 None
@@ -15411,7 +15406,7 @@ impl Parser {
                 loop {
                     if self.check(TokenType::On) {
                         let saved = self.current;
-                        self.advance(); // consume ON
+                        self.skip(); // consume ON
                         if self.match_token(TokenType::Delete) {
                             on_delete = Some(self.parse_referential_action()?);
                         } else if self.match_token(TokenType::Update) {
@@ -15565,8 +15560,8 @@ impl Parser {
             // Parse optional USING INDEX TABLESPACE tablespace_name
             let using_index_tablespace =
                 if self.check(TokenType::Using) && self.check_next(TokenType::Index) {
-                    self.advance(); // consume USING
-                    self.advance(); // consume INDEX
+                    self.skip(); // consume USING
+                    self.skip(); // consume INDEX
                     if self.match_identifier("TABLESPACE") {
                         Some(self.expect_identifier()?)
                     } else {
@@ -15604,7 +15599,7 @@ impl Parser {
         {
             // ClickHouse: CONSTRAINT name ASSUME expression
             // Used for query optimization assumptions — store as CHECK constraint
-            self.advance(); // consume ASSUME
+            self.skip(); // consume ASSUME
             let expr = self.parse_expression()?;
             Ok(TableConstraint::Check {
                 name,
@@ -15757,7 +15752,7 @@ impl Parser {
                 }
             } else if self.check(TokenType::With) {
                 let saved_with = self.current;
-                self.advance(); // consume WITH
+                self.skip(); // consume WITH
                 if self.match_identifier("PARSER") {
                     // MySQL WITH PARSER name
                     if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
@@ -15766,7 +15761,7 @@ impl Parser {
                 } else if self.check(TokenType::LParen) {
                     // TSQL: WITH (PAD_INDEX=ON, STATISTICS_NORECOMPUTE=OFF, ...)
                     // Parse and store the options
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     loop {
                         if self.check(TokenType::RParen) || self.is_at_end() {
                             break;
@@ -15789,7 +15784,7 @@ impl Parser {
                 }
             } else if self.check(TokenType::On) {
                 let saved_on = self.current;
-                self.advance(); // consume ON
+                self.skip(); // consume ON
                 if self.match_identifier("CONFLICT") {
                     // SQLite ON CONFLICT action: ROLLBACK, ABORT, FAIL, IGNORE, REPLACE
                     if self.match_token(TokenType::Rollback) {
@@ -15841,10 +15836,10 @@ impl Parser {
         // MATCH clause comes BEFORE ON DELETE/ON UPDATE in PostgreSQL
         let match_type = if self.match_token(TokenType::Match) {
             if self.check(TokenType::Full) {
-                self.advance();
+                self.skip();
                 Some(MatchType::Full)
             } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let text = self.advance().text.to_uppercase();
+                let text = self.advance().text.to_ascii_uppercase();
                 match text.as_str() {
                     "PARTIAL" => Some(MatchType::Partial),
                     "SIMPLE" => Some(MatchType::Simple),
@@ -15885,10 +15880,10 @@ impl Parser {
         let match_type = if match_type.is_none() && self.match_token(TokenType::Match) {
             match_after_actions = on_delete.is_some() || on_update.is_some();
             if self.check(TokenType::Full) {
-                self.advance();
+                self.skip();
                 Some(MatchType::Full)
             } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let text = self.advance().text.to_uppercase();
+                let text = self.advance().text.to_ascii_uppercase();
                 match text.as_str() {
                     "PARTIAL" => Some(MatchType::Partial),
                     "SIMPLE" => Some(MatchType::Simple),
@@ -15936,8 +15931,8 @@ impl Parser {
             Ok(ReferentialAction::Restrict)
         } else if self.match_token(TokenType::No) {
             // NO ACTION - NO is a token, ACTION is an identifier
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ACTION" {
-                self.advance();
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ACTION") {
+                self.skip();
             }
             Ok(ReferentialAction::NoAction)
         } else {
@@ -15997,7 +15992,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check_identifier("UUID")
         {
-            self.advance(); // consume UUID
+            self.skip(); // consume UUID
             let _ = self.advance(); // consume UUID string value
         }
 
@@ -16128,7 +16123,7 @@ impl Parser {
             } else {
                 // Unexpected token after BUILD - try to consume it
                 let value = self.expect_identifier_or_keyword()?;
-                Some(value.to_uppercase())
+                Some(value.to_ascii_uppercase())
             }
         } else {
             None
@@ -16150,7 +16145,7 @@ impl Parser {
                     && !self.check_identifier("ENGINE")
                     && !self.check(TokenType::Semicolon)
                 {
-                    self.advance();
+                    self.skip();
                 }
                 // Consume APPEND if present (REFRESH ... APPEND TO target)
                 let _ = self.match_identifier("APPEND");
@@ -16288,7 +16283,7 @@ impl Parser {
             self.parse_statement()?
         } else if query_parenthesized {
             // Handle (SELECT ...) or (WITH ... SELECT ...) - parenthesized query
-            self.advance(); // consume (
+            self.skip(); // consume (
             let inner = if self.check(TokenType::With) {
                 self.parse_statement()?
             } else {
@@ -16475,7 +16470,7 @@ impl Parser {
                 .peek_nth(1)
                 .is_some_and(|t| t.token_type == TokenType::LParen)
             {
-                self.advance(); // consume WITH
+                self.skip(); // consume WITH
                 self.parse_with_properties()?
             } else {
                 Vec::new()
@@ -16653,7 +16648,7 @@ impl Parser {
     /// Parse DROP statement
     fn parse_drop(&mut self) -> Result<Expression> {
         // Capture leading comments from the DROP token (e.g., "-- comment\nDROP TABLE ...")
-        let leading_comments = self.current_leading_comments();
+        let leading_comments = self.current_leading_comments().to_vec();
         self.expect(TokenType::Drop)?;
 
         // ClickHouse: DROP TEMPORARY TABLE / DROP TEMPORARY VIEW
@@ -16663,7 +16658,7 @@ impl Parser {
                 Some(crate::dialects::DialectType::ClickHouse)
             )
         {
-            self.advance(); // consume TEMPORARY
+            self.skip(); // consume TEMPORARY
             if self.check(TokenType::View) {
                 return self.parse_drop_view(false);
             }
@@ -16674,7 +16669,7 @@ impl Parser {
             TokenType::Table => self.parse_drop_table(leading_comments),
             TokenType::View => self.parse_drop_view(false),
             TokenType::Materialized => {
-                self.advance(); // consume MATERIALIZED
+                self.skip(); // consume MATERIALIZED
                 self.parse_drop_view(true)
             }
             TokenType::Index => self.parse_drop_index(),
@@ -16687,7 +16682,7 @@ impl Parser {
             TokenType::Type => self.parse_drop_type(),
             TokenType::Domain => {
                 // DROP DOMAIN is similar to DROP TYPE
-                self.advance();
+                self.skip();
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 let name = self.parse_table_ref()?;
                 let cascade = self.match_token(TokenType::Cascade);
@@ -16702,7 +16697,7 @@ impl Parser {
             }
             TokenType::Namespace => {
                 // DROP NAMESPACE is similar to DROP SCHEMA (Spark/Databricks)
-                self.advance();
+                self.skip();
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 // Parse potentially qualified namespace name (a.b.c)
                 let mut name_parts = vec![self.expect_identifier()?];
@@ -16727,7 +16722,7 @@ impl Parser {
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) {
-                    let text_upper = self.peek().text.to_uppercase();
+                    let text_upper = self.peek().text.to_ascii_uppercase();
                     if matches!(
                         text_upper.as_str(),
                         "DICTIONARY"
@@ -16743,11 +16738,11 @@ impl Parser {
                     ) || self.check(TokenType::Settings)
                         || self.check(TokenType::Partition)
                     {
-                        self.advance(); // consume keyword, previous() is now set
+                        self.skip(); // consume keyword, previous() is now set
                         let mut tokens: Vec<(String, TokenType)> = vec![
                             ("DROP".to_string(), TokenType::Var),
                             (
-                                self.previous().text.to_uppercase(),
+                                self.previous().text.to_ascii_uppercase(),
                                 self.previous().token_type,
                             ),
                         ];
@@ -16794,8 +16789,8 @@ impl Parser {
                     .text
                     .eq_ignore_ascii_case("EMPTY")
             {
-                self.advance(); // consume IF
-                self.advance(); // consume EMPTY
+                self.skip(); // consume IF
+                self.skip(); // consume EMPTY
             }
         }
 
@@ -16913,7 +16908,7 @@ impl Parser {
 
         match self.peek().token_type {
             TokenType::Table => {
-                self.advance();
+                self.skip();
                 // Handle IF EXISTS after ALTER TABLE
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 // Handle PostgreSQL ONLY modifier: ALTER TABLE ONLY "Album" ...
@@ -16960,13 +16955,13 @@ impl Parser {
                     // TSQL: WITH CHECK / WITH NOCHECK before ADD CONSTRAINT
                     if self.check(TokenType::With) {
                         let saved = self.current;
-                        self.advance(); // consume WITH
+                        self.skip(); // consume WITH
                         if self.check(TokenType::Check) {
-                            self.advance(); // consume CHECK
+                            self.skip(); // consume CHECK
                             with_check_modifier = Some("WITH CHECK".to_string());
                             // Continue to parse the actual action (ADD CONSTRAINT, etc.)
                         } else if self.check_identifier("NOCHECK") {
-                            self.advance(); // consume NOCHECK
+                            self.skip(); // consume NOCHECK
                             with_check_modifier = Some("WITH NOCHECK".to_string());
                             // Continue to parse the actual action (ADD CONSTRAINT, etc.)
                         } else {
@@ -17051,25 +17046,25 @@ impl Parser {
                 loop {
                     // First check without consuming comma (comma may have been consumed by action loop)
                     if self.check_identifier("ALGORITHM") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::Eq)?;
-                        algorithm = Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                        algorithm = Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                         self.match_token(TokenType::Comma); // optional trailing comma
                     } else if self.check_identifier("LOCK") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::Eq)?;
-                        lock = Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                        lock = Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                         self.match_token(TokenType::Comma); // optional trailing comma
                     } else if self.match_token(TokenType::Comma) {
                         // Try after comma
                         if self.check_identifier("ALGORITHM") {
-                            self.advance();
+                            self.skip();
                             self.expect(TokenType::Eq)?;
-                            algorithm = Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                            algorithm = Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                         } else if self.check_identifier("LOCK") {
-                            self.advance();
+                            self.skip();
                             self.expect(TokenType::Eq)?;
-                            lock = Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                            lock = Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                         } else {
                             self.current -= 1;
                             break;
@@ -17086,7 +17081,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && self.check(TokenType::Settings)
                 {
-                    self.advance(); // consume SETTINGS
+                    self.skip(); // consume SETTINGS
                     let _ = self.parse_settings_property()?;
                 }
 
@@ -17106,7 +17101,7 @@ impl Parser {
             TokenType::Sequence => self.parse_alter_sequence(),
             _ if self.check_identifier("SESSION") => {
                 // ALTER SESSION SET/UNSET (Snowflake)
-                self.advance(); // consume SESSION
+                self.skip(); // consume SESSION
                 match self.parse_alter_session()? {
                     Some(expr) => Ok(expr),
                     None => {
@@ -17126,11 +17121,11 @@ impl Parser {
 
                 loop {
                     if self.check_identifier("ALGORITHM") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::Eq)?;
-                        view_algorithm = Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                        view_algorithm = Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                     } else if self.check_identifier("DEFINER") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::Eq)?;
                         // Parse user@host format: 'admin'@'localhost'
                         let mut definer_str = String::new();
@@ -17150,11 +17145,11 @@ impl Parser {
                         }
                         view_definer = Some(definer_str);
                     } else if self.check_identifier("SQL") {
-                        self.advance();
+                        self.skip();
                         if self.match_identifier("SECURITY") {
                             self.match_token(TokenType::Eq);
                             view_sql_security =
-                                Some(self.expect_identifier_or_keyword()?.to_uppercase());
+                                Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase());
                         }
                     } else {
                         break;
@@ -17171,7 +17166,7 @@ impl Parser {
                     // Fall back to Raw for unrecognized ALTER targets
                     let start = self.current;
                     while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                        self.advance();
+                        self.skip();
                     }
                     let sql = self.tokens_to_sql(start, self.current);
                     Ok(Expression::Raw(Raw {
@@ -17343,7 +17338,7 @@ impl Parser {
                 }
             } else if self.check(TokenType::Partition) {
                 // ADD PARTITION(key = value) - Hive/Spark syntax
-                self.advance(); // consume PARTITION
+                self.skip(); // consume PARTITION
                 self.expect(TokenType::LParen)?;
                 let mut partition_exprs = Vec::new();
                 loop {
@@ -17377,7 +17372,7 @@ impl Parser {
                 // Check for Oracle-style ADD (col1 TYPE, col2 TYPE, ...) without COLUMN keyword
                 if !has_column_keyword && self.check(TokenType::LParen) {
                     // Oracle multi-column ADD syntax: ADD (col1 TYPE, col2 TYPE, ...)
-                    self.advance(); // consume '('
+                    self.skip(); // consume '('
                     let mut columns = Vec::new();
                     loop {
                         let col_def = self.parse_column_def()?;
@@ -17488,7 +17483,7 @@ impl Parser {
                             let expr = self.parse_expression()?;
                             partitions.push(vec![(Identifier::new("__expr__".to_string()), expr)]);
                         } else {
-                            self.advance(); // consume (
+                            self.skip(); // consume (
                             let mut parts = Vec::new();
                             loop {
                                 let key = self.expect_identifier()?;
@@ -17561,7 +17556,7 @@ impl Parser {
                 Ok(AlterTableAction::DropForeignKey { name })
             } else if self.check_identifier("COLUMNS") && self.check_next(TokenType::LParen) {
                 // DROP COLUMNS (col1, col2, ...) - Spark/Databricks syntax
-                self.advance(); // consume COLUMNS
+                self.skip(); // consume COLUMNS
                 self.expect(TokenType::LParen)?;
                 let mut names = Vec::new();
                 loop {
@@ -17672,9 +17667,9 @@ impl Parser {
                 Ok(AlterTableAction::AlterIndex { name, visible })
             } else if self.check_identifier("SORTKEY") {
                 // Redshift: ALTER TABLE t ALTER SORTKEY AUTO|NONE|(col1, col2)
-                self.advance(); // consume SORTKEY
+                self.skip(); // consume SORTKEY
                 if self.match_texts(&["AUTO", "NONE"]) {
-                    let style = self.previous().text.to_uppercase();
+                    let style = self.previous().text.to_ascii_uppercase();
                     Ok(AlterTableAction::AlterSortKey {
                         this: Some(style),
                         expressions: Vec::new(),
@@ -17698,7 +17693,7 @@ impl Parser {
                 }
             } else if self.check_identifier("COMPOUND") {
                 // Redshift: ALTER TABLE t ALTER COMPOUND SORTKEY (col1, col2)
-                self.advance(); // consume COMPOUND
+                self.skip(); // consume COMPOUND
                 if !self.match_identifier("SORTKEY") {
                     return Err(self.parse_error("Expected SORTKEY after COMPOUND"));
                 }
@@ -17719,9 +17714,9 @@ impl Parser {
                 }
             } else if self.check_identifier("DISTSTYLE") {
                 // Redshift: ALTER TABLE t ALTER DISTSTYLE ALL|EVEN|AUTO|KEY [DISTKEY col]
-                self.advance(); // consume DISTSTYLE
+                self.skip(); // consume DISTSTYLE
                 if self.match_texts(&["ALL", "EVEN", "AUTO"]) {
-                    let style = self.previous().text.to_uppercase();
+                    let style = self.previous().text.to_ascii_uppercase();
                     Ok(AlterTableAction::AlterDistStyle {
                         style,
                         distkey: None,
@@ -17741,7 +17736,7 @@ impl Parser {
                 }
             } else if self.check_identifier("DISTKEY") {
                 // Redshift: ALTER TABLE t ALTER DISTKEY col (shorthand for DISTSTYLE KEY DISTKEY col)
-                self.advance(); // consume DISTKEY
+                self.skip(); // consume DISTKEY
                 let col = self.expect_identifier_with_quoted()?;
                 Ok(AlterTableAction::AlterDistStyle {
                     style: "KEY".to_string(),
@@ -17891,7 +17886,7 @@ impl Parser {
         } else if self.match_token(TokenType::Set) {
             // TSQL: ALTER TABLE t SET (SYSTEM_VERSIONING=ON, DATA_DELETION=ON, ...)
             if self.check(TokenType::LParen) {
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let mut expressions = Vec::new();
                 loop {
                     if self.check(TokenType::RParen) {
@@ -17934,13 +17929,13 @@ impl Parser {
                 Ok(AlterTableAction::SetTag { expressions: tags })
             } else if self.check_identifier("LOGGED") {
                 // PostgreSQL: ALTER TABLE t SET LOGGED
-                self.advance();
+                self.skip();
                 Ok(AlterTableAction::SetAttribute {
                     attribute: "LOGGED".to_string(),
                 })
             } else if self.check_identifier("UNLOGGED") {
                 // PostgreSQL: ALTER TABLE t SET UNLOGGED
-                self.advance();
+                self.skip();
                 Ok(AlterTableAction::SetAttribute {
                     attribute: "UNLOGGED".to_string(),
                 })
@@ -17952,7 +17947,7 @@ impl Parser {
                 })
             } else if self.check_identifier("ACCESS") {
                 // PostgreSQL: ALTER TABLE t SET ACCESS METHOD method
-                self.advance();
+                self.skip();
                 // Consume "METHOD"
                 if !self.match_identifier("METHOD") {
                     return Err(self.parse_error("Expected METHOD after ACCESS"));
@@ -17963,19 +17958,19 @@ impl Parser {
                 })
             } else if self.check_identifier("TABLESPACE") {
                 // PostgreSQL: ALTER TABLE t SET TABLESPACE tablespace
-                self.advance();
+                self.skip();
                 let name = self.expect_identifier_or_keyword()?;
                 Ok(AlterTableAction::SetAttribute {
                     attribute: format!("TABLESPACE {}", name),
                 })
             } else if self.check_identifier("STAGE_FILE_FORMAT") {
                 // Snowflake: ALTER TABLE t SET STAGE_FILE_FORMAT = (options)
-                self.advance();
+                self.skip();
                 let options = self.parse_wrapped_options()?;
                 Ok(AlterTableAction::SetStageFileFormat { options })
             } else if self.check_identifier("STAGE_COPY_OPTIONS") {
                 // Snowflake: ALTER TABLE t SET STAGE_COPY_OPTIONS = (options)
-                self.advance();
+                self.skip();
                 let options = self.parse_wrapped_options()?;
                 Ok(AlterTableAction::SetStageCopyOptions { options })
             } else if self.match_token(TokenType::Authorization) {
@@ -18117,7 +18112,7 @@ impl Parser {
                 };
                 let source = if self.match_token(TokenType::From) {
                     let tref = self.parse_table_ref()?;
-                    Some(Box::new(Expression::Table(tref)))
+                    Some(Box::new(Expression::Table(Box::new(tref))))
                 } else {
                     None
                 };
@@ -18177,7 +18172,7 @@ impl Parser {
     /// Parse TSQL SYSTEM_VERSIONING option in ALTER TABLE SET (...)
     /// Handles: SYSTEM_VERSIONING=OFF, SYSTEM_VERSIONING=ON, SYSTEM_VERSIONING=ON(HISTORY_TABLE=..., ...)
     fn parse_system_versioning_option(&mut self) -> Result<Expression> {
-        self.advance(); // consume SYSTEM_VERSIONING
+        self.skip(); // consume SYSTEM_VERSIONING
         self.expect(TokenType::Eq)?;
 
         let mut prop = WithSystemVersioningProperty {
@@ -18210,12 +18205,12 @@ impl Parser {
                 if self.match_identifier("HISTORY_TABLE") {
                     self.expect(TokenType::Eq)?;
                     let table = self.parse_table_ref()?;
-                    prop.this = Some(Box::new(Expression::Table(table)));
+                    prop.this = Some(Box::new(Expression::Table(Box::new(table))));
                 } else if self.match_identifier("DATA_CONSISTENCY_CHECK") {
                     self.expect(TokenType::Eq)?;
                     let val = self.expect_identifier_or_keyword()?;
                     prop.data_consistency = Some(Box::new(Expression::Identifier(
-                        Identifier::new(val.to_uppercase()),
+                        Identifier::new(val.to_ascii_uppercase()),
                     )));
                 } else if self.match_identifier("HISTORY_RETENTION_PERIOD") {
                     self.expect(TokenType::Eq)?;
@@ -18224,7 +18219,7 @@ impl Parser {
                     }
                 } else {
                     // Skip unknown options
-                    self.advance();
+                    self.skip();
                 }
                 if !self.match_token(TokenType::Comma) {
                     break;
@@ -18239,7 +18234,7 @@ impl Parser {
     /// Parse TSQL DATA_DELETION option in ALTER TABLE SET (...)
     /// Handles: DATA_DELETION=ON, DATA_DELETION=OFF, DATA_DELETION=ON(FILTER_COLUMN=..., RETENTION_PERIOD=...)
     fn parse_data_deletion_option(&mut self) -> Result<Expression> {
-        self.advance(); // consume DATA_DELETION
+        self.skip(); // consume DATA_DELETION
         self.expect(TokenType::Eq)?;
 
         let on = if self.match_identifier("ON") || self.match_token(TokenType::On) {
@@ -18262,7 +18257,7 @@ impl Parser {
                 if self.match_identifier("FILTER_COLUMN") {
                     self.expect(TokenType::Eq)?;
                     let col = self.expect_identifier_or_keyword()?;
-                    filter_column = Some(Box::new(Expression::Column(Column {
+                    filter_column = Some(Box::new(Expression::boxed_column(Column {
                         name: Identifier::new(col),
                         table: None,
                         join_mark: false,
@@ -18276,7 +18271,7 @@ impl Parser {
                         retention_period = Some(Box::new(rp));
                     }
                 } else {
-                    self.advance();
+                    self.skip();
                 }
                 if !self.match_token(TokenType::Comma) {
                     break;
@@ -18602,11 +18597,11 @@ impl Parser {
         self.expect(TokenType::Use)?;
 
         // Check for Snowflake: USE SECONDARY ROLES ALL|NONE|role1, role2, ...
-        if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "SECONDARY" {
-            self.advance(); // consume SECONDARY
+        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SECONDARY") {
+            self.skip(); // consume SECONDARY
                             // Check for ROLES
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ROLES" {
-                self.advance(); // consume ROLES
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLES") {
+                self.skip(); // consume ROLES
                                 // Parse ALL, NONE, or comma-separated role list
                 let mut roles = Vec::new();
                 loop {
@@ -18643,11 +18638,11 @@ impl Parser {
             Some(UseKind::Schema)
         } else if self.match_token(TokenType::Warehouse) {
             Some(UseKind::Warehouse)
-        } else if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ROLE" {
-            self.advance();
+        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLE") {
+            self.skip();
             Some(UseKind::Role)
-        } else if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "CATALOG" {
-            self.advance();
+        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("CATALOG") {
+            self.skip();
             Some(UseKind::Catalog)
         } else {
             None
@@ -18669,7 +18664,7 @@ impl Parser {
     /// Parse EXPORT DATA statement (BigQuery)
     /// EXPORT DATA [WITH CONNECTION connection] OPTIONS (...) AS SELECT ...
     fn parse_export_data(&mut self) -> Result<Expression> {
-        self.advance(); // consume EXPORT
+        self.skip(); // consume EXPORT
 
         // Expect DATA
         if !self.match_identifier("DATA") {
@@ -18724,18 +18719,18 @@ impl Parser {
         self.expect(TokenType::Cache)?;
 
         // Check for LAZY keyword
-        let lazy = self.check(TokenType::Var) && self.peek().text.to_uppercase() == "LAZY";
+        let lazy = self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("LAZY");
         if lazy {
-            self.advance();
+            self.skip();
         }
 
         self.expect(TokenType::Table)?;
         let table = Identifier::new(self.expect_identifier()?);
 
         // Check for OPTIONS clause
-        let options = if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "OPTIONS"
+        let options = if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTIONS")
         {
-            self.advance();
+            self.skip();
             self.expect(TokenType::LParen)?;
             let mut opts = Vec::new();
             loop {
@@ -18802,7 +18797,7 @@ impl Parser {
 
         // Expect DATA keyword
         let data_token = self.advance();
-        if data_token.text.to_uppercase() != "DATA" {
+        if !data_token.text.eq_ignore_ascii_case("DATA") {
             return Err(self.parse_error("Expected DATA after LOAD"));
         }
 
@@ -18827,7 +18822,7 @@ impl Parser {
         self.expect(TokenType::Table)?;
 
         // Parse table name (can be qualified)
-        let table = Expression::Table(self.parse_table_ref()?);
+        let table = Expression::Table(Box::new(self.parse_table_ref()?));
 
         // Check for PARTITION clause
         let partition = if self.match_token(TokenType::Partition) {
@@ -19020,7 +19015,7 @@ impl Parser {
             } else {
                 // Skip to RParen
                 while !self.check(TokenType::RParen) && !self.is_at_end() {
-                    self.advance();
+                    self.skip();
                 }
                 self.match_token(TokenType::RParen);
                 None
@@ -19299,30 +19294,30 @@ impl Parser {
         {
             // ClickHouse EXPLAIN styles
             let text_upper = if !self.is_at_end() {
-                self.peek().text.to_uppercase()
+                self.peek().text.to_ascii_uppercase()
             } else {
                 String::new()
             };
             match text_upper.as_str() {
                 "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "QUERY" | "CURRENT" => {
-                    self.advance();
+                    self.skip();
                     let mut style_str = text_upper;
                     // Handle multi-word: TABLE OVERRIDE, CURRENT TRANSACTION, QUERY TREE
                     if style_str == "CURRENT" && self.check_identifier("TRANSACTION") {
                         style_str.push_str(" TRANSACTION");
-                        self.advance();
+                        self.skip();
                     }
                     if style_str == "QUERY" && self.check_identifier("TREE") {
                         style_str.push_str(" TREE");
-                        self.advance();
+                        self.skip();
                     }
                     Some(style_str)
                 }
                 _ if self.check(TokenType::Table) => {
                     // EXPLAIN TABLE OVERRIDE
-                    self.advance(); // consume TABLE
+                    self.skip(); // consume TABLE
                     if self.check_identifier("OVERRIDE") {
-                        self.advance();
+                        self.skip();
                         Some("TABLE OVERRIDE".to_string())
                     } else {
                         // Not TABLE OVERRIDE, backtrack
@@ -19337,10 +19332,10 @@ impl Parser {
             && (self.check(TokenType::Identifier)
                 || self.check(TokenType::Var)
                 || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.to_uppercase() == "HISTORY"
+            && self.peek().text.eq_ignore_ascii_case("HISTORY")
             && self.peek_nth(1).map(|t| t.token_type) != Some(TokenType::Dot)
         {
-            self.advance(); // consume HISTORY
+            self.skip(); // consume HISTORY
             Some("HISTORY".to_string())
         } else {
             None
@@ -19386,7 +19381,7 @@ impl Parser {
                     && self.tokens[self.current + 1].token_type == TokenType::Eq
                 {
                     let name = self.advance().text.to_lowercase();
-                    self.advance(); // consume =
+                    self.skip(); // consume =
                     let value = self.advance().text.clone();
                     properties.push((name, value));
                     self.match_token(TokenType::Comma); // optional comma between settings
@@ -19440,7 +19435,7 @@ impl Parser {
         } else {
             // Parse as table reference
             let table = self.parse_table_ref()?;
-            Expression::Table(table)
+            Expression::Table(Box::new(table))
         };
 
         // Parse optional PARTITION clause (Spark/Hive)
@@ -19474,7 +19469,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check(TokenType::Settings)
         {
-            self.advance(); // consume SETTINGS
+            self.skip(); // consume SETTINGS
             let _ = self.parse_settings_property()?;
         }
 
@@ -19485,8 +19480,8 @@ impl Parser {
                 .map(|t| t.text.eq_ignore_ascii_case("JSON"))
                 == Some(true)
         {
-            self.advance(); // consume AS
-            self.advance(); // consume JSON
+            self.skip(); // consume AS
+            self.skip(); // consume JSON
             true
         } else {
             false
@@ -19577,15 +19572,15 @@ impl Parser {
                     let last = this_parts.pop().unwrap();
                     this_parts.push(format!("{},", last));
                 }
-                self.advance();
+                self.skip();
                 continue;
             }
             // Stop at HISTORY keyword (but not as the first word)
-            if !this_parts.is_empty() && current.text.to_uppercase() == "HISTORY" {
+            if !this_parts.is_empty() && current.text.eq_ignore_ascii_case("HISTORY") {
                 break;
             }
             // Stop at STARTS keyword
-            if current.text.to_uppercase() == "STARTS" {
+            if current.text.eq_ignore_ascii_case("STARTS") {
                 break;
             }
             // SingleStore: SHOW PLAN <id> - handle number directly (before Var/keyword check)
@@ -19613,16 +19608,16 @@ impl Parser {
 
                 // SingleStore: SHOW <type> ON <name> - preserve case for name after ON
                 // Check if current token is "ON" (but not at start)
-                if current.text.to_uppercase() == "ON" && !this_parts.is_empty() {
+                if current.text.eq_ignore_ascii_case("ON") && !this_parts.is_empty() {
                     this_parts.push("ON".to_string());
-                    self.advance();
+                    self.skip();
                     // Parse the name after ON, preserving case
                     if !self.is_at_end() {
                         let next = self.peek();
                         // Handle "ON TABLE name" pattern
-                        if next.text.to_uppercase() == "TABLE" {
+                        if next.text.eq_ignore_ascii_case("TABLE") {
                             this_parts.push("TABLE".to_string());
-                            self.advance();
+                            self.skip();
                         }
                         // Parse the actual name
                         if !self.is_at_end() {
@@ -19639,12 +19634,12 @@ impl Parser {
                 }
 
                 // SingleStore: SHOW REPRODUCTION INTO OUTFILE 'filename'
-                if current.text.to_uppercase() == "INTO" && joined == "REPRODUCTION" {
+                if current.text.eq_ignore_ascii_case("INTO") && joined == "REPRODUCTION" {
                     this_parts.push("INTO".to_string());
-                    self.advance();
-                    if !self.is_at_end() && self.peek().text.to_uppercase() == "OUTFILE" {
+                    self.skip();
+                    if !self.is_at_end() && self.peek().text.eq_ignore_ascii_case("OUTFILE") {
                         this_parts.push("OUTFILE".to_string());
-                        self.advance();
+                        self.skip();
                         // Parse the filename
                         if !self.is_at_end() && self.check(TokenType::String) {
                             let filename = self.advance().text;
@@ -19657,9 +19652,9 @@ impl Parser {
                 // SingleStore: SHOW PLAN [JSON] <id> - capture the numeric ID
                 if joined == "PLAN" {
                     // Check if current is "JSON" - if so, push it and check for number
-                    if current.text.to_uppercase() == "JSON" {
+                    if current.text.eq_ignore_ascii_case("JSON") {
                         this_parts.push("JSON".to_string());
-                        self.advance();
+                        self.skip();
                         // Now check for number
                         if !self.is_at_end() && self.check(TokenType::Number) {
                             let id = self.advance().text;
@@ -19675,8 +19670,8 @@ impl Parser {
                     }
                 }
 
-                this_parts.push(current.text.to_uppercase());
-                self.advance();
+                this_parts.push(current.text.to_ascii_uppercase());
+                self.skip();
 
                 // ClickHouse: SHOW CREATE TABLE/VIEW/DICTIONARY <qualified_name>
                 // After detecting CREATE TABLE/VIEW/DICTIONARY, parse the next as a table ref
@@ -19696,7 +19691,7 @@ impl Parser {
                             || self.is_safe_keyword_as_identifier())
                     {
                         let table = self.parse_table_ref()?;
-                        target = Some(Expression::Table(table));
+                        target = Some(Expression::Table(Box::new(table)));
                     }
                     break;
                 }
@@ -19743,7 +19738,7 @@ impl Parser {
                     && !self.is_at_end()
                     && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
                     && !matches!(
-                        self.peek().text.to_uppercase().as_str(),
+                        self.peek().text.to_ascii_uppercase().as_str(),
                         "TABLE"
                             | "VIEW"
                             | "DICTIONARY"
@@ -19761,7 +19756,7 @@ impl Parser {
                     )
                 {
                     let table = self.parse_table_ref()?;
-                    target = Some(Expression::Table(table));
+                    target = Some(Expression::Table(Box::new(table)));
                     break;
                 }
 
@@ -19779,12 +19774,12 @@ impl Parser {
                             // Parse STATUS or MUTEX
                             if !self.is_at_end() {
                                 let next = self.peek();
-                                let next_upper = next.text.to_uppercase();
+                                let next_upper = next.text.to_ascii_uppercase();
                                 if next_upper == "STATUS" {
-                                    self.advance();
+                                    self.skip();
                                     mutex = Some(false);
                                 } else if next_upper == "MUTEX" {
-                                    self.advance();
+                                    self.skip();
                                     mutex = Some(true);
                                 }
                             }
@@ -19865,7 +19860,7 @@ impl Parser {
                     && !self.check_keyword_text("STARTS")
                 {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19879,7 +19874,7 @@ impl Parser {
                     && !self.check_keyword_text("STARTS")
                 {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19893,7 +19888,7 @@ impl Parser {
                     && !self.check_keyword_text("STARTS")
                 {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19907,7 +19902,7 @@ impl Parser {
                     && !self.check_keyword_text("STARTS")
                 {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19916,7 +19911,7 @@ impl Parser {
                 // IN CLASS name
                 let scope_obj = if !self.is_at_end() {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19930,7 +19925,7 @@ impl Parser {
                 };
                 let scope_obj = if !self.is_at_end() {
                     let table = self.parse_table_ref()?;
-                    Some(Expression::Table(table))
+                    Some(Expression::Table(Box::new(table)))
                 } else {
                     None
                 };
@@ -19947,7 +19942,7 @@ impl Parser {
                 };
                 (
                     Some(inferred_kind.to_string()),
-                    Some(Expression::Table(table)),
+                    Some(Expression::Table(Box::new(table))),
                 )
             };
             (kind, scope_obj)
@@ -20049,8 +20044,8 @@ impl Parser {
                     TokenType::Like | TokenType::ILike
                 )
             {
-                self.advance(); // consume NOT
-                self.advance(); // consume LIKE/ILIKE
+                self.skip(); // consume NOT
+                self.skip(); // consume LIKE/ILIKE
                 let _ = self.parse_primary()?; // consume pattern
             }
         }
@@ -20081,7 +20076,7 @@ impl Parser {
                 }
                 let tok = self.peek();
                 if tok.token_type == TokenType::Var || tok.token_type.is_keyword() {
-                    privs.push(self.advance().text.to_uppercase());
+                    privs.push(self.advance().text.to_ascii_uppercase());
                     // Check for comma to continue
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -20150,13 +20145,13 @@ impl Parser {
                 // Column list won't start with SELECT
                 let has_column_list = {
                     let start = self.current;
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let is_select = self.check(TokenType::Select);
                     self.current = start; // backtrack
                     !is_select
                 };
                 if has_column_list {
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let mut columns = Vec::new();
                     loop {
                         let col_name = self.expect_identifier_or_keyword()?;
@@ -20168,11 +20163,11 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     // Create a schema expression with the table and columns
                     Expression::Schema(Box::new(Schema {
-                        this: Some(Box::new(Expression::Table(table))),
+                        this: Some(Box::new(Expression::Table(Box::new(table)))),
                         expressions: columns
                             .into_iter()
                             .map(|c| {
-                                Expression::Column(Column {
+                                Expression::boxed_column(Column {
                                     name: Identifier::new(c),
                                     table: None,
                                     join_mark: false,
@@ -20184,10 +20179,10 @@ impl Parser {
                             .collect(),
                     }))
                 } else {
-                    Expression::Table(table)
+                    Expression::Table(Box::new(table))
                 }
             } else {
-                Expression::Table(table)
+                Expression::Table(Box::new(table))
             }
         };
 
@@ -20213,7 +20208,7 @@ impl Parser {
             if self.check(TokenType::LParen) {
                 // Peek ahead to see if this is a subquery
                 let start = self.current;
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let is_select = self.check(TokenType::Select);
                 self.current = start; // backtrack
                 if is_select {
@@ -20266,7 +20261,7 @@ impl Parser {
                         && self.tokens[lookahead].token_type == TokenType::Dot;
                     if has_dot {
                         let table = self.parse_table_ref()?;
-                        files.push(Expression::Table(table));
+                        files.push(Expression::Table(Box::new(table)));
                         continue;
                     }
                 }
@@ -20398,12 +20393,12 @@ impl Parser {
                     // Key=value pairs: CREDENTIALS = (AWS_KEY_ID='id' AWS_SECRET_KEY='key')
                     while !self.check(TokenType::RParen) && !self.is_at_end() {
                         // Parse nested key=value pairs
-                        let nested_key = self.expect_identifier_or_keyword()?.to_uppercase();
+                        let nested_key = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
                         if self.match_token(TokenType::Eq) {
                             let nested_value = self.parse_copy_param_value()?;
                             // Create an Eq expression for the nested key=value
                             values.push(Expression::Eq(Box::new(BinaryOp {
-                                left: Expression::Column(Column {
+                                left: Expression::boxed_column(Column {
                                     name: Identifier::new(nested_key),
                                     table: None,
                                     join_mark: false,
@@ -20419,7 +20414,7 @@ impl Parser {
                             })));
                         } else {
                             // Just a keyword/value without =
-                            values.push(Expression::Column(Column {
+                            values.push(Expression::boxed_column(Column {
                                 name: Identifier::new(nested_key),
                                 table: None,
                                 join_mark: false,
@@ -20448,7 +20443,7 @@ impl Parser {
                     "FORMAT_OPTIONS" | "COPY_OPTIONS" | "FILE_FORMAT" | "CREDENTIAL"
                 );
 
-                self.advance(); // consume (
+                self.skip(); // consume (
 
                 if is_varlen_option {
                     // Parse as key='value' pairs: FORMAT_OPTIONS ('opt1'='true', 'opt2'='test')
@@ -20480,7 +20475,7 @@ impl Parser {
                             if self.match_token(TokenType::Eq) {
                                 let val = self.parse_copy_param_value()?;
                                 values.push(Expression::Eq(Box::new(BinaryOp {
-                                    left: Expression::Column(Column {
+                                    left: Expression::boxed_column(Column {
                                         name: Identifier::new(key),
                                         table: None,
                                         join_mark: false,
@@ -20496,7 +20491,7 @@ impl Parser {
                                 })));
                             } else {
                                 // Just an identifier without =
-                                values.push(Expression::Column(Column {
+                                values.push(Expression::boxed_column(Column {
                                     name: Identifier::new(key),
                                     table: None,
                                     join_mark: false,
@@ -20538,7 +20533,7 @@ impl Parser {
             {
                 // Identifier value: FORMAT JSON, HEADER MATCH, etc.
                 // But skip if this is a known flag-only parameter (Redshift COPY options that take no value)
-                let name_upper = name.to_uppercase();
+                let name_upper = name.to_ascii_uppercase();
                 let is_flag_param = matches!(
                     name_upper.as_str(),
                     "EMPTYASNULL"
@@ -20596,7 +20591,7 @@ impl Parser {
         // Handle quoted identifier (e.g., STORAGE_INTEGRATION = "storage")
         if self.check(TokenType::QuotedIdentifier) {
             let token = self.advance();
-            return Ok(Expression::Column(Column {
+            return Ok(Expression::boxed_column(Column {
                 name: Identifier::quoted(token.text.clone()),
                 table: None,
                 join_mark: false,
@@ -20623,7 +20618,7 @@ impl Parser {
                 let second = self.expect_identifier_or_keyword()?;
                 if self.match_token(TokenType::Dot) {
                     let third = self.expect_identifier_or_keyword()?;
-                    return Ok(Expression::Column(Column {
+                    return Ok(Expression::boxed_column(Column {
                         name: Identifier::new(format!("{}.{}.{}", first, second, third)),
                         table: None,
                         join_mark: false,
@@ -20632,7 +20627,7 @@ impl Parser {
                         inferred_type: None,
                     }));
                 }
-                return Ok(Expression::Column(Column {
+                return Ok(Expression::boxed_column(Column {
                     name: Identifier::new(format!("{}.{}", first, second)),
                     table: None,
                     join_mark: false,
@@ -20641,7 +20636,7 @@ impl Parser {
                     inferred_type: None,
                 }));
             }
-            return Ok(Expression::Column(Column {
+            return Ok(Expression::boxed_column(Column {
                 name: Identifier::new(first),
                 table: None,
                 join_mark: false,
@@ -20727,7 +20722,7 @@ impl Parser {
                 name.push_str(&self.advance().text);
             } else if self.check(TokenType::Percent) {
                 // Handle table stage in qualified path: @namespace.%table_name
-                self.advance();
+                self.skip();
                 name.push('%');
                 if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
                     name.push_str(&self.advance().text);
@@ -20816,10 +20811,10 @@ impl Parser {
         // @~ = user stage
         // @% = table stage (followed by table name)
         if self.check(TokenType::Tilde) {
-            self.advance();
+            self.skip();
             name.push('~');
         } else if self.check(TokenType::Percent) {
-            self.advance();
+            self.skip();
             name.push('%');
             // Table name follows (can be qualified: schema.table)
             loop {
@@ -20846,7 +20841,7 @@ impl Parser {
                     name.push('"');
                 } else if self.check(TokenType::Percent) {
                     // Handle table stage in qualified path: @namespace.%table_name
-                    self.advance();
+                    self.skip();
                     name.push('%');
                     if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
                         name.push_str(&self.advance().text);
@@ -20940,18 +20935,18 @@ impl Parser {
     fn parse_file_location(&mut self) -> Result<Expression> {
         // Stage reference starting with @ (tokenized as DAt or as a Var starting with @)
         if self.check(TokenType::DAt) {
-            self.advance(); // consume @
+            self.skip(); // consume @
             let mut stage_path = String::from("@");
 
             // Handle table stage prefix: @%table
             if self.check(TokenType::Percent) || self.check(TokenType::Mod) {
                 stage_path.push('%');
-                self.advance(); // consume %
+                self.skip(); // consume %
             }
             // Handle user stage: @~
             else if self.check(TokenType::Tilde) {
                 stage_path.push('~');
-                self.advance(); // consume ~
+                self.skip(); // consume ~
             }
 
             // Get stage name
@@ -20960,7 +20955,7 @@ impl Parser {
             }
             // Parse qualified name parts: .schema.stage
             while self.check(TokenType::Dot) {
-                self.advance(); // consume .
+                self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token()
                 {
@@ -20969,7 +20964,7 @@ impl Parser {
             }
             // Parse path segments: /path/to/file (slash is tokenized separately)
             while self.check(TokenType::Slash) {
-                self.advance(); // consume /
+                self.skip(); // consume /
                 stage_path.push('/');
                 // Get path segment (identifier, keyword, or special chars)
                 // But don't consume if followed by = (that's a parameter, not path)
@@ -20990,7 +20985,7 @@ impl Parser {
             let mut stage_path = self.advance().text.clone();
             // Parse qualified name parts: .schema.stage
             while self.check(TokenType::Dot) {
-                self.advance(); // consume .
+                self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token()
                 {
@@ -20999,7 +20994,7 @@ impl Parser {
             }
             // Parse path segments: /path/to/file
             while self.check(TokenType::Slash) {
-                self.advance(); // consume /
+                self.skip(); // consume /
                 stage_path.push('/');
                 // Get path segment (identifier, keyword, or special chars)
                 // But don't consume if followed by = (that's a parameter, not path)
@@ -21031,7 +21026,7 @@ impl Parser {
         // Identifier (could be a stage name without @)
         if self.check(TokenType::Var) || self.check_keyword() {
             let ident = self.advance().text.clone();
-            return Ok(Expression::Column(Column {
+            return Ok(Expression::boxed_column(Column {
                 name: Identifier::new(ident),
                 table: None,
                 join_mark: false,
@@ -21050,21 +21045,21 @@ impl Parser {
     fn parse_stage_reference_as_string(&mut self) -> Result<Expression> {
         // Stage reference starting with @ (tokenized as DAt)
         if self.check(TokenType::DAt) {
-            self.advance(); // consume @
+            self.skip(); // consume @
             let mut stage_path = String::from("@");
 
             // Handle table stage prefix: @%table
             if self.check(TokenType::Percent) || self.check(TokenType::Mod) {
                 stage_path.push('%');
-                self.advance(); // consume %
+                self.skip(); // consume %
             }
             // Handle user stage: @~
             else if self.check(TokenType::Tilde) {
                 stage_path.push('~');
-                self.advance(); // consume ~
+                self.skip(); // consume ~
                                 // After @~, parse any path segments
                 while self.check(TokenType::Slash) {
-                    self.advance(); // consume /
+                    self.skip(); // consume /
                     stage_path.push('/');
                     if (self.check(TokenType::Var)
                         || self.check_keyword()
@@ -21084,7 +21079,7 @@ impl Parser {
                 stage_path.push('"');
                 stage_path.push_str(text);
                 stage_path.push('"');
-                self.advance();
+                self.skip();
             } else if self.check(TokenType::Var)
                 || self.check_keyword()
                 || self.check(TokenType::Identifier)
@@ -21094,7 +21089,7 @@ impl Parser {
 
             // Parse qualified name parts: .schema.stage (may include quoted identifiers)
             while self.check(TokenType::Dot) {
-                self.advance(); // consume .
+                self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::QuotedIdentifier) {
                     // Preserve quoted identifier with quotes
@@ -21102,7 +21097,7 @@ impl Parser {
                     stage_path.push('"');
                     stage_path.push_str(text);
                     stage_path.push('"');
-                    self.advance();
+                    self.skip();
                 } else if self.check(TokenType::Var)
                     || self.check_keyword()
                     || self.check(TokenType::Identifier)
@@ -21113,7 +21108,7 @@ impl Parser {
 
             // Parse path segments: /path/to/file
             while self.check(TokenType::Slash) {
-                self.advance(); // consume /
+                self.skip(); // consume /
                 stage_path.push('/');
                 // Get path segment but don't consume if followed by = (that's a parameter)
                 if (self.check(TokenType::Var)
@@ -21133,14 +21128,14 @@ impl Parser {
 
             // Parse qualified name parts: .schema.stage (may include quoted identifiers)
             while self.check(TokenType::Dot) {
-                self.advance(); // consume .
+                self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::QuotedIdentifier) {
                     let text = &self.peek().text;
                     stage_path.push('"');
                     stage_path.push_str(text);
                     stage_path.push('"');
-                    self.advance();
+                    self.skip();
                 } else if self.check(TokenType::Var)
                     || self.check_keyword()
                     || self.check(TokenType::Identifier)
@@ -21151,7 +21146,7 @@ impl Parser {
 
             // Parse path segments: /path/to/file
             while self.check(TokenType::Slash) {
-                self.advance(); // consume /
+                self.skip(); // consume /
                 stage_path.push('/');
                 if (self.check(TokenType::Var)
                     || self.check_keyword()
@@ -21378,7 +21373,7 @@ impl Parser {
     /// RM @stage_name / REMOVE @stage_name
     fn parse_rm_command(&mut self) -> Result<Expression> {
         let command_token = self.advance(); // RM or REMOVE
-        let command_name = command_token.text.to_uppercase();
+        let command_name = command_token.text.to_ascii_uppercase();
 
         // Collect remaining tokens with their types
         let mut tokens = vec![(command_name, command_token.token_type)];
@@ -21459,7 +21454,7 @@ impl Parser {
 
         // Parse procedure name (can be qualified: schema.proc_name)
         let proc_name = self.parse_table_ref()?;
-        let this = Expression::Table(proc_name);
+        let this = Expression::Table(Box::new(proc_name));
 
         // Parse optional parameters: @param=value, ...
         let mut parameters = Vec::new();
@@ -21488,7 +21483,7 @@ impl Parser {
                 // Positional parameter: @var (no = sign)
                 parameters.push(ExecuteParameter {
                     name: param_name.clone(),
-                    value: Expression::Column(Column {
+                    value: Expression::boxed_column(Column {
                         name: Identifier::new(&param_name),
                         table: None,
                         join_mark: false,
@@ -21598,11 +21593,11 @@ impl Parser {
         let grant_option = self.match_token(TokenType::With)
             && self.check(TokenType::Grant)
             && {
-                self.advance();
-                self.check(TokenType::Var) && self.peek().text.to_uppercase() == "OPTION"
+                self.skip();
+                self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTION")
             }
             && {
-                self.advance();
+                self.skip();
                 true
             };
 
@@ -21672,9 +21667,9 @@ impl Parser {
 
         // Check for GRANT OPTION FOR
         let grant_option = if self.check(TokenType::Grant) {
-            self.advance();
-            if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "OPTION" {
-                self.advance();
+            self.skip();
+            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTION") {
+                self.skip();
                 self.expect(TokenType::For)?;
                 true
             } else {
@@ -21744,7 +21739,7 @@ impl Parser {
                     break;
                 }
                 if self.is_identifier_or_keyword_token() {
-                    priv_parts.push(self.advance().text.to_uppercase());
+                    priv_parts.push(self.advance().text.to_ascii_uppercase());
                 } else {
                     break;
                 }
@@ -21790,25 +21785,25 @@ impl Parser {
     /// Parse object kind (TABLE, SCHEMA, FUNCTION, PROCEDURE, SEQUENCE, etc.)
     fn parse_object_kind(&mut self) -> Result<Option<String>> {
         if self.check(TokenType::Table) {
-            self.advance();
+            self.skip();
             Ok(Some("TABLE".to_string()))
         } else if self.check(TokenType::Schema) {
-            self.advance();
+            self.skip();
             Ok(Some("SCHEMA".to_string()))
         } else if self.check(TokenType::Database) {
-            self.advance();
+            self.skip();
             Ok(Some("DATABASE".to_string()))
         } else if self.check(TokenType::Function) {
-            self.advance();
+            self.skip();
             Ok(Some("FUNCTION".to_string()))
         } else if self.check(TokenType::View) {
-            self.advance();
+            self.skip();
             Ok(Some("VIEW".to_string()))
         } else if self.check(TokenType::Procedure) {
-            self.advance();
+            self.skip();
             Ok(Some("PROCEDURE".to_string()))
         } else if self.check(TokenType::Sequence) {
-            self.advance();
+            self.skip();
             Ok(Some("SEQUENCE".to_string()))
         } else {
             Ok(None)
@@ -21820,16 +21815,16 @@ impl Parser {
         let mut principals = Vec::new();
         loop {
             // Check for ROLE keyword (TokenType::Var with text "ROLE")
-            let is_role = if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ROLE"
+            let is_role = if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLE")
             {
-                self.advance();
+                self.skip();
                 true
             } else {
                 false
             };
             // Check for GROUP keyword (Redshift) - TokenType::Group
             let is_group = if !is_role && self.check(TokenType::Group) {
-                self.advance();
+                self.skip();
                 true
             } else {
                 false
@@ -21905,15 +21900,15 @@ impl Parser {
         // Check for MATERIALIZED (can be TokenType::Materialized or TokenType::Var)
         let materialized = if self.match_token(TokenType::Materialized) {
             true
-        } else if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "MATERIALIZED" {
-            self.advance();
+        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("MATERIALIZED") {
+            self.skip();
             true
         } else {
             false
         };
 
         // Parse the object kind (COLUMN, TABLE, DATABASE, PROCEDURE, etc.)
-        let kind = self.expect_identifier_or_keyword()?.to_uppercase();
+        let kind = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
 
         // Parse the object name (can be qualified like schema.table.column)
         // For PROCEDURE/FUNCTION, we need to handle the parameter list like my_proc(integer, integer)
@@ -21953,7 +21948,7 @@ impl Parser {
 
         // Expect IS
         if self.check(TokenType::Is) {
-            self.advance();
+            self.skip();
         } else {
             return Err(self.parse_error("Expected IS in COMMENT ON statement"));
         }
@@ -22123,7 +22118,7 @@ impl Parser {
                         && next.token_type != TokenType::To
                         && next.token_type != TokenType::ColonEq
                     {
-                        self.advance(); // consume VARIABLE
+                        self.skip(); // consume VARIABLE
                         true
                     } else {
                         false
@@ -22140,7 +22135,7 @@ impl Parser {
             let name = {
                 if self.check(TokenType::AtAt) {
                     // @@SCOPE.variable or @@variable syntax (MySQL system variables)
-                    self.advance(); // consume @@
+                    self.skip(); // consume @@
                     let mut name_str = "@@".to_string();
                     let first = self.advance().text.clone();
                     name_str.push_str(&first);
@@ -22153,7 +22148,7 @@ impl Parser {
                     Expression::Identifier(Identifier::new(name_str))
                 } else if self.check(TokenType::DAt) {
                     // @variable syntax (MySQL user variables)
-                    self.advance(); // consume @
+                    self.skip(); // consume @
                     let mut name_str = "@".to_string();
                     let first = self.advance().text.clone();
                     name_str.push_str(&first);
@@ -22170,7 +22165,7 @@ impl Parser {
                     // Handle Hive-style colon-separated names (e.g., hiveconf:some_var)
                     // But not := which is assignment
                     while self.check(TokenType::Colon) && !self.check_next(TokenType::Eq) {
-                        self.advance(); // consume :
+                        self.skip(); // consume :
                         let next = self.advance().text.clone();
                         name_str.push(':');
                         name_str.push_str(&next);
@@ -22388,7 +22383,7 @@ impl Parser {
         if parts.len() == 1 {
             Ok(Expression::Identifier(Identifier::new(parts.remove(0))))
         } else if parts.len() == 2 {
-            Ok(Expression::Column(Column {
+            Ok(Expression::boxed_column(Column {
                 table: Some(Identifier::new(parts[0].clone())),
                 name: Identifier::new(parts[1].clone()),
                 join_mark: false,
@@ -22400,7 +22395,7 @@ impl Parser {
             // For 3+ parts, create a Column with concatenated table parts
             let column_name = parts.pop().unwrap();
             let table_name = parts.join(".");
-            Ok(Expression::Column(Column {
+            Ok(Expression::boxed_column(Column {
                 table: Some(Identifier::new(table_name)),
                 name: Identifier::new(column_name),
                 join_mark: false,
@@ -22431,7 +22426,7 @@ impl Parser {
         // Parse AT/BEFORE clause for time travel (Snowflake)
         // Note: BEFORE is a keyword token, AT is an identifier
         let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-            let keyword = self.previous().text.to_uppercase();
+            let keyword = self.previous().text.to_ascii_uppercase();
             self.expect(TokenType::LParen)?;
             // Parse the content: OFFSET => value or TIMESTAMP => value
             let mut result = format!("{} (", keyword);
@@ -22572,7 +22567,7 @@ impl Parser {
         // Parse AT/BEFORE clause for time travel (Snowflake)
         // Note: BEFORE is a keyword token, AT is an identifier
         let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-            let keyword = self.previous().text.to_uppercase();
+            let keyword = self.previous().text.to_ascii_uppercase();
             self.expect(TokenType::LParen)?;
             // Parse the content: OFFSET => value or TIMESTAMP => value
             let mut result = format!("{} (", keyword);
@@ -22706,8 +22701,8 @@ impl Parser {
                     .text
                     .eq_ignore_ascii_case("EMPTY")
             {
-                self.advance(); // consume IF
-                self.advance(); // consume EMPTY
+                self.skip(); // consume IF
+                self.skip(); // consume EMPTY
             }
         }
         let name = Identifier::new(self.expect_identifier()?);
@@ -22768,7 +22763,7 @@ impl Parser {
                 // TSQL: RETURNS @var TABLE (col_defs)
                 let var_name = self.advance().text.clone();
                 if self.check(TokenType::Table) {
-                    self.advance(); // consume TABLE
+                    self.skip(); // consume TABLE
                     return_type = Some(DataType::Custom {
                         name: "TABLE".to_string(),
                     });
@@ -22786,7 +22781,7 @@ impl Parser {
                                     break;
                                 }
                             }
-                            self.advance();
+                            self.skip();
                         }
                         // Reconstruct the column definitions with proper spacing
                         let mut col_defs_str = String::new();
@@ -22824,10 +22819,10 @@ impl Parser {
                 // - TSQL: RETURNS TABLE AS RETURN ...
                 // - BigQuery: RETURNS TABLE <col1 TYPE, col2 TYPE>
                 // - Snowflake: RETURNS TABLE(col1 TYPE, col2 TYPE)
-                self.advance(); // consume TABLE
+                self.skip(); // consume TABLE
                 if self.check(TokenType::Lt) {
                     // BigQuery: RETURNS TABLE <col1 TYPE, col2 TYPE>
-                    self.advance(); // consume <
+                    self.skip(); // consume <
                     let mut cols = Vec::new();
                     loop {
                         let col_name = self.expect_identifier()?;
@@ -22847,7 +22842,7 @@ impl Parser {
                     returns_table_body = Some(format!("TABLE <{}>", cols.join(", ")));
                 } else if self.check(TokenType::LParen) {
                     // Snowflake: RETURNS TABLE(col1 TYPE, col2 TYPE)
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let mut cols = Vec::new();
                     loop {
                         let col_name = self.expect_identifier()?;
@@ -22892,8 +22887,8 @@ impl Parser {
                 && self.tokens[self.current + 1].token_type == TokenType::Null
             {
                 // RETURNS NULL ON NULL INPUT
-                self.advance(); // consume RETURNS
-                self.advance(); // consume NULL
+                self.skip(); // consume RETURNS
+                self.skip(); // consume NULL
                 self.match_token(TokenType::On);
                 self.match_token(TokenType::Null);
                 self.match_token(TokenType::Input);
@@ -23395,7 +23390,7 @@ impl Parser {
     /// Parse CREATE PROCEDURE statement
     fn parse_create_procedure(&mut self, or_replace: bool) -> Result<Expression> {
         // Check if PROC shorthand was used before consuming the token
-        let use_proc_keyword = self.peek().text.to_uppercase() == "PROC";
+        let use_proc_keyword = self.peek().text.eq_ignore_ascii_case("PROC");
         self.expect(TokenType::Procedure)?;
 
         let if_not_exists =
@@ -23461,11 +23456,11 @@ impl Parser {
                             with_options.push(format!("EXECUTE AS '{}'", tok.text));
                         } else {
                             let ident = self.expect_identifier_or_keyword()?;
-                            with_options.push(format!("EXECUTE AS {}", ident.to_uppercase()));
+                            with_options.push(format!("EXECUTE AS {}", ident.to_ascii_uppercase()));
                         }
                     } else {
                         let opt = self.expect_identifier_or_keyword()?;
-                        with_options.push(opt.to_uppercase());
+                        with_options.push(opt.to_ascii_uppercase());
                     }
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -24218,11 +24213,11 @@ impl Parser {
 
     /// Parse CREATE STAGE statement (Snowflake)
     fn parse_create_stage(&mut self, or_replace: bool, temporary: bool) -> Result<Expression> {
-        self.advance(); // consume STAGE (identifier)
+        self.skip(); // consume STAGE (identifier)
                         // Parse remaining tokens, normalizing FILE_FORMAT clause
         let start = self.current;
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
         let sql = self.tokens_to_sql_stage_format(start, self.current);
 
@@ -24243,11 +24238,11 @@ impl Parser {
 
     /// Parse CREATE TAG statement (Snowflake)
     fn parse_create_tag(&mut self, or_replace: bool) -> Result<Expression> {
-        self.advance(); // consume TAG
+        self.skip(); // consume TAG
                         // Capture remaining tokens as raw SQL
         let start = self.current;
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
         let sql = self.tokens_to_sql(start, self.current);
         let prefix = if or_replace {
@@ -24262,11 +24257,11 @@ impl Parser {
 
     /// Parse CREATE STREAM statement (Snowflake)
     fn parse_create_stream(&mut self, _or_replace: bool) -> Result<Expression> {
-        self.advance(); // consume STREAM
+        self.skip(); // consume STREAM
                         // Capture remaining tokens as raw SQL
         let start = self.current;
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
         let sql = self.tokens_to_sql(start, self.current);
         Ok(Expression::Raw(Raw {
@@ -24280,12 +24275,12 @@ impl Parser {
         or_replace: bool,
         temporary: bool,
     ) -> Result<Expression> {
-        self.advance(); // consume FILE
-        self.advance(); // consume FORMAT
+        self.skip(); // consume FILE
+        self.skip(); // consume FORMAT
                         // Capture remaining tokens as raw SQL
         let start = self.current;
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
         let sql = self.tokens_to_sql(start, self.current);
         let mut prefix = String::from("CREATE");
@@ -24335,7 +24330,7 @@ impl Parser {
         let columns = if self.check(TokenType::LParen) {
             // Peek ahead to see if this looks like column aliases
             let saved = self.current;
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
 
             // Check if this is an identifier (column name) vs SELECT keyword
             let is_column_aliases = self.check(TokenType::Identifier)
@@ -24375,7 +24370,7 @@ impl Parser {
         // TSQL: WITH option (SCHEMABINDING, ENCRYPTION, VIEW_METADATA) before AS
         let with_option = if self.match_token(TokenType::With) {
             let opt = self.expect_identifier_or_keyword()?;
-            Some(opt.to_uppercase())
+            Some(opt.to_ascii_uppercase())
         } else {
             None
         };
@@ -24565,8 +24560,8 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) {
             while self.check(TokenType::Apply) && self.check_next(TokenType::LParen) {
-                self.advance(); // consume APPLY
-                self.advance(); // consume (
+                self.skip(); // consume APPLY
+                self.skip(); // consume (
                 let expr = self.parse_expression()?;
                 self.expect(TokenType::RParen)?;
                 left = Expression::Apply(Box::new(crate::expressions::Apply {
@@ -24586,11 +24581,11 @@ impl Parser {
         while self.check(TokenType::Or)
             || (self.dpipe_is_logical_or() && self.check(TokenType::DPipe))
         {
-            let mut all_comments = self.previous_trailing_comments();
+            let mut all_comments = self.previous_trailing_comments().to_vec();
             // Also capture leading comments on the OR token (comments on a separate line before OR)
-            all_comments.extend(self.current_leading_comments());
-            self.advance(); // consume OR
-            all_comments.extend(self.previous_trailing_comments());
+            all_comments.extend_from_slice(self.current_leading_comments());
+            self.skip(); // consume OR
+            all_comments.extend_from_slice(self.previous_trailing_comments());
             // Clear trailing_comments from left expression to avoid duplication
             if !all_comments.is_empty() {
                 Self::clear_rightmost_trailing_comments(&mut left);
@@ -24610,7 +24605,7 @@ impl Parser {
             let mut right = self.parse_xor()?;
             // If parse_comparison stored pending leading comments, attach them
             if !self.pending_leading_comments.is_empty() {
-                let pending = self.pending_leading_comments.drain(..).collect::<Vec<_>>();
+                let pending = std::mem::take(&mut self.pending_leading_comments);
                 right = Expression::Annotated(Box::new(Annotated {
                     this: right,
                     trailing_comments: pending,
@@ -24659,12 +24654,12 @@ impl Parser {
 
         while self.check(TokenType::And) {
             // Capture comments from the token before AND (left operand's last token)
-            let mut all_comments = self.previous_trailing_comments();
+            let mut all_comments = self.previous_trailing_comments().to_vec();
             // Also capture leading comments on the AND token (comments on a separate line before AND)
-            all_comments.extend(self.current_leading_comments());
-            self.advance(); // consume AND
+            all_comments.extend_from_slice(self.current_leading_comments());
+            self.skip(); // consume AND
                             // Also capture any trailing comments on the AND token itself
-            all_comments.extend(self.previous_trailing_comments());
+            all_comments.extend_from_slice(self.previous_trailing_comments());
             // Clear trailing_comments from left expression to avoid duplication
             if !all_comments.is_empty() {
                 Self::clear_rightmost_trailing_comments(&mut left);
@@ -24689,7 +24684,7 @@ impl Parser {
             // the right operand's first token with no comparison following),
             // attach them as trailing_comments on the right expression.
             if !self.pending_leading_comments.is_empty() {
-                let pending = self.pending_leading_comments.drain(..).collect::<Vec<_>>();
+                let pending = std::mem::take(&mut self.pending_leading_comments);
                 right = Expression::Annotated(Box::new(Annotated {
                     this: right,
                     trailing_comments: pending,
@@ -24819,7 +24814,7 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<Expression> {
         // Capture leading comments from the first token before parsing the left side.
         // If a comparison operator follows, these are placed after the left operand.
-        let pre_left_comments = self.current_leading_comments();
+        let pre_left_comments = self.current_leading_comments().to_vec();
         let mut left = self.parse_bitwise_or()?;
 
         // Only attach pre-left comments when a comparison operator follows.
@@ -24827,20 +24822,13 @@ impl Parser {
         // the comments are returned to the caller by being accessible via the
         // `comparison_pre_left_comments` field, so they can be placed appropriately
         // (e.g., after an alias name, or after the expression in an AND chain).
-        let has_comparison_op = self.check(TokenType::Eq)
-            || self.check(TokenType::Neq)
-            || self.check(TokenType::Lt)
-            || self.check(TokenType::Gt)
-            || self.check(TokenType::Lte)
-            || self.check(TokenType::Gte)
-            || self.check(TokenType::Is)
-            || self.check(TokenType::In)
-            || self.check(TokenType::Not)
-            || self.check(TokenType::Between)
-            || self.check(TokenType::Like)
-            || self.check(TokenType::ILike)
-            || self.check(TokenType::RLike)
-            || self.check(TokenType::SimilarTo);
+        let has_comparison_op = !self.is_at_end() && matches!(
+            self.peek().token_type,
+            TokenType::Eq | TokenType::Neq | TokenType::Lt | TokenType::Gt
+            | TokenType::Lte | TokenType::Gte | TokenType::Is | TokenType::In
+            | TokenType::Not | TokenType::Between | TokenType::Like
+            | TokenType::ILike | TokenType::RLike | TokenType::SimilarTo
+        );
 
         if !pre_left_comments.is_empty() {
             if has_comparison_op {
@@ -24874,7 +24862,7 @@ impl Parser {
             ) && self.check_identifier("GLOBAL")
                 && (self.check_next(TokenType::Not) || self.check_next(TokenType::In))
             {
-                self.advance();
+                self.skip();
                 global_in = true;
             }
 
@@ -24907,7 +24895,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Eq(Box::new(BinaryOp {
                         left,
                         right,
@@ -24946,7 +24934,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Neq(Box::new(BinaryOp {
                         left,
                         right,
@@ -24985,7 +24973,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Lt(Box::new(BinaryOp {
                         left,
                         right,
@@ -25024,7 +25012,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Lte(Box::new(BinaryOp {
                         left,
                         right,
@@ -25063,7 +25051,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Gt(Box::new(BinaryOp {
                         left,
                         right,
@@ -25102,7 +25090,7 @@ impl Parser {
                     }))
                 } else {
                     let right = self.parse_bitwise_or()?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Gte(Box::new(BinaryOp {
                         left,
                         right,
@@ -25115,7 +25103,7 @@ impl Parser {
             } else if self.match_token(TokenType::NullsafeEq) {
                 // <=> (MySQL NULL-safe equality)
                 let right = self.parse_bitwise_or()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::NullSafeEq(Box::new(BinaryOp {
                     left,
                     right,
@@ -25126,8 +25114,8 @@ impl Parser {
                 }))
             } else if self.check_identifier("SOUNDS") && self.check_next(TokenType::Like) {
                 // MySQL SOUNDS LIKE: expr SOUNDS LIKE expr -> SOUNDEX(expr) = SOUNDEX(expr)
-                self.advance(); // consume SOUNDS
-                self.advance(); // consume LIKE
+                self.skip(); // consume SOUNDS
+                self.skip(); // consume LIKE
                 let right = self.parse_bitwise_or()?;
                 // Transform: SOUNDEX(left) = SOUNDEX(right)
                 let soundex_left = Expression::Function(Box::new(Function::new(
@@ -25189,8 +25177,8 @@ impl Parser {
                 }))
             } else if self.check_identifier("SIMILAR") && self.check_next(TokenType::To) {
                 // SIMILAR TO operator (PostgreSQL/Redshift regex-like pattern matching)
-                self.advance(); // consume SIMILAR
-                self.advance(); // consume TO
+                self.skip(); // consume SIMILAR
+                self.skip(); // consume TO
                 let pattern = self.parse_bitwise_or()?;
                 let escape = if self.match_token(TokenType::Escape) {
                     Some(self.parse_primary()?)
@@ -25293,7 +25281,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) && self.check(TokenType::DColon)
                     {
-                        self.advance(); // consume ::
+                        self.skip(); // consume ::
                         let data_type = self.parse_data_type_for_cast()?;
                         Expression::Cast(Box::new(Cast {
                             this: expr,
@@ -25379,7 +25367,7 @@ impl Parser {
                 if self.match_token(TokenType::In) {
                     // BigQuery: NOT IN UNNEST(expr)
                     if self.check_identifier("UNNEST") {
-                        self.advance(); // consume UNNEST
+                        self.skip(); // consume UNNEST
                         self.expect(TokenType::LParen)?;
                         let unnest_expr = self.parse_expression()?;
                         self.expect(TokenType::RParen)?;
@@ -25407,7 +25395,7 @@ impl Parser {
                             }))
                         } else if self.check(TokenType::RParen) {
                             // Empty NOT IN set: NOT IN ()
-                            self.advance();
+                            self.skip();
                             Expression::In(Box::new(In {
                                 this: left,
                                 expressions: Vec::new(),
@@ -25464,8 +25452,8 @@ impl Parser {
                     }))
                 } else if self.check_identifier("SOUNDS") && self.check_next(TokenType::Like) {
                     // MySQL NOT SOUNDS LIKE: expr NOT SOUNDS LIKE expr -> NOT SOUNDEX(expr) = SOUNDEX(expr)
-                    self.advance(); // consume SOUNDS
-                    self.advance(); // consume LIKE
+                    self.skip(); // consume SOUNDS
+                    self.skip(); // consume LIKE
                     let right = self.parse_bitwise_or()?;
                     let soundex_left = Expression::Function(Box::new(Function::new(
                         "SOUNDEX".to_string(),
@@ -25510,8 +25498,8 @@ impl Parser {
                     Expression::Not(Box::new(UnaryOp::new(ilike_expr)))
                 } else if self.check_identifier("SIMILAR") && self.check_next(TokenType::To) {
                     // NOT SIMILAR TO
-                    self.advance(); // consume SIMILAR
-                    self.advance(); // consume TO
+                    self.skip(); // consume SIMILAR
+                    self.skip(); // consume TO
                     let pattern = self.parse_bitwise_or()?;
                     let escape = if self.match_token(TokenType::Escape) {
                         Some(self.parse_primary()?)
@@ -25545,7 +25533,7 @@ impl Parser {
             } else if self.match_token(TokenType::In) {
                 // BigQuery: IN UNNEST(expr)
                 if self.check_identifier("UNNEST") {
-                    self.advance(); // consume UNNEST
+                    self.skip(); // consume UNNEST
                     self.expect(TokenType::LParen)?;
                     let unnest_expr = self.parse_expression()?;
                     self.expect(TokenType::RParen)?;
@@ -25576,7 +25564,7 @@ impl Parser {
                         }))
                     } else if self.check(TokenType::RParen) {
                         // Empty IN set: IN ()
-                        self.advance();
+                        self.skip();
                         Expression::In(Box::new(In {
                             this: left,
                             expressions: Vec::new(),
@@ -25656,7 +25644,7 @@ impl Parser {
                         | TokenType::Eof
                 )
             {
-                self.advance(); // consume OVERLAPS
+                self.skip(); // consume OVERLAPS
                 let right = self.parse_bitwise_or()?;
                 Expression::Overlaps(Box::new(OverlapsExpr {
                     this: Some(left),
@@ -25765,7 +25753,7 @@ impl Parser {
                 let mut op_text = String::new();
                 while !self.check(TokenType::RParen) && !self.is_at_end() {
                     op_text.push_str(&self.peek().text);
-                    self.advance();
+                    self.skip();
                 }
                 self.expect(TokenType::RParen)?;
 
@@ -25885,12 +25873,12 @@ impl Parser {
     /// Parse addition/subtraction with an existing left expression
     fn parse_addition_continuation(&mut self, mut left: Expression) -> Result<Expression> {
         loop {
-            let left_comments = self.previous_trailing_comments();
+            let left_comments = self.previous_trailing_comments().to_vec();
 
             let expr = if self.match_token(TokenType::Plus) {
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Add(Box::new(BinaryOp {
                     left,
                     right,
@@ -25900,9 +25888,9 @@ impl Parser {
                     inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Dash) {
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Sub(Box::new(BinaryOp {
                     left,
                     right,
@@ -25912,9 +25900,9 @@ impl Parser {
                     inferred_type: None,
                 }))
             } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Concat(Box::new(BinaryOp {
                     left,
                     right,
@@ -26001,13 +25989,13 @@ impl Parser {
 
         loop {
             // Capture comments after left operand before consuming operator
-            let left_comments = self.previous_trailing_comments();
+            let left_comments = self.previous_trailing_comments().to_vec();
 
             let expr = if self.match_token(TokenType::Plus) {
                 // Capture comments after operator (before right operand)
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Add(Box::new(BinaryOp {
                     left,
                     right,
@@ -26017,9 +26005,9 @@ impl Parser {
                     inferred_type: None,
                 }))
             } else if self.match_token(TokenType::Dash) {
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Sub(Box::new(BinaryOp {
                     left,
                     right,
@@ -26029,9 +26017,9 @@ impl Parser {
                     inferred_type: None,
                 }))
             } else if !self.dpipe_is_logical_or() && self.match_token(TokenType::DPipe) {
-                let operator_comments = self.previous_trailing_comments();
+                let operator_comments = self.previous_trailing_comments().to_vec();
                 let right = self.parse_at_time_zone()?;
-                let trailing_comments = self.previous_trailing_comments();
+                let trailing_comments = self.previous_trailing_comments().to_vec();
                 Expression::Concat(Box::new(BinaryOp {
                     left,
                     right,
@@ -26060,13 +26048,13 @@ impl Parser {
         let mut expr = self.parse_multiplication()?;
 
         // Check for AT TIME ZONE (can be chained)
-        while self.check(TokenType::Var) && self.peek().text.to_uppercase() == "AT" {
-            self.advance(); // consume AT
+        while self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("AT") {
+            self.skip(); // consume AT
                             // Check for TIME ZONE
             if self.check(TokenType::Time) {
-                self.advance(); // consume TIME
-                if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "ZONE" {
-                    self.advance(); // consume ZONE
+                self.skip(); // consume TIME
+                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ZONE") {
+                    self.skip(); // consume ZONE
                     let zone = self.parse_unary()?;
                     expr = Expression::AtTimeZone(Box::new(AtTimeZone { this: expr, zone }));
                 } else {
@@ -26183,7 +26171,7 @@ impl Parser {
         }
 
         // Get the potential type name without consuming
-        let type_name = self.peek().text.to_uppercase();
+        let type_name = self.peek().text.to_ascii_uppercase();
 
         // Check if this looks like a known data type that supports literal syntax
         // These are types where PostgreSQL allows TYPE 'value' syntax
@@ -26216,7 +26204,7 @@ impl Parser {
 
         // This looks like a type literal! Parse it.
         // Consume the type name
-        self.advance();
+        self.skip();
 
         // Try to parse the data type from the name
         let data_type = match self.parse_data_type_from_name(&type_name) {
@@ -26296,7 +26284,7 @@ impl Parser {
 
         // Get the type name
         let type_token = self.advance();
-        let type_name = type_token.text.to_uppercase();
+        let type_name = type_token.text.to_ascii_uppercase();
 
         // Parse the data type
         let data_type = match type_name.as_str() {
@@ -26404,7 +26392,7 @@ impl Parser {
             // @ is the ABS operator in DuckDB with low precedence
             // Python sqlglot: "@": lambda self: exp.Abs(this=self._parse_bitwise())
             // This means @col + 1 parses as ABS(col + 1), not ABS(col) + 1
-            self.advance(); // consume @
+            self.skip(); // consume @
                             // Parse at bitwise level for correct precedence (matches Python sqlglot)
             let expr = self.parse_bitwise_or()?;
             Ok(Expression::Abs(Box::new(UnaryFunc::new(expr))))
@@ -26422,7 +26410,7 @@ impl Parser {
             let col_name = &token.text[1..]; // strip leading @
 
             // Create column expression for the identifier part
-            let col_expr = Expression::Column(Column {
+            let col_expr = Expression::boxed_column(Column {
                 name: Identifier::new(col_name),
                 table: None,
                 join_mark: false,
@@ -26458,7 +26446,7 @@ impl Parser {
             && (self.check_next(TokenType::LParen) || self.check_next(TokenType::Dash))
         {
             // Non-DuckDB dialects: only handle @(expr) and @-expr as ABS
-            self.advance(); // consume @
+            self.skip(); // consume @
             let expr = self.parse_bitwise_or()?;
             Ok(Expression::Abs(Box::new(UnaryFunc::new(expr))))
         } else if self.check(TokenType::Prior)
@@ -26472,7 +26460,7 @@ impl Parser {
             // Can appear in SELECT list, CONNECT BY, or other expression contexts
             // Python sqlglot: "PRIOR": lambda self: self.expression(exp.Prior, this=self._parse_bitwise())
             // When followed by AS/comma/rparen/end, treat PRIOR as an identifier (column name)
-            self.advance(); // consume PRIOR
+            self.skip(); // consume PRIOR
             let expr = self.parse_bitwise_or()?;
             Ok(Expression::Prior(Box::new(Prior { this: expr })))
         } else {
@@ -26563,8 +26551,8 @@ impl Parser {
         ) && self.check(TokenType::LParen)
             && self.check_next(TokenType::Format)
         {
-            self.advance(); // consume (
-            self.advance(); // consume FORMAT
+            self.skip(); // consume (
+            self.skip(); // consume FORMAT
             let format = self.expect_string()?;
             self.expect(TokenType::RParen)?;
             expr = Expression::FormatPhrase(Box::new(FormatPhrase {
@@ -26710,7 +26698,7 @@ impl Parser {
             let saved_path_len = path_string.len();
 
             // Consume the colon
-            self.advance();
+            self.skip();
 
             // Parse first path component (required) - can be any identifier including keywords
             // Also handle backtick-quoted identifiers like `zip code` or `fb:testid`
@@ -26796,7 +26784,7 @@ impl Parser {
                     } else if self.check(TokenType::Star) {
                         // Wildcard array access: [*] matches all array elements
                         path_string.push('[');
-                        self.advance();
+                        self.skip();
                         path_string.push('*');
                         self.expect(TokenType::RBracket)?;
                         path_string.push(']');
@@ -26971,9 +26959,9 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expression> {
         // Handle APPROXIMATE COUNT(DISTINCT expr) - Redshift syntax
         // Parses as ApproxDistinct expression
-        if self.check(TokenType::Var) && self.peek().text.to_uppercase() == "APPROXIMATE" {
+        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("APPROXIMATE") {
             let saved_pos = self.current;
-            self.advance(); // consume APPROXIMATE
+            self.skip(); // consume APPROXIMATE
                             // Parse the COUNT(DISTINCT ...) that follows
             let func = self.parse_primary()?;
             // Check if it's COUNT with DISTINCT
@@ -27020,7 +27008,7 @@ impl Parser {
                 | Some(crate::dialects::DialectType::Redshift)
         ) {
             if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("VARIADIC") {
-                self.advance(); // consume VARIADIC
+                self.skip(); // consume VARIADIC
                 let expr = self.parse_bitwise_or()?;
                 return Ok(Expression::Variadic(Box::new(
                     crate::expressions::Variadic {
@@ -27039,8 +27027,7 @@ impl Parser {
                 | Some(crate::dialects::DialectType::StarRocks)
         ) {
             if self.check(TokenType::Var) || self.check(TokenType::Identifier) {
-                let text = self.peek().text.to_uppercase();
-                if text.starts_with('_') && Self::is_mysql_charset_introducer(&text) {
+                if self.peek().text.starts_with('_') && Self::is_mysql_charset_introducer(&self.peek().text.to_ascii_uppercase()) {
                     // Check if next token is a string literal or hex string
                     if self.current + 1 < self.tokens.len() {
                         let next_tt = self.tokens[self.current + 1].token_type;
@@ -27053,7 +27040,7 @@ impl Parser {
                             let literal = self.parse_primary()?; // parse the string/hex literal
                             return Ok(Expression::Introducer(Box::new(
                                 crate::expressions::Introducer {
-                                    this: Box::new(Expression::Column(
+                                    this: Box::new(Expression::Column(Box::new(
                                         crate::expressions::Column {
                                             name: crate::expressions::Identifier {
                                                 name: charset_name,
@@ -27067,7 +27054,7 @@ impl Parser {
                                             span: None,
                                             inferred_type: None,
                                         },
-                                    )),
+                                    ))),
                                     expression: Box::new(literal),
                                 },
                             )));
@@ -27139,7 +27126,7 @@ impl Parser {
             ) && self.check(TokenType::As)
                 && !self.check_next(TokenType::RBracket)
             {
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                 let alias = self.expect_identifier()?;
                 Expression::Alias(Box::new(Alias::new(first_expr, Identifier::new(alias))))
             } else {
@@ -27159,7 +27146,7 @@ impl Parser {
                 ) && self.check(TokenType::As)
                     && !self.check_next(TokenType::RBracket)
                 {
-                    self.advance(); // consume AS
+                    self.skip(); // consume AS
                     let alias = self.expect_identifier()?;
                     Expression::Alias(Box::new(Alias::new(expr, Identifier::new(alias))))
                 } else {
@@ -27205,7 +27192,7 @@ impl Parser {
             // Check for ODBC escape syntax: {fn function_name(args)}
             // This must be checked before wildcards and map literals
             if self.check_identifier("fn") {
-                self.advance(); // consume 'fn'
+                self.skip(); // consume 'fn'
                                 // Parse function call
                 let func_name = self.expect_identifier_or_keyword_with_quoted()?;
                 self.expect(TokenType::LParen)?;
@@ -27236,7 +27223,7 @@ impl Parser {
                 if (type_text == "d" || type_text == "t" || type_text == "ts")
                     && self.check_next(TokenType::String)
                 {
-                    self.advance(); // consume type indicator (d, t, or ts)
+                    self.skip(); // consume type indicator (d, t, or ts)
                     let value = self.expect_string()?;
                     self.expect(TokenType::RBrace)?;
 
@@ -27288,7 +27275,7 @@ impl Parser {
                     // {*} or {* EXCLUDE ...} or {* ILIKE ...}
                     // Check for ILIKE first since it's different from standard star modifiers
                     if self.check_keyword_text("ILIKE") {
-                        self.advance();
+                        self.skip();
                         let pattern = self.parse_expression()?;
                         // Create an ILike expression with Star as left side
                         Expression::ILike(Box::new(LikeOp {
@@ -27354,11 +27341,11 @@ impl Parser {
         // Parenthesized expression or subquery
         if self.match_token(TokenType::LParen) {
             // Capture comments from the ( token (e.g., "(/* comment */ 1)")
-            let lparen_comments = self.previous_trailing_comments();
+            let lparen_comments = self.previous_trailing_comments().to_vec();
 
             // Empty parens () — could be empty tuple or zero-param lambda () -> body
             if self.check(TokenType::RParen) {
-                self.advance(); // consume )
+                self.skip(); // consume )
                                 // Check for lambda: () -> body
                 if self.match_token(TokenType::Arrow) || self.match_token(TokenType::FArrow) {
                     let body = self.parse_expression()?;
@@ -27391,7 +27378,7 @@ impl Parser {
                     cluster_by: None,
                     lateral: false,
                     modifiers_inside: false,
-                    trailing_comments: self.previous_trailing_comments(),
+                    trailing_comments: self.previous_trailing_comments().to_vec(),
                     inferred_type: None,
                 })));
             }
@@ -27412,7 +27399,7 @@ impl Parser {
                             | TokenType::System
                             | TokenType::Table
                     ) || matches!(
-                        t.text.to_uppercase().as_str(),
+                        t.text.to_ascii_uppercase().as_str(),
                         "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY"
                     ) || (t.token_type == TokenType::Var
                         && self
@@ -27529,7 +27516,7 @@ impl Parser {
                         cluster_by: None,
                         lateral: false,
                         modifiers_inside: true,
-                        trailing_comments: self.previous_trailing_comments(),
+                        trailing_comments: self.previous_trailing_comments().to_vec(),
                         inferred_type: None,
                     }))
                 } else {
@@ -27545,7 +27532,7 @@ impl Parser {
                         cluster_by: None,
                         lateral: false,
                         modifiers_inside: false,
-                        trailing_comments: self.previous_trailing_comments(),
+                        trailing_comments: self.previous_trailing_comments().to_vec(),
                         inferred_type: None,
                     }))
                 };
@@ -27657,7 +27644,7 @@ impl Parser {
 
                 self.expect(TokenType::RParen)?;
                 let mut nested_paren_comments = lparen_comments.clone();
-                nested_paren_comments.extend(self.previous_trailing_comments());
+                nested_paren_comments.extend_from_slice(self.previous_trailing_comments());
                 // Check for set operations after parenthesized expression
                 if self.check(TokenType::Union)
                     || self.check(TokenType::Intersect)
@@ -27731,7 +27718,7 @@ impl Parser {
                 let mut expressions = vec![first_expr];
                 // ClickHouse: trailing comma creates single-element tuple, e.g., (1,)
                 if self.check(TokenType::RParen) {
-                    self.advance(); // consume )
+                    self.skip(); // consume )
                     let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
                     return self.maybe_parse_subscript(tuple_expr);
                 }
@@ -27805,7 +27792,7 @@ impl Parser {
                     if is_type_constructor || is_cast_type {
                         tuple_expr
                     } else {
-                        self.advance(); // consume AS
+                        self.skip(); // consume AS
                         let alias = self.expect_identifier()?;
                         Expression::Alias(Box::new(Alias::new(tuple_expr, Identifier::new(alias))))
                     }
@@ -27846,7 +27833,7 @@ impl Parser {
             self.expect(TokenType::RParen)?;
             // Combine comments from ( and ) tokens
             let mut paren_comments = lparen_comments.clone();
-            paren_comments.extend(self.previous_trailing_comments());
+            paren_comments.extend_from_slice(self.previous_trailing_comments());
 
             // Check for lambda expression: (x) -> body or single identifier case
             if self.match_token(TokenType::Arrow) {
@@ -28077,13 +28064,13 @@ impl Parser {
                     // Check for WITH, WITHOUT, or String after the closing paren
                     lookahead < self.tokens.len()
                         && (self.tokens[lookahead].token_type == TokenType::With
-                            || self.tokens[lookahead].text.to_uppercase() == "WITHOUT"
+                            || self.tokens[lookahead].text.eq_ignore_ascii_case("WITHOUT")
                             || self.tokens[lookahead].token_type == TokenType::String)
                 };
 
                 if is_data_type {
                     // Parse as data type: TIMESTAMP(precision) [WITH/WITHOUT TIME ZONE] ['literal']
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let precision = Some(self.expect_number()? as u32);
                     self.expect(TokenType::RParen)?;
 
@@ -28135,7 +28122,7 @@ impl Parser {
                 }
 
                 // Otherwise parse as function call
-                self.advance(); // consume (
+                self.skip(); // consume (
                 let func_expr = self.parse_typed_function(&original_text, "TIMESTAMP", false)?;
                 return self.maybe_parse_over(func_expr);
             }
@@ -28216,7 +28203,7 @@ impl Parser {
 
         // ROW() function (window function for row number)
         if self.check(TokenType::Row) && self.check_next(TokenType::LParen) {
-            self.advance(); // consume ROW
+            self.skip(); // consume ROW
             self.expect(TokenType::LParen)?;
             // ROW() typically takes no arguments
             let args = if !self.check(TokenType::RParen) {
@@ -28294,7 +28281,7 @@ impl Parser {
                         && next.text.starts_with('_')
                     {
                         let suffix = next.text.clone();
-                        self.advance(); // consume suffix token
+                        self.skip(); // consume suffix token
                         let combined = format!("{}{}", token.text, suffix);
                         let literal = Expression::Literal(Literal::Number(combined));
                         return self.maybe_parse_subscript(literal);
@@ -28469,13 +28456,13 @@ impl Parser {
                     .map(|t| t.token_type == TokenType::LParen)
                     .unwrap_or(false)
                 {
-                    self.advance(); // consume *
-                    self.advance(); // consume COLUMNS
-                    self.advance(); // consume (
+                    self.skip(); // consume *
+                    self.skip(); // consume COLUMNS
+                    self.skip(); // consume (
 
                     // Parse the argument: can be *, a regex string, or an array of column names
                     let arg = if self.check(TokenType::Star) {
-                        self.advance(); // consume *
+                        self.skip(); // consume *
                         Expression::Star(Star {
                             table: None,
                             except: None,
@@ -28501,7 +28488,7 @@ impl Parser {
             }
 
             // Regular star
-            self.advance(); // consume *
+            self.skip(); // consume *
             let star = self.parse_star_modifiers(None)?;
             return Ok(Expression::Star(star));
         }
@@ -28510,11 +28497,11 @@ impl Parser {
         // These are standalone type expressions (not in CAST context)
         // But also handle STRUCT<TYPE>(args) which becomes CAST(STRUCT(args) AS STRUCT<TYPE>)
         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-            let name_upper = self.peek().text.to_uppercase();
+            let name_upper = self.peek().text.to_ascii_uppercase();
             if (name_upper == "ARRAY" || name_upper == "MAP" || name_upper == "STRUCT")
                 && self.check_next(TokenType::Lt)
             {
-                self.advance(); // consume ARRAY/MAP/STRUCT
+                self.skip(); // consume ARRAY/MAP/STRUCT
                 let data_type = self.parse_data_type_from_name(&name_upper)?;
 
                 // Check for typed constructor: STRUCT<TYPE>(args) or ARRAY<TYPE>(args)
@@ -28597,7 +28584,7 @@ impl Parser {
             }
             // DuckDB-style MAP with curly brace literals: MAP {'key': value}
             if name_upper == "MAP" && self.check_next(TokenType::LBrace) {
-                self.advance(); // consume MAP
+                self.skip(); // consume MAP
                 self.expect(TokenType::LBrace)?;
 
                 // Handle empty: MAP {}
@@ -28656,8 +28643,8 @@ impl Parser {
             // case.column or top.column
             let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
             // Capture trailing comments from the column name token
-            let trailing_comments = self.previous_trailing_comments();
-            let mut col = Expression::Column(Column {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            let mut col = Expression::boxed_column(Column {
                 name: col_ident,
                 table: Some(ident),
                 join_mark: false,
@@ -28701,7 +28688,7 @@ impl Parser {
                     TokenType::Semicolon | TokenType::Eof | TokenType::RParen | TokenType::Comma
                 );
             if has_expr {
-                self.advance(); // consume BINARY
+                self.skip(); // consume BINARY
                 let expr = self.parse_unary()?;
                 return Ok(Expression::Cast(Box::new(Cast {
                     this: expr,
@@ -28719,7 +28706,7 @@ impl Parser {
         // Normally RLIKE is an operator, but Snowflake allows function syntax
         if self.check(TokenType::RLike) && self.check_next(TokenType::LParen) {
             let token = self.advance(); // consume RLIKE
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let args = if self.check(TokenType::RParen) {
                 Vec::new()
             } else {
@@ -28745,7 +28732,7 @@ impl Parser {
         // When followed by ( in expression context, treat as function call.
         if self.check(TokenType::Insert) && self.check_next(TokenType::LParen) {
             let token = self.advance(); // consume INSERT
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let args = if self.check(TokenType::RParen) {
                 Vec::new()
             } else {
@@ -28777,7 +28764,7 @@ impl Parser {
             && self.check_next(TokenType::LParen)
         {
             let token = self.advance(); // consume keyword
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let args = if self.check(TokenType::RParen) {
                 Vec::new()
             } else {
@@ -28813,7 +28800,7 @@ impl Parser {
                 Some(crate::dialects::DialectType::Snowflake)
             ) && self.peek().token_type == TokenType::CurrentTime
             {
-                self.advance(); // consume CURRENT_TIME
+                self.skip(); // consume CURRENT_TIME
                 if self.match_token(TokenType::LParen) {
                     // CURRENT_TIME(n) - consume args but ignore precision
                     if !self.check(TokenType::RParen) {
@@ -28828,7 +28815,7 @@ impl Parser {
             if self.check_next(TokenType::LParen) {
                 // Parse as function call: CURRENT_DATE('UTC'), CURRENT_TIMESTAMP(), etc.
                 let token = self.advance(); // consume CURRENT_DATE etc.
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let args = if self.check(TokenType::RParen) {
                     Vec::new()
                 } else {
@@ -28868,12 +28855,12 @@ impl Parser {
         // Type keyword followed by string literal -> CAST('value' AS TYPE)
         // E.g., NUMERIC '2.25' -> CAST('2.25' AS NUMERIC)
         if self.is_identifier_token() && self.check_next(TokenType::String) {
-            let upper_name = self.peek().text.to_uppercase();
+            let upper_name = self.peek().text.to_ascii_uppercase();
             if matches!(
                 upper_name.as_str(),
                 "NUMERIC" | "DECIMAL" | "BIGNUMERIC" | "BIGDECIMAL"
             ) {
-                self.advance(); // consume the type keyword
+                self.skip(); // consume the type keyword
                 let str_token = self.advance(); // consume the string literal
                 let data_type = match upper_name.as_str() {
                     "NUMERIC" | "DECIMAL" | "BIGNUMERIC" | "BIGDECIMAL" => {
@@ -28900,7 +28887,7 @@ impl Parser {
         if self.is_identifier_token() {
             // Check for no-paren functions like CURRENT_TIMESTAMP, CURRENT_DATE, etc.
             // These should be parsed as functions even without parentheses
-            let upper_name = self.peek().text.to_uppercase();
+            let upper_name = self.peek().text.to_ascii_uppercase();
             if !self.check_next(TokenType::LParen)
                 && !self.check_next(TokenType::Dot)
                 && crate::function_registry::is_no_paren_function_name_upper(upper_name.as_str())
@@ -28935,7 +28922,7 @@ impl Parser {
             ) && self.check(TokenType::LParen)
                 && self.check_next(TokenType::Format);
             if !is_teradata_format_phrase && self.match_token(TokenType::LParen) {
-                let upper_name = name.to_uppercase();
+                let upper_name = name.to_ascii_uppercase();
                 let func_expr = self.parse_typed_function(&name, &upper_name, quoted)?;
                 let func_expr = self.maybe_parse_clickhouse_parameterized_agg(func_expr)?;
                 // Check for OVER clause (window function)
@@ -28955,7 +28942,7 @@ impl Parser {
                     ) {
                         loop {
                             if self.check(TokenType::Apply) {
-                                self.advance();
+                                self.skip();
                                 let apply_expr = if self.match_token(TokenType::LParen) {
                                     let e = self.parse_expression()?;
                                     self.expect(TokenType::RParen)?;
@@ -28971,7 +28958,7 @@ impl Parser {
                             } else if self.check(TokenType::Except)
                                 || self.check(TokenType::Exclude)
                             {
-                                self.advance();
+                                self.skip();
                                 self.match_identifier("STRICT");
                                 if self.match_token(TokenType::LParen) {
                                     loop {
@@ -28990,7 +28977,7 @@ impl Parser {
                                     let _ = self.parse_expression()?;
                                 }
                             } else if self.check(TokenType::Replace) {
-                                self.advance();
+                                self.skip();
                                 self.match_identifier("STRICT");
                                 if self.match_token(TokenType::LParen) {
                                     loop {
@@ -29002,7 +28989,7 @@ impl Parser {
                                             if self.is_identifier_token()
                                                 || self.is_safe_keyword_as_identifier()
                                             {
-                                                self.advance();
+                                                self.skip();
                                             }
                                         }
                                         if !self.match_token(TokenType::Comma) {
@@ -29016,7 +29003,7 @@ impl Parser {
                                         if self.is_identifier_token()
                                             || self.is_safe_keyword_as_identifier()
                                         {
-                                            self.advance();
+                                            self.skip();
                                         }
                                     }
                                 }
@@ -29032,7 +29019,7 @@ impl Parser {
                 if self.check(TokenType::Number) {
                     let field_name = self.advance().text;
                     let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: ident,
                             table: None,
                             join_mark: false,
@@ -29051,11 +29038,11 @@ impl Parser {
                     && self.current + 1 < self.tokens.len()
                     && self.tokens[self.current + 1].token_type == TokenType::Number
                 {
-                    self.advance(); // consume -
+                    self.skip(); // consume -
                     let num = self.advance().text;
                     let field_name = format!("-{}", num);
                     let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: ident,
                             table: None,
                             join_mark: false,
@@ -29073,7 +29060,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && self.check(TokenType::Caret)
                 {
-                    self.advance(); // consume ^
+                    self.skip(); // consume ^
                     let mut field_name = "^".to_string();
                     if self.check(TokenType::Identifier)
                         || self.check(TokenType::Var)
@@ -29082,7 +29069,7 @@ impl Parser {
                         field_name.push_str(&self.advance().text);
                     }
                     let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: ident,
                             table: None,
                             join_mark: false,
@@ -29105,8 +29092,8 @@ impl Parser {
                         && self.match_token(TokenType::Plus)
                         && self.match_token(TokenType::RParen)
                     {
-                        let trailing_comments = self.previous_trailing_comments();
-                        let col = Expression::Column(Column {
+                        let trailing_comments = self.previous_trailing_comments().to_vec();
+                        let col = Expression::boxed_column(Column {
                             name: col_ident,
                             table: Some(ident),
                             join_mark: true,
@@ -29123,7 +29110,7 @@ impl Parser {
                 // Check if this is a method call (column followed by parentheses)
                 if self.check(TokenType::LParen) {
                     // This is a method call like table.EXTRACT() or obj.INT()
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let args = if self.check(TokenType::RParen) {
                         Vec::new()
                     } else {
@@ -29131,7 +29118,7 @@ impl Parser {
                     };
                     self.expect(TokenType::RParen)?;
                     let method_call = Expression::MethodCall(Box::new(MethodCall {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: ident.clone(),
                             table: None,
                             join_mark: false,
@@ -29146,8 +29133,8 @@ impl Parser {
                 }
 
                 // Capture trailing comments from the column name token
-                let trailing_comments = self.previous_trailing_comments();
-                let col = Expression::Column(Column {
+                let trailing_comments = self.previous_trailing_comments().to_vec();
+                let col = Expression::boxed_column(Column {
                     name: col_ident,
                     table: Some(ident),
                     join_mark: false,
@@ -29182,7 +29169,7 @@ impl Parser {
                     .peek_nth(1)
                     .map_or(false, |t| t.token_type == TokenType::String)
             {
-                self.advance(); // consume the Arrow token
+                self.skip(); // consume the Arrow token
                 let body = self.parse_expression()?;
                 return Ok(Expression::Lambda(Box::new(LambdaExpr {
                     parameters: vec![ident],
@@ -29193,8 +29180,8 @@ impl Parser {
             }
 
             // Capture trailing comments from the identifier token
-            let trailing_comments = self.previous_trailing_comments();
-            let col = Expression::Column(Column {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            let col = Expression::boxed_column(Column {
                 name: ident,
                 table: None,
                 join_mark: false,
@@ -29219,7 +29206,7 @@ impl Parser {
             ))
         {
             let saved_pos = self.current;
-            self.advance(); // consume IF
+            self.skip(); // consume IF
             if let Some(if_expr) = self.parse_if()? {
                 return Ok(if_expr);
             }
@@ -29239,7 +29226,7 @@ impl Parser {
                 .text
                 .eq_ignore_ascii_case("FOR")
         {
-            self.advance(); // consume NEXT
+            self.skip(); // consume NEXT
             if let Some(expr) = self.parse_next_value_for()? {
                 return Ok(expr);
             }
@@ -29257,23 +29244,23 @@ impl Parser {
             if self.match_token(TokenType::Dot) {
                 // from.col qualified reference
                 let col_name = self.expect_identifier_or_keyword()?;
-                return Ok(Expression::Column(crate::expressions::Column {
+                return Ok(Expression::Column(Box::new(crate::expressions::Column {
                     name: Identifier::new(col_name),
                     table: Some(Identifier::new(name)),
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
                     inferred_type: None,
-                }));
+                })));
             }
-            return Ok(Expression::Column(crate::expressions::Column {
+            return Ok(Expression::Column(Box::new(crate::expressions::Column {
                 name: Identifier::new(name),
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
                 inferred_type: None,
-            }));
+            })));
         }
 
         // ClickHouse: `except` as identifier in expression context (set operations are handled at statement level)
@@ -29288,23 +29275,23 @@ impl Parser {
             let name = token.text.clone();
             if self.match_token(TokenType::Dot) {
                 let col_name = self.expect_identifier_or_keyword()?;
-                return Ok(Expression::Column(crate::expressions::Column {
+                return Ok(Expression::Column(Box::new(crate::expressions::Column {
                     name: Identifier::new(col_name),
                     table: Some(Identifier::new(name)),
                     join_mark: false,
                     trailing_comments: Vec::new(),
                     span: None,
                     inferred_type: None,
-                }));
+                })));
             }
-            return Ok(Expression::Column(crate::expressions::Column {
+            return Ok(Expression::Column(Box::new(crate::expressions::Column {
                 name: Identifier::new(name),
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
                 span: None,
                 inferred_type: None,
-            }));
+            })));
         }
 
         // ClickHouse: structural keywords like FROM, ON, JOIN can be used as identifiers
@@ -29336,7 +29323,7 @@ impl Parser {
             );
             if is_expr_context {
                 let token = self.advance();
-                return Ok(Expression::Column(Column {
+                return Ok(Expression::boxed_column(Column {
                     name: Identifier::new(token.text),
                     table: None,
                     join_mark: false,
@@ -29356,7 +29343,7 @@ impl Parser {
                 // %(name)s
             )
         {
-            self.advance(); // consume %
+            self.skip(); // consume %
                             // Check for %(name)s - named parameter
             if self.match_token(TokenType::LParen) {
                 // Get the parameter name
@@ -29365,7 +29352,7 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     // Expect 's' after the closing paren
                     if self.check(TokenType::Var) && self.peek().text == "s" {
-                        self.advance(); // consume 's'
+                        self.skip(); // consume 's'
                     }
                     return Ok(Expression::Parameter(Box::new(Parameter {
                         name: Some(name),
@@ -29381,7 +29368,7 @@ impl Parser {
             }
             // Check for %s - anonymous parameter
             if self.check(TokenType::Var) && self.peek().text == "s" {
-                self.advance(); // consume 's'
+                self.skip(); // consume 's'
                 return Ok(Expression::Parameter(Box::new(Parameter {
                     name: None,
                     index: None,
@@ -29409,7 +29396,7 @@ impl Parser {
             ) && self.check(TokenType::LParen)
                 && self.check_next(TokenType::Format);
             if !is_teradata_format_phrase && self.match_token(TokenType::LParen) {
-                let upper_name = name.to_uppercase();
+                let upper_name = name.to_ascii_uppercase();
                 let func_expr = self.parse_typed_function(&name, &upper_name, false)?;
                 let func_expr = self.maybe_parse_clickhouse_parameterized_agg(func_expr)?;
                 return self.maybe_parse_over(func_expr);
@@ -29429,7 +29416,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && self.check(TokenType::Caret)
                 {
-                    self.advance(); // consume ^
+                    self.skip(); // consume ^
                     let mut field_name = "^".to_string();
                     if self.check(TokenType::Identifier)
                         || self.check(TokenType::Var)
@@ -29438,7 +29425,7 @@ impl Parser {
                         field_name.push_str(&self.advance().text);
                     }
                     let col = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: Identifier::new(name),
                             table: None,
                             join_mark: false,
@@ -29455,7 +29442,7 @@ impl Parser {
                 if self.check(TokenType::Number) {
                     let field_name = self.advance().text;
                     let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: Identifier::new(name),
                             table: None,
                             join_mark: false,
@@ -29473,7 +29460,7 @@ impl Parser {
 
                 // Check if this is a method call
                 if self.check(TokenType::LParen) {
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let args = if self.check(TokenType::RParen) {
                         Vec::new()
                     } else {
@@ -29489,8 +29476,8 @@ impl Parser {
                 }
 
                 // Capture trailing comments from the column name token
-                let trailing_comments = self.previous_trailing_comments();
-                let mut col = Expression::Column(Column {
+                let trailing_comments = self.previous_trailing_comments().to_vec();
+                let mut col = Expression::boxed_column(Column {
                     name: col_ident,
                     table: Some(Identifier::new(name)),
                     join_mark: false,
@@ -29517,9 +29504,9 @@ impl Parser {
 
             // Simple identifier (keyword used as column name)
             // Capture trailing comments from the keyword token
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             let ident = Identifier::new(name);
-            let col = Expression::Column(Column {
+            let col = Expression::boxed_column(Column {
                 name: ident,
                 table: None,
                 join_mark: false,
@@ -29739,7 +29726,7 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     // Expect 's' after the closing paren
                     if self.check(TokenType::Var) && self.peek().text == "s" {
-                        self.advance(); // consume 's'
+                        self.skip(); // consume 's'
                     }
                     return Ok(Expression::Parameter(Box::new(Parameter {
                         name: Some(name),
@@ -29755,7 +29742,7 @@ impl Parser {
             }
             // Check for %s - anonymous parameter
             if self.check(TokenType::Var) && self.peek().text == "s" {
-                self.advance(); // consume 's'
+                self.skip(); // consume 's'
                 return Ok(Expression::Parameter(Box::new(Parameter {
                     name: None,
                     index: None,
@@ -29789,8 +29776,8 @@ impl Parser {
                 return Ok(Expression::Star(star));
             }
             let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
-            let trailing_comments = self.previous_trailing_comments();
-            let mut col = Expression::Column(Column {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            let mut col = Expression::boxed_column(Column {
                 name: col_ident,
                 table: Some(ident),
                 join_mark: false,
@@ -29821,7 +29808,7 @@ impl Parser {
             // NEXT(arg) - pattern navigation function in MATCH_RECOGNIZE
             if self.check_next(TokenType::LParen) {
                 let token = self.advance();
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let args = self.parse_function_args_list()?;
                 self.expect(TokenType::RParen)?;
                 return Ok(Expression::Function(Box::new(Function {
@@ -29846,8 +29833,8 @@ impl Parser {
             && !self.check_next(TokenType::LParen)
         {
             let token = self.advance();
-            let trailing_comments = self.previous_trailing_comments();
-            let col = Expression::Column(Column {
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            let col = Expression::boxed_column(Column {
                 name: Identifier::new(token.text),
                 table: None,
                 join_mark: false,
@@ -29932,7 +29919,7 @@ impl Parser {
                             TokenType::RParen | TokenType::Comma
                         );
                     if is_alias {
-                        self.advance(); // consume AS
+                        self.skip(); // consume AS
                         let alias_token = self.advance();
                         Expression::Alias(Box::new(crate::expressions::Alias {
                             this,
@@ -29972,7 +29959,7 @@ impl Parser {
                                 TokenType::RParen | TokenType::Comma
                             );
                         if is_alias {
-                            self.advance(); // consume AS
+                            self.skip(); // consume AS
                             let alias_token = self.advance();
                             Expression::Alias(Box::new(crate::expressions::Alias {
                                 this: arg,
@@ -30679,7 +30666,7 @@ impl Parser {
             }
             (crate::function_registry::TypedParseKind::Variadic, "LOCATE") => {
                 if self.check(TokenType::RParen) {
-                    self.advance();
+                    self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args: vec![],
@@ -30694,7 +30681,7 @@ impl Parser {
                 }
                 let first = self.parse_expression()?;
                 if !self.check(TokenType::Comma) && self.check(TokenType::RParen) {
-                    self.advance();
+                    self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args: vec![first],
@@ -31234,7 +31221,7 @@ impl Parser {
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) {
-                    self.advance();
+                    self.skip();
                     let table_name = self.expect_identifier_or_keyword()?;
                     vec![Expression::Var(Box::new(Var {
                         this: format!("TABLE {}", table_name),
@@ -31259,7 +31246,7 @@ impl Parser {
                     }))));
                 }
 
-                self.advance();
+                self.skip();
                 self.expect(TokenType::LParen)?;
                 let search_expr = self.parse_primary()?;
 
@@ -31367,7 +31354,7 @@ impl Parser {
                 if is_tsql {
                     let saved = self.current;
                     let orig_type_text = if self.current < self.tokens.len() {
-                        self.tokens[self.current].text.to_uppercase()
+                        self.tokens[self.current].text.to_ascii_uppercase()
                     } else {
                         String::new()
                     };
@@ -31712,7 +31699,7 @@ impl Parser {
             (crate::function_registry::TypedParseKind::Conditional, "IF") => {
                 // ClickHouse: if() with zero args is valid in test queries
                 if self.check(TokenType::RParen) {
-                    self.advance();
+                    self.skip();
                     return Ok(Some(Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args: vec![],
@@ -32045,7 +32032,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) && self.check(TokenType::As)
                     {
-                        self.advance(); // consume AS
+                        self.skip(); // consume AS
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
                         Expression::Alias(Box::new(Alias {
                             this: first_expr,
@@ -32237,7 +32224,7 @@ impl Parser {
                     // This could be a parenthesized subquery with modifiers after it
                     // Save position in case we need to backtrack
                     let saved_pos = self.current;
-                    self.advance(); // consume opening paren
+                    self.skip(); // consume opening paren
 
                     // Check if there's a SELECT or WITH inside
                     if self.check(TokenType::Select) || self.check(TokenType::With) {
@@ -32476,10 +32463,10 @@ impl Parser {
                     // e.g., ANY_VALUE(fruit HAVING MAX sold)
                     let having_max = if self.match_token(TokenType::Having) {
                         let is_max = if self.check_keyword_text("MAX") {
-                            self.advance();
+                            self.skip();
                             true
                         } else if self.check_keyword_text("MIN") {
-                            self.advance();
+                            self.skip();
                             false
                         } else {
                             return Err(
@@ -32719,13 +32706,13 @@ impl Parser {
             // Window functions with no arguments (ClickHouse allows args in row_number)
             "ROW_NUMBER" => {
                 if self.check(TokenType::RParen) {
-                    self.advance();
+                    self.skip();
                     Ok(Expression::RowNumber(RowNumber))
                 } else {
                     // ClickHouse: row_number(column1) — parse as regular function
                     let args = self.parse_function_args_list()?;
                     self.expect(TokenType::RParen)?;
-                    let trailing_comments = self.previous_trailing_comments();
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args,
@@ -33151,7 +33138,7 @@ impl Parser {
                 if !self.check(TokenType::RParen) {
                     // Check for JSON_OBJECT(*) syntax
                     if self.check(TokenType::Star) && self.check_next(TokenType::RParen) {
-                        self.advance(); // consume *
+                        self.skip(); // consume *
                         star = true;
                     } else {
                         loop {
@@ -33626,7 +33613,7 @@ impl Parser {
             } else {
                 // Regular star: parse star modifiers like EXCLUDE/EXCEPT/REPLACE/RENAME
                 // e.g., COLUMNS(* EXCLUDE (empid, dept))
-                self.advance(); // consume *
+                self.skip(); // consume *
                 let star = self.parse_star_modifiers(None)?;
                 let mut args = vec![Expression::Star(star)];
                 // ClickHouse: func(*, col1, col2) — star followed by more args
@@ -33642,7 +33629,7 @@ impl Parser {
         {
             // DISTINCT as aggregate modifier: func(DISTINCT expr)
             // Not when followed by comma or rparen — then DISTINCT is used as an identifier value
-            self.advance(); // consume DISTINCT
+            self.skip(); // consume DISTINCT
             (self.parse_function_arguments()?, true)
         } else if is_known_agg && self.match_token(TokenType::All) {
             // ALL is the default quantifier, just consume it
@@ -33688,7 +33675,7 @@ impl Parser {
                 || self.tokens[self.current + 1].token_type == TokenType::Identifier)
             && self.tokens[self.current + 2].token_type == TokenType::Eq
         {
-            self.advance(); // consume SETTINGS
+            self.skip(); // consume SETTINGS
             loop {
                 let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                     self.advance().text
@@ -33705,7 +33692,7 @@ impl Parser {
         }
 
         self.expect(TokenType::RParen)?;
-        let trailing_comments = self.previous_trailing_comments();
+        let trailing_comments = self.previous_trailing_comments().to_vec();
 
         // Check for WITHIN GROUP (ORDER BY ...)
         if self.match_identifier("WITHIN") {
@@ -33800,7 +33787,7 @@ impl Parser {
                     TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
                 );
             if is_alias {
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                 let alias_token = self.advance();
                 let alias_name = Identifier {
                     name: alias_token.text.clone(),
@@ -33870,9 +33857,9 @@ impl Parser {
                 false
             };
             let arg = if is_table_or_model_arg {
-                let prefix = self.peek().text.to_uppercase();
+                let prefix = self.peek().text.to_ascii_uppercase();
                 let saved_pos = self.current;
-                self.advance(); // consume TABLE or MODEL
+                self.skip(); // consume TABLE or MODEL
 
                 // Only treat as TABLE/MODEL argument if followed by an identifier (table name),
                 // not by => (which would be a named arg like "table => value")
@@ -34029,7 +34016,7 @@ impl Parser {
                         TokenType::RParen | TokenType::Comma
                     );
                 if is_alias {
-                    self.advance(); // consume AS
+                    self.skip(); // consume AS
                     let alias_token = self.advance();
                     let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
                         let mut ident = Identifier::new(alias_token.text.clone());
@@ -34057,7 +34044,7 @@ impl Parser {
             let arg = self.try_clickhouse_implicit_alias(arg);
 
             // Handle trailing comments
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             let arg = if trailing_comments.is_empty() {
                 arg
             } else {
@@ -34080,7 +34067,7 @@ impl Parser {
             // Skip consecutive commas (Snowflake allows skipping optional named args)
             // e.g., ROUND(SCALE => 1, EXPR => 2.25, , ROUNDING_MODE => 'HALF_TO_EVEN')
             while self.check(TokenType::Comma) {
-                self.advance();
+                self.skip();
             }
         }
 
@@ -34094,7 +34081,7 @@ impl Parser {
                 || self.tokens[self.current + 1].token_type == TokenType::Identifier)
             && self.tokens[self.current + 2].token_type == TokenType::Eq
         {
-            self.advance(); // consume SETTINGS
+            self.skip(); // consume SETTINGS
             loop {
                 let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                     self.advance().text
@@ -34174,8 +34161,8 @@ impl Parser {
 
         // Check for WITHIN GROUP (for ordered-set aggregate functions like LISTAGG, PERCENTILE_CONT)
         let expr = if self.check(TokenType::Within) && self.check_next(TokenType::Group) {
-            self.advance(); // consume WITHIN
-            self.advance(); // consume GROUP
+            self.skip(); // consume WITHIN
+            self.skip(); // consume GROUP
             self.expect(TokenType::LParen)?;
             self.expect(TokenType::Order)?;
             self.expect(TokenType::By)?;
@@ -34223,7 +34210,7 @@ impl Parser {
         // Check for KEEP clause (Oracle: aggregate KEEP (DENSE_RANK FIRST|LAST ORDER BY ...))
         // Only if KEEP is followed by LPAREN - otherwise KEEP is used as an alias
         let keep = if self.check(TokenType::Keep) && self.check_next(TokenType::LParen) {
-            self.advance(); // consume KEEP
+            self.skip(); // consume KEEP
             Some(self.parse_keep_clause()?)
         } else {
             None
@@ -34286,7 +34273,7 @@ impl Parser {
             _ => return Ok(expr),
         };
 
-        self.advance(); // consume (
+        self.skip(); // consume (
                         // Handle DISTINCT in second arg list: func(params)(DISTINCT args)
         let distinct = self.match_token(TokenType::Distinct);
         let expressions = if self.check(TokenType::RParen) {
@@ -34350,7 +34337,7 @@ impl Parser {
         // Negative number literal (e.g., -1)
         if self.check(TokenType::Dash) {
             let dash_pos = self.current;
-            self.advance(); // consume the dash
+            self.skip(); // consume the dash
             if self.check(TokenType::Number) {
                 let token = self.advance();
                 return Ok(Expression::Neg(Box::new(UnaryOp {
@@ -34462,7 +34449,7 @@ impl Parser {
                         let token = self.advance();
                         Identifier::new(token.text)
                     };
-                    return Ok(Expression::Column(Column {
+                    return Ok(Expression::boxed_column(Column {
                         name: second_ident,
                         table: Some(first_ident),
                         join_mark: false,
@@ -34473,7 +34460,7 @@ impl Parser {
                 }
             }
 
-            return Ok(Expression::Column(Column {
+            return Ok(Expression::boxed_column(Column {
                 name: first_ident,
                 table: None,
                 join_mark: false,
@@ -34497,7 +34484,7 @@ impl Parser {
                         let token = self.advance();
                         Identifier::new(token.text)
                     };
-                    return Ok(Expression::Column(Column {
+                    return Ok(Expression::boxed_column(Column {
                         name: second_ident,
                         table: Some(first_ident),
                         join_mark: false,
@@ -34508,7 +34495,7 @@ impl Parser {
                 }
             }
 
-            return Ok(Expression::Column(Column {
+            return Ok(Expression::boxed_column(Column {
                 name: first_ident,
                 table: None,
                 join_mark: false,
@@ -34531,7 +34518,7 @@ impl Parser {
                 // Check if expr is an array/list constructor keyword (ARRAY[...] or LIST[...])
                 let array_constructor_type = match &expr {
                     Expression::Column(col) if col.table.is_none() => {
-                        let upper = col.name.name.to_uppercase();
+                        let upper = col.name.name.to_ascii_uppercase();
                         if upper == "ARRAY" || upper == "LIST" {
                             Some(upper)
                         } else {
@@ -34539,7 +34526,7 @@ impl Parser {
                         }
                     }
                     Expression::Identifier(id) => {
-                        let upper = id.name.to_uppercase();
+                        let upper = id.name.to_ascii_uppercase();
                         if upper == "ARRAY" || upper == "LIST" {
                             Some(upper)
                         } else {
@@ -34555,7 +34542,7 @@ impl Parser {
                     let use_list_keyword = constructor_type == "LIST";
                     if self.check(TokenType::RBracket) {
                         // Empty array: ARRAY[]
-                        self.advance();
+                        self.skip();
                         expr = Expression::ArrayFunc(Box::new(ArrayConstructor {
                             expressions: Vec::new(),
                             bracket_notation: false, // Has ARRAY/LIST keyword
@@ -34581,9 +34568,9 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && match &expr {
                     Expression::Column(col) => {
-                        col.name.name.to_uppercase() == "MAP" && col.table.is_none()
+                        col.name.name.eq_ignore_ascii_case("MAP") && col.table.is_none()
                     }
-                    Expression::Identifier(id) => id.name.to_uppercase() == "MAP",
+                    Expression::Identifier(id) => id.name.eq_ignore_ascii_case("MAP"),
                     _ => false,
                 };
 
@@ -34597,7 +34584,7 @@ impl Parser {
                     if is_materialize {
                         if self.check(TokenType::RBracket) {
                             // Empty map: MAP[]
-                            self.advance();
+                            self.skip();
                             expr = Expression::ToMap(Box::new(ToMap {
                                 this: Box::new(Expression::Struct(Box::new(Struct {
                                     fields: Vec::new(),
@@ -34655,7 +34642,7 @@ impl Parser {
                 // Check for slice syntax: [start:end:step]
                 // Handle [:...] case where start is omitted
                 if self.check(TokenType::Colon) {
-                    self.advance(); // consume first :
+                    self.skip(); // consume first :
                                     // Parse end - use parse_slice_element to avoid : being interpreted as parameter
                     let end = self.parse_slice_element()?;
                     // Check for step (second colon)
@@ -34771,7 +34758,7 @@ impl Parser {
                         ) {
                             loop {
                                 if self.check(TokenType::Apply) {
-                                    self.advance();
+                                    self.skip();
                                     let apply_expr = if self.match_token(TokenType::LParen) {
                                         let e = self.parse_expression()?;
                                         self.expect(TokenType::RParen)?;
@@ -34786,7 +34773,7 @@ impl Parser {
                                 } else if self.check(TokenType::Except)
                                     || self.check(TokenType::Exclude)
                                 {
-                                    self.advance();
+                                    self.skip();
                                     self.match_identifier("STRICT");
                                     if self.match_token(TokenType::LParen) {
                                         loop {
@@ -34805,7 +34792,7 @@ impl Parser {
                                         let _ = self.parse_expression()?;
                                     }
                                 } else if self.check(TokenType::Replace) {
-                                    self.advance();
+                                    self.skip();
                                     self.match_identifier("STRICT");
                                     if self.match_token(TokenType::LParen) {
                                         loop {
@@ -34817,7 +34804,7 @@ impl Parser {
                                                 if self.is_identifier_token()
                                                     || self.is_safe_keyword_as_identifier()
                                                 {
-                                                    self.advance();
+                                                    self.skip();
                                                 }
                                             }
                                             if !self.match_token(TokenType::Comma) {
@@ -34831,7 +34818,7 @@ impl Parser {
                                             if self.is_identifier_token()
                                                 || self.is_safe_keyword_as_identifier()
                                             {
-                                                self.advance();
+                                                self.skip();
                                             }
                                         }
                                     }
@@ -34857,7 +34844,7 @@ impl Parser {
                     // Check if this is a method call (field followed by parentheses)
                     if self.check(TokenType::LParen) && !is_quoted {
                         // This is a method call like a.b.C() or x.EXTRACT()
-                        self.advance(); // consume (
+                        self.skip(); // consume (
                         let args = if self.check(TokenType::RParen) {
                             Vec::new()
                         } else {
@@ -34893,7 +34880,7 @@ impl Parser {
                 ) && self.check(TokenType::Caret)
                 {
                     // ClickHouse: json.^path — the ^ prefix means "get all nested subcolumns"
-                    self.advance(); // consume ^
+                    self.skip(); // consume ^
                                     // What follows should be an identifier path
                     let mut field_name = "^".to_string();
                     if self.check(TokenType::Identifier)
@@ -34912,7 +34899,7 @@ impl Parser {
                 ) && self.check(TokenType::Colon)
                 {
                     // ClickHouse: json.path.:Type — the : prefix means type cast on JSON path
-                    self.advance(); // consume :
+                    self.skip(); // consume :
                                     // Consume the type name
                     let mut type_name = ":".to_string();
                     if self.check(TokenType::Identifier)
@@ -34934,7 +34921,7 @@ impl Parser {
                         .is_some_and(|t| t.token_type == TokenType::Number)
                 {
                     // ClickHouse: tuple.-1 — negative tuple index
-                    self.advance(); // consume -
+                    self.skip(); // consume -
                     let num = self.advance().text;
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
@@ -35043,7 +35030,7 @@ impl Parser {
                     }
                 } else {
                     // PostgreSQL :: cast operator: expr::type
-                    self.advance(); // consume DColon
+                    self.skip(); // consume DColon
                                     // Use parse_data_type_for_cast to avoid consuming subscripts as array dimensions
                     let data_type = self.parse_data_type_for_cast()?;
                     expr = Expression::Cast(Box::new(Cast {
@@ -35098,7 +35085,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 )
             {
-                self.advance(); // consume ->
+                self.skip(); // consume ->
                                 // JSON extract operator: expr -> path (PostgreSQL, MySQL, DuckDB)
                                 // Use parse_json_path_operand to get only the immediate operand for proper left-to-right associativity
                 let path = self.parse_json_path_operand()?;
@@ -35156,9 +35143,9 @@ impl Parser {
                 // Oracle/Redshift-style outer join marker: column (+)
                 // Only applies to Column expressions
                 if let Expression::Column(col) = &mut expr {
-                    self.advance(); // consume (
-                    self.advance(); // consume +
-                    self.advance(); // consume )
+                    self.skip(); // consume (
+                    self.skip(); // consume +
+                    self.skip(); // consume )
                     col.join_mark = true;
                     // Don't continue - join marker is terminal (no more postfix ops after it)
                     break;
@@ -35266,9 +35253,9 @@ impl Parser {
                 if self.match_token(TokenType::Collate) {
                     // Consume collation name (string or identifier)
                     if self.check(TokenType::String) {
-                        self.advance();
+                        self.skip();
                     } else if self.check(TokenType::QuotedIdentifier) {
-                        self.advance();
+                        self.skip();
                     } else {
                         let _ = self.expect_identifier_or_keyword();
                     }
@@ -35294,8 +35281,8 @@ impl Parser {
                         .text
                         .eq_ignore_ascii_case("FILL")
                 {
-                    self.advance(); // consume WITH
-                    self.advance(); // consume FILL
+                    self.skip(); // consume WITH
+                    self.skip(); // consume FILL
                     let from_ = if self.match_token(TokenType::From) {
                         Some(Box::new(self.parse_or()?))
                     } else {
@@ -35645,13 +35632,13 @@ impl Parser {
                             && unit_text.chars().all(|c| c.is_ascii_alphabetic())
                         {
                             let num_part = trimmed[..pos].trim_end().to_string();
-                            let unit_upper = unit_text.to_uppercase();
+                            let unit_upper = unit_text.to_ascii_uppercase();
                             // Try to parse as interval unit
                             if let Some(parsed_unit) =
                                 Self::parse_interval_unit_from_string(&unit_upper)
                             {
                                 // Check if the original text had an 'S' suffix (plural)
-                                let is_plural = unit_text.to_uppercase().ends_with('S');
+                                let is_plural = unit_upper.ends_with('S');
                                 unit = Some(IntervalUnitSpec::Simple {
                                     unit: parsed_unit,
                                     use_plural: is_plural,
@@ -35721,7 +35708,7 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        let text = self.peek().text.to_uppercase();
+        let text = self.peek().text.to_ascii_uppercase();
         matches!(
             text.as_str(),
             "YEAR"
@@ -35790,7 +35777,7 @@ impl Parser {
             // Use lookahead to avoid consuming TO when it's part of WITH FILL
             if self.check_keyword_text("TO") {
                 let saved = self.current;
-                self.advance(); // consume TO
+                self.skip(); // consume TO
                 if let Some((end_unit, _)) = self.try_parse_simple_interval_unit()? {
                     return Ok(Some(IntervalUnitSpec::Span(IntervalSpan {
                         this: unit,
@@ -35837,7 +35824,7 @@ impl Parser {
             return Ok(None);
         }
 
-        let text_upper = self.peek().text.to_uppercase();
+        let text_upper = self.peek().text.to_ascii_uppercase();
         let result = match text_upper.as_str() {
             "YEAR" => Some((IntervalUnit::Year, false)),
             "YEARS" => Some((IntervalUnit::Year, true)),
@@ -35865,7 +35852,7 @@ impl Parser {
         };
 
         if result.is_some() {
-            self.advance(); // consume the unit token
+            self.skip(); // consume the unit token
         }
 
         Ok(result)
@@ -35899,7 +35886,7 @@ impl Parser {
 
         // Check NO_PAREN_FUNCTION_NAMES for string-based lookup
         // (handles cases where functions are tokenized as Var/Identifier)
-        let text_upper = self.peek().text.to_uppercase();
+        let text_upper = self.peek().text.to_ascii_uppercase();
         if crate::function_registry::is_no_paren_function_name_upper(text_upper.as_str()) {
             if !matches!(
                 self.config.dialect,
@@ -35927,7 +35914,7 @@ impl Parser {
 
         // Check if current token is an interval unit keyword (DAY, HOUR, MINUTE, SECOND, YEAR, MONTH)
         let start_unit_name = if !self.is_at_end() {
-            let text = self.peek().text.to_uppercase();
+            let text = self.peek().text.to_ascii_uppercase();
             if matches!(
                 text.as_str(),
                 "DAY" | "HOUR" | "MINUTE" | "SECOND" | "YEAR" | "MONTH"
@@ -35945,7 +35932,7 @@ impl Parser {
         }
 
         let start_unit_name = start_unit_name.unwrap();
-        self.advance(); // consume the unit keyword
+        self.skip(); // consume the unit keyword
 
         // Parse optional precision: DAY(9) or just DAY
         let start_unit = if self.match_token(TokenType::LParen) {
@@ -35978,7 +35965,7 @@ impl Parser {
 
         // Parse end unit
         let end_unit_name = if !self.is_at_end() {
-            let text = self.peek().text.to_uppercase();
+            let text = self.peek().text.to_ascii_uppercase();
             if matches!(
                 text.as_str(),
                 "DAY" | "HOUR" | "MINUTE" | "SECOND" | "YEAR" | "MONTH"
@@ -36000,7 +35987,7 @@ impl Parser {
             }
         };
 
-        self.advance(); // consume the end unit keyword
+        self.skip(); // consume the end unit keyword
 
         // Parse optional precision for end unit: SECOND(3) or just SECOND
         let end_unit = if self.match_token(TokenType::LParen) {
@@ -36090,7 +36077,7 @@ impl Parser {
                 return true;
             }
         }
-        let text_upper = self.peek().text.to_uppercase();
+        let text_upper = self.peek().text.to_ascii_uppercase();
         if crate::function_registry::is_no_paren_function_name_upper(text_upper.as_str()) {
             if !matches!(
                 self.config.dialect,
@@ -36108,8 +36095,8 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        if self.peek().text.to_uppercase() == keyword {
-            self.advance();
+        if self.peek().text.eq_ignore_ascii_case(keyword) {
+            self.skip();
             true
         } else {
             false
@@ -36122,7 +36109,7 @@ impl Parser {
             if self.current + i >= self.tokens.len() {
                 return false;
             }
-            if self.tokens[self.current + i].text.to_uppercase() != kw {
+            if !self.tokens[self.current + i].text.eq_ignore_ascii_case(kw) {
                 return false;
             }
         }
@@ -36136,7 +36123,7 @@ impl Parser {
             if self.current + i >= self.tokens.len() {
                 return false;
             }
-            if self.tokens[self.current + i].text.to_uppercase() != kw {
+            if !self.tokens[self.current + i].text.eq_ignore_ascii_case(kw) {
                 return false;
             }
         }
@@ -36148,10 +36135,9 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        let current_text = self.peek().text.to_uppercase();
         for text in texts {
-            if current_text == text.to_uppercase() {
-                self.advance();
+            if self.peek().text.eq_ignore_ascii_case(text) {
+                self.skip();
                 return true;
             }
         }
@@ -36162,7 +36148,7 @@ impl Parser {
     fn parse_case(&mut self) -> Result<Expression> {
         self.expect(TokenType::Case)?;
         // Capture trailing comments from the CASE keyword (e.g., CASE /* test */ WHEN ...)
-        let case_comments = self.previous_trailing_comments();
+        let case_comments = self.previous_trailing_comments().to_vec();
 
         // Check for simple CASE (CASE expr WHEN ...)
         let operand = if !self.check(TokenType::When) {
@@ -36264,7 +36250,7 @@ impl Parser {
             // ClickHouse: alias on type expr: cast('1234' lhs, 'UInt32' rhs) or cast('1234', 'UInt32' AS rhs)
             let type_expr = self.try_clickhouse_func_arg_alias(type_expr);
             self.expect(TokenType::RParen)?;
-            let _trailing_comments = self.previous_trailing_comments();
+            let _trailing_comments = self.previous_trailing_comments().to_vec();
             return Ok(Expression::CastToStrType(Box::new(CastToStrType {
                 this: Box::new(expr),
                 to: Some(Box::new(type_expr)),
@@ -36301,7 +36287,7 @@ impl Parser {
             let type_expr = self.parse_expression()?;
             let type_expr = self.try_clickhouse_func_arg_alias(type_expr);
             self.expect(TokenType::RParen)?;
-            let _trailing_comments = self.previous_trailing_comments();
+            let _trailing_comments = self.previous_trailing_comments().to_vec();
             return Ok(Expression::CastToStrType(Box::new(CastToStrType {
                 this: Box::new(expr),
                 to: Some(Box::new(type_expr)),
@@ -36318,7 +36304,7 @@ impl Parser {
         {
             let format = Some(Box::new(self.parse_expression()?));
             self.expect(TokenType::RParen)?;
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             return Ok(Expression::Cast(Box::new(Cast {
                 this: expr,
                 to: DataType::Unknown,
@@ -36357,7 +36343,7 @@ impl Parser {
         };
 
         self.expect(TokenType::RParen)?;
-        let trailing_comments = self.previous_trailing_comments();
+        let trailing_comments = self.previous_trailing_comments().to_vec();
 
         Ok(Expression::Cast(Box::new(Cast {
             this: expr,
@@ -36386,7 +36372,7 @@ impl Parser {
         };
 
         self.expect(TokenType::RParen)?;
-        let trailing_comments = self.previous_trailing_comments();
+        let trailing_comments = self.previous_trailing_comments().to_vec();
 
         Ok(Expression::TryCast(Box::new(Cast {
             this: expr,
@@ -36415,7 +36401,7 @@ impl Parser {
         };
 
         self.expect(TokenType::RParen)?;
-        let trailing_comments = self.previous_trailing_comments();
+        let trailing_comments = self.previous_trailing_comments().to_vec();
 
         Ok(Expression::SafeCast(Box::new(Cast {
             this: expr,
@@ -36445,24 +36431,24 @@ impl Parser {
             raw_name.push('.');
             raw_name.push_str(&part);
         }
-        let mut name = raw_name.to_uppercase();
+        let mut name = raw_name.to_ascii_uppercase();
 
         // SQL standard: NATIONAL CHAR/CHARACTER → NCHAR
         if name == "NATIONAL" {
             let next_upper = if !self.is_at_end() {
-                self.peek().text.to_uppercase()
+                self.peek().text.to_ascii_uppercase()
             } else {
                 String::new()
             };
             if next_upper == "CHAR" || next_upper == "CHARACTER" {
-                self.advance(); // consume CHAR/CHARACTER
+                self.skip(); // consume CHAR/CHARACTER
                 name = "NCHAR".to_string();
                 // NATIONAL CHARACTER VARYING → NVARCHAR equivalent
                 if next_upper == "CHARACTER" && self.check_identifier("VARYING") {
-                    self.advance(); // consume VARYING
+                    self.skip(); // consume VARYING
                     let length = if self.match_token(TokenType::LParen) {
                         if self.check(TokenType::RParen) {
-                            self.advance();
+                            self.skip();
                             None
                         } else {
                             let n = self.expect_number()? as u32;
@@ -36485,7 +36471,7 @@ impl Parser {
                 // MySQL allows INT(N) for display width; ClickHouse allows INT()
                 let length = if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         None
                     } else {
                         let n = self.expect_number()? as u32;
@@ -36505,7 +36491,7 @@ impl Parser {
                 // MySQL allows BIGINT(N) for display width; ClickHouse allows BIGINT()
                 let length = if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         None
                     } else {
                         let n = self.expect_number()? as u32;
@@ -36520,7 +36506,7 @@ impl Parser {
             "SMALLINT" => {
                 let length = if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         None
                     } else {
                         let n = self.expect_number()? as u32;
@@ -36535,7 +36521,7 @@ impl Parser {
             "TINYINT" => {
                 let length = if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         None
                     } else {
                         let n = self.expect_number()? as u32;
@@ -36627,7 +36613,7 @@ impl Parser {
                 if self.match_identifier("VARYING") {
                     let length = if self.match_token(TokenType::LParen) {
                         if self.check(TokenType::RParen) {
-                            self.advance();
+                            self.skip();
                             None
                         } else {
                             let n = self.expect_number()? as u32;
@@ -36645,7 +36631,7 @@ impl Parser {
                     let length = if self.match_token(TokenType::LParen) {
                         // Allow empty parens like NCHAR() - treat as no length specified
                         if self.check(TokenType::RParen) {
-                            self.advance(); // consume RParen
+                            self.skip(); // consume RParen
                             None
                         } else {
                             let n = self.expect_number()? as u32;
@@ -36683,7 +36669,7 @@ impl Parser {
                 if self.match_token(TokenType::LParen) {
                     // Allow empty parens like NVARCHAR() - treat as no length specified
                     if self.check(TokenType::RParen) {
-                        self.advance(); // consume RParen
+                        self.skip(); // consume RParen
                         if is_nvarchar {
                             return Ok(DataType::Custom {
                                 name: "NVARCHAR".to_string(),
@@ -36695,7 +36681,7 @@ impl Parser {
                         })
                     } else if self.check_identifier("MAX") {
                         // TSQL: VARCHAR(MAX) / NVARCHAR(MAX)
-                        self.advance(); // consume MAX
+                        self.skip(); // consume MAX
                         self.expect(TokenType::RParen)?;
                         let type_name = if is_nvarchar {
                             "NVARCHAR(MAX)"
@@ -36767,7 +36753,7 @@ impl Parser {
                     && self.current + 1 < self.tokens.len()
                     && self.tokens[self.current + 1].token_type == TokenType::String
                 {
-                    self.advance(); // consume LParen
+                    self.skip(); // consume LParen
                     let args = self.parse_custom_type_args_balanced()?;
                     self.expect(TokenType::RParen)?;
                     return Ok(DataType::Custom {
@@ -36776,7 +36762,7 @@ impl Parser {
                 }
                 let precision = if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         None
                     } else {
                         let p = self.expect_number()? as u32;
@@ -36908,7 +36894,7 @@ impl Parser {
                     && !self.check(TokenType::RParen)
                     && !self.check(TokenType::Comma)
                 {
-                    Some(self.advance().text.to_uppercase())
+                    Some(self.advance().text.to_ascii_uppercase())
                 } else {
                     None
                 };
@@ -36918,7 +36904,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance().text.to_uppercase())
+                        Some(self.advance().text.to_ascii_uppercase())
                     } else {
                         None
                     }
@@ -37076,7 +37062,7 @@ impl Parser {
                         let element_type = if self.match_token(TokenType::Comma) {
                             // Parse the type alias (I8, I16, I32, I64, F32, F64)
                             let type_alias = self.expect_identifier_or_keyword()?;
-                            let mapped_type = match type_alias.to_uppercase().as_str() {
+                            let mapped_type = match type_alias.to_ascii_uppercase().as_str() {
                                 "I8" => DataType::TinyInt { length: None },
                                 "I16" => DataType::SmallInt { length: None },
                                 "I32" => DataType::Int {
@@ -37251,7 +37237,7 @@ impl Parser {
                                 Some(crate::dialects::DialectType::ClickHouse)
                             ) && self.check(TokenType::Null)
                             {
-                                self.advance();
+                                self.skip();
                                 "NULL".to_string()
                             } else {
                                 self.expect_string()?
@@ -37309,7 +37295,7 @@ impl Parser {
             }
             "UNION" if self.check(TokenType::LParen) => {
                 // UNION(num INT, str TEXT) - DuckDB union type (only when followed by paren)
-                self.advance(); // consume LParen
+                self.skip(); // consume LParen
                 let struct_fields = self.parse_struct_type_fields(true)?;
                 self.expect(TokenType::RParen)?;
                 // Convert StructField to (String, DataType) for Union
@@ -37372,7 +37358,7 @@ impl Parser {
                     || self.check_keyword_text("INTEGER")
                     || self.check_keyword_text("INT")
                 {
-                    self.advance();
+                    self.skip();
                 }
                 Ok(DataType::Custom { name })
             }
@@ -37449,7 +37435,7 @@ impl Parser {
         );
         if is_materialize {
             while self.check_identifier("LIST") || self.check(TokenType::List) {
-                self.advance(); // consume LIST
+                self.skip(); // consume LIST
                 result_type = DataType::List {
                     element_type: Box::new(result_type),
                 };
@@ -37514,7 +37500,7 @@ impl Parser {
                 name: format!("\"{}\"", raw_name),
             });
         }
-        let name = raw_name.to_uppercase();
+        let name = raw_name.to_ascii_uppercase();
 
         // Handle parametric types like ARRAY<T>, MAP<K,V>
         let base_type = match name.as_str() {
@@ -37786,7 +37772,7 @@ impl Parser {
                     && !self.check(TokenType::Not)
                     && !self.check(TokenType::Null)
                 {
-                    Some(self.advance().text.to_uppercase())
+                    Some(self.advance().text.to_ascii_uppercase())
                 } else {
                     None
                 };
@@ -37796,7 +37782,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance().text.to_uppercase())
+                        Some(self.advance().text.to_ascii_uppercase())
                     } else {
                         None
                     }
@@ -37810,13 +37796,13 @@ impl Parser {
                 let is_nvarchar = name == "NVARCHAR";
                 if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         DataType::VarChar {
                             length: None,
                             parenthesized_length: false,
                         }
                     } else if self.check_identifier("MAX") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::RParen)?;
                         let type_name = if is_nvarchar {
                             "NVARCHAR(MAX)"
@@ -37845,10 +37831,10 @@ impl Parser {
             "VARBINARY" => {
                 if self.match_token(TokenType::LParen) {
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         DataType::VarBinary { length: None }
                     } else if self.check_identifier("MAX") {
-                        self.advance();
+                        self.skip();
                         self.expect(TokenType::RParen)?;
                         DataType::Custom {
                             name: "VARBINARY(MAX)".to_string(),
@@ -37968,7 +37954,7 @@ impl Parser {
                     || self.check_keyword_text("INTEGER")
                     || self.check_keyword_text("INT")
                 {
-                    self.advance();
+                    self.skip();
                 }
                 DataType::Custom { name }
             }
@@ -37997,7 +37983,7 @@ impl Parser {
                         DataType::Custom { .. } | DataType::Json | DataType::JsonB
                     ))
                 {
-                    self.advance(); // consume (
+                    self.skip(); // consume (
                     let args = self.parse_custom_type_args_balanced()?;
                     self.expect(TokenType::RParen)?;
                     let base_name = match &base {
@@ -38039,7 +38025,7 @@ impl Parser {
         let mut result_type = base_type;
         if is_materialize {
             while self.check_identifier("LIST") || self.check(TokenType::List) {
-                self.advance(); // consume LIST
+                self.skip(); // consume LIST
                 result_type = DataType::List {
                     element_type: Box::new(result_type),
                 };
@@ -38289,7 +38275,7 @@ impl Parser {
 
         // Handle PostgreSQL ARRAY keyword suffix: type ARRAY or type ARRAY[3]
         if self.check_identifier("ARRAY") {
-            self.advance(); // consume ARRAY
+            self.skip(); // consume ARRAY
                             // Check for optional dimension: ARRAY[N]
             let dimension = if self.match_token(TokenType::LBracket) {
                 let dim = if self.check(TokenType::Number) {
@@ -38340,7 +38326,7 @@ impl Parser {
                 return Ok((None, Some(n)));
             }
             // Parse subtype
-            let subtype = Some(self.expect_identifier()?.to_uppercase());
+            let subtype = Some(self.expect_identifier()?.to_ascii_uppercase());
 
             // Parse optional SRID
             let srid = if self.match_token(TokenType::Comma) {
@@ -38372,7 +38358,7 @@ impl Parser {
             // Track whether it was a quoted identifier to preserve quoting
             let is_quoted = self.check(TokenType::QuotedIdentifier);
             let first = self.expect_identifier_or_keyword()?;
-            let first_upper = first.to_uppercase();
+            let first_upper = first.to_ascii_uppercase();
 
             // Check if this is a parametric type (ARRAY<T>, MAP<K,V>, STRUCT<...>, STRUCT(...))
             let is_parametric_type = (first_upper == "ARRAY"
@@ -38391,7 +38377,7 @@ impl Parser {
                 || (!paren_style && (self.check(TokenType::Gt) || self.check(TokenType::GtGt)))
             {
                 // Check if we just matched OPTIONS - if so, retreat
-                if self.previous().text.to_uppercase() == "OPTIONS" {
+                if self.previous().text.eq_ignore_ascii_case("OPTIONS") {
                     self.current -= 1;
                 }
                 // Anonymous field: just a type name
@@ -38523,7 +38509,7 @@ impl Parser {
     /// Convert a type name string to a DataType
     /// Used for anonymous struct fields where we have just a type name
     fn convert_name_to_type(&self, name: &str) -> Result<DataType> {
-        let upper = name.to_uppercase();
+        let upper = name.to_ascii_uppercase();
         Ok(match upper.as_str() {
             "INT" => DataType::Int {
                 length: None,
@@ -38673,7 +38659,7 @@ impl Parser {
                     {
                         break;
                     }
-                    self.advance(); // consume comma
+                    self.skip(); // consume comma
                 }
             }
             except = Some(columns);
@@ -38748,6 +38734,7 @@ impl Parser {
     // === Helper methods ===
 
     /// Check if at end of tokens
+    #[inline]
     fn is_at_end(&self) -> bool {
         self.current >= self.tokens.len()
     }
@@ -38786,6 +38773,7 @@ impl Parser {
 
     /// Peek at current token
     /// Returns reference to current token, or last token if at end
+    #[inline]
     fn peek(&self) -> &Token {
         if self.current >= self.tokens.len() {
             // Return last token as fallback when at end
@@ -38808,6 +38796,7 @@ impl Parser {
     }
 
     /// Advance to next token
+    #[inline]
     fn advance(&mut self) -> Token {
         if self.current >= self.tokens.len() {
             // Return last token as fallback if we're past the end
@@ -38823,18 +38812,22 @@ impl Parser {
         token
     }
 
+    /// Advance to next token without returning it (when result is unused)
+    #[inline]
+    fn skip(&mut self) {
+        if self.current < self.tokens.len() {
+            self.current += 1;
+        }
+    }
+
     /// Get the previous token (last consumed)
     fn previous(&self) -> &Token {
         &self.tokens[self.current - 1]
     }
 
     /// Get trailing comments from the previous token
-    fn previous_trailing_comments(&self) -> Vec<String> {
-        if self.current > 0 {
-            self.tokens[self.current - 1].trailing_comments.clone()
-        } else {
-            Vec::new()
-        }
+    fn previous_trailing_comments(&self) -> &[String] {
+        if self.current > 0 { &self.tokens[self.current - 1].trailing_comments } else { &[] }
     }
 
     /// Get the token type of the previous token (the one before current).
@@ -38912,12 +38905,8 @@ impl Parser {
     }
 
     /// Get leading comments from the current token (comments that appeared before it)
-    fn current_leading_comments(&self) -> Vec<String> {
-        if !self.is_at_end() {
-            self.tokens[self.current].comments.clone()
-        } else {
-            Vec::new()
-        }
+    fn current_leading_comments(&self) -> &[String] {
+        if !self.is_at_end() { &self.tokens[self.current].comments } else { &[] }
     }
 
     /// Convert a slice of tokens to SQL string with proper quoting for strings
@@ -38986,7 +38975,7 @@ impl Parser {
             // Check for FILE_FORMAT= pattern that needs normalization
             // FILE_FORMAT must be followed by = and then NOT by (
             if (t.token_type == TokenType::Var || t.token_type == TokenType::Identifier)
-                && t.text.to_uppercase() == "FILE_FORMAT"
+                && t.text.eq_ignore_ascii_case("FILE_FORMAT")
                 && i + 1 < end
                 && self.tokens[i + 1].token_type == TokenType::Eq
                 && (i + 2 >= end || self.tokens[i + 2].token_type != TokenType::LParen)
@@ -39105,7 +39094,7 @@ impl Parser {
                 // (CLUSTERED, NONCLUSTERED, INDEX) but not data types (VARCHAR, INT, etc.)
                 || (t.token_type == TokenType::LParen
                     && prev_token_text.as_ref().map_or(false, |text| {
-                        let upper = text.to_uppercase();
+                        let upper = text.to_ascii_uppercase();
                         matches!(upper.as_str(),
                             "CLUSTERED" | "NONCLUSTERED" | "HASH" | "RANGE"
                             | "INCLUDE" | "FILLFACTOR" | "PAD_INDEX"
@@ -39133,7 +39122,7 @@ impl Parser {
                 result.push('\'');
             } else if t.token_type.is_keyword() {
                 // Uppercase keyword tokens
-                result.push_str(&t.text.to_uppercase());
+                result.push_str(&t.text.to_ascii_uppercase());
             } else {
                 // For non-keyword tokens, preserve original text
                 result.push_str(&t.text);
@@ -39146,6 +39135,7 @@ impl Parser {
     }
 
     /// Check if current token matches type
+    #[inline]
     fn check(&self, token_type: TokenType) -> bool {
         if self.is_at_end() {
             false
@@ -39178,7 +39168,7 @@ impl Parser {
             return true;
         }
         // UNPIVOT INCLUDE NULLS (...) or UNPIVOT EXCLUDE NULLS (...)
-        let next_text = next.text.to_uppercase();
+        let next_text = next.text.to_ascii_uppercase();
         next_text == "INCLUDE" || next_text == "EXCLUDE"
     }
 
@@ -39187,7 +39177,7 @@ impl Parser {
         if self.is_at_end() {
             false
         } else {
-            self.peek().text.to_uppercase() == keyword.to_uppercase()
+            self.peek().text.eq_ignore_ascii_case(keyword)
         }
     }
 
@@ -39212,7 +39202,7 @@ impl Parser {
         } else {
             let token = &self.tokens[self.current + 1];
             (token.token_type == TokenType::Var || token.token_type == TokenType::Identifier)
-                && token.text.to_uppercase() == name.to_uppercase()
+                && token.text.eq_ignore_ascii_case(name)
         }
     }
 
@@ -39222,9 +39212,9 @@ impl Parser {
         if (self.check(TokenType::Identifier)
             || self.check(TokenType::Var)
             || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.to_uppercase() == text.to_uppercase()
+            && self.peek().text.eq_ignore_ascii_case(text)
         {
-            self.advance();
+            self.skip();
             true
         } else {
             false
@@ -39240,7 +39230,7 @@ impl Parser {
         (self.check(TokenType::Identifier)
             || self.check(TokenType::Var)
             || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.to_uppercase() == text.to_uppercase()
+            && self.peek().text.eq_ignore_ascii_case(text)
     }
 
     /// Check if current token is a "safe" keyword that can be used as an identifier.
@@ -39251,12 +39241,11 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        let text = self.peek().text.to_uppercase();
-        if text == "PERCENT" {
+        if self.peek().text.eq_ignore_ascii_case("PERCENT") {
             return true;
         }
         // "%" symbol — only treat as PERCENT modifier if followed by a boundary
-        if text == "%" {
+        if self.peek().text == "%" {
             let next_idx = self.current + 1;
             if next_idx >= self.tokens.len() {
                 return true; // at end — it's PERCENT
@@ -39390,7 +39379,7 @@ impl Parser {
         let token = self.peek();
         // Check for common type keywords that might appear in lambda annotations
         // Use text comparison to avoid depending on specific TokenType variants
-        let text_upper = token.text.to_uppercase();
+        let text_upper = token.text.to_ascii_uppercase();
         matches!(
             text_upper.as_str(),
             "INT"
@@ -39496,7 +39485,7 @@ impl Parser {
     /// Match and consume a token type
     fn match_token(&mut self, token_type: TokenType) -> bool {
         if self.check(token_type) {
-            self.advance();
+            self.skip();
             true
         } else {
             false
@@ -40064,7 +40053,7 @@ impl Parser {
             // Check for AS alias on this expression (Spark/Hive: IF(cond, val AS name, ...))
             let expr = if self.check(TokenType::As) {
                 let as_pos = self.current;
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                                 // Check if what follows looks like an alias name
                 if self.is_identifier_token()
                     || self.is_safe_keyword_as_identifier()
@@ -40167,7 +40156,7 @@ impl Parser {
 
             // Check for trailing comments on this expression
             // Only wrap in Annotated for expression types that don't have their own trailing_comments field
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             let expr = if trailing_comments.is_empty() {
                 expr
             } else {
@@ -40328,7 +40317,7 @@ impl Parser {
             };
 
             // Capture trailing comments on the expression (e.g., `1 /* c4 */`)
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             let expr = if !trailing_comments.is_empty() {
                 match &expr {
                     Expression::Literal(_) | Expression::Boolean(_) | Expression::Null(_) => {
@@ -40385,7 +40374,7 @@ impl Parser {
                     name = format!("{}.{}", name, sub_id.name);
                 }
             }
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             identifiers.push(Identifier {
                 name,
                 quoted,
@@ -40450,7 +40439,7 @@ impl Parser {
                 name = self.expect_identifier_or_safe_keyword()?;
             }
 
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
             identifiers.push(Identifier {
                 name,
                 quoted: final_quoted,
@@ -40474,7 +40463,7 @@ impl Parser {
         loop {
             let quoted = self.check(TokenType::QuotedIdentifier);
             let name = self.expect_identifier_or_safe_keyword()?;
-            let trailing_comments = self.previous_trailing_comments();
+            let trailing_comments = self.previous_trailing_comments().to_vec();
 
             // Check for prefix length: col(16)
             let mut display_name = name.clone();
@@ -40612,7 +40601,7 @@ impl Parser {
     pub fn parse_alter_diststyle(&mut self) -> Result<Option<Expression>> {
         // Check for ALL, EVEN, AUTO
         if self.match_texts(&["ALL", "EVEN", "AUTO"]) {
-            let style = self.previous().text.to_uppercase();
+            let style = self.previous().text.to_ascii_uppercase();
             return Ok(Some(Expression::DistStyleProperty(Box::new(
                 DistStyleProperty {
                     this: Box::new(Expression::Identifier(Identifier::new(style))),
@@ -40712,7 +40701,7 @@ impl Parser {
 
         // Check for AUTO or NONE
         if self.match_texts(&["AUTO", "NONE"]) {
-            let style = self.previous().text.to_uppercase();
+            let style = self.previous().text.to_ascii_uppercase();
             return Ok(Some(Expression::AlterSortKey(Box::new(AlterSortKey {
                 this: Some(Box::new(Expression::Identifier(Identifier::new(style)))),
                 expressions: Vec::new(),
@@ -41047,7 +41036,7 @@ impl Parser {
 
         // Check for DROP COLUMNS (col1, col2, ...) syntax (Spark/Databricks)
         if self.check_identifier("COLUMNS") && self.check_next(TokenType::LParen) {
-            self.advance(); // consume COLUMNS
+            self.skip(); // consume COLUMNS
             self.expect(TokenType::LParen)?;
             let mut columns = Vec::new();
             loop {
@@ -41232,7 +41221,7 @@ impl Parser {
 
         // SET LOGGED or SET UNLOGGED
         if self.match_texts(&["LOGGED", "UNLOGGED"]) {
-            let option = self.previous().text.to_uppercase();
+            let option = self.previous().text.to_ascii_uppercase();
             alter_set.option = Some(Box::new(Expression::Identifier(Identifier::new(option))));
             return Ok(Some(Expression::AlterSet(Box::new(alter_set))));
         }
@@ -41240,7 +41229,7 @@ impl Parser {
         // SET WITHOUT CLUSTER or SET WITHOUT OIDS
         if self.match_text_seq(&["WITHOUT"]) {
             if self.match_texts(&["CLUSTER", "OIDS"]) {
-                let option = format!("WITHOUT {}", self.previous().text.to_uppercase());
+                let option = format!("WITHOUT {}", self.previous().text.to_ascii_uppercase());
                 alter_set.option = Some(Box::new(Expression::Identifier(Identifier::new(option))));
                 return Ok(Some(Expression::AlterSet(Box::new(alter_set))));
             }
@@ -41372,7 +41361,7 @@ impl Parser {
             "SAMPLE",
         ];
         while self.match_texts(&analyze_styles) {
-            let style = self.previous().text.to_uppercase();
+            let style = self.previous().text.to_ascii_uppercase();
             if style == "BUFFER_USAGE_LIMIT" {
                 // Parse number after BUFFER_USAGE_LIMIT
                 if let Some(num) = self.parse_number()? {
@@ -41404,7 +41393,7 @@ impl Parser {
         } else if self.match_text_seq(&["TABLES"]) {
             kind = Some("TABLES".to_string());
             if self.match_token(TokenType::From) || self.match_token(TokenType::In) {
-                let dir = self.previous().text.to_uppercase();
+                let dir = self.previous().text.to_ascii_uppercase();
                 kind = Some(format!("TABLES {}", dir));
                 // Parse database name as identifier
                 let db_name = self.expect_identifier()?;
@@ -41418,7 +41407,7 @@ impl Parser {
             this = self.parse_table_parts()?;
         } else if self.match_texts(&["LOCAL", "NO_WRITE_TO_BINLOG"]) {
             // MySQL: ANALYZE LOCAL TABLE tbl / ANALYZE NO_WRITE_TO_BINLOG TABLE tbl
-            let opt_text = self.previous().text.to_uppercase();
+            let opt_text = self.previous().text.to_ascii_uppercase();
             options.push(Expression::Identifier(Identifier::new(opt_text)));
             if self.match_token(TokenType::Table) {
                 kind = Some("TABLE".to_string());
@@ -41539,7 +41528,7 @@ impl Parser {
                 loop {
                     // Parse key (can be a string literal or identifier)
                     let key = if self.check(TokenType::String) {
-                        self.advance();
+                        self.skip();
                         let key_str = self.previous().text.clone();
                         Expression::Literal(Literal::String(key_str))
                     } else {
@@ -41587,7 +41576,7 @@ impl Parser {
     /// Python: parser.py:8055-8059
     /// Note: AnalyzeColumns not in expressions.rs, using Identifier instead
     pub fn parse_analyze_columns(&mut self) -> Result<Option<Expression>> {
-        let prev_text = self.previous().text.to_uppercase();
+        let prev_text = self.previous().text.to_ascii_uppercase();
         if self.match_text_seq(&["COLUMNS"]) {
             return Ok(Some(Expression::Identifier(Identifier::new(format!(
                 "{} COLUMNS",
@@ -41618,7 +41607,7 @@ impl Parser {
     /// parse_analyze_histogram - Parses ANALYZE ... HISTOGRAM ON
     /// Python: parser.py:8073-8108
     pub fn parse_analyze_histogram(&mut self) -> Result<Option<Expression>> {
-        let action = self.previous().text.to_uppercase(); // DROP or UPDATE
+        let action = self.previous().text.to_ascii_uppercase(); // DROP or UPDATE
         let mut expressions = Vec::new();
         let mut update_options: Option<Box<Expression>> = None;
         let mut expression: Option<Box<Expression>> = None;
@@ -41663,7 +41652,7 @@ impl Parser {
 
         if self.match_token(TokenType::With) {
             if self.match_texts(&["SYNC", "ASYNC"]) {
-                let mode = self.previous().text.to_uppercase();
+                let mode = self.previous().text.to_ascii_uppercase();
                 if self.match_text_seq(&["MODE"]) {
                     mode_str = Some(format!("WITH {} MODE", mode));
                 }
@@ -41711,10 +41700,10 @@ impl Parser {
 
         // Parse AUTO UPDATE or MANUAL UPDATE (MySQL 8.0.27+)
         if self.match_texts(&["MANUAL", "AUTO"]) {
-            let mode = self.previous().text.to_uppercase();
+            let mode = self.previous().text.to_ascii_uppercase();
             if self.check(TokenType::Update) {
                 update_options = Some(Box::new(Expression::Identifier(Identifier::new(mode))));
-                self.advance(); // consume UPDATE
+                self.skip(); // consume UPDATE
             }
         }
 
@@ -41743,7 +41732,7 @@ impl Parser {
     /// parse_analyze_statistics - Parses ANALYZE ... STATISTICS
     /// Python: parser.py:8002-8031
     pub fn parse_analyze_statistics(&mut self) -> Result<Option<Expression>> {
-        let kind = self.previous().text.to_uppercase();
+        let kind = self.previous().text.to_ascii_uppercase();
         let option = if self.match_text_seq(&["DELTA"]) {
             Some(Box::new(Expression::Identifier(Identifier::new(
                 "DELTA".to_string(),
@@ -41835,7 +41824,7 @@ impl Parser {
                 ))));
             } else if self.match_text_seq(&["CASCADE", "COMPLETE"]) {
                 if self.match_texts(&["ONLINE", "OFFLINE"]) {
-                    let mode = self.previous().text.to_uppercase();
+                    let mode = self.previous().text.to_ascii_uppercase();
                     this = Some(Box::new(Expression::Identifier(Identifier::new(format!(
                         "CASCADE COMPLETE {}",
                         mode
@@ -41897,7 +41886,7 @@ impl Parser {
                 let mut opts = Vec::new();
                 loop {
                     // Parse option: KEY [VALUE]
-                    let key_name = self.advance().text.to_uppercase();
+                    let key_name = self.advance().text.to_ascii_uppercase();
                     let key = Expression::Identifier(Identifier::new(key_name));
                     let value = if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) {
                         // The value can be an identifier, string, boolean, etc.
@@ -42012,7 +42001,7 @@ impl Parser {
     /// parse_deallocate_prepare - Parses DEALLOCATE PREPARE <name>
     /// Presto/Trino syntax for deallocating prepared statements
     pub fn parse_deallocate_prepare(&mut self) -> Result<Expression> {
-        self.advance(); // consume DEALLOCATE
+        self.skip(); // consume DEALLOCATE
 
         // Check for PREPARE keyword
         if self.match_identifier("PREPARE") {
@@ -42107,7 +42096,7 @@ impl Parser {
         let start_span = self.tokens[start_pos].span.start;
         // Consume until semicolon or end
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
         let command_text = if let Some(ref source) = self.source {
             let end_span = if self.current > 0 {
@@ -42962,7 +42951,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) {
             if self.match_texts(&["HIERARCHICAL", "IS_OBJECT_ID", "INJECTIVE"]) {
-                let attr_name = self.previous().text.to_uppercase();
+                let attr_name = self.previous().text.to_ascii_uppercase();
                 return Ok(Some(Expression::Property(Box::new(
                     crate::expressions::Property {
                         this: Box::new(Expression::Identifier(Identifier::new(attr_name))),
@@ -43206,8 +43195,8 @@ impl Parser {
         ) && self.check(TokenType::LParen)
             && self.check_next(TokenType::Format)
         {
-            self.advance(); // consume (
-            self.advance(); // consume FORMAT
+            self.skip(); // consume (
+            self.skip(); // consume FORMAT
             let format = self.expect_string()?;
             self.expect(TokenType::RParen)?;
             if let Some(expr) = result.take() {
@@ -43229,7 +43218,7 @@ impl Parser {
             // If it's an identifier, wrap it in a Column expression
             match &field {
                 Expression::Identifier(id) => {
-                    return Ok(Some(Expression::Column(Column {
+                    return Ok(Some(Expression::boxed_column(Column {
                         name: id.clone(),
                         table: None,
                         join_mark: false,
@@ -43250,7 +43239,7 @@ impl Parser {
     /// Used for commands that we don't have specific parsing for
     pub fn parse_command(&mut self) -> Result<Option<Expression>> {
         // Get the command keyword from the previous token
-        let command_text = self.previous().text.to_uppercase();
+        let command_text = self.previous().text.to_ascii_uppercase();
 
         // Collect remaining tokens as the command expression (until statement end)
         // Use (text, token_type) tuples for smart spacing with join_command_tokens
@@ -43363,7 +43352,7 @@ impl Parser {
         // Check if it's a parenthesized list of values
         if self.check(TokenType::LParen) {
             // Parse wrapped CSV of bitwise expressions
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let mut expressions = Vec::new();
             loop {
                 if let Some(expr) = self.parse_bitwise()? {
@@ -43553,7 +43542,7 @@ impl Parser {
                 } else if !self.is_at_end() {
                     let type_name = self.advance().text.clone();
                     if self.check(TokenType::LParen) {
-                        self.advance();
+                        self.skip();
                         let mut args = Vec::new();
                         if !self.check(TokenType::RParen) {
                             args.push(self.parse_expression()?);
@@ -43596,7 +43585,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check_identifier("PROJECTION")
         {
-            self.advance(); // consume PROJECTION
+            self.skip(); // consume PROJECTION
             let name = self.expect_identifier_or_keyword_with_quoted()?;
             // Parse the projection body - either (SELECT ...) or INDEX expr TYPE type_name
             if self.match_token(TokenType::LParen) {
@@ -43612,7 +43601,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 let body_sql = self.tokens_to_sql(start, self.current);
                 self.expect(TokenType::RParen)?;
@@ -43725,8 +43714,8 @@ impl Parser {
             }
 
             let option_name = match &option {
-                Some(Expression::Var(v)) => v.this.to_uppercase(),
-                Some(Expression::Identifier(id)) => id.name.to_uppercase(),
+                Some(Expression::Var(v)) => v.this.to_ascii_uppercase(),
+                Some(Expression::Identifier(id)) => id.name.to_ascii_uppercase(),
                 _ => String::new(),
             };
 
@@ -43756,7 +43745,7 @@ impl Parser {
                 && self.match_texts(&["AVRO", "JSON"])
             {
                 // FORMAT AS AVRO/JSON
-                let format_type = self.previous().text.to_uppercase();
+                let format_type = self.previous().text.to_ascii_uppercase();
                 let field = self.parse_field()?;
                 (
                     Some(Expression::Var(Box::new(Var {
@@ -44058,7 +44047,7 @@ impl Parser {
     pub fn parse_declareitem(&mut self) -> Result<Option<Expression>> {
         // Consume optional VAR or VARIABLE keyword (Spark/Databricks)
         if self.check_identifier("VAR") || self.check_identifier("VARIABLE") {
-            self.advance();
+            self.skip();
         }
 
         // Parse the variable name (starts with @ or is a cursor name)
@@ -44070,14 +44059,14 @@ impl Parser {
 
         // Check for CURSOR FOR syntax: DECLARE name CURSOR FOR SELECT ...
         if self.check_identifier("CURSOR") {
-            self.advance(); // consume CURSOR
+            self.skip(); // consume CURSOR
                             // Parse optional cursor options before FOR (e.g., SCROLL, INSENSITIVE, etc.)
                             // For now just look for FOR
             if self.match_token(TokenType::For) {
                 // Capture the remaining tokens as the cursor query using tokens_to_sql for proper spacing
                 let start = self.current;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                    self.advance();
+                    self.skip();
                 }
                 let query_str = self.tokens_to_sql_uppercased(start, self.current);
                 let kind_str = format!("CURSOR FOR {}", query_str);
@@ -44104,7 +44093,7 @@ impl Parser {
 
         // Check for TABLE type with column definitions
         if self.check(TokenType::Table) {
-            self.advance(); // consume TABLE
+            self.skip(); // consume TABLE
             if self.match_token(TokenType::LParen) {
                 // Parse the TABLE column definitions using tokens_to_sql for proper spacing
                 let start = self.current;
@@ -44119,7 +44108,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 let col_defs_str = self.tokens_to_sql_uppercased(start, self.current);
                 self.expect(TokenType::RParen)?;
@@ -44508,10 +44497,10 @@ impl Parser {
         };
 
         let (min_val, max_val) = if self.peek().text.eq_ignore_ascii_case("MIN") {
-            self.advance(); // consume MIN
+            self.skip(); // consume MIN
             let min = parse_bound(self)?;
             if self.peek().text.eq_ignore_ascii_case("MAX") {
-                self.advance(); // consume MAX
+                self.skip(); // consume MAX
             }
             let max = parse_bound(self)?;
             (min, max)
@@ -44749,7 +44738,7 @@ impl Parser {
         // Parse the field (YEAR, MONTH, DAY, HOUR, etc.)
         let field_name = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
             let token = self.advance();
-            token.text.to_uppercase()
+            token.text.to_ascii_uppercase()
         } else {
             return Ok(None);
         };
@@ -44966,7 +44955,7 @@ impl Parser {
                 && !self.check_next(TokenType::View)
             {
                 // ClickHouse: MATERIALIZED expr
-                self.advance(); // consume MATERIALIZED
+                self.skip(); // consume MATERIALIZED
                 let expr = self.parse_or()?;
                 col_def.materialized_expr = Some(Box::new(expr));
             } else if matches!(
@@ -44993,7 +44982,7 @@ impl Parser {
             ) && self.check_identifier("CODEC")
             {
                 // ClickHouse: CODEC(LZ4HC(9), ZSTD, DELTA)
-                self.advance(); // consume CODEC
+                self.skip(); // consume CODEC
                 self.expect(TokenType::LParen)?;
                 let start = self.current;
                 let mut depth = 1;
@@ -45007,7 +44996,7 @@ impl Parser {
                             break;
                         }
                     }
-                    self.advance();
+                    self.skip();
                 }
                 let codec_text = self.tokens_to_sql(start, self.current);
                 self.expect(TokenType::RParen)?;
@@ -45111,9 +45100,9 @@ impl Parser {
         // Check for ODBC escape syntax: {fn function_call}
         let fn_syntax = if self.check(TokenType::LBrace) {
             if let Some(next) = self.tokens.get(self.current + 1) {
-                if next.text.to_uppercase() == "FN" {
-                    self.advance(); // consume {
-                    self.advance(); // consume FN
+                if next.text.eq_ignore_ascii_case("FN") {
+                    self.skip(); // consume {
+                    self.skip(); // consume FN
                     true
                 } else {
                     false
@@ -45189,13 +45178,13 @@ impl Parser {
         let token = self.peek().clone();
         let token_type = token.token_type.clone();
         let name = token.text.clone();
-        let _upper_name = name.to_uppercase();
+        let _upper_name = name.to_ascii_uppercase();
 
         // Check for no-paren functions like CURRENT_DATE, CURRENT_TIMESTAMP
         if self.is_no_paren_function() {
             // Check if next token is NOT a paren (so it's used without parens)
             if !self.check_next(TokenType::LParen) {
-                self.advance();
+                self.skip();
                 return Ok(Some(Expression::Function(Box::new(Function {
                     name, // Preserve original case; generator handles normalization
                     args: Vec::new(),
@@ -45232,8 +45221,8 @@ impl Parser {
             return Ok(None);
         }
 
-        self.advance(); // consume function name
-        self.advance(); // consume (
+        self.skip(); // consume function name
+        self.skip(); // consume (
 
         // Check for DISTINCT keyword
         let distinct = self.match_token(TokenType::Distinct);
@@ -45314,7 +45303,7 @@ impl Parser {
         };
 
         // Return the name as a Column expression
-        Ok(Some(Expression::Column(Column {
+        Ok(Some(Expression::boxed_column(Column {
             name: Identifier {
                 name: name.map(|n| n.name).unwrap_or_default(),
                 quoted: false,
@@ -45485,9 +45474,9 @@ impl Parser {
             }
 
             // Get the current token text
-            let text = self.peek().text.to_uppercase();
+            let text = self.peek().text.to_ascii_uppercase();
             privilege_parts.push(text);
-            self.advance();
+            self.skip();
         }
 
         if privilege_parts.is_empty() {
@@ -45554,7 +45543,7 @@ impl Parser {
             "ROLE",
             "USER",
         ]) {
-            let kind_text = self.previous().text.to_uppercase();
+            let kind_text = self.previous().text.to_ascii_uppercase();
             Some(Expression::Var(Box::new(Var { this: kind_text })))
         } else {
             None
@@ -45821,14 +45810,14 @@ impl Parser {
 
         // Check if next token is connected (no whitespace) and collect tag
         if !self.is_at_end() {
-            let next_text = self.peek().text.to_uppercase();
+            let next_text = self.peek().text.to_ascii_uppercase();
             if next_text == "$" {
                 // Simple $$ ... $$ case
-                self.advance();
+                self.skip();
                 tags.push("$".to_string());
             } else {
                 // $tag$ ... $tag$ case
-                self.advance();
+                self.skip();
                 tag_text = Some(next_text.clone());
                 tags.push(next_text);
 
@@ -45850,18 +45839,18 @@ impl Parser {
             let current_text = self.peek().text.clone();
 
             // Check if we've reached the closing tag
-            if current_text == "$" || current_text.to_uppercase() == closing_tag {
+            if current_text == "$" || current_text.eq_ignore_ascii_case(&closing_tag) {
                 // Try to match the full closing sequence
                 let start_pos = self.current;
                 let mut matched = true;
                 for expected in &tags {
                     if self.is_at_end()
-                        || self.peek().text.to_uppercase() != expected.to_uppercase()
+                        || !self.peek().text.eq_ignore_ascii_case(expected)
                     {
                         matched = false;
                         break;
                     }
-                    self.advance();
+                    self.skip();
                 }
                 if matched {
                     // Found the closing tag
@@ -45924,7 +45913,7 @@ impl Parser {
 
         // Check for AT, BEFORE, or END keywords
         let this = if self.match_texts(&["AT", "BEFORE", "END"]) {
-            self.previous().text.to_uppercase()
+            self.previous().text.to_ascii_uppercase()
         } else {
             return Ok(None);
         };
@@ -45937,7 +45926,7 @@ impl Parser {
         }
 
         let kind = if self.match_texts(&["OFFSET", "STATEMENT", "STREAM", "TIMESTAMP", "VERSION"]) {
-            self.previous().text.to_uppercase()
+            self.previous().text.to_ascii_uppercase()
         } else {
             // Backtrack if not the right pattern
             self.current = start_index;
@@ -46044,7 +46033,7 @@ impl Parser {
         ) && self.check(TokenType::LParen) {
             // Parse the parenthesized condition using balanced paren matching
             let cond_start = self.current;
-            self.advance(); // consume opening (
+            self.skip(); // consume opening (
             let mut depth = 1;
             while depth > 0 && !self.is_at_end() {
                 if self.check(TokenType::LParen) {
@@ -46055,7 +46044,7 @@ impl Parser {
                         break;
                     }
                 }
-                self.advance();
+                self.skip();
             }
             // Extract condition text from source (inside outer parens)
             let cond_text = if let Some(ref source) = self.source {
@@ -46065,12 +46054,12 @@ impl Parser {
             } else {
                 self.tokens_to_sql(cond_start + 1, self.current)
             };
-            self.advance(); // consume closing )
+            self.skip(); // consume closing )
 
             // Now collect the rest (BEGIN...END) as raw text
             let body_start = self.current;
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                self.advance();
+                self.skip();
             }
             let body_text = if let Some(ref source) = self.source {
                 let start_span = self.tokens[body_start].span.start;
@@ -46089,7 +46078,7 @@ impl Parser {
         if self.match_token(TokenType::LParen) {
             // ClickHouse: if() with zero args is valid (used in test queries)
             if self.check(TokenType::RParen) {
-                self.advance(); // consume RParen
+                self.skip(); // consume RParen
                 return Ok(Some(Expression::Function(Box::new(Function {
                     name: "IF".to_string(),
                     args: vec![],
@@ -46171,7 +46160,7 @@ impl Parser {
                     let has_begin = self.match_token(TokenType::Begin);
                     if self.check(TokenType::Drop) {
                         // Parse DROP TABLE, forcing if_exists = true
-                        self.advance(); // consume DROP
+                        self.skip(); // consume DROP
                         if self.match_token(TokenType::Table) {
                             // Parse table names
                             let mut names = Vec::new();
@@ -46636,7 +46625,7 @@ impl Parser {
 
         Ok(Some(Expression::JoinHint(Box::new(JoinHint {
             this: Box::new(Expression::Identifier(Identifier::new(
-                hint_name.to_uppercase(),
+                hint_name.to_ascii_uppercase(),
             ))),
             expressions: tables,
         }))))
@@ -46650,21 +46639,21 @@ impl Parser {
     pub fn parse_join_parts(&mut self) -> (Option<String>, Option<String>, Option<String>) {
         // Parse join method (ASOF, NATURAL, POSITIONAL)
         let method = if self.match_texts(&["ASOF", "NATURAL", "POSITIONAL"]) {
-            Some(self.previous().text.to_uppercase())
+            Some(self.previous().text.to_ascii_uppercase())
         } else {
             None
         };
 
         // Parse join side (LEFT, RIGHT, FULL)
         let side = if self.match_texts(&["LEFT", "RIGHT", "FULL"]) {
-            Some(self.previous().text.to_uppercase())
+            Some(self.previous().text.to_ascii_uppercase())
         } else {
             None
         };
 
         // Parse join kind (ANTI, CROSS, INNER, OUTER, SEMI)
         let kind = if self.match_texts(&["ANTI", "CROSS", "INNER", "OUTER", "SEMI"]) {
-            Some(self.previous().text.to_uppercase())
+            Some(self.previous().text.to_ascii_uppercase())
         } else if self.match_token(TokenType::StraightJoin) {
             Some("STRAIGHT_JOIN".to_string())
         } else {
@@ -47581,7 +47570,7 @@ impl Parser {
     pub fn parse_match_recognize_measure(&mut self) -> Result<Option<Expression>> {
         // Check for optional FINAL or RUNNING keyword
         let window_frame = if self.match_texts(&["FINAL", "RUNNING"]) {
-            let text = self.previous().text.to_uppercase();
+            let text = self.previous().text.to_ascii_uppercase();
             Some(if text == "FINAL" {
                 MatchRecognizeSemantics::Final
             } else {
@@ -47664,7 +47653,7 @@ impl Parser {
         self.match_token(TokenType::Into);
 
         // Parse target table using parse_table_ref
-        let mut target = Expression::Table(self.parse_table_ref()?);
+        let mut target = Expression::Table(Box::new(self.parse_table_ref()?));
 
         // Parse optional TSQL table hints: WITH (HOLDLOCK), WITH (TABLOCK), etc.
         if self.check(TokenType::With) && self.check_next(TokenType::LParen) {
@@ -47726,7 +47715,7 @@ impl Parser {
             // Subquery: USING (SELECT ...) AS alias
             let query = self.parse_statement()?;
             self.expect(TokenType::RParen)?;
-            let trailing = self.previous_trailing_comments();
+            let trailing = self.previous_trailing_comments().to_vec();
             let mut subq = Subquery {
                 this: query,
                 alias: None,
@@ -47779,7 +47768,7 @@ impl Parser {
             }
             Expression::Subquery(Box::new(subq))
         } else {
-            Expression::Table(self.parse_table_ref()?)
+            Expression::Table(Box::new(self.parse_table_ref()?))
         };
 
         // Parse optional alias for source (if not already parsed for subquery)
@@ -47961,7 +47950,7 @@ impl Parser {
                                 if let Expression::Identifier(table_ident) = col {
                                     if let Some(col_expr) = self.parse_id_var()? {
                                         if let Expression::Identifier(col_ident) = col_expr {
-                                            Expression::Column(Column {
+                                            Expression::boxed_column(Column {
                                                 name: col_ident,
                                                 table: Some(table_ident),
                                                 join_mark: false,
@@ -48046,7 +48035,7 @@ impl Parser {
                                     // Parse the column part after the dot
                                     if let Some(col_expr) = self.parse_id_var()? {
                                         if let Expression::Identifier(col_ident) = col_expr {
-                                            Expression::Column(Column {
+                                            Expression::boxed_column(Column {
                                                 name: col_ident,
                                                 table: Some(table_ident),
                                                 join_mark: false,
@@ -48219,7 +48208,7 @@ impl Parser {
         leading_comments: Vec<String>,
     ) -> Result<Option<Expression>> {
         // Get kind from previous token (ALL or FIRST)
-        let kind = self.previous().text.to_uppercase();
+        let kind = self.previous().text.to_ascii_uppercase();
 
         let mut expressions = Vec::new();
 
@@ -48248,7 +48237,7 @@ impl Parser {
 
             // Extract TableRef from the table expression
             let table_ref = if let Some(Expression::Table(t)) = table_expr {
-                t
+                *t
             } else {
                 // Fallback: create empty table ref (shouldn't happen)
                 TableRef::new("")
@@ -48461,7 +48450,7 @@ impl Parser {
 
         // Build a Column expression from the parts
         let this = if parts.len() == 1 {
-            Expression::Column(Column {
+            Expression::boxed_column(Column {
                 name: parts.remove(0),
                 table: None,
                 join_mark: false,
@@ -48470,7 +48459,7 @@ impl Parser {
                 inferred_type: None,
             })
         } else if parts.len() == 2 {
-            Expression::Column(Column {
+            Expression::boxed_column(Column {
                 name: parts.remove(1),
                 table: Some(parts.remove(0)),
                 join_mark: false,
@@ -48889,7 +48878,7 @@ impl Parser {
             let mut op_text = String::new();
             while !self.check(TokenType::RParen) && !self.is_at_end() {
                 op_text.push_str(&self.peek().text);
-                self.advance();
+                self.skip();
             }
             self.expect(TokenType::RParen)?;
 
@@ -49226,7 +49215,7 @@ impl Parser {
             return Ok(None);
         }
 
-        let subpartition = self.previous().text.to_uppercase() == "SUBPARTITION";
+        let subpartition = self.previous().text.eq_ignore_ascii_case("SUBPARTITION");
 
         // Parse wrapped CSV of disjunction expressions
         if !self.match_token(TokenType::LParen) {
@@ -49351,7 +49340,7 @@ impl Parser {
         }
 
         // Determine if it's BUCKET or TRUNCATE based on previous token
-        let is_bucket = self.previous().text.to_uppercase() == "BUCKET";
+        let is_bucket = self.previous().text.eq_ignore_ascii_case("BUCKET");
 
         // Parse wrapped arguments
         self.expect(TokenType::LParen)?;
@@ -49416,7 +49405,7 @@ impl Parser {
 
         // Check for partition definitions in parentheses
         let create_expressions = if self.check(TokenType::LParen) {
-            self.advance(); // consume (
+            self.skip(); // consume (
 
             if kind == "LIST" {
                 // Parse LIST partition definitions: PARTITION name VALUES IN (val1, val2), ...
@@ -49529,7 +49518,7 @@ impl Parser {
                 }))
             } else if self.check(TokenType::LBracket) {
                 // VALUES [(val1), (val2)) - note asymmetric brackets
-                self.advance(); // consume [
+                self.skip(); // consume [
                 let mut value_tuples = Vec::new();
                 loop {
                     let vals = self.parse_wrapped_csv_expressions()?;
@@ -49578,7 +49567,7 @@ impl Parser {
         let every = if self.match_token(TokenType::Interval) {
             let number = self.parse_expression()?;
             let unit = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                let unit_text = self.advance().text.to_uppercase();
+                let unit_text = self.advance().text.to_ascii_uppercase();
                 // Convert unit text to IntervalUnit
                 let interval_unit = match unit_text.as_str() {
                     "YEAR" | "YEARS" => crate::expressions::IntervalUnit::Year,
@@ -49950,28 +49939,28 @@ impl Parser {
         // Process pipe syntax chain: |> transform1 |> transform2 |> ...
         while self.match_token(TokenType::PipeGt) {
             let start_pos = self.current;
-            let operator_text = self.peek().text.to_uppercase();
+            let operator_text = self.peek().text.to_ascii_uppercase();
 
             // Try to match known pipe syntax transforms
             let transform_result = match operator_text.as_str() {
                 "WHERE" => {
-                    self.advance();
+                    self.skip();
                     self.parse_where()?
                 }
                 "SELECT" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_select()?
                 }
                 "AGGREGATE" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_aggregate()?
                 }
                 "EXTEND" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_extend()?
                 }
                 "LIMIT" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_limit()?
                 }
                 "JOIN" | "LEFT" | "RIGHT" | "INNER" | "OUTER" | "CROSS" | "FULL" => {
@@ -49979,11 +49968,11 @@ impl Parser {
                 }
                 "UNION" | "INTERSECT" | "EXCEPT" => self.parse_pipe_syntax_set_operator()?,
                 "PIVOT" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_pivot()?
                 }
                 "TABLESAMPLE" => {
-                    self.advance();
+                    self.skip();
                     self.parse_pipe_syntax_tablesample()?
                 }
                 _ => {
@@ -50220,7 +50209,7 @@ impl Parser {
         }
 
         let start = self.current;
-        self.advance(); // consume {
+        self.skip(); // consume {
 
         if !(self.is_identifier_token() || self.is_safe_keyword_as_identifier()) {
             self.current = start;
@@ -50242,34 +50231,34 @@ impl Parser {
             match token_type {
                 TokenType::LParen => {
                     paren_depth += 1;
-                    self.advance();
+                    self.skip();
                 }
                 TokenType::RParen => {
                     if paren_depth == 0 {
                         break;
                     }
                     paren_depth -= 1;
-                    self.advance();
+                    self.skip();
                 }
                 TokenType::LBracket => {
                     bracket_depth += 1;
-                    self.advance();
+                    self.skip();
                 }
                 TokenType::RBracket => {
                     if bracket_depth == 0 {
                         break;
                     }
                     bracket_depth -= 1;
-                    self.advance();
+                    self.skip();
                 }
                 TokenType::RBrace => {
                     if paren_depth == 0 && bracket_depth == 0 {
                         break;
                     }
-                    self.advance();
+                    self.skip();
                 }
                 _ => {
-                    self.advance();
+                    self.skip();
                 }
             }
         }
@@ -50704,7 +50693,7 @@ impl Parser {
                     // ClickHouse: ORDER BY (col1 [ASC|DESC], col2 [ASC|DESC], ...)
                     // or ORDER BY () for no ordering
                     if self.check(TokenType::RParen) {
-                        self.advance();
+                        self.skip();
                         OrderBy {
                             expressions: vec![Ordered::asc(Expression::Tuple(Box::new(Tuple {
                                 expressions: Vec::new(),
@@ -50908,9 +50897,9 @@ impl Parser {
     /// Normalize TSQL date part aliases (e.g., dd -> DAY, yy -> YEAR, etc.)
     fn normalize_tsql_date_part(&self, expr: Expression) -> Expression {
         let name = match &expr {
-            Expression::Var(v) => Some(v.this.to_uppercase()),
-            Expression::Column(c) if c.table.is_none() => Some(c.name.name.to_uppercase()),
-            Expression::Identifier(id) => Some(id.name.to_uppercase()),
+            Expression::Var(v) => Some(v.this.to_ascii_uppercase()),
+            Expression::Column(c) if c.table.is_none() => Some(c.name.name.to_ascii_uppercase()),
+            Expression::Identifier(id) => Some(id.name.to_ascii_uppercase()),
             _ => None,
         };
         if let Some(name) = name {
@@ -50947,7 +50936,7 @@ impl Parser {
     }
 
     fn try_parse_date_part_unit_expr(&self, expr: &Expression) -> Option<IntervalUnit> {
-        let upper = self.date_part_expr_name(expr)?.to_uppercase();
+        let upper = self.date_part_expr_name(expr)?.to_ascii_uppercase();
         let canonical = match upper.as_str() {
             // Year
             "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => "YEAR",
@@ -50980,7 +50969,7 @@ impl Parser {
     }
 
     fn try_parse_date_part_unit_identifier_expr(&self, expr: &Expression) -> Option<IntervalUnit> {
-        let upper = self.date_part_identifier_expr_name(expr)?.to_uppercase();
+        let upper = self.date_part_identifier_expr_name(expr)?.to_ascii_uppercase();
         let canonical = match upper.as_str() {
             "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => "YEAR",
             "Q" | "QTR" | "QTRS" | "QUARTERS" | "QQ" => "QUARTER",
@@ -51005,7 +50994,7 @@ impl Parser {
         &self,
         expr: &Expression,
     ) -> Option<DateTimeField> {
-        let upper = self.date_part_identifier_expr_name(expr)?.to_uppercase();
+        let upper = self.date_part_identifier_expr_name(expr)?.to_ascii_uppercase();
         Some(match upper.as_str() {
             "YEAR" | "Y" | "YY" | "YYY" | "YYYY" | "YR" | "YEARS" | "YRS" => DateTimeField::Year,
             "MONTH" | "MM" | "MON" | "MONS" | "MONTHS" => DateTimeField::Month,
@@ -51103,7 +51092,7 @@ impl Parser {
                         | TokenType::As
                 );
             if is_delimiter {
-                self.advance(); // consume AS
+                self.skip(); // consume AS
                 let alias_token = self.advance();
                 let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
                     let mut ident = Identifier::new(alias_token.text.clone());
@@ -51366,7 +51355,7 @@ impl Parser {
 
         // BigQuery: IN UNNEST(expr) — UNNEST without wrapping parentheses
         if self.check_identifier("UNNEST") {
-            self.advance(); // consume UNNEST
+            self.skip(); // consume UNNEST
             self.expect(TokenType::LParen)?;
             let unnest_expr = self.parse_expression()?;
             self.expect(TokenType::RParen)?;
@@ -51756,7 +51745,7 @@ impl Parser {
 
         // Parse as a table reference (schema.table format)
         let table_ref = self.parse_table_ref()?;
-        let table_expr = Expression::Table(table_ref);
+        let table_expr = Expression::Table(Box::new(table_ref));
 
         Ok(Some(Expression::Refresh(Box::new(Refresh {
             this: Box::new(table_expr),
@@ -51772,13 +51761,13 @@ impl Parser {
     ///   REFRESH AUTO ON SCHEDULE EVERY 5 MINUTE STARTS '2025-01-01 00:00:00'
     pub fn parse_refresh_trigger_property(&mut self) -> Result<RefreshTriggerProperty> {
         // Parse method: COMPLETE or AUTO
-        let method = self.expect_identifier_or_keyword()?.to_uppercase();
+        let method = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
 
         // Parse ON
         self.expect(TokenType::On)?;
 
         // Parse kind: MANUAL, COMMIT, or SCHEDULE
-        let kind_text = self.expect_identifier_or_keyword()?.to_uppercase();
+        let kind_text = self.expect_identifier_or_keyword()?.to_ascii_uppercase();
         let kind = Some(kind_text.clone());
 
         // For SCHEDULE, parse EVERY n UNIT [STARTS 'datetime']
@@ -51793,7 +51782,7 @@ impl Parser {
 
             // Unit: MINUTE, HOUR, DAY, etc.
             let unit = if every.is_some() {
-                Some(self.expect_identifier_or_keyword()?.to_uppercase())
+                Some(self.expect_identifier_or_keyword()?.to_ascii_uppercase())
             } else {
                 None
             };
@@ -52333,10 +52322,10 @@ impl Parser {
             let text = self.advance().text.clone();
             Expression::Literal(Literal::String(text))
         } else if self.check(TokenType::False) {
-            self.advance();
+            self.skip();
             Expression::Boolean(BooleanLiteral { value: false })
         } else if self.check(TokenType::True) {
-            self.advance();
+            self.skip();
             Expression::Boolean(BooleanLiteral { value: true })
         } else {
             let right = self
@@ -52560,7 +52549,7 @@ impl Parser {
         // Parse the source table (can be a subquery like (SELECT 1 AS col1, 2 AS col2))
         let this = if self.check(TokenType::LParen) {
             // Could be parenthesized subquery
-            self.advance(); // consume (
+            self.skip(); // consume (
             if self.check(TokenType::Select) || self.check(TokenType::With) {
                 let inner = self.parse_statement()?;
                 self.expect(TokenType::RParen)?;
@@ -52737,7 +52726,7 @@ impl Parser {
         // Handle special case: -: which means -1 (from end)
         let end = if self.check(TokenType::Dash) && self.check_next(TokenType::Colon) {
             // -: pattern means -1 (from end)
-            self.advance(); // consume dash
+            self.skip(); // consume dash
             Some(Expression::Neg(Box::new(UnaryOp::new(
                 Expression::Literal(Literal::Number("1".to_string())),
             ))))
@@ -52777,7 +52766,7 @@ impl Parser {
         // Handle special case: -: means -1 (from the end)
         // This is used in slicing like [:-:-1] where the first -: means end=-1
         if self.check(TokenType::Dash) && self.check_next(TokenType::Colon) {
-            self.advance(); // consume dash
+            self.skip(); // consume dash
                             // Don't consume the colon - let the caller handle it
             return Ok(Some(Expression::Neg(Box::new(UnaryOp::new(
                 Expression::Literal(Literal::Number("1".to_string())),
@@ -53669,7 +53658,7 @@ impl Parser {
         // Handle AS (col1, col2) - no alias name, just column aliases
         if has_as && self.check(TokenType::LParen) {
             // Parse (col1, col2, ...)
-            self.advance(); // consume LParen
+            self.skip(); // consume LParen
             let mut cols = Vec::new();
             loop {
                 if self.check(TokenType::RParen) {
@@ -53774,7 +53763,7 @@ impl Parser {
         } else {
             // MySQL style: USE INDEX, IGNORE INDEX, FORCE INDEX
             while self.match_texts(&["USE", "IGNORE", "FORCE"]) {
-                let hint_type = self.previous().text.to_uppercase();
+                let hint_type = self.previous().text.to_ascii_uppercase();
 
                 // Match INDEX or KEY
                 let _ = self.match_texts(&["INDEX", "KEY"]);
@@ -53782,12 +53771,12 @@ impl Parser {
                 // Check for optional FOR clause: FOR JOIN, FOR ORDER BY, FOR GROUP BY
                 let target = if self.match_text_seq(&["FOR"]) {
                     let target_token = self.advance();
-                    let target_text = target_token.text.to_uppercase();
+                    let target_text = target_token.text.to_ascii_uppercase();
                     // For ORDER BY and GROUP BY, combine into a single target name
                     let full_target = if (target_text == "ORDER" || target_text == "GROUP")
                         && self.check(TokenType::By)
                     {
-                        self.advance(); // consume BY
+                        self.skip(); // consume BY
                         format!("{} BY", target_text)
                     } else {
                         target_text
@@ -53853,7 +53842,7 @@ impl Parser {
 
         // Check for PARTITIONS specifically
         if self.check_identifier("PARTITIONS") {
-            self.advance(); // consume PARTITIONS
+            self.skip(); // consume PARTITIONS
             self.expect(TokenType::LParen)?;
 
             // Parse partition ranges: 1, 2 TO 5, 10 TO 20, 84
@@ -53942,7 +53931,7 @@ impl Parser {
         // This mirrors Python sqlglot's ID_VAR_TOKENS which includes many keyword types
         if self.check_keyword_as_identifier() {
             let text = self.peek().text.clone();
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Identifier(Identifier {
                 name: text,
                 quoted: false,
@@ -54086,7 +54075,7 @@ impl Parser {
             _ => Identifier::new(String::new()),
         });
 
-        Ok(Some(Expression::Table(TableRef {
+        Ok(Some(Expression::boxed_table(TableRef {
             name: name_ident,
             schema: schema_ident,
             catalog: catalog_ident,
@@ -54303,7 +54292,7 @@ impl Parser {
                             }
                             paren_depth -= 1;
                         }
-                        self.advance();
+                        self.skip();
                     }
                     if self.current == base_start {
                         break;
@@ -54557,7 +54546,7 @@ impl Parser {
 
         // Parse optional USING index_type
         let index_type = if self.match_token(TokenType::Using) {
-            self.advance();
+            self.skip();
             Some(Box::new(Expression::Var(Box::new(Var {
                 this: self.previous().text.clone(),
             }))))
@@ -54824,7 +54813,7 @@ impl Parser {
                 loop {
                     // Support DEFAULT keyword in VALUES
                     if self.match_texts(&["DEFAULT"]) {
-                        let text = self.previous().text.to_uppercase();
+                        let text = self.previous().text.to_ascii_uppercase();
                         expressions.push(Expression::Var(Box::new(Var { this: text })));
                     } else {
                         // Try to parse an expression
@@ -54886,9 +54875,9 @@ impl Parser {
         // Get current token text as the option
         let token = self.peek().clone();
         if token.token_type == TokenType::Identifier || token.token_type == TokenType::Var {
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Var(Box::new(Var {
-                this: token.text.to_uppercase(),
+                this: token.text.to_ascii_uppercase(),
             }))));
         }
 
@@ -54954,7 +54943,7 @@ impl Parser {
         // Parse the kind and expression
         let (kind, expression) = if self.match_texts(&["FROM", "BETWEEN"]) {
             // FROM start TO end or BETWEEN start AND end
-            let kind_str = self.previous().text.to_uppercase();
+            let kind_str = self.previous().text.to_ascii_uppercase();
             let start = self.parse_bitwise()?;
             self.match_texts(&["TO", "AND"]);
             let end = self.parse_bitwise()?;
@@ -55438,7 +55427,7 @@ impl Parser {
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
             let name = self.peek().text.clone();
-            self.advance();
+            self.skip();
             Some(Expression::Var(Box::new(Var { this: name })))
         } else {
             None
@@ -55465,7 +55454,7 @@ impl Parser {
         // - Nested parens for tuple: ('')
         let value = if self.check(TokenType::LParen) {
             // Parse nested parenthesized value like NULL_IF=('')
-            self.advance(); // consume (
+            self.skip(); // consume (
             let mut inner_exprs = Vec::new();
             while !self.check(TokenType::RParen) && !self.is_at_end() {
                 if let Some(expr) = self.parse_primary_for_option()? {
@@ -55483,7 +55472,7 @@ impl Parser {
         } else {
             // Fallback: try to parse as a var
             let text = self.peek().text.clone();
-            self.advance();
+            self.skip();
             Expression::Var(Box::new(Var { this: text }))
         };
 
@@ -55500,24 +55489,24 @@ impl Parser {
         // String literal
         if self.check(TokenType::String) {
             let text = self.peek().text.clone();
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Literal(Literal::String(text))));
         }
 
         // Number
         if self.check(TokenType::Number) {
             let text = self.peek().text.clone();
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Literal(Literal::Number(text))));
         }
 
         // TRUE/FALSE
         if self.check(TokenType::True) {
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Boolean(BooleanLiteral { value: true })));
         }
         if self.check(TokenType::False) {
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Boolean(BooleanLiteral { value: false })));
         }
 
@@ -55538,7 +55527,7 @@ impl Parser {
             if self.check_next(TokenType::Eq) {
                 return Ok(None);
             }
-            self.advance();
+            self.skip();
             return Ok(Some(Expression::Var(Box::new(Var { this: text }))));
         }
 
@@ -55968,7 +55957,7 @@ impl Parser {
             loop {
                 // Check for stop keywords before parsing a column
                 if !self.is_at_end() {
-                    let next_text = self.peek().text.to_uppercase();
+                    let next_text = self.peek().text.to_ascii_uppercase();
                     if next_text == "COLUMNS" || next_text == "RETURNING" {
                         break;
                     }
@@ -56055,7 +56044,7 @@ impl Parser {
             // Track string literals
             if token_type == TokenType::String {
                 parts.push(format!("'{}'", token_text.replace('\'', "''")));
-                self.advance();
+                self.skip();
                 // Add space after string unless followed by punctuation
                 if !self.is_at_end() {
                     let next_type = self.peek().token_type;
@@ -56076,10 +56065,10 @@ impl Parser {
                     .is_some_and(|t| t.token_type == TokenType::LBracket)
             {
                 parts.push(token_text);
-                self.advance();
+                self.skip();
                 // Consume [
                 parts.push("[".to_string());
-                self.advance();
+                self.skip();
                 // Collect until RBracket
                 while !self.is_at_end() && !self.check(TokenType::RBracket) {
                     let inner_type = self.peek().token_type;
@@ -56089,21 +56078,21 @@ impl Parser {
                     } else {
                         parts.push(inner_text);
                     }
-                    self.advance();
+                    self.skip();
                     if self.check(TokenType::Comma) {
                         parts.push(", ".to_string());
-                        self.advance();
+                        self.skip();
                     }
                 }
                 if self.check(TokenType::RBracket) {
                     parts.push("]".to_string());
-                    self.advance();
+                    self.skip();
                 }
                 continue;
             }
 
             parts.push(token_text);
-            self.advance();
+            self.skip();
 
             // Add space after most tokens except punctuation
             if !self.is_at_end() {
@@ -56136,7 +56125,7 @@ impl Parser {
 
         // Advance through all tokens until end or semicolon
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-            self.advance();
+            self.skip();
         }
 
         // Get end position from the last consumed token

@@ -1201,7 +1201,7 @@ mod tests {
 
     fn make_column(name: &str) -> Expression {
         use crate::expressions::{Column, Identifier};
-        Expression::Column(Column {
+        Expression::boxed_column(Column {
             name: Identifier::new(name),
             table: None,
             join_mark: false,

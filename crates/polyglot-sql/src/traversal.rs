@@ -1414,7 +1414,7 @@ mod tests {
     use crate::expressions::{BinaryOp, Column, Identifier, Literal};
 
     fn make_column(name: &str) -> Expression {
-        Expression::Column(Column {
+        Expression::boxed_column(Column {
             name: Identifier {
                 name: name.to_string(),
                 quoted: false,
@@ -1614,7 +1614,7 @@ mod tests {
         let result = super::transform_map(expr, &|e| {
             if let Expression::Column(ref c) = e {
                 if c.name.name == "a" {
-                    return Ok(Expression::Column(Column {
+                    return Ok(Expression::boxed_column(Column {
                         name: Identifier::new("alpha"),
                         table: c.table.clone(),
                         join_mark: false,

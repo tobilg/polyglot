@@ -1177,7 +1177,7 @@ fn extract_subquery_to_cte(
                 if !alias_name.is_empty() {
                     tref.alias = Some(Identifier::new(&alias_name));
                 }
-                return Expression::Table(tref);
+                return Expression::Table(Box::new(tref));
             }
 
             // Generate a CTE name
@@ -1205,7 +1205,7 @@ fn extract_subquery_to_cte(
             if !alias_name.is_empty() {
                 tref.alias = Some(Identifier::new(&alias_name));
             }
-            Expression::Table(tref)
+            Expression::Table(Box::new(tref))
         }
         other => other,
     }

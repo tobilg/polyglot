@@ -162,7 +162,8 @@ fn maybe_wrap_table(expression: Expression, schema: Option<&dyn Schema>) -> Expr
                 _ => return expression,
             };
 
-            wrap_table_in_subquery(table.clone(), &alias_name)
+            wrap_table_in_subquery(*table.clone(), &alias_name)
+
         }
         _ => expression,
     }
@@ -183,7 +184,7 @@ fn wrap_table_in_subquery(table: TableRef, alias_name: &str) -> Expression {
             trailing_comments: Vec::new(),
             span: None,
         }))
-        .from(Expression::Table(table));
+        .from(Expression::Table(Box::new(table)));
 
     // Wrap the SELECT in a Subquery with the original alias
     Expression::Subquery(Box::new(Subquery {

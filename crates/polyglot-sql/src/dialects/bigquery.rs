@@ -604,7 +604,7 @@ impl DialectImpl for BigQueryDialect {
                             // Check if this GROUP BY expression matches a SELECT alias
                             for (expr, alias_ident) in &aliases {
                                 if grouped == expr {
-                                    *grouped = Expression::Column(Column {
+                                    *grouped = Expression::boxed_column(Column {
                                         name: alias_ident.clone(),
                                         table: None,
                                         join_mark: false,
@@ -642,7 +642,7 @@ impl DialectImpl for BigQueryDialect {
                     trailing_comments: Vec::new(),
                     inferred_type: None,
                 }));
-                let col_ref = Expression::Column(Column {
+                let col_ref = Expression::boxed_column(Column {
                     name: Identifier::new("_col"),
                     table: None,
                     join_mark: false,

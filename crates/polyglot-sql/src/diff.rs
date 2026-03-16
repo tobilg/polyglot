@@ -1111,7 +1111,7 @@ mod tests {
 
         // Join kind matters
         let join_left = Expression::Join(Box::new(crate::expressions::Join {
-            this: Expression::Table(crate::expressions::TableRef::new("t")),
+            this: Expression::Table(Box::new(crate::expressions::TableRef::new("t"))),
             on: None,
             using: vec![],
             kind: crate::expressions::JoinKind::Left,
@@ -1126,7 +1126,7 @@ mod tests {
             directed: false,
         }));
         let join_right = Expression::Join(Box::new(crate::expressions::Join {
-            this: Expression::Table(crate::expressions::TableRef::new("t")),
+            this: Expression::Table(Box::new(crate::expressions::TableRef::new("t"))),
             on: None,
             using: vec![],
             kind: crate::expressions::JoinKind::Right,

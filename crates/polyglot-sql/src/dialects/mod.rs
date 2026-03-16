@@ -298,7 +298,7 @@ impl std::str::FromStr for DialectType {
     type Err = crate::error::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
+        match s.to_ascii_lowercase().as_str() {
             "generic" | "" => Ok(DialectType::Generic),
             "postgres" | "postgresql" => Ok(DialectType::PostgreSQL),
             "mysql" => Ok(DialectType::MySQL),
@@ -557,6 +557,21 @@ where
                 inferred_type: $op.inferred_type,
             }))
         }};
+    }
+
+    // Fast path: leaf nodes never need child traversal, apply transform directly
+    if matches!(
+        &expr,
+        Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Null(_)
+            | Expression::Identifier(_)
+            | Expression::Star(_)
+            | Expression::Parameter(_)
+            | Expression::Placeholder(_)
+            | Expression::SessionParameter(_)
+    ) {
+        return transform_fn(expr);
     }
 
     // First recursively transform children, then apply the transform function
@@ -1559,6 +1574,73 @@ where
 /// Returns the tokenizer config, generator config, and expression transform closure
 /// for a built-in dialect type. This is the shared implementation used by both
 /// `Dialect::get()` and custom dialect construction.
+// ---------------------------------------------------------------------------
+// Cached dialect configurations
+// ---------------------------------------------------------------------------
+
+/// Pre-computed tokenizer + generator configs for a dialect, cached via `LazyLock`.
+/// Transform closures are cheap (unit-struct method calls) and created fresh each time.
+struct CachedDialectConfig {
+    tokenizer_config: TokenizerConfig,
+    generator_config: GeneratorConfig,
+}
+
+/// Declare a per-dialect `LazyLock<CachedDialectConfig>` static.
+macro_rules! cached_dialect {
+    ($static_name:ident, $dialect_struct:expr, $feature:literal) => {
+        #[cfg(feature = $feature)]
+        static $static_name: LazyLock<CachedDialectConfig> = LazyLock::new(|| {
+            let d = $dialect_struct;
+            CachedDialectConfig {
+                tokenizer_config: d.tokenizer_config(),
+                generator_config: d.generator_config(),
+            }
+        });
+    };
+}
+
+static CACHED_GENERIC: LazyLock<CachedDialectConfig> = LazyLock::new(|| {
+    let d = GenericDialect;
+    CachedDialectConfig {
+        tokenizer_config: d.tokenizer_config(),
+        generator_config: d.generator_config(),
+    }
+});
+
+cached_dialect!(CACHED_POSTGRESQL, PostgresDialect, "dialect-postgresql");
+cached_dialect!(CACHED_MYSQL, MySQLDialect, "dialect-mysql");
+cached_dialect!(CACHED_BIGQUERY, BigQueryDialect, "dialect-bigquery");
+cached_dialect!(CACHED_SNOWFLAKE, SnowflakeDialect, "dialect-snowflake");
+cached_dialect!(CACHED_DUCKDB, DuckDBDialect, "dialect-duckdb");
+cached_dialect!(CACHED_TSQL, TSQLDialect, "dialect-tsql");
+cached_dialect!(CACHED_ORACLE, OracleDialect, "dialect-oracle");
+cached_dialect!(CACHED_HIVE, HiveDialect, "dialect-hive");
+cached_dialect!(CACHED_SPARK, SparkDialect, "dialect-spark");
+cached_dialect!(CACHED_SQLITE, SQLiteDialect, "dialect-sqlite");
+cached_dialect!(CACHED_PRESTO, PrestoDialect, "dialect-presto");
+cached_dialect!(CACHED_TRINO, TrinoDialect, "dialect-trino");
+cached_dialect!(CACHED_REDSHIFT, RedshiftDialect, "dialect-redshift");
+cached_dialect!(CACHED_CLICKHOUSE, ClickHouseDialect, "dialect-clickhouse");
+cached_dialect!(CACHED_DATABRICKS, DatabricksDialect, "dialect-databricks");
+cached_dialect!(CACHED_ATHENA, AthenaDialect, "dialect-athena");
+cached_dialect!(CACHED_TERADATA, TeradataDialect, "dialect-teradata");
+cached_dialect!(CACHED_DORIS, DorisDialect, "dialect-doris");
+cached_dialect!(CACHED_STARROCKS, StarRocksDialect, "dialect-starrocks");
+cached_dialect!(CACHED_MATERIALIZE, MaterializeDialect, "dialect-materialize");
+cached_dialect!(CACHED_RISINGWAVE, RisingWaveDialect, "dialect-risingwave");
+cached_dialect!(CACHED_SINGLESTORE, SingleStoreDialect, "dialect-singlestore");
+cached_dialect!(CACHED_COCKROACHDB, CockroachDBDialect, "dialect-cockroachdb");
+cached_dialect!(CACHED_TIDB, TiDBDialect, "dialect-tidb");
+cached_dialect!(CACHED_DRUID, DruidDialect, "dialect-druid");
+cached_dialect!(CACHED_SOLR, SolrDialect, "dialect-solr");
+cached_dialect!(CACHED_TABLEAU, TableauDialect, "dialect-tableau");
+cached_dialect!(CACHED_DUNE, DuneDialect, "dialect-dune");
+cached_dialect!(CACHED_FABRIC, FabricDialect, "dialect-fabric");
+cached_dialect!(CACHED_DRILL, DrillDialect, "dialect-drill");
+cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
+cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
+cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
+
 fn configs_for_dialect_type(
     dt: DialectType,
 ) -> (
@@ -1566,84 +1648,85 @@ fn configs_for_dialect_type(
     GeneratorConfig,
     Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
 ) {
-    macro_rules! dialect_configs {
-        ($dialect_struct:ident) => {{
-            let d = $dialect_struct;
+    /// Clone configs from a cached static and pair with a fresh transform closure.
+    macro_rules! from_cache {
+        ($cache:expr, $dialect_struct:expr) => {{
+            let c = &*$cache;
             (
-                d.tokenizer_config(),
-                d.generator_config(),
+                c.tokenizer_config.clone(),
+                c.generator_config.clone(),
                 Box::new(move |e| $dialect_struct.transform_expr(e)),
             )
         }};
     }
     match dt {
         #[cfg(feature = "dialect-postgresql")]
-        DialectType::PostgreSQL => dialect_configs!(PostgresDialect),
+        DialectType::PostgreSQL => from_cache!(CACHED_POSTGRESQL, PostgresDialect),
         #[cfg(feature = "dialect-mysql")]
-        DialectType::MySQL => dialect_configs!(MySQLDialect),
+        DialectType::MySQL => from_cache!(CACHED_MYSQL, MySQLDialect),
         #[cfg(feature = "dialect-bigquery")]
-        DialectType::BigQuery => dialect_configs!(BigQueryDialect),
+        DialectType::BigQuery => from_cache!(CACHED_BIGQUERY, BigQueryDialect),
         #[cfg(feature = "dialect-snowflake")]
-        DialectType::Snowflake => dialect_configs!(SnowflakeDialect),
+        DialectType::Snowflake => from_cache!(CACHED_SNOWFLAKE, SnowflakeDialect),
         #[cfg(feature = "dialect-duckdb")]
-        DialectType::DuckDB => dialect_configs!(DuckDBDialect),
+        DialectType::DuckDB => from_cache!(CACHED_DUCKDB, DuckDBDialect),
         #[cfg(feature = "dialect-tsql")]
-        DialectType::TSQL => dialect_configs!(TSQLDialect),
+        DialectType::TSQL => from_cache!(CACHED_TSQL, TSQLDialect),
         #[cfg(feature = "dialect-oracle")]
-        DialectType::Oracle => dialect_configs!(OracleDialect),
+        DialectType::Oracle => from_cache!(CACHED_ORACLE, OracleDialect),
         #[cfg(feature = "dialect-hive")]
-        DialectType::Hive => dialect_configs!(HiveDialect),
+        DialectType::Hive => from_cache!(CACHED_HIVE, HiveDialect),
         #[cfg(feature = "dialect-spark")]
-        DialectType::Spark => dialect_configs!(SparkDialect),
+        DialectType::Spark => from_cache!(CACHED_SPARK, SparkDialect),
         #[cfg(feature = "dialect-sqlite")]
-        DialectType::SQLite => dialect_configs!(SQLiteDialect),
+        DialectType::SQLite => from_cache!(CACHED_SQLITE, SQLiteDialect),
         #[cfg(feature = "dialect-presto")]
-        DialectType::Presto => dialect_configs!(PrestoDialect),
+        DialectType::Presto => from_cache!(CACHED_PRESTO, PrestoDialect),
         #[cfg(feature = "dialect-trino")]
-        DialectType::Trino => dialect_configs!(TrinoDialect),
+        DialectType::Trino => from_cache!(CACHED_TRINO, TrinoDialect),
         #[cfg(feature = "dialect-redshift")]
-        DialectType::Redshift => dialect_configs!(RedshiftDialect),
+        DialectType::Redshift => from_cache!(CACHED_REDSHIFT, RedshiftDialect),
         #[cfg(feature = "dialect-clickhouse")]
-        DialectType::ClickHouse => dialect_configs!(ClickHouseDialect),
+        DialectType::ClickHouse => from_cache!(CACHED_CLICKHOUSE, ClickHouseDialect),
         #[cfg(feature = "dialect-databricks")]
-        DialectType::Databricks => dialect_configs!(DatabricksDialect),
+        DialectType::Databricks => from_cache!(CACHED_DATABRICKS, DatabricksDialect),
         #[cfg(feature = "dialect-athena")]
-        DialectType::Athena => dialect_configs!(AthenaDialect),
+        DialectType::Athena => from_cache!(CACHED_ATHENA, AthenaDialect),
         #[cfg(feature = "dialect-teradata")]
-        DialectType::Teradata => dialect_configs!(TeradataDialect),
+        DialectType::Teradata => from_cache!(CACHED_TERADATA, TeradataDialect),
         #[cfg(feature = "dialect-doris")]
-        DialectType::Doris => dialect_configs!(DorisDialect),
+        DialectType::Doris => from_cache!(CACHED_DORIS, DorisDialect),
         #[cfg(feature = "dialect-starrocks")]
-        DialectType::StarRocks => dialect_configs!(StarRocksDialect),
+        DialectType::StarRocks => from_cache!(CACHED_STARROCKS, StarRocksDialect),
         #[cfg(feature = "dialect-materialize")]
-        DialectType::Materialize => dialect_configs!(MaterializeDialect),
+        DialectType::Materialize => from_cache!(CACHED_MATERIALIZE, MaterializeDialect),
         #[cfg(feature = "dialect-risingwave")]
-        DialectType::RisingWave => dialect_configs!(RisingWaveDialect),
+        DialectType::RisingWave => from_cache!(CACHED_RISINGWAVE, RisingWaveDialect),
         #[cfg(feature = "dialect-singlestore")]
-        DialectType::SingleStore => dialect_configs!(SingleStoreDialect),
+        DialectType::SingleStore => from_cache!(CACHED_SINGLESTORE, SingleStoreDialect),
         #[cfg(feature = "dialect-cockroachdb")]
-        DialectType::CockroachDB => dialect_configs!(CockroachDBDialect),
+        DialectType::CockroachDB => from_cache!(CACHED_COCKROACHDB, CockroachDBDialect),
         #[cfg(feature = "dialect-tidb")]
-        DialectType::TiDB => dialect_configs!(TiDBDialect),
+        DialectType::TiDB => from_cache!(CACHED_TIDB, TiDBDialect),
         #[cfg(feature = "dialect-druid")]
-        DialectType::Druid => dialect_configs!(DruidDialect),
+        DialectType::Druid => from_cache!(CACHED_DRUID, DruidDialect),
         #[cfg(feature = "dialect-solr")]
-        DialectType::Solr => dialect_configs!(SolrDialect),
+        DialectType::Solr => from_cache!(CACHED_SOLR, SolrDialect),
         #[cfg(feature = "dialect-tableau")]
-        DialectType::Tableau => dialect_configs!(TableauDialect),
+        DialectType::Tableau => from_cache!(CACHED_TABLEAU, TableauDialect),
         #[cfg(feature = "dialect-dune")]
-        DialectType::Dune => dialect_configs!(DuneDialect),
+        DialectType::Dune => from_cache!(CACHED_DUNE, DuneDialect),
         #[cfg(feature = "dialect-fabric")]
-        DialectType::Fabric => dialect_configs!(FabricDialect),
+        DialectType::Fabric => from_cache!(CACHED_FABRIC, FabricDialect),
         #[cfg(feature = "dialect-drill")]
-        DialectType::Drill => dialect_configs!(DrillDialect),
+        DialectType::Drill => from_cache!(CACHED_DRILL, DrillDialect),
         #[cfg(feature = "dialect-dremio")]
-        DialectType::Dremio => dialect_configs!(DremioDialect),
+        DialectType::Dremio => from_cache!(CACHED_DREMIO, DremioDialect),
         #[cfg(feature = "dialect-exasol")]
-        DialectType::Exasol => dialect_configs!(ExasolDialect),
+        DialectType::Exasol => from_cache!(CACHED_EXASOL, ExasolDialect),
         #[cfg(feature = "dialect-datafusion")]
-        DialectType::DataFusion => dialect_configs!(DataFusionDialect),
-        _ => dialect_configs!(GenericDialect),
+        DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
+        _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
 
@@ -2840,16 +2923,16 @@ impl Dialect {
                             // Extract unit from step interval
                             let unit = if let Some(Expression::Interval(ref iv)) = step {
                                 if let Some(IntervalUnitSpec::Simple { ref unit, .. }) = iv.unit {
-                                    Some(format!("{:?}", unit).to_uppercase())
+                                    Some(format!("{:?}", unit).to_ascii_uppercase())
                                 } else if let Some(ref this) = iv.this {
                                     // The interval may be stored as a string like "1 MONTH"
                                     if let Expression::Literal(Literal::String(ref s)) = this {
                                         let parts: Vec<&str> = s.split_whitespace().collect();
                                         if parts.len() == 2 {
-                                            Some(parts[1].to_uppercase())
+                                            Some(parts[1].to_ascii_uppercase())
                                         } else if parts.len() == 1 {
                                             // Single word like "MONTH" or just "1"
-                                            let upper = parts[0].to_uppercase();
+                                            let upper = parts[0].to_ascii_uppercase();
                                             if matches!(
                                                 upper.as_str(),
                                                 "YEAR"
@@ -2902,7 +2985,7 @@ impl Dialect {
             let datediff = Expression::Function(Box::new(Function::new(
                 "DATEDIFF".to_string(),
                 vec![
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: Identifier::new(&unit_str),
                         table: None,
                         join_mark: false,
@@ -3000,7 +3083,7 @@ impl Dialect {
             let dateadd_expr = Expression::Function(Box::new(Function::new(
                 "DATEADD".to_string(),
                 vec![
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: Identifier::new(&unit_str),
                         table: None,
                         join_mark: false,
@@ -3009,7 +3092,7 @@ impl Dialect {
                         inferred_type: None,
                     }),
                     Expression::Cast(Box::new(Cast {
-                        this: Expression::Column(Column {
+                        this: Expression::boxed_column(Column {
                             name: Identifier::new(&alias_name),
                             table: None,
                             join_mark: false,
@@ -3225,7 +3308,7 @@ impl Dialect {
         let datediff = Expression::Function(Box::new(Function::new(
             "DATEDIFF".to_string(),
             vec![
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: Identifier::new(&unit_str),
                     table: None,
                     join_mark: false,
@@ -3315,7 +3398,7 @@ impl Dialect {
         let dateadd_expr = Expression::Function(Box::new(Function::new(
             "DATEADD".to_string(),
             vec![
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: Identifier::new(&unit_str),
                     table: None,
                     join_mark: false,
@@ -3324,7 +3407,7 @@ impl Dialect {
                     inferred_type: None,
                 }),
                 Expression::Cast(Box::new(Cast {
-                    this: Expression::Column(Column {
+                    this: Expression::boxed_column(Column {
                         name: Identifier::new(&col_name),
                         table: None,
                         join_mark: false,
@@ -3417,7 +3500,7 @@ impl Dialect {
         let datediff = Expression::Function(Box::new(Function::new(
             "DATEDIFF".to_string(),
             vec![
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: Identifier::new(&unit_str),
                     table: None,
                     join_mark: false,
@@ -3497,7 +3580,7 @@ impl Dialect {
         let dateadd_expr = Expression::Function(Box::new(Function::new(
             "DATEADD".to_string(),
             vec![
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: Identifier::new(&unit_str),
                     table: None,
                     join_mark: false,
@@ -3506,7 +3589,7 @@ impl Dialect {
                     inferred_type: None,
                 }),
                 Expression::Cast(Box::new(Cast {
-                    this: Expression::Column(Column {
+                    this: Expression::boxed_column(Column {
                         name: Identifier::new(col_name),
                         table: None,
                         join_mark: false,
@@ -3615,15 +3698,15 @@ impl Dialect {
         use crate::expressions::*;
         if let Some(Expression::Interval(ref iv)) = step {
             if let Some(IntervalUnitSpec::Simple { ref unit, .. }) = iv.unit {
-                return Some(format!("{:?}", unit).to_uppercase());
+                return Some(format!("{:?}", unit).to_ascii_uppercase());
             }
             if let Some(ref this) = iv.this {
                 if let Expression::Literal(Literal::String(ref s)) = this {
                     let parts: Vec<&str> = s.split_whitespace().collect();
                     if parts.len() == 2 {
-                        return Some(parts[1].to_uppercase());
+                        return Some(parts[1].to_ascii_uppercase());
                     } else if parts.len() == 1 {
-                        let upper = parts[0].to_uppercase();
+                        let upper = parts[0].to_ascii_uppercase();
                         if matches!(
                             upper.as_str(),
                             "YEAR"
@@ -3967,14 +4050,14 @@ impl Dialect {
                         let name_exprs: Vec<Expression> = partition_col_names
                             .iter()
                             .map(|n| {
-                                Expression::Column(crate::expressions::Column {
+                                Expression::Column(Box::new(crate::expressions::Column {
                                     name: crate::expressions::Identifier::new(n.clone()),
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
                                     inferred_type: None,
-                                })
+                                }))
                             })
                             .collect();
                         ct.properties.insert(
@@ -4815,7 +4898,7 @@ impl Dialect {
                                 .take(1)
                                 .filter_map(|expr| {
                                     if let Expression::Table(t) = expr {
-                                        Some(t.name.name.to_lowercase())
+                                        Some(t.name.name.to_ascii_lowercase())
                                     } else {
                                         None
                                     }
@@ -4828,7 +4911,7 @@ impl Dialect {
                             for expr in from.expressions.iter().skip(1) {
                                 if let Expression::Table(t) = expr {
                                     if let Some(ref schema) = t.schema {
-                                        if first_tables.contains(&schema.name.to_lowercase()) {
+                                        if first_tables.contains(&schema.name.to_ascii_lowercase()) {
                                             needs_rewrite = true;
                                             break;
                                         }
@@ -4837,7 +4920,7 @@ impl Dialect {
                                     if t.schema.is_none() && t.name.name.contains('.') {
                                         let parts: Vec<&str> = t.name.name.split('.').collect();
                                         if parts.len() >= 2
-                                            && first_tables.contains(&parts[0].to_lowercase())
+                                            && first_tables.contains(&parts[0].to_ascii_lowercase())
                                         {
                                             needs_rewrite = true;
                                             break;
@@ -4854,17 +4937,17 @@ impl Dialect {
                                 for expr in from.expressions.iter().skip(1) {
                                     if let Expression::Table(ref t) = expr {
                                         if let Some(ref schema) = t.schema {
-                                            if first_tables.contains(&schema.name.to_lowercase()) {
+                                            if first_tables.contains(&schema.name.to_ascii_lowercase()) {
                                                 // This is an array path reference, convert to CROSS JOIN UNNEST
                                                 let col_expr = Expression::Column(
-                                                    crate::expressions::Column {
+                                                    Box::new(crate::expressions::Column {
                                                         name: t.name.clone(),
                                                         table: Some(schema.clone()),
                                                         join_mark: false,
                                                         trailing_comments: vec![],
                                                         span: None,
                                                         inferred_type: None,
-                                                    },
+                                                    }),
                                                 );
                                                 let unnest_expr = Expression::Unnest(Box::new(
                                                     crate::expressions::UnnestFunc {
@@ -4931,7 +5014,7 @@ impl Dialect {
                                             // Dotted name in quoted identifier: `Coordinates.position`
                                             let parts: Vec<&str> = t.name.name.split('.').collect();
                                             if parts.len() >= 2
-                                                && first_tables.contains(&parts[0].to_lowercase())
+                                                && first_tables.contains(&parts[0].to_ascii_lowercase())
                                             {
                                                 let join_this =
                                                     if matches!(target, DialectType::BigQuery) {
@@ -5452,10 +5535,9 @@ impl Dialect {
             {
                 if let Expression::Cast(ref c) = e {
                     if let DataType::Custom { ref name } = c.to {
-                        let upper = name.to_uppercase();
-                        if upper.starts_with("NULLABLE(") && upper.ends_with(")") {
+                        if name.len() >= 9 && name[..9].eq_ignore_ascii_case("NULLABLE(") && name.ends_with(")") {
                             let inner = &name[9..name.len() - 1]; // strip "Nullable(" and ")"
-                            let inner_upper = inner.to_uppercase();
+                            let inner_upper = inner.to_ascii_uppercase();
                             let new_dt = match inner_upper.as_str() {
                                 "DATETIME" | "DATETIME64" => DataType::Timestamp {
                                     precision: None,
@@ -5518,7 +5600,7 @@ impl Dialect {
 
                 match &e {
                     Expression::Function(f) => {
-                        let name = f.name.to_uppercase();
+                        let name = f.name.to_ascii_uppercase();
                         // DATE_PART: strip quotes from first arg when target is Snowflake (source != Snowflake)
                         if (name == "DATE_PART" || name == "DATEPART")
                             && f.args.len() == 2
@@ -5553,7 +5635,7 @@ impl Dialect {
                             // - TIMESTAMPTZ/TIMESTAMPLTZ/TIME -> always wrap
                             let unit_str = match &f.args[0] {
                                 Expression::Literal(crate::expressions::Literal::String(s)) => {
-                                    Some(s.to_uppercase())
+                                    Some(s.to_ascii_uppercase())
                                 }
                                 _ => None,
                             };
@@ -5965,7 +6047,7 @@ impl Dialect {
                         }
                     }
                     Expression::AggregateFunction(af) => {
-                        let name = af.name.to_uppercase();
+                        let name = af.name.to_ascii_uppercase();
                         match name.as_str() {
                             "ARBITRARY" | "AGGREGATE" => Action::GenericFunctionNormalize,
                             "JSON_ARRAYAGG" => Action::GenericFunctionNormalize,
@@ -6144,8 +6226,7 @@ impl Dialect {
                         } else if !matches!(source, DialectType::Snowflake) {
                             Action::None
                         } else if matches!(target, DialectType::Spark | DialectType::Databricks) {
-                            let is_array_agg = agg.name.as_deref().map(|n| n.to_uppercase())
-                                == Some("ARRAY_AGG".to_string())
+                            let is_array_agg = agg.name.as_deref().map_or(false, |n| n.eq_ignore_ascii_case("ARRAY_AGG"))
                                 || agg.name.is_none();
                             if is_array_agg {
                                 Action::ArrayAggCollectList
@@ -6431,9 +6512,9 @@ impl Dialect {
                                             || name.eq_ignore_ascii_case("ROWVERSION")
                                             || name.eq_ignore_ascii_case("UNIQUEIDENTIFIER")
                                             || name.eq_ignore_ascii_case("DATETIMEOFFSET")
-                                            || name.to_uppercase().starts_with("NUMERIC")
-                                            || name.to_uppercase().starts_with("DATETIME2(")
-                                            || name.to_uppercase().starts_with("TIME(")) =>
+                                            || (name.len() >= 7 && name[..7].eq_ignore_ascii_case("NUMERIC"))
+                                            || (name.len() >= 10 && name[..10].eq_ignore_ascii_case("DATETIME2("))
+                                            || (name.len() >= 5 && name[..5].eq_ignore_ascii_case("TIME("))) =>
                                 {
                                     Action::TSQLTypeNormalize
                                 }
@@ -6466,8 +6547,8 @@ impl Dialect {
                         {
                             match dt {
                                 DataType::Custom { ref name }
-                                    if name.to_uppercase().starts_with("VARCHAR2(")
-                                        || name.to_uppercase().starts_with("NVARCHAR2(")
+                                    if (name.len() >= 9 && name[..9].eq_ignore_ascii_case("VARCHAR2("))
+                                        || (name.len() >= 10 && name[..10].eq_ignore_ascii_case("NVARCHAR2("))
                                         || name.eq_ignore_ascii_case("VARCHAR2")
                                         || name.eq_ignore_ascii_case("NVARCHAR2") =>
                                 {
@@ -9560,7 +9641,7 @@ impl Dialect {
                     }
 
                     if let Expression::Function(f) = e {
-                        let name = f.name.to_uppercase();
+                        let name = f.name.to_ascii_uppercase();
                         match name.as_str() {
                             "ARBITRARY" if f.args.len() == 1 => {
                                 let arg = f.args.into_iter().next().unwrap();
@@ -10392,7 +10473,7 @@ impl Dialect {
                                 let algo_expr = &f.args[0];
                                 let algo = match algo_expr {
                                     Expression::Literal(crate::expressions::Literal::String(s)) => {
-                                        s.to_uppercase()
+                                        s.to_ascii_uppercase()
                                     }
                                     _ => return Ok(Expression::Function(f)),
                                 };
@@ -11660,23 +11741,23 @@ impl Dialect {
                                         DialectType::Presto | DialectType::Trino => {
                                             let arr_arg = f.args.into_iter().next().unwrap();
                                             let a =
-                                                Expression::Column(crate::expressions::Column {
+                                                Expression::Column(Box::new(crate::expressions::Column {
                                                     name: crate::expressions::Identifier::new("a"),
                                                     table: None,
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
                                                     span: None,
                                                     inferred_type: None,
-                                                });
+                                                }));
                                             let b =
-                                                Expression::Column(crate::expressions::Column {
+                                                Expression::Column(Box::new(crate::expressions::Column {
                                                     name: crate::expressions::Identifier::new("b"),
                                                     table: None,
                                                     join_mark: false,
                                                     trailing_comments: Vec::new(),
                                                     span: None,
                                                     inferred_type: None,
-                                                });
+                                                }));
                                             let case_expr = Expression::Case(Box::new(
                                                 crate::expressions::Case {
                                                     operand: None,
@@ -12318,24 +12399,28 @@ impl Dialect {
                                             Expression::DataType(new_dt)
                                         }
                                         Expression::Identifier(id) => {
-                                            let upper = id.name.to_uppercase();
-                                            let normalized = match upper.as_str() {
-                                                "INT" => "INTEGER",
-                                                _ => &upper,
-                                            };
-                                            Expression::Identifier(
-                                                crate::expressions::Identifier::new(normalized),
-                                            )
+                                            if id.name.eq_ignore_ascii_case("INT") {
+                                                Expression::Identifier(
+                                                    crate::expressions::Identifier::new("INTEGER"),
+                                                )
+                                            } else {
+                                                let upper = id.name.to_ascii_uppercase();
+                                                Expression::Identifier(
+                                                    crate::expressions::Identifier::new(upper),
+                                                )
+                                            }
                                         }
                                         Expression::Column(col) => {
-                                            let upper = col.name.name.to_uppercase();
-                                            let normalized = match upper.as_str() {
-                                                "INT" => "INTEGER",
-                                                _ => &upper,
-                                            };
-                                            Expression::Identifier(
-                                                crate::expressions::Identifier::new(normalized),
-                                            )
+                                            if col.name.name.eq_ignore_ascii_case("INT") {
+                                                Expression::Identifier(
+                                                    crate::expressions::Identifier::new("INTEGER"),
+                                                )
+                                            } else {
+                                                let upper = col.name.name.to_ascii_uppercase();
+                                                Expression::Identifier(
+                                                    crate::expressions::Identifier::new(upper),
+                                                )
+                                            }
                                         }
                                         _ => type_expr.clone(),
                                     };
@@ -12399,7 +12484,7 @@ impl Dialect {
                                             }
                                         }
                                         Expression::Identifier(id) => {
-                                            let name = id.name.to_uppercase();
+                                            let name = id.name.to_ascii_uppercase();
                                             match name.as_str() {
                                                 "INT" | "INTEGER" => Some(DataType::Int {
                                                     length: None,
@@ -12457,7 +12542,7 @@ impl Dialect {
                                             }
                                         }
                                         Expression::Column(col) => {
-                                            let name = col.name.name.to_uppercase();
+                                            let name = col.name.name.to_ascii_uppercase();
                                             match name.as_str() {
                                                 "INT" | "INTEGER" => Some(DataType::Int {
                                                     length: None,
@@ -12495,7 +12580,7 @@ impl Dialect {
                                         }
                                         // NVARCHAR(200) parsed as Function("NVARCHAR", [200])
                                         Expression::Function(f) => {
-                                            let fname = f.name.to_uppercase();
+                                            let fname = f.name.to_ascii_uppercase();
                                             match fname.as_str() {
                                                 "VARCHAR" | "NVARCHAR" => {
                                                     let len = f.args.first().and_then(|a| {
@@ -14724,7 +14809,7 @@ impl Dialect {
                                 // where arg2 is a string literal matching a unit name
                                 let arg2_unit = match &arg2 {
                                     Expression::Literal(Literal::String(s)) => {
-                                        let u = s.to_uppercase();
+                                        let u = s.to_ascii_uppercase();
                                         if matches!(
                                             u.as_str(),
                                             "DAY"
@@ -15470,10 +15555,10 @@ impl Dialect {
                                         let arg = &f.args[0];
                                         let wrapped_arg = match arg {
                                             Expression::Function(inner_f)
-                                                if inner_f.name.to_uppercase() == "MD5"
-                                                    || inner_f.name.to_uppercase() == "SHA1"
-                                                    || inner_f.name.to_uppercase() == "SHA256"
-                                                    || inner_f.name.to_uppercase() == "SHA512" =>
+                                                if inner_f.name.eq_ignore_ascii_case("MD5")
+                                                    || inner_f.name.eq_ignore_ascii_case("SHA1")
+                                                    || inner_f.name.eq_ignore_ascii_case("SHA256")
+                                                    || inner_f.name.eq_ignore_ascii_case("SHA512") =>
                                             {
                                                 // Wrap hash function in TO_HEX for BigQuery
                                                 Expression::Function(Box::new(Function::new(
@@ -18285,14 +18370,14 @@ impl Dialect {
                                         let target_val = args.remove(0);
                                         let u_id = crate::expressions::Identifier::new("_u");
                                         let u_col =
-                                            Expression::Column(crate::expressions::Column {
+                                            Expression::Column(Box::new(crate::expressions::Column {
                                                 name: u_id.clone(),
                                                 table: None,
                                                 join_mark: false,
                                                 trailing_comments: Vec::new(),
                                                 span: None,
                                                 inferred_type: None,
-                                            });
+                                            }));
                                         // UNNEST(the_array) AS _u
                                         let unnest_expr = Expression::Unnest(Box::new(
                                             crate::expressions::UnnestFunc {
@@ -18894,7 +18979,7 @@ impl Dialect {
                             _ => Ok(Expression::Function(f)),
                         }
                     } else if let Expression::AggregateFunction(mut af) = e {
-                        let name = af.name.to_uppercase();
+                        let name = af.name.to_ascii_uppercase();
                         match name.as_str() {
                             "ARBITRARY" if af.args.len() == 1 => {
                                 let arg = af.args.into_iter().next().unwrap();
@@ -19191,7 +19276,7 @@ impl Dialect {
                                 }
                             }
                             DataType::Custom { ref name }
-                                if name.to_uppercase().starts_with("DATETIME2(") =>
+                                if name.len() >= 10 && name[..10].eq_ignore_ascii_case("DATETIME2(") =>
                             {
                                 // DATETIME2(n) -> TIMESTAMP
                                 DataType::Timestamp {
@@ -19200,7 +19285,7 @@ impl Dialect {
                                 }
                             }
                             DataType::Custom { ref name }
-                                if name.to_uppercase().starts_with("TIME(") =>
+                                if name.len() >= 5 && name[..5].eq_ignore_ascii_case("TIME(") =>
                             {
                                 // TIME(n) -> TIMESTAMP for Spark, keep as TIME for others
                                 match target {
@@ -19214,10 +19299,10 @@ impl Dialect {
                                 }
                             }
                             DataType::Custom { ref name }
-                                if name.to_uppercase().starts_with("NUMERIC") =>
+                                if name.len() >= 7 && name[..7].eq_ignore_ascii_case("NUMERIC") =>
                             {
                                 // Parse NUMERIC(p,s) back to Decimal(p,s)
-                                let upper = name.to_uppercase();
+                                let upper = name.to_ascii_uppercase();
                                 if let Some(inner) = upper
                                     .strip_prefix("NUMERIC(")
                                     .and_then(|s| s.strip_suffix(')'))
@@ -19634,7 +19719,7 @@ impl Dialect {
                     // or CONCAT(a, b, c) -> a + b + c (for TSQL)
                     fn expand_concat_to_dpipe(expr: Expression) -> Expression {
                         if let Expression::Function(ref f) = expr {
-                            if f.name.to_uppercase() == "CONCAT" && f.args.len() > 1 {
+                            if f.name.eq_ignore_ascii_case("CONCAT") && f.args.len() > 1 {
                                 let mut result = f.args[0].clone();
                                 for arg in &f.args[1..] {
                                     result = Expression::Concat(Box::new(BinaryOp {
@@ -19653,7 +19738,7 @@ impl Dialect {
                     }
                     fn expand_concat_to_plus(expr: Expression) -> Expression {
                         if let Expression::Function(ref f) = expr {
-                            if f.name.to_uppercase() == "CONCAT" && f.args.len() > 1 {
+                            if f.name.eq_ignore_ascii_case("CONCAT") && f.args.len() > 1 {
                                 let mut result = f.args[0].clone();
                                 for arg in &f.args[1..] {
                                     result = Expression::Add(Box::new(BinaryOp {
@@ -19673,7 +19758,7 @@ impl Dialect {
                     // Helper to wrap each arg in CAST(arg AS VARCHAR) for Presto/Trino CONCAT
                     fn wrap_concat_args_in_varchar_cast(expr: Expression) -> Expression {
                         if let Expression::Function(ref f) = expr {
-                            if f.name.to_uppercase() == "CONCAT" && f.args.len() > 1 {
+                            if f.name.eq_ignore_ascii_case("CONCAT") && f.args.len() > 1 {
                                 let new_args: Vec<Expression> = f
                                     .args
                                     .iter()
@@ -20027,15 +20112,15 @@ impl Dialect {
                         if let Some(Expression::Literal(crate::expressions::Literal::String(s))) =
                             f.args.first()
                         {
-                            let bare_name = s.to_lowercase();
-                            f.args[0] = Expression::Column(crate::expressions::Column {
+                            let bare_name = s.to_ascii_lowercase();
+                            f.args[0] = Expression::Column(Box::new(crate::expressions::Column {
                                 name: Identifier::new(bare_name),
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: Vec::new(),
                                 span: None,
                                 inferred_type: None,
-                            });
+                            }));
                         }
                         Ok(Expression::Function(f))
                     } else {
@@ -23469,11 +23554,12 @@ impl Dialect {
                 Action::MinMaxToLeastGreatest => {
                     // Multi-arg MIN(a,b,c) -> LEAST(a,b,c), MAX(a,b,c) -> GREATEST(a,b,c)
                     if let Expression::Function(f) = e {
-                        let name = f.name.to_uppercase();
-                        let new_name = match name.as_str() {
-                            "MIN" => "LEAST",
-                            "MAX" => "GREATEST",
-                            _ => return Ok(Expression::Function(f)),
+                        let new_name = if f.name.eq_ignore_ascii_case("MIN") {
+                            "LEAST"
+                        } else if f.name.eq_ignore_ascii_case("MAX") {
+                            "GREATEST"
+                        } else {
+                            return Ok(Expression::Function(f));
                         };
                         Ok(Expression::Function(Box::new(Function::new(
                             new_name.to_string(),
@@ -23511,11 +23597,12 @@ impl Dialect {
                 Action::OracleVarchar2ToVarchar => {
                     // Oracle VARCHAR2(N CHAR/BYTE) / NVARCHAR2(N) -> VarChar(N) for non-Oracle targets
                     if let Expression::DataType(DataType::Custom { ref name }) = e {
-                        let upper = name.to_uppercase();
                         // Extract length from VARCHAR2(N ...) or NVARCHAR2(N ...)
+                        let starts_varchar2 = name.len() >= 9 && name[..9].eq_ignore_ascii_case("VARCHAR2(");
+                        let starts_nvarchar2 = name.len() >= 10 && name[..10].eq_ignore_ascii_case("NVARCHAR2(");
                         let inner =
-                            if upper.starts_with("VARCHAR2(") || upper.starts_with("NVARCHAR2(") {
-                                let start = if upper.starts_with("N") { 10 } else { 9 }; // skip "NVARCHAR2(" or "VARCHAR2("
+                            if starts_varchar2 || starts_nvarchar2 {
+                                let start = if starts_nvarchar2 { 10 } else { 9 }; // skip "NVARCHAR2(" or "VARCHAR2("
                                 let end = name.len() - 1; // skip trailing ")"
                                 Some(&name[start..end])
                             } else {
@@ -23764,7 +23851,7 @@ impl Dialect {
                                     vec![arg, concat4],
                                 )));
                                 // Use Column("TRUE") to output literal TRUE keyword (not boolean 1/0)
-                                let true_expr = Expression::Column(crate::expressions::Column {
+                                let true_expr = Expression::Column(Box::new(crate::expressions::Column {
                                     name: Identifier {
                                         name: "TRUE".to_string(),
                                         quoted: false,
@@ -23776,7 +23863,7 @@ impl Dialect {
                                     trailing_comments: Vec::new(),
                                     span: None,
                                     inferred_type: None,
-                                });
+                                }));
                                 let nvl = Expression::Function(Box::new(Function::new(
                                     "NVL".to_string(),
                                     vec![regexp_like, true_expr],
@@ -24545,7 +24632,7 @@ impl Dialect {
                                     span: None,
                                 })],
                                 from: Some(crate::expressions::From {
-                                    expressions: vec![Expression::Table(source_table)],
+                                    expressions: vec![Expression::Table(Box::new(source_table))],
                                 }),
                                 limit: Some(crate::expressions::Limit {
                                     this: Expression::Literal(Literal::Number("0".to_string())),
@@ -24588,10 +24675,10 @@ impl Dialect {
                                     span: None,
                                 })],
                                 from: Some(crate::expressions::From {
-                                    expressions: vec![Expression::Table(aliased_source)],
+                                    expressions: vec![Expression::Table(Box::new(aliased_source))],
                                 }),
                                 into: Some(crate::expressions::SelectInto {
-                                    this: Expression::Table(ct.name.clone()),
+                                    this: Expression::Table(Box::new(ct.name.clone())),
                                     temporary: false,
                                     unlogged: false,
                                     bulk_collect: false,
@@ -24628,7 +24715,7 @@ impl Dialect {
                             let mut new_ct = *ct;
                             new_ct.constraints.clear();
                             // AS b (just a table reference, not a SELECT)
-                            new_ct.as_select = Some(Expression::Table(source_table));
+                            new_ct.as_select = Some(Expression::Table(Box::new(source_table)));
                             Ok(Expression::CreateTable(Box::new(new_ct)))
                         } else {
                             Ok(Expression::CreateTable(ct))
@@ -25824,21 +25911,21 @@ impl Dialect {
                             let expr_arg = f.args[1].clone();
                             // Extract unit string from the first arg
                             let unit_str = match &unit_arg {
-                                Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
                                 _ => return Ok(Expression::Function(f)),
                             };
                             match target {
                                 DialectType::BigQuery => {
                                     // BigQuery: DATE_TRUNC(x, UNIT) - unquoted unit
                                     let unit_ident =
-                                        Expression::Column(crate::expressions::Column {
+                                        Expression::Column(Box::new(crate::expressions::Column {
                                             name: crate::expressions::Identifier::new(unit_str),
                                             table: None,
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
                                             span: None,
                                             inferred_type: None,
-                                        });
+                                        }));
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "DATE_TRUNC".to_string(),
                                         vec![expr_arg, unit_ident],
@@ -25892,8 +25979,8 @@ impl Dialect {
                             };
                             // Extract unit string
                             let unit_str = match &unit_arg {
-                                Expression::Literal(Literal::String(s)) => s.to_uppercase(),
-                                Expression::Column(c) => c.name.name.to_uppercase(),
+                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                                Expression::Column(c) => c.name.name.to_ascii_uppercase(),
                                 _ => {
                                     return Ok(Expression::Function(f));
                                 }
@@ -25916,14 +26003,14 @@ impl Dialect {
                                 DialectType::BigQuery => {
                                     // BigQuery: TIMESTAMP_TRUNC(x, UNIT) - keep but with unquoted unit
                                     let unit_ident =
-                                        Expression::Column(crate::expressions::Column {
+                                        Expression::Column(Box::new(crate::expressions::Column {
                                             name: crate::expressions::Identifier::new(unit_str),
                                             table: None,
                                             join_mark: false,
                                             trailing_comments: Vec::new(),
                                             span: None,
                                             inferred_type: None,
-                                        });
+                                        }));
                                     let mut args = vec![expr_arg, unit_ident];
                                     if let Some(tz) = tz_arg {
                                         args.push(tz);
@@ -26161,7 +26248,7 @@ impl Dialect {
                             let n = args.remove(0);
                             let unit_expr = args.remove(0);
                             let unit_str = match &unit_expr {
-                                Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
                                 _ => "DAY".to_string(),
                             };
 
@@ -26177,7 +26264,7 @@ impl Dialect {
                                 }
                                 DialectType::MySQL => {
                                     // DATE_ADD(x, INTERVAL n UNIT)
-                                    let iu = match unit_str.to_uppercase().as_str() {
+                                    let iu = match unit_str.as_str() {
                                         "YEAR" => crate::expressions::IntervalUnit::Year,
                                         "QUARTER" => crate::expressions::IntervalUnit::Quarter,
                                         "MONTH" => crate::expressions::IntervalUnit::Month,
@@ -26242,7 +26329,7 @@ impl Dialect {
                                         default: None,
                                         inferred_type: None,
                                     }));
-                                    let iu = match unit_str.to_uppercase().as_str() {
+                                    let iu = match unit_str.as_str() {
                                         "YEAR" => crate::expressions::IntervalUnit::Year,
                                         "QUARTER" => crate::expressions::IntervalUnit::Quarter,
                                         "MONTH" => crate::expressions::IntervalUnit::Month,
@@ -26283,7 +26370,7 @@ impl Dialect {
                                         default: None,
                                         inferred_type: None,
                                     }));
-                                    let iu = match unit_str.to_uppercase().as_str() {
+                                    let iu = match unit_str.as_str() {
                                         "YEAR" => crate::expressions::IntervalUnit::Year,
                                         "QUARTER" => crate::expressions::IntervalUnit::Quarter,
                                         "MONTH" => crate::expressions::IntervalUnit::Month,
@@ -26502,14 +26589,14 @@ impl Dialect {
                             DialectType::BigQuery => {
                                 // ARRAY(SELECT _u FROM UNNEST(the_array) AS _u WHERE _u <> target)
                                 let u_id = crate::expressions::Identifier::new("_u");
-                                let u_col = Expression::Column(crate::expressions::Column {
+                                let u_col = Expression::Column(Box::new(crate::expressions::Column {
                                     name: u_id.clone(),
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: Vec::new(),
                                     span: None,
                                     inferred_type: None,
-                                });
+                                }));
                                 let unnest_expr =
                                     Expression::Unnest(Box::new(crate::expressions::UnnestFunc {
                                         this: arr,
@@ -26809,7 +26896,7 @@ impl Dialect {
                 return expr;
             }
             let num = &trimmed[..digit_end];
-            let unit_text = trimmed[digit_end..].trim().to_uppercase();
+            let unit_text = trimmed[digit_end..].trim().to_ascii_uppercase();
             if unit_text.is_empty() {
                 return expr;
             }
@@ -26930,7 +27017,7 @@ impl Dialect {
 
         fn make_col(name: &str, table: Option<&str>) -> Expression {
             if let Some(tbl) = table {
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: Identifier::new(name.to_string()),
                     table: Some(Identifier::new(tbl.to_string())),
                     join_mark: false,
@@ -27642,7 +27729,7 @@ impl Dialect {
                             let mut new_into = into.clone();
                             new_into.temporary = true;
                             new_into.unlogged = false;
-                            new_into.this = Expression::Table(TableRef::new(clean_name));
+                            new_into.this = Expression::Table(Box::new(TableRef::new(clean_name)));
                             new_select.into = Some(new_into);
                             Expression::Select(new_select)
                         } else {
@@ -27683,7 +27770,7 @@ impl Dialect {
                 Expression::Literal(Literal::Number(trimmed.to_string()))
             }
             // Check if it's ARRAY[...] or ARRAY(...)
-            else if trimmed.to_uppercase().starts_with("ARRAY") {
+            else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ARRAY") {
                 // Convert ARRAY['y'] to ARRAY('y') for Hive/Spark
                 let inner = trimmed
                     .trim_start_matches(|c: char| c.is_alphabetic()) // Remove ARRAY
@@ -27721,11 +27808,10 @@ impl Dialect {
             let mut other_props: Vec<(String, String)> = Vec::new();
 
             for (key, value) in ct.with_properties.drain(..) {
-                let key_upper = key.to_uppercase();
-                if key_upper == "FORMAT" {
+                if key.eq_ignore_ascii_case("FORMAT") {
                     // Strip surrounding quotes from value if present
                     format_value = Some(value.trim_matches('\'').to_string());
-                } else if key_upper == "PARTITIONED_BY" {
+                } else if key.eq_ignore_ascii_case("PARTITIONED_BY") {
                     partitioned_by = Some(value);
                 } else {
                     other_props.push((key, value));
@@ -27744,7 +27830,7 @@ impl Dialect {
                         let trimmed = part.trim();
                         let inner = trimmed.trim_start_matches('(').trim_end_matches(')');
                         // Also handle ARRAY['...'] format - keep as-is
-                        if trimmed.to_uppercase().starts_with("ARRAY") {
+                        if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ARRAY") {
                             ct.with_properties
                                 .push(("PARTITIONED_BY".to_string(), part));
                         } else {
@@ -28043,7 +28129,7 @@ impl Dialect {
                     } else {
                         Identifier::new(name.clone())
                     };
-                    Expression::Column(Column {
+                    Expression::boxed_column(Column {
                         name: ident,
                         table: None,
                         join_mark: false,
@@ -28141,7 +28227,7 @@ impl Dialect {
                     if let Expression::Literal(crate::expressions::Literal::String(s)) = &val {
                         let parts: Vec<&str> = s.trim().splitn(2, ' ').collect();
                         if parts.len() == 2 {
-                            let unit_str = parts[1].trim().to_uppercase();
+                            let unit_str = parts[1].trim().to_ascii_uppercase();
                             let parsed_unit = match unit_str.as_str() {
                                 "YEAR" | "YEARS" => IntervalUnit::Year,
                                 "QUARTER" | "QUARTERS" => IntervalUnit::Quarter,
@@ -28190,18 +28276,18 @@ impl Dialect {
         } else {
             return Ok(e);
         };
-        let name = f.name.to_uppercase();
+        let name = f.name.to_ascii_uppercase();
         let mut args = f.args;
 
         /// Helper to extract unit string from an identifier, column, or literal expression
         fn get_unit_str(expr: &Expression) -> String {
             match expr {
-                Expression::Identifier(id) => id.name.to_uppercase(),
-                Expression::Literal(Literal::String(s)) => s.to_uppercase(),
-                Expression::Column(col) => col.name.name.to_uppercase(),
+                Expression::Identifier(id) => id.name.to_ascii_uppercase(),
+                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                Expression::Column(col) => col.name.name.to_ascii_uppercase(),
                 // Handle WEEK(MONDAY), WEEK(SUNDAY) etc. which are parsed as Function("WEEK", [Column("MONDAY")])
                 Expression::Function(f) => {
-                    let base = f.name.to_uppercase();
+                    let base = f.name.to_ascii_uppercase();
                     if !f.args.is_empty() {
                         // e.g., WEEK(MONDAY) -> "WEEK(MONDAY)"
                         let inner = get_unit_str(&f.args[0]);
@@ -28605,7 +28691,7 @@ impl Dialect {
                             crate::expressions::TimestampAdd {
                                 this: Box::new(val),
                                 expression: Box::new(cast_ts),
-                                unit: Some(unit_str),
+                                unit: Some(unit_str.to_string()),
                             },
                         )))
                     }
@@ -28733,7 +28819,7 @@ impl Dialect {
                             crate::expressions::TimestampAdd {
                                 this: Box::new(neg_val),
                                 expression: Box::new(cast_ts),
-                                unit: Some(unit_str),
+                                unit: Some(unit_str.to_string()),
                             },
                         )))
                     }
@@ -29226,7 +29312,7 @@ impl Dialect {
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATE_ADD".to_string(),
                             vec![
-                                Expression::Literal(Literal::String(unit_str)),
+                                Expression::Literal(Literal::String(unit_str.to_string())),
                                 Expression::Cast(Box::new(Cast {
                                     this: Expression::Literal(Literal::String(val_str)),
                                     to: DataType::BigInt { length: None },
@@ -29242,7 +29328,7 @@ impl Dialect {
                     }
                     DialectType::Spark | DialectType::Hive => {
                         // Spark/Hive: DATE_ADD(date, val) for DAY
-                        match unit_str.as_str() {
+                        match unit_str {
                             "DAY" => Ok(Expression::Function(Box::new(Function::new(
                                 "DATE_ADD".to_string(),
                                 vec![date, val],
@@ -29762,7 +29848,7 @@ impl Dialect {
                     // TO_HEX(SHA512(x)) -> TO_CHAR(SHA2_BINARY(x, 512))
                     if let Expression::Function(ref inner_f) = arg {
                         let inner_args = inner_f.args.clone();
-                        let binary_func = match inner_f.name.to_uppercase().as_str() {
+                        let binary_func = match inner_f.name.to_ascii_uppercase().as_str() {
                             "SHA1" => Expression::Function(Box::new(Function::new(
                                 "SHA1_BINARY".to_string(),
                                 inner_args,
@@ -32216,7 +32302,7 @@ impl Dialect {
                     }
                     // Sort named args by: day, hour, minute, second
                     let unit_order = |u: &str| -> usize {
-                        match u.to_lowercase().as_str() {
+                        match u.to_ascii_lowercase().as_str() {
                             "day" => 0,
                             "hour" => 1,
                             "minute" => 2,
@@ -32391,12 +32477,11 @@ impl Dialect {
             Expression::Array(_) | Expression::ArrayFunc(_) => true,
             Expression::Struct(_) | Expression::StructFunc(_) => true,
             Expression::Function(f) => {
-                let up = f.name.to_uppercase();
-                up == "STRUCT"
-                    || up == "ROW"
-                    || up == "CURRENT_DATE"
-                    || up == "CURRENT_TIMESTAMP"
-                    || up == "NOW"
+                f.name.eq_ignore_ascii_case("STRUCT")
+                    || f.name.eq_ignore_ascii_case("ROW")
+                    || f.name.eq_ignore_ascii_case("CURRENT_DATE")
+                    || f.name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+                    || f.name.eq_ignore_ascii_case("NOW")
             }
             Expression::Cast(_) => true,
             Expression::Neg(inner) => Self::can_infer_presto_type(&inner.this),
@@ -32423,12 +32508,11 @@ impl Dialect {
             Expression::Array(_) | Expression::ArrayFunc(_) => "ARRAY(VARCHAR)".to_string(),
             Expression::Struct(_) | Expression::StructFunc(_) => "ROW".to_string(),
             Expression::Function(f) => {
-                let up = f.name.to_uppercase();
-                if up == "STRUCT" || up == "ROW" {
+                if f.name.eq_ignore_ascii_case("STRUCT") || f.name.eq_ignore_ascii_case("ROW") {
                     "ROW".to_string()
-                } else if up == "CURRENT_DATE" {
+                } else if f.name.eq_ignore_ascii_case("CURRENT_DATE") {
                     "DATE".to_string()
-                } else if up == "CURRENT_TIMESTAMP" || up == "NOW" {
+                } else if f.name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") || f.name.eq_ignore_ascii_case("NOW") {
                     "TIMESTAMP".to_string()
                 } else {
                     "VARCHAR".to_string()
@@ -32482,19 +32566,19 @@ impl Dialect {
     }
 
     /// Convert IntervalUnit to string
-    fn interval_unit_to_string(unit: &crate::expressions::IntervalUnit) -> String {
+    fn interval_unit_to_string(unit: &crate::expressions::IntervalUnit) -> &'static str {
         match unit {
-            crate::expressions::IntervalUnit::Year => "YEAR".to_string(),
-            crate::expressions::IntervalUnit::Quarter => "QUARTER".to_string(),
-            crate::expressions::IntervalUnit::Month => "MONTH".to_string(),
-            crate::expressions::IntervalUnit::Week => "WEEK".to_string(),
-            crate::expressions::IntervalUnit::Day => "DAY".to_string(),
-            crate::expressions::IntervalUnit::Hour => "HOUR".to_string(),
-            crate::expressions::IntervalUnit::Minute => "MINUTE".to_string(),
-            crate::expressions::IntervalUnit::Second => "SECOND".to_string(),
-            crate::expressions::IntervalUnit::Millisecond => "MILLISECOND".to_string(),
-            crate::expressions::IntervalUnit::Microsecond => "MICROSECOND".to_string(),
-            crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND".to_string(),
+            crate::expressions::IntervalUnit::Year => "YEAR",
+            crate::expressions::IntervalUnit::Quarter => "QUARTER",
+            crate::expressions::IntervalUnit::Month => "MONTH",
+            crate::expressions::IntervalUnit::Week => "WEEK",
+            crate::expressions::IntervalUnit::Day => "DAY",
+            crate::expressions::IntervalUnit::Hour => "HOUR",
+            crate::expressions::IntervalUnit::Minute => "MINUTE",
+            crate::expressions::IntervalUnit::Second => "SECOND",
+            crate::expressions::IntervalUnit::Millisecond => "MILLISECOND",
+            crate::expressions::IntervalUnit::Microsecond => "MICROSECOND",
+            crate::expressions::IntervalUnit::Nanosecond => "NANOSECOND",
         }
     }
 
@@ -32502,11 +32586,11 @@ impl Dialect {
     fn get_unit_str_static(expr: &Expression) -> String {
         use crate::expressions::Literal;
         match expr {
-            Expression::Identifier(id) => id.name.to_uppercase(),
-            Expression::Literal(Literal::String(s)) => s.to_uppercase(),
-            Expression::Column(col) => col.name.name.to_uppercase(),
+            Expression::Identifier(id) => id.name.to_ascii_uppercase(),
+            Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+            Expression::Column(col) => col.name.name.to_ascii_uppercase(),
             Expression::Function(f) => {
-                let base = f.name.to_uppercase();
+                let base = f.name.to_ascii_uppercase();
                 if !f.args.is_empty() {
                     let inner = Self::get_unit_str_static(&f.args[0]);
                     format!("{}({})", base, inner)
@@ -32593,7 +32677,7 @@ impl Dialect {
             }
         }
         // Check for named timezone abbreviations
-        let ts_lower = trimmed.to_lowercase();
+        let ts_lower = trimmed.to_ascii_lowercase();
         let tz_abbrevs = [" utc", " gmt", " cet", " est", " pst", " cst", " mst"];
         for abbrev in &tz_abbrevs {
             if ts_lower.ends_with(abbrev) {

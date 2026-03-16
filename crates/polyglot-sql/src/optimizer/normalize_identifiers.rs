@@ -119,7 +119,7 @@ pub fn normalize_identifier(identifier: Identifier, strategy: NormalizationStrat
 fn normalize_expression(expression: Expression, strategy: NormalizationStrategy) -> Expression {
     match expression {
         Expression::Identifier(id) => Expression::Identifier(normalize_identifier(id, strategy)),
-        Expression::Column(col) => Expression::Column(Column {
+        Expression::Column(col) => Expression::boxed_column(Column {
             name: normalize_identifier(col.name, strategy),
             table: col.table.map(|t| normalize_identifier(t, strategy)),
             join_mark: col.join_mark,
@@ -434,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_normalize_column() {
-        let col = Expression::Column(Column {
+        let col = Expression::boxed_column(Column {
             name: Identifier::new("MyColumn"),
             table: Some(Identifier::new("MyTable")),
             join_mark: false,

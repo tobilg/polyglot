@@ -2575,7 +2575,7 @@ fn is_star_column(col: &Column) -> bool {
 
 /// Create a qualified column expression
 fn create_qualified_column(name: &str, table: Option<&str>) -> Expression {
-    Expression::Column(Column {
+    Expression::boxed_column(Column {
         name: Identifier::new(name),
         table: table.map(Identifier::new),
         join_mark: false,
@@ -2693,7 +2693,7 @@ mod tests {
 
     #[test]
     fn test_create_alias() {
-        let col = Expression::Column(Column {
+        let col = Expression::boxed_column(Column {
             name: Identifier::new("value"),
             table: None,
             join_mark: false,
@@ -3291,7 +3291,7 @@ mod tests {
     #[test]
     fn test_quote_identifiers_column_with_reserved_name() {
         // A column named "select" should be quoted
-        let expr = Expression::Column(Column {
+        let expr = Expression::boxed_column(Column {
             name: Identifier::new("select"),
             table: None,
             join_mark: false,
@@ -3309,7 +3309,7 @@ mod tests {
 
     #[test]
     fn test_quote_identifiers_column_with_special_chars() {
-        let expr = Expression::Column(Column {
+        let expr = Expression::boxed_column(Column {
             name: Identifier::new("my column"),
             table: None,
             join_mark: false,
@@ -3327,7 +3327,7 @@ mod tests {
 
     #[test]
     fn test_quote_identifiers_preserves_normal_column() {
-        let expr = Expression::Column(Column {
+        let expr = Expression::boxed_column(Column {
             name: Identifier::new("normal_col"),
             table: Some(Identifier::new("my_table")),
             join_mark: false,
@@ -3349,7 +3349,7 @@ mod tests {
 
     #[test]
     fn test_quote_identifiers_table_ref_reserved() {
-        let expr = Expression::Table(TableRef::new("select"));
+        let expr = Expression::Table(Box::new(TableRef::new("select")));
         let result = quote_identifiers(expr, None);
         if let Expression::Table(tr) = &result {
             assert!(tr.name.quoted, "Table named 'select' should be quoted");
@@ -3363,7 +3363,7 @@ mod tests {
         let mut tr = TableRef::new("my_table");
         tr.schema = Some(Identifier::new("from"));
         tr.alias = Some(Identifier::new("t"));
-        let expr = Expression::Table(tr);
+        let expr = Expression::Table(Box::new(tr));
         let result = quote_identifiers(expr, None);
         if let Expression::Table(tr) = &result {
             assert!(!tr.name.quoted, "Normal table name should not be quoted");
@@ -3393,7 +3393,7 @@ mod tests {
 
     #[test]
     fn test_quote_identifiers_alias() {
-        let inner = Expression::Column(Column {
+        let inner = Expression::boxed_column(Column {
             name: Identifier::new("val"),
             table: None,
             join_mark: false,
@@ -3440,7 +3440,7 @@ mod tests {
 
     #[test]
     fn test_quote_identifiers_digit_start() {
-        let expr = Expression::Column(Column {
+        let expr = Expression::boxed_column(Column {
             name: Identifier::new("1col"),
             table: None,
             join_mark: false,
@@ -3499,7 +3499,7 @@ mod tests {
     fn test_quote_identifiers_join_using() {
         // Build a join with USING identifiers that include reserved words
         let mut join = crate::expressions::Join {
-            this: Expression::Table(TableRef::new("other")),
+            this: Expression::Table(Box::new(TableRef::new("other"))),
             on: None,
             using: vec![Identifier::new("key"), Identifier::new("value")],
             kind: crate::expressions::JoinKind::Inner,
@@ -3531,7 +3531,7 @@ mod tests {
         // Build a CTE where alias is a reserved word
         let mut cte = crate::expressions::Cte {
             alias: Identifier::new("select"),
-            this: Expression::Column(Column {
+            this: Expression::boxed_column(Column {
                 name: Identifier::new("x"),
                 table: None,
                 join_mark: false,
@@ -3563,7 +3563,7 @@ mod tests {
         // a_col + select_col should quote "select_col" but that's actually
         // just a regular name. Use actual reserved word as column name.
         let expr = Expression::Add(Box::new(crate::expressions::BinaryOp::new(
-            Expression::Column(Column {
+            Expression::boxed_column(Column {
                 name: Identifier::new("select"),
                 table: None,
                 join_mark: false,
@@ -3571,7 +3571,7 @@ mod tests {
                 span: None,
                 inferred_type: None,
             }),
-            Expression::Column(Column {
+            Expression::boxed_column(Column {
                 name: Identifier::new("normal"),
                 table: None,
                 join_mark: false,
@@ -3599,7 +3599,7 @@ mod tests {
     #[test]
     fn test_quote_identifiers_already_quoted_preserved() {
         // Already-quoted identifier should stay quoted even if it doesn't need it
-        let expr = Expression::Column(Column {
+        let expr = Expression::boxed_column(Column {
             name: Identifier::quoted("normal_name"),
             table: None,
             join_mark: false,
@@ -3623,7 +3623,7 @@ mod tests {
         // Test with a parsed query that uses reserved words as identifiers
         // We build the AST manually since the parser would fail on unquoted reserved words
         let mut select = crate::expressions::Select::new();
-        select.expressions.push(Expression::Column(Column {
+        select.expressions.push(Expression::boxed_column(Column {
             name: Identifier::new("order"),
             table: Some(Identifier::new("t")),
             join_mark: false,
@@ -3632,7 +3632,7 @@ mod tests {
             inferred_type: None,
         }));
         select.from = Some(crate::expressions::From {
-            expressions: vec![Expression::Table(TableRef::new("t"))],
+            expressions: vec![Expression::Table(Box::new(TableRef::new("t")))],
         });
         let expr = Expression::Select(Box::new(select));
 

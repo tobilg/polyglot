@@ -85,8 +85,8 @@ pub enum Expression {
 
     // Identifiers
     Identifier(Identifier),
-    Column(Column),
-    Table(TableRef),
+    Column(Box<Column>),
+    Table(Box<TableRef>),
     Star(Star),
     /// Snowflake braced wildcard syntax: {*}, {tbl.*}, {* EXCLUDE (...)}, {* ILIKE '...'}
     BracedWildcard(Box<Expression>),
@@ -1101,6 +1101,18 @@ pub enum Expression {
 }
 
 impl Expression {
+    /// Create a `Column` variant, boxing the value automatically.
+    #[inline]
+    pub fn boxed_column(col: Column) -> Self {
+        Expression::Column(Box::new(col))
+    }
+
+    /// Create a `Table` variant, boxing the value automatically.
+    #[inline]
+    pub fn boxed_table(t: TableRef) -> Self {
+        Expression::Table(Box::new(t))
+    }
+
     /// Returns `true` if this expression is a valid top-level SQL statement.
     ///
     /// Bare expressions like identifiers, literals, and function calls are not
@@ -1687,26 +1699,26 @@ impl Expression {
 
     /// Create an unqualified column reference (e.g. `name`).
     pub fn column(name: impl Into<String>) -> Self {
-        Expression::Column(Column {
+        Expression::Column(Box::new(Column {
             name: Identifier::new(name),
             table: None,
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
             inferred_type: None,
-        })
+        }))
     }
 
     /// Create a qualified column reference (`table.column`).
     pub fn qualified_column(table: impl Into<String>, column: impl Into<String>) -> Self {
-        Expression::Column(Column {
+        Expression::Column(Box::new(Column {
             name: Identifier::new(column),
             table: Some(Identifier::new(table)),
             join_mark: false,
             trailing_comments: Vec::new(),
             span: None,
             inferred_type: None,
-        })
+        }))
     }
 
     /// Create a bare identifier expression (not a column reference).
@@ -13279,7 +13291,7 @@ mod tests {
     fn test_simple_select_builder() {
         let select = Select::new()
             .column(Expression::star())
-            .from(Expression::Table(TableRef::new("users")));
+            .from(Expression::Table(Box::new(TableRef::new("users"))));
 
         assert_eq!(select.expressions.len(), 1);
         assert!(select.from.is_some());

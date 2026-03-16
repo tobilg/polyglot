@@ -491,14 +491,14 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                         .map(|expr| {
                             if let Expression::Alias(a) = expr {
                                 // Replace with just the alias identifier as a column reference
-                                Expression::Column(crate::expressions::Column {
+                                Expression::Column(Box::new(crate::expressions::Column {
                                     name: a.alias.clone(),
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: vec![],
                                     span: None,
                                     inferred_type: None,
-                                })
+                                }))
                             } else {
                                 expr.clone()
                             }
@@ -572,14 +572,14 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                             expressions: vec![Expression::Subquery(Box::new(subquery))],
                         }),
                         where_clause: Some(Where {
-                            this: Expression::Column(crate::expressions::Column {
+                            this: Expression::Column(Box::new(crate::expressions::Column {
                                 name: window_alias_ident,
                                 table: None,
                                 join_mark: false,
                                 trailing_comments: vec![],
                                 span: None,
                                 inferred_type: None,
-                            }),
+                            })),
                         }),
                         ..Select::new()
                     };
@@ -600,14 +600,14 @@ fn extract_window_from_condition(
     condition: Expression,
     alias: &Identifier,
 ) -> (Option<Expression>, Expression) {
-    let alias_col = Expression::Column(crate::expressions::Column {
+    let alias_col = Expression::Column(Box::new(crate::expressions::Column {
         name: alias.clone(),
         table: None,
         join_mark: false,
         trailing_comments: vec![],
         span: None,
         inferred_type: None,
-    });
+    }));
 
     // Check if condition is a simple comparison with a window function on one side
     match condition {
@@ -925,14 +925,14 @@ pub fn eliminate_distinct_on_for_dialect(
                                 // Already aliased - keep as-is in inner, reference alias in outer
                                 inner_aliased_exprs.push(orig_expr.clone());
                                 outer_select_exprs.push(Expression::Column(
-                                    crate::expressions::Column {
+                                    Box::new(crate::expressions::Column {
                                         name: alias.alias.clone(),
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
                                         inferred_type: None,
-                                    },
+                                    }),
                                 ));
                             }
                             Expression::Column(col) => {
@@ -948,14 +948,14 @@ pub fn eliminate_distinct_on_for_dialect(
                                     },
                                 )));
                                 outer_select_exprs.push(Expression::Column(
-                                    crate::expressions::Column {
+                                    Box::new(crate::expressions::Column {
                                         name: col.name.clone(),
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
                                         inferred_type: None,
-                                    },
+                                    }),
                                 ));
                             }
                             _ => {
@@ -1014,14 +1014,14 @@ pub fn eliminate_distinct_on_for_dialect(
                         }),
                         where_clause: Some(Where {
                             this: Expression::Eq(Box::new(BinaryOp {
-                                left: Expression::Column(crate::expressions::Column {
+                                left: Expression::Column(Box::new(crate::expressions::Column {
                                     name: row_number_alias,
                                     table: None,
                                     join_mark: false,
                                     trailing_comments: vec![],
                                     span: None,
                                     inferred_type: None,
-                                }),
+                                })),
                                 right: Expression::Literal(Literal::Number("1".to_string())),
                                 left_comments: vec![],
                                 operator_comments: vec![],
@@ -2513,14 +2513,14 @@ fn try_convert_generate_date_array_with_name(
             let (add_unit, add_count) = extract_interval_unit_and_count(&normalized_step);
 
             let date_add_expr = Expression::DateAdd(Box::new(crate::expressions::DateAddFunc {
-                this: Expression::Column(crate::expressions::Column {
+                this: Expression::Column(Box::new(crate::expressions::Column {
                     name: column_name.clone(),
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
                     inferred_type: None,
-                }),
+                })),
                 interval: add_count,
                 unit: add_unit,
             }));
@@ -2538,9 +2538,9 @@ fn try_convert_generate_date_array_with_name(
             let recursive_select = Select {
                 expressions: vec![cast_date_add.clone()],
                 from: Some(From {
-                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(
+                    expressions: vec![Expression::Table(Box::new(crate::expressions::TableRef::new(
                         &cte_name,
-                    ))],
+                    )))],
                 }),
                 where_clause: Some(Where {
                     this: Expression::Lte(Box::new(BinaryOp {
@@ -2589,18 +2589,18 @@ fn try_convert_generate_date_array_with_name(
 
             // Create replacement: SELECT date_value FROM cte_name
             let replacement_select = Select {
-                expressions: vec![Expression::Column(crate::expressions::Column {
+                expressions: vec![Expression::Column(Box::new(crate::expressions::Column {
                     name: column_name,
                     table: None,
                     join_mark: false,
                     trailing_comments: vec![],
                     span: None,
                     inferred_type: None,
-                })],
+                }))],
                 from: Some(From {
-                    expressions: vec![Expression::Table(crate::expressions::TableRef::new(
+                    expressions: vec![Expression::Table(Box::new(crate::expressions::TableRef::new(
                         &cte_name,
-                    ))],
+                    )))],
                 }),
                 ..Select::new()
             };
@@ -2942,7 +2942,7 @@ fn try_unwrap_unnest_gen_series(expr: &Expression) -> Option<Expression> {
     let gs = gen_series?;
 
     // Build: (SELECT CAST(value AS DATE) FROM GENERATE_SERIES(start, end, step) AS _t(value)) AS _unnested_generate_series
-    let value_col = Expression::Column(Column {
+    let value_col = Expression::boxed_column(Column {
         name: Identifier::new("value".to_string()),
         table: None,
         join_mark: false,
@@ -5196,7 +5196,7 @@ mod tests {
     #[test]
     fn test_unnest_to_explode() {
         let unnest = Expression::Unnest(Box::new(UnnestFunc {
-            this: Expression::Column(Column {
+            this: Expression::boxed_column(Column {
                 name: Identifier::new("arr".to_string()),
                 table: None,
                 join_mark: false,
@@ -5217,7 +5217,7 @@ mod tests {
     #[test]
     fn test_explode_to_unnest() {
         let explode = Expression::Explode(Box::new(UnaryFunc {
-            this: Expression::Column(Column {
+            this: Expression::boxed_column(Column {
                 name: Identifier::new("arr".to_string()),
                 table: None,
                 join_mark: false,
@@ -5496,7 +5496,7 @@ mod tests {
     #[test]
     fn test_unqualify_columns() {
         // Test that table qualifiers are removed
-        let col = Expression::Column(Column {
+        let col = Expression::boxed_column(Column {
             name: Identifier::new("id".to_string()),
             table: Some(Identifier::new("users".to_string())),
             join_mark: false,
@@ -5541,7 +5541,7 @@ mod tests {
 
         // Test that semi joins are converted to EXISTS
         let select = Expression::Select(Box::new(Select {
-            expressions: vec![Expression::Column(Column {
+            expressions: vec![Expression::boxed_column(Column {
                 name: Identifier::new("a".to_string()),
                 table: None,
                 join_mark: false,
@@ -5550,13 +5550,13 @@ mod tests {
                 inferred_type: None,
             })],
             from: Some(From {
-                expressions: vec![Expression::Table(TableRef::new("t1"))],
+                expressions: vec![Expression::Table(Box::new(TableRef::new("t1")))],
             }),
             joins: vec![Join {
-                this: Expression::Table(TableRef::new("t2")),
+                this: Expression::Table(Box::new(TableRef::new("t2"))),
                 kind: JoinKind::Semi,
                 on: Some(Expression::Eq(Box::new(BinaryOp {
-                    left: Expression::Column(Column {
+                    left: Expression::boxed_column(Column {
                         name: Identifier::new("x".to_string()),
                         table: None,
                         join_mark: false,
@@ -5564,7 +5564,7 @@ mod tests {
                         span: None,
                         inferred_type: None,
                     }),
-                    right: Expression::Column(Column {
+                    right: Expression::boxed_column(Column {
                         name: Identifier::new("y".to_string()),
                         table: None,
                         join_mark: false,
@@ -5608,7 +5608,7 @@ mod tests {
 
         // Test ILIKE conversion to LOWER+LIKE
         let ilike_expr = Expression::ILike(Box::new(LikeOp {
-            left: Expression::Column(Column {
+            left: Expression::boxed_column(Column {
                 name: Identifier::new("name".to_string()),
                 table: None,
                 join_mark: false,

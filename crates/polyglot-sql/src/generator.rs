@@ -10,6 +10,8 @@
 //! generation, construct a `Generator` once with [`Generator::with_config`]
 //! and call [`Generator::generate`] for each expression.
 
+use std::borrow::Cow;
+
 use crate::error::Result;
 use crate::expressions::*;
 use crate::DialectType;
@@ -187,7 +189,7 @@ pub struct GeneratorConfig {
     /// Pretty print with indentation
     pub pretty: bool,
     /// Indentation string (default 2 spaces)
-    pub indent: String,
+    pub indent: &'static str,
     /// Maximum text width before wrapping (default 80)
     pub max_text_width: usize,
     /// Quote identifier style (deprecated, use identifier_quote_style instead)
@@ -501,7 +503,7 @@ impl Default for GeneratorConfig {
         Self {
             // ===== Basic formatting =====
             pretty: false,
-            indent: "  ".to_string(),
+            indent: "  ",
             max_text_width: 80,
             identifier_quote: '"',
             identifier_quote_style: IdentifierQuoteStyle::DOUBLE_QUOTE,
@@ -2265,8 +2267,16 @@ impl Generator {
     /// Check if an identifier is a reserved keyword for the current dialect
     fn is_reserved_keyword(&self, name: &str) -> bool {
         use crate::dialects::DialectType;
-        let lower = name.to_lowercase();
-        let lower_ref = lower.as_str();
+        let mut buf = [0u8; 128];
+        let lower_ref: &str = if name.len() <= 128 {
+            for (i, b) in name.bytes().enumerate() {
+                buf[i] = b.to_ascii_lowercase();
+            }
+            // SAFETY: input is valid UTF-8 and ASCII lowercase preserves that
+            std::str::from_utf8(&buf[..name.len()]).unwrap_or(name)
+        } else {
+            return false;
+        };
 
         match self.config.dialect {
             Some(DialectType::BigQuery) => reserved_keywords::BIGQUERY_RESERVED.contains(lower_ref),
@@ -2315,11 +2325,11 @@ impl Generator {
     }
 
     /// Normalize function name based on dialect settings
-    fn normalize_func_name(&self, name: &str) -> String {
+    fn normalize_func_name<'a>(&self, name: &'a str) -> Cow<'a, str> {
         match self.config.normalize_functions {
-            NormalizeFunctions::Upper => name.to_uppercase(),
-            NormalizeFunctions::Lower => name.to_lowercase(),
-            NormalizeFunctions::None => name.to_string(),
+            NormalizeFunctions::Upper => Cow::Owned(name.to_ascii_uppercase()),
+            NormalizeFunctions::Lower => Cow::Owned(name.to_ascii_lowercase()),
+            NormalizeFunctions::None => Cow::Borrowed(name),
         }
     }
 
@@ -2536,8 +2546,8 @@ impl Generator {
                 let override_name = f
                     .name
                     .as_ref()
-                    .filter(|n| n.to_uppercase() != "ARRAY_AGG")
-                    .map(|n| n.to_uppercase());
+                    .filter(|n| !n.eq_ignore_ascii_case("ARRAY_AGG"))
+                    .map(|n| n.to_ascii_uppercase());
                 match override_name {
                     Some(name) => self.generate_agg_func(&name, f),
                     None => self.generate_agg_func("ARRAY_AGG", f),
@@ -5234,13 +5244,16 @@ impl Generator {
                     let mut global = false;
                     let mut strictness: Option<&'static str> = None;
                     for part in hint.split_whitespace() {
-                        match part.to_uppercase().as_str() {
-                            "GLOBAL" => global = true,
-                            "ANY" => strictness = Some("ANY"),
-                            "ASOF" => strictness = Some("ASOF"),
-                            "SEMI" => strictness = Some("SEMI"),
-                            "ANTI" => strictness = Some("ANTI"),
-                            _ => {}
+                        if part.eq_ignore_ascii_case("GLOBAL") {
+                            global = true;
+                        } else if part.eq_ignore_ascii_case("ANY") {
+                            strictness = Some("ANY");
+                        } else if part.eq_ignore_ascii_case("ASOF") {
+                            strictness = Some("ASOF");
+                        } else if part.eq_ignore_ascii_case("SEMI") {
+                            strictness = Some("SEMI");
+                        } else if part.eq_ignore_ascii_case("ANTI") {
+                            strictness = Some("ANTI");
                         }
                     }
 
@@ -5337,82 +5350,198 @@ impl Generator {
             match join.kind {
                 JoinKind::Inner => {
                     if join.use_inner_keyword {
-                        self.write_keyword(&format!("INNER{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("INNER JOIN");
+                        } else {
+                            self.write_keyword("INNER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!(
-                            "{}{}JOIN",
-                            if hint_str.is_empty() {
-                                String::new()
-                            } else {
-                                format!("{} ", hint_str.trim())
-                            },
-                            if directed_str.is_empty() {
-                                ""
-                            } else {
-                                "DIRECTED "
-                            }
-                        ));
+                        if !hint_str.is_empty() {
+                            self.write_keyword(hint_str.trim());
+                            self.write_keyword(" ");
+                        }
+                        if !directed_str.is_empty() {
+                            self.write_keyword("DIRECTED ");
+                        }
+                        self.write_keyword("JOIN");
                     }
                 }
                 JoinKind::Left => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!("LEFT OUTER{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("LEFT OUTER JOIN");
+                        } else {
+                            self.write_keyword("LEFT OUTER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else if join.use_inner_keyword {
-                        self.write_keyword(&format!("LEFT INNER{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("LEFT INNER JOIN");
+                        } else {
+                            self.write_keyword("LEFT INNER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("LEFT{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("LEFT JOIN");
+                        } else {
+                            self.write_keyword("LEFT");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::Right => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!(
-                            "RIGHT OUTER{}{} JOIN",
-                            hint_str, directed_str
-                        ));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("RIGHT OUTER JOIN");
+                        } else {
+                            self.write_keyword("RIGHT OUTER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else if join.use_inner_keyword {
-                        self.write_keyword(&format!(
-                            "RIGHT INNER{}{} JOIN",
-                            hint_str, directed_str
-                        ));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("RIGHT INNER JOIN");
+                        } else {
+                            self.write_keyword("RIGHT INNER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("RIGHT{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("RIGHT JOIN");
+                        } else {
+                            self.write_keyword("RIGHT");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::Full => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!("FULL OUTER{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("FULL OUTER JOIN");
+                        } else {
+                            self.write_keyword("FULL OUTER");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("FULL{}{} JOIN", hint_str, directed_str));
+                        if hint_str.is_empty() && directed_str.is_empty() {
+                            self.write_keyword("FULL JOIN");
+                        } else {
+                            self.write_keyword("FULL");
+                            if !hint_str.is_empty() { self.write_keyword(&hint_str); }
+                            if !directed_str.is_empty() { self.write_keyword(directed_str); }
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
-                JoinKind::Outer => self.write_keyword(&format!("OUTER{} JOIN", directed_str)),
-                JoinKind::Cross => self.write_keyword(&format!("CROSS{} JOIN", directed_str)),
+                JoinKind::Outer => {
+                    if directed_str.is_empty() {
+                        self.write_keyword("OUTER JOIN");
+                    } else {
+                        self.write_keyword("OUTER");
+                        self.write_keyword(directed_str);
+                        self.write_keyword(" JOIN");
+                    }
+                }
+                JoinKind::Cross => {
+                    if directed_str.is_empty() {
+                        self.write_keyword("CROSS JOIN");
+                    } else {
+                        self.write_keyword("CROSS");
+                        self.write_keyword(directed_str);
+                        self.write_keyword(" JOIN");
+                    }
+                }
                 JoinKind::Natural => {
                     if join.use_inner_keyword {
-                        self.write_keyword(&format!("NATURAL INNER{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL INNER JOIN");
+                        } else {
+                            self.write_keyword("NATURAL INNER");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("NATURAL{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL JOIN");
+                        } else {
+                            self.write_keyword("NATURAL");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::NaturalLeft => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!("NATURAL LEFT OUTER{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL LEFT OUTER JOIN");
+                        } else {
+                            self.write_keyword("NATURAL LEFT OUTER");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("NATURAL LEFT{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL LEFT JOIN");
+                        } else {
+                            self.write_keyword("NATURAL LEFT");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::NaturalRight => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!("NATURAL RIGHT OUTER{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL RIGHT OUTER JOIN");
+                        } else {
+                            self.write_keyword("NATURAL RIGHT OUTER");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("NATURAL RIGHT{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL RIGHT JOIN");
+                        } else {
+                            self.write_keyword("NATURAL RIGHT");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::NaturalFull => {
                     if join.use_outer_keyword {
-                        self.write_keyword(&format!("NATURAL FULL OUTER{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL FULL OUTER JOIN");
+                        } else {
+                            self.write_keyword("NATURAL FULL OUTER");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     } else {
-                        self.write_keyword(&format!("NATURAL FULL{} JOIN", directed_str));
+                        if directed_str.is_empty() {
+                            self.write_keyword("NATURAL FULL JOIN");
+                        } else {
+                            self.write_keyword("NATURAL FULL");
+                            self.write_keyword(directed_str);
+                            self.write_keyword(" JOIN");
+                        }
                     }
                 }
                 JoinKind::Semi => self.write_keyword("SEMI JOIN"),
@@ -5747,12 +5876,11 @@ impl Generator {
                 (false, false, args)
             }
             Expression::Function(func) => {
-                let name = func.name.to_uppercase();
-                if name == "POSEXPLODE" || name == "POSEXPLODE_OUTER" {
+                if func.name.eq_ignore_ascii_case("POSEXPLODE") || func.name.eq_ignore_ascii_case("POSEXPLODE_OUTER") {
                     (true, false, func.args.clone())
-                } else if name == "INLINE" {
+                } else if func.name.eq_ignore_ascii_case("INLINE") {
                     (false, true, func.args.clone())
-                } else if name == "EXPLODE" || name == "EXPLODE_OUTER" {
+                } else if func.name.eq_ignore_ascii_case("EXPLODE") || func.name.eq_ignore_ascii_case("EXPLODE_OUTER") {
                     (false, false, func.args.clone())
                 } else {
                     (false, false, vec![])
@@ -5779,7 +5907,7 @@ impl Generator {
                         .iter()
                         .map(|a| {
                             if let Expression::Function(ref f) = a {
-                                if f.name.to_uppercase() == "ARRAY" && f.args.len() == 1 {
+                                if f.name.eq_ignore_ascii_case("ARRAY") && f.args.len() == 1 {
                                     return Expression::ArrayFunc(Box::new(
                                         crate::expressions::ArrayConstructor {
                                             expressions: f.args.clone(),
@@ -5803,7 +5931,7 @@ impl Generator {
                         .iter()
                         .map(|a| {
                             if let Expression::Function(ref f) = a {
-                                if f.name.to_uppercase() == "ARRAY" && f.args.len() >= 1 {
+                                if f.name.eq_ignore_ascii_case("ARRAY") && f.args.len() >= 1 {
                                     return Expression::ArrayFunc(Box::new(
                                         crate::expressions::ArrayConstructor {
                                             expressions: f.args.clone(),
@@ -6621,7 +6749,7 @@ impl Generator {
             if let Some(ref hint) = insert.hint {
                 self.generate_hint(hint)?;
             }
-            self.write(&self.config.insert_overwrite.to_uppercase());
+            self.write(&self.config.insert_overwrite.to_ascii_uppercase());
         } else if let Some(ref action) = insert.conflict_action {
             // SQLite conflict action: INSERT OR ABORT|FAIL|IGNORE|REPLACE|ROLLBACK INTO
             self.write_keyword("INSERT OR");
@@ -7313,9 +7441,9 @@ impl Generator {
             let is_teradata_modifier = modifier.eq_ignore_ascii_case("VOLATILE")
                 || modifier.eq_ignore_ascii_case("SET")
                 || modifier.eq_ignore_ascii_case("MULTISET")
-                || modifier.to_uppercase().contains("VOLATILE")
-                || modifier.to_uppercase().starts_with("SET ")
-                || modifier.to_uppercase().starts_with("MULTISET ");
+                || modifier.to_ascii_uppercase().contains("VOLATILE")
+                || modifier.to_ascii_uppercase().starts_with("SET ")
+                || modifier.to_ascii_uppercase().starts_with("MULTISET ");
             let skip_teradata =
                 is_teradata_modifier && !matches!(self.config.dialect, Some(DialectType::Teradata));
             if !skip_transient && !skip_teradata {
@@ -7481,12 +7609,12 @@ impl Generator {
                 if let TableConstraint::PrimaryKey { columns, name, .. } = constraint {
                     // Only inline if: single column, no constraint name, and column exists in table
                     if columns.len() == 1 && name.is_none() {
-                        let pk_col_name = columns[0].name.to_lowercase();
+                        let pk_col_name = columns[0].name.to_ascii_lowercase();
                         // Check if this column exists in the table
                         if ct
                             .columns
                             .iter()
-                            .any(|c| c.name.name.to_lowercase() == pk_col_name)
+                            .any(|c| c.name.name.to_ascii_lowercase() == pk_col_name)
                         {
                             self.sqlite_inline_pk_columns.insert(pk_col_name);
                         }
@@ -7518,7 +7646,7 @@ impl Generator {
                             && name.is_none()
                             && self
                                 .sqlite_inline_pk_columns
-                                .contains(&columns[0].name.to_lowercase())
+                                .contains(&columns[0].name.to_ascii_lowercase())
                         {
                             continue;
                         }
@@ -7548,7 +7676,7 @@ impl Generator {
                             && name.is_none()
                             && self
                                 .sqlite_inline_pk_columns
-                                .contains(&columns[0].name.to_lowercase())
+                                .contains(&columns[0].name.to_ascii_lowercase())
                         {
                             continue;
                         }
@@ -8032,11 +8160,14 @@ impl Generator {
             Some(DialectType::Materialize) | Some(DialectType::PostgreSQL)
         ) {
             if let DataType::Custom { ref name } = col.data_type {
-                match name.to_uppercase().as_str() {
-                    "SERIAL" => Some("INT"),
-                    "BIGSERIAL" => Some("BIGINT"),
-                    "SMALLSERIAL" => Some("SMALLINT"),
-                    _ => None,
+                if name.eq_ignore_ascii_case("SERIAL") {
+                    Some("INT")
+                } else if name.eq_ignore_ascii_case("BIGSERIAL") {
+                    Some("BIGINT")
+                } else if name.eq_ignore_ascii_case("SMALLSERIAL") {
+                    Some("SMALLINT")
+                } else {
+                    None
                 }
             } else {
                 None
@@ -8823,7 +8954,7 @@ impl Generator {
         if !col.primary_key
             && self
                 .sqlite_inline_pk_columns
-                .contains(&col.name.name.to_lowercase())
+                .contains(&col.name.name.to_ascii_lowercase())
         {
             self.write_space();
             self.write_keyword("PRIMARY KEY");
@@ -11162,7 +11293,7 @@ impl Generator {
             if should_upper {
                 use crate::expressions::Identifier;
                 let upper_id = Identifier {
-                    name: g.securable.name.to_uppercase(),
+                    name: g.securable.name.to_ascii_uppercase(),
                     quoted: g.securable.quoted,
                     ..g.securable.clone()
                 };
@@ -11273,7 +11404,7 @@ impl Generator {
             if should_upper {
                 use crate::expressions::Identifier;
                 let upper_id = Identifier {
-                    name: r.securable.name.to_uppercase(),
+                    name: r.securable.name.to_ascii_uppercase(),
                     quoted: r.securable.quoted,
                     ..r.securable.clone()
                 };
@@ -14194,7 +14325,7 @@ impl Generator {
         // Check for common IANA timezone patterns: Continent/City format
         // Examples: Europe/Prague, America/New_York, Asia/Tokyo, etc.
         // Also handles: UTC, GMT, Etc/GMT+0, etc.
-        let ts_lower = ts.to_lowercase();
+        let ts_lower = ts.to_ascii_lowercase();
 
         // Check for Continent/City pattern (most common)
         let continent_prefixes = [
@@ -14438,7 +14569,9 @@ impl Generator {
             // Oracle: Uses standard double single-quote escaping
             Some(DialectType::Oracle) => {
                 self.write("'");
-                self.write(&s.replace('\'', "''"));
+                for ch in s.chars() {
+                    if ch == '\'' { self.output.push_str("''"); } else { self.output.push(ch); }
+                }
                 self.write("'");
             }
             // ClickHouse: Uses SQL-standard quote doubling ('') for quotes,
@@ -14475,7 +14608,9 @@ impl Generator {
             // PostgreSQL, Snowflake, DuckDB, TSQL, etc.
             _ => {
                 self.write("'");
-                self.write(&s.replace('\'', "''"));
+                for ch in s.chars() {
+                    if ch == '\'' { self.output.push_str("''"); } else { self.output.push(ch); }
+                }
                 self.write("'");
             }
         }
@@ -14548,7 +14683,7 @@ impl Generator {
 
         // Normalize identifier if configured
         let output_name = if self.config.normalize_identifiers && !id.quoted {
-            name.to_lowercase()
+            name.to_ascii_lowercase()
         } else {
             name.to_string()
         };
@@ -14655,14 +14790,14 @@ impl Generator {
         // Exasol uses UPPERCASE normalization strategy, so reserved keywords that need quoting
         // should be uppercased when not already quoted (to match Python sqlglot behavior)
         let output_name = if self.config.normalize_identifiers && !id.quoted {
-            base_name.to_lowercase()
+            base_name.to_ascii_lowercase()
         } else if matches!(self.config.dialect, Some(DialectType::Exasol))
             && !id.quoted
             && self.is_reserved_keyword(name)
         {
             // Exasol: uppercase reserved keywords when quoting them
             // This matches Python sqlglot's behavior with NORMALIZATION_STRATEGY = UPPERCASE
-            base_name.to_uppercase()
+            base_name.to_ascii_uppercase()
         } else {
             base_name
         };
@@ -15973,15 +16108,16 @@ impl Generator {
             ) {
                 match &cast.to {
                     DataType::Custom { ref name } => {
-                        let upper = name.to_uppercase();
-                        match upper.as_str() {
-                            "LONGTEXT" | "MEDIUMTEXT" | "TINYTEXT" | "LONGBLOB" | "MEDIUMBLOB"
-                            | "TINYBLOB" => {
-                                self.write_keyword("CHAR");
-                            }
-                            _ => {
-                                self.generate_data_type(&cast.to)?;
-                            }
+                        if name.eq_ignore_ascii_case("LONGTEXT")
+                            || name.eq_ignore_ascii_case("MEDIUMTEXT")
+                            || name.eq_ignore_ascii_case("TINYTEXT")
+                            || name.eq_ignore_ascii_case("LONGBLOB")
+                            || name.eq_ignore_ascii_case("MEDIUMBLOB")
+                            || name.eq_ignore_ascii_case("TINYBLOB")
+                        {
+                            self.write_keyword("CHAR");
+                        } else {
+                            self.generate_data_type(&cast.to)?;
                         }
                     }
                     DataType::VarChar { length, .. } => {
@@ -16339,11 +16475,10 @@ impl Generator {
     fn generate_function(&mut self, func: &Function) -> Result<()> {
         // Normalize function name based on dialect settings
         let normalized_name = self.normalize_func_name(&func.name);
-        let upper_name = func.name.to_uppercase();
 
         // DuckDB: ARRAY_CONSTRUCT_COMPACT(a, b, c) -> LIST_FILTER([a, b, c], _u -> NOT _u IS NULL)
         if matches!(self.config.dialect, Some(DialectType::DuckDB))
-            && upper_name == "ARRAY_CONSTRUCT_COMPACT"
+            && func.name.eq_ignore_ascii_case("ARRAY_CONSTRUCT_COMPACT")
         {
             self.write("LIST_FILTER(");
             self.write("[");
@@ -16358,7 +16493,7 @@ impl Generator {
         }
 
         // STRUCT function: BigQuery STRUCT('Alice' AS name, 85 AS score) -> dialect-specific
-        if upper_name == "STRUCT"
+        if func.name.eq_ignore_ascii_case("STRUCT")
             && !matches!(
                 self.config.dialect,
                 Some(DialectType::BigQuery)
@@ -16373,7 +16508,7 @@ impl Generator {
 
         // SingleStore: __SS_JSON_PATH_QMARK__(expr, key) -> expr::?key
         // This is an internal marker function for ::? JSON path syntax
-        if upper_name == "__SS_JSON_PATH_QMARK__" && func.args.len() == 2 {
+        if func.name.eq_ignore_ascii_case("__SS_JSON_PATH_QMARK__") && func.args.len() == 2 {
             self.generate_expression(&func.args[0])?;
             self.write("::?");
             // Extract the key from the string literal
@@ -16386,7 +16521,7 @@ impl Generator {
         }
 
         // PostgreSQL: __PG_BITWISE_XOR__(a, b) -> a # b
-        if upper_name == "__PG_BITWISE_XOR__" && func.args.len() == 2 {
+        if func.name.eq_ignore_ascii_case("__PG_BITWISE_XOR__") && func.args.len() == 2 {
             self.generate_expression(&func.args[0])?;
             self.write(" # ");
             self.generate_expression(&func.args[1])?;
@@ -16397,7 +16532,7 @@ impl Generator {
         if matches!(
             self.config.dialect,
             Some(DialectType::Spark | DialectType::Databricks | DialectType::Hive)
-        ) && upper_name == "TRY"
+        ) && func.name.eq_ignore_ascii_case("TRY")
             && func.args.len() == 1
         {
             self.generate_expression(&func.args[0])?;
@@ -16406,7 +16541,7 @@ impl Generator {
 
         // ClickHouse normalization: toStartOfDay(x) -> dateTrunc('DAY', x)
         if self.config.dialect == Some(DialectType::ClickHouse)
-            && upper_name == "TOSTARTOFDAY"
+            && func.name.eq_ignore_ascii_case("TOSTARTOFDAY")
             && func.args.len() == 1
         {
             self.write("dateTrunc('DAY', ");
@@ -16417,7 +16552,7 @@ impl Generator {
 
         // Redshift: CONCAT(a, b, ...) -> a || b || ...
         if self.config.dialect == Some(DialectType::Redshift)
-            && upper_name == "CONCAT"
+            && func.name.eq_ignore_ascii_case("CONCAT")
             && func.args.len() >= 2
         {
             for (i, arg) in func.args.iter().enumerate() {
@@ -16431,7 +16566,7 @@ impl Generator {
 
         // Redshift: CONCAT_WS(delim, a, b, c) -> a || delim || b || delim || c
         if self.config.dialect == Some(DialectType::Redshift)
-            && upper_name == "CONCAT_WS"
+            && func.name.eq_ignore_ascii_case("CONCAT_WS")
             && func.args.len() >= 2
         {
             let sep = &func.args[0];
@@ -16449,7 +16584,7 @@ impl Generator {
         // Redshift: DATEDIFF/DATE_DIFF(unit, start, end) -> DATEDIFF(UNIT, start, end)
         // Unit should be unquoted uppercase identifier
         if self.config.dialect == Some(DialectType::Redshift)
-            && (upper_name == "DATEDIFF" || upper_name == "DATE_DIFF")
+            && (func.name.eq_ignore_ascii_case("DATEDIFF") || func.name.eq_ignore_ascii_case("DATE_DIFF"))
             && func.args.len() == 3
         {
             self.write_keyword("DATEDIFF");
@@ -16467,7 +16602,7 @@ impl Generator {
         // Redshift: DATEADD/DATE_ADD(unit, interval, date) -> DATEADD(UNIT, interval, date)
         // Unit should be unquoted uppercase identifier
         if self.config.dialect == Some(DialectType::Redshift)
-            && (upper_name == "DATEADD" || upper_name == "DATE_ADD")
+            && (func.name.eq_ignore_ascii_case("DATEADD") || func.name.eq_ignore_ascii_case("DATE_ADD"))
             && func.args.len() == 3
         {
             self.write_keyword("DATEADD");
@@ -16483,7 +16618,7 @@ impl Generator {
         }
 
         // UUID_STRING(args) from Snowflake -> dialect-specific UUID function (dropping args)
-        if upper_name == "UUID_STRING"
+        if func.name.eq_ignore_ascii_case("UUID_STRING")
             && !matches!(self.config.dialect, Some(DialectType::Snowflake) | None)
         {
             let func_name = match self.config.dialect {
@@ -16499,7 +16634,7 @@ impl Generator {
         // Redshift: DATE_TRUNC('unit', date) -> DATE_TRUNC('UNIT', date)
         // Unit should be quoted uppercase string
         if self.config.dialect == Some(DialectType::Redshift)
-            && upper_name == "DATE_TRUNC"
+            && func.name.eq_ignore_ascii_case("DATE_TRUNC")
             && func.args.len() == 2
         {
             self.write_keyword("DATE_TRUNC");
@@ -16516,7 +16651,7 @@ impl Generator {
         if matches!(
             self.config.dialect,
             Some(DialectType::TSQL) | Some(DialectType::Fabric)
-        ) && (upper_name == "DATE_PART" || upper_name == "DATEPART")
+        ) && (func.name.eq_ignore_ascii_case("DATE_PART") || func.name.eq_ignore_ascii_case("DATEPART"))
             && func.args.len() == 2
         {
             self.write_keyword("DATEPART");
@@ -16532,7 +16667,7 @@ impl Generator {
         if matches!(
             self.config.dialect,
             Some(DialectType::PostgreSQL) | Some(DialectType::Redshift)
-        ) && (upper_name == "DATE_PART" || upper_name == "DATEPART")
+        ) && (func.name.eq_ignore_ascii_case("DATE_PART") || func.name.eq_ignore_ascii_case("DATEPART"))
             && func.args.len() == 2
         {
             self.write_keyword("EXTRACT");
@@ -16540,7 +16675,7 @@ impl Generator {
             // Extract the datetime field - if it's a string literal, strip quotes to make it a keyword
             match &func.args[0] {
                 Expression::Literal(crate::expressions::Literal::String(s)) => {
-                    self.write(&s.to_lowercase());
+                    self.write(&s.to_ascii_lowercase());
                 }
                 _ => self.generate_expression(&func.args[0])?,
             }
@@ -16555,7 +16690,7 @@ impl Generator {
         // Dremio: DATE_PART(part, value) -> EXTRACT(part FROM value)
         // Also DATE literals in Dremio should be CAST(...AS DATE)
         if self.config.dialect == Some(DialectType::Dremio)
-            && (upper_name == "DATE_PART" || upper_name == "DATEPART")
+            && (func.name.eq_ignore_ascii_case("DATE_PART") || func.name.eq_ignore_ascii_case("DATEPART"))
             && func.args.len() == 2
         {
             self.write_keyword("EXTRACT");
@@ -16572,7 +16707,7 @@ impl Generator {
 
         // Dremio: CURRENT_DATE_UTC() -> CURRENT_DATE_UTC (no parentheses)
         if self.config.dialect == Some(DialectType::Dremio)
-            && upper_name == "CURRENT_DATE_UTC"
+            && func.name.eq_ignore_ascii_case("CURRENT_DATE_UTC")
             && func.args.is_empty()
         {
             self.write_keyword("CURRENT_DATE_UTC");
@@ -16583,7 +16718,7 @@ impl Generator {
         // - If all args are integer literals: DATE('YYYY-MM-DD')
         // - If args are expressions: CAST(CONCAT(x, '-', y, '-', z) AS DATE)
         if self.config.dialect == Some(DialectType::Dremio)
-            && upper_name == "DATETYPE"
+            && func.name.eq_ignore_ascii_case("DATETYPE")
             && func.args.len() == 3
         {
             // Helper function to extract integer from number literal
@@ -16632,7 +16767,7 @@ impl Generator {
             self.config.dialect,
             Some(DialectType::Presto) | Some(DialectType::Trino)
         );
-        if is_presto_like && upper_name == "DATE_ADD" && func.args.len() == 3 {
+        if is_presto_like && func.name.eq_ignore_ascii_case("DATE_ADD") && func.args.len() == 3 {
             self.write_keyword("DATE_ADD");
             self.write("(");
             // First arg: unit (pass through as-is, e.g., 'DAY')
@@ -16667,7 +16802,8 @@ impl Generator {
         // Input: FUNC(args) WITH ORDINALITY
         // Stored as: name="FUNC WITH ORDINALITY", args=[...]
         // Output must be: FUNC(args) WITH ORDINALITY
-        let has_ordinality = upper_name.ends_with(" WITH ORDINALITY");
+        let has_ordinality = func.name.len() >= 16
+            && func.name[func.name.len() - 16..].eq_ignore_ascii_case(" WITH ORDINALITY");
         let output_name = if has_ordinality {
             let base_name = &func.name[..func.name.len() - " WITH ORDINALITY".len()];
             self.normalize_func_name(base_name)
@@ -16694,16 +16830,21 @@ impl Generator {
         // If no_parens is true and there are no args, output just the function name
         // Unless the target dialect requires parens for this function
         let force_parens = func.no_parens && func.args.is_empty() && !func.distinct && {
-            let needs_parens = match upper_name.as_str() {
-                "CURRENT_USER" | "SESSION_USER" | "SYSTEM_USER" => matches!(
-                    self.config.dialect,
-                    Some(DialectType::Snowflake)
-                        | Some(DialectType::Spark)
-                        | Some(DialectType::Databricks)
-                        | Some(DialectType::Hive)
-                ),
-                _ => false,
-            };
+            let needs_parens =
+                if func.name.eq_ignore_ascii_case("CURRENT_USER")
+                    || func.name.eq_ignore_ascii_case("SESSION_USER")
+                    || func.name.eq_ignore_ascii_case("SYSTEM_USER")
+                {
+                    matches!(
+                        self.config.dialect,
+                        Some(DialectType::Snowflake)
+                            | Some(DialectType::Spark)
+                            | Some(DialectType::Databricks)
+                            | Some(DialectType::Hive)
+                    )
+                } else {
+                    false
+                };
             !needs_parens
         };
         if force_parens {
@@ -16716,7 +16857,7 @@ impl Generator {
         }
 
         // CUBE, ROLLUP, GROUPING SETS need a space before the parenthesis
-        if upper_name == "CUBE" || upper_name == "ROLLUP" || upper_name == "GROUPING SETS" {
+        if func.name.eq_ignore_ascii_case("CUBE") || func.name.eq_ignore_ascii_case("ROLLUP") || func.name.eq_ignore_ascii_case("GROUPING SETS") {
             self.write(" (");
         } else if use_brackets {
             self.write("[");
@@ -16730,10 +16871,10 @@ impl Generator {
 
         // Check if arguments should be split onto multiple lines (pretty + too wide)
         let compact_pretty_func = matches!(self.config.dialect, Some(DialectType::Snowflake))
-            && (upper_name == "TABLE" || upper_name == "FLATTEN");
+            && (func.name.eq_ignore_ascii_case("TABLE") || func.name.eq_ignore_ascii_case("FLATTEN"));
         // GROUPING SETS, CUBE, ROLLUP always expand in pretty mode
         let is_grouping_func =
-            upper_name == "GROUPING SETS" || upper_name == "CUBE" || upper_name == "ROLLUP";
+            func.name.eq_ignore_ascii_case("GROUPING SETS") || func.name.eq_ignore_ascii_case("CUBE") || func.name.eq_ignore_ascii_case("ROLLUP");
         let should_split = if self.config.pretty && !func.args.is_empty() && !compact_pretty_func {
             if is_grouping_func {
                 true
@@ -16799,28 +16940,27 @@ impl Generator {
         let mut normalized_name = self.normalize_func_name(&func.name);
 
         // Dialect-specific name mappings for aggregate functions
-        let upper = normalized_name.to_uppercase();
-        if upper == "MAX_BY" || upper == "MIN_BY" {
-            let is_max = upper == "MAX_BY";
+        if func.name.eq_ignore_ascii_case("MAX_BY") || func.name.eq_ignore_ascii_case("MIN_BY") {
+            let is_max = func.name.eq_ignore_ascii_case("MAX_BY");
             match self.config.dialect {
                 Some(DialectType::ClickHouse) => {
                     normalized_name = if is_max {
-                        "argMax".to_string()
+                        Cow::Borrowed("argMax")
                     } else {
-                        "argMin".to_string()
+                        Cow::Borrowed("argMin")
                     };
                 }
                 Some(DialectType::DuckDB) => {
                     normalized_name = if is_max {
-                        "ARG_MAX".to_string()
+                        Cow::Borrowed("ARG_MAX")
                     } else {
-                        "ARG_MIN".to_string()
+                        Cow::Borrowed("ARG_MIN")
                     };
                 }
                 _ => {}
             }
         }
-        self.write(&normalized_name);
+        self.write(normalized_name.as_ref());
         self.write("(");
         if func.distinct {
             self.write_keyword("DISTINCT");
@@ -17434,8 +17574,16 @@ impl Generator {
     /// Normalize date part to uppercase singular form
     /// days -> DAY, months -> MONTH, etc.
     fn normalize_date_part(&self, part: &str) -> String {
-        let lower = part.to_lowercase();
-        match lower.as_str() {
+        let mut buf = [0u8; 64];
+        let lower: &str = if part.len() <= 64 {
+            for (i, b) in part.bytes().enumerate() {
+                buf[i] = b.to_ascii_lowercase();
+            }
+            std::str::from_utf8(&buf[..part.len()]).unwrap_or(part)
+        } else {
+            return part.to_ascii_uppercase();
+        };
+        match lower {
             "day" | "days" | "d" => "DAY".to_string(),
             "month" | "months" | "mon" | "mm" => "MONTH".to_string(),
             "year" | "years" | "y" | "yy" | "yyyy" => "YEAR".to_string(),
@@ -17446,7 +17594,7 @@ impl Generator {
             "millisecond" | "milliseconds" | "ms" => "MILLISECOND".to_string(),
             "microsecond" | "microseconds" | "us" => "MICROSECOND".to_string(),
             "quarter" | "quarters" | "q" | "qq" => "QUARTER".to_string(),
-            _ => part.to_uppercase(),
+            _ => part.to_ascii_uppercase(),
         }
     }
 
@@ -18548,20 +18696,20 @@ impl Generator {
 
     fn generate_agg_func(&mut self, name: &str, f: &AggFunc) -> Result<()> {
         // Apply function name normalization based on config
-        let func_name = match self.config.normalize_functions {
-            NormalizeFunctions::Upper => name.to_uppercase(),
-            NormalizeFunctions::Lower => name.to_lowercase(),
+        let func_name: Cow<'_, str> = match self.config.normalize_functions {
+            NormalizeFunctions::Upper => Cow::Owned(name.to_ascii_uppercase()),
+            NormalizeFunctions::Lower => Cow::Owned(name.to_ascii_lowercase()),
             NormalizeFunctions::None => {
                 // Use the original function name from parsing if available,
                 // otherwise fall back to lowercase of the hardcoded constant
                 if let Some(ref original) = f.name {
-                    original.clone()
+                    Cow::Owned(original.clone())
                 } else {
-                    name.to_lowercase()
+                    Cow::Owned(name.to_ascii_lowercase())
                 }
             }
         };
-        self.write(&func_name);
+        self.write(func_name.as_ref());
         self.write("(");
         if f.distinct {
             self.write_keyword("DISTINCT");
@@ -19275,7 +19423,7 @@ impl Generator {
                     None
                 }
             }
-            Expression::Function(f) if f.name.to_uppercase() == "STRUCT" => {
+            Expression::Function(f) if f.name.eq_ignore_ascii_case("STRUCT") => {
                 // Check if all args are Alias (named fields)
                 if f.args.iter().all(|a| matches!(a, Expression::Alias(_))) {
                     Some(
@@ -19302,7 +19450,7 @@ impl Generator {
     fn struct_has_unnamed_fields(expr: &Expression) -> bool {
         match expr {
             Expression::Struct(s) => s.fields.iter().any(|(name, _)| name.is_none()),
-            Expression::Function(f) if f.name.to_uppercase() == "STRUCT" => {
+            Expression::Function(f) if f.name.eq_ignore_ascii_case("STRUCT") => {
                 f.args.iter().any(|a| !matches!(a, Expression::Alias(_)))
             }
             _ => false,
@@ -19313,7 +19461,7 @@ impl Generator {
     fn struct_field_count(expr: &Expression) -> usize {
         match expr {
             Expression::Struct(s) => s.fields.len(),
-            Expression::Function(f) if f.name.to_uppercase() == "STRUCT" => f.args.len(),
+            Expression::Function(f) if f.name.eq_ignore_ascii_case("STRUCT") => f.args.len(),
             _ => 0,
         }
     }
@@ -19332,7 +19480,7 @@ impl Generator {
                 }
                 Expression::Struct(Box::new(crate::expressions::Struct { fields: new_fields }))
             }
-            Expression::Function(f) if f.name.to_uppercase() == "STRUCT" => {
+            Expression::Function(f) if f.name.eq_ignore_ascii_case("STRUCT") => {
                 let mut new_args = Vec::with_capacity(f.args.len());
                 for (i, arg) in f.args.iter().enumerate() {
                     if !matches!(arg, Expression::Alias(_)) && i < field_names.len() {
@@ -19833,12 +19981,11 @@ impl Generator {
             // For nested structs - generate a nested ROW type by inspecting fields
             Expression::Struct(_) | Expression::StructFunc(_) => "ROW".to_string(),
             Expression::Function(f) => {
-                let up = f.name.to_uppercase();
-                if up == "STRUCT" {
+                if f.name.eq_ignore_ascii_case("STRUCT") {
                     "ROW".to_string()
-                } else if up == "CURRENT_DATE" {
+                } else if f.name.eq_ignore_ascii_case("CURRENT_DATE") {
                     "DATE".to_string()
-                } else if up == "CURRENT_TIMESTAMP" || up == "NOW" {
+                } else if f.name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") || f.name.eq_ignore_ascii_case("NOW") {
                     "TIMESTAMP".to_string()
                 } else {
                     "VARCHAR".to_string()
@@ -23078,7 +23225,7 @@ impl Generator {
                 } else {
                     // Map ClickHouse-specific custom type names to standard types
                     match inner.as_ref() {
-                        DataType::Custom { name } if name.to_uppercase() == "DATETIME" => {
+                        DataType::Custom { name } if name.eq_ignore_ascii_case("DATETIME") => {
                             self.generate_data_type(&DataType::Timestamp {
                                 precision: None,
                                 timezone: false,
@@ -23092,7 +23239,7 @@ impl Generator {
             }
             DataType::Custom { name } => {
                 // Handle dialect-specific type transformations
-                let name_upper = name.to_uppercase();
+                let name_upper = name.to_ascii_uppercase();
                 match self.config.dialect {
                     Some(DialectType::ClickHouse) => {
                         let (base_upper, suffix) = if let Some(idx) = name.find('(') {
@@ -23622,26 +23769,31 @@ impl Generator {
 
     // === Helper methods ===
 
+    #[inline]
     fn write(&mut self, s: &str) {
         self.output.push_str(s);
     }
 
+    #[inline]
     fn write_space(&mut self) {
         self.output.push(' ');
     }
 
+    #[inline]
     fn write_keyword(&mut self, keyword: &str) {
         if self.config.uppercase_keywords {
             self.output.push_str(keyword);
         } else {
-            self.output.push_str(&keyword.to_lowercase());
+            for b in keyword.bytes() {
+                self.output.push(b.to_ascii_lowercase() as char);
+            }
         }
     }
 
     /// Write a function name respecting the normalize_functions config setting
     fn write_func_name(&mut self, name: &str) {
         let normalized = self.normalize_func_name(name);
-        self.output.push_str(&normalized);
+        self.output.push_str(normalized.as_ref());
     }
 
     /// Convert strptime format string to Exasol format string
@@ -23832,7 +23984,7 @@ impl Generator {
 
     fn write_indent(&mut self) {
         for _ in 0..self.indent_level {
-            self.output.push_str(&self.config.indent);
+            self.output.push_str(self.config.indent);
         }
     }
 
@@ -27320,7 +27472,7 @@ impl Generator {
             if let Some(this) = &e.this {
                 // Uppercase the format name (e.g., parquet -> PARQUET)
                 if let Expression::Identifier(id) = this.as_ref() {
-                    self.write_keyword(&id.name.to_uppercase());
+                    self.write_keyword(&id.name.to_ascii_uppercase());
                 } else {
                     self.generate_expression(this)?;
                 }
@@ -27331,7 +27483,7 @@ impl Generator {
             self.write_space();
             if let Some(this) = &e.this {
                 if let Expression::Identifier(id) = this.as_ref() {
-                    self.write_keyword(&id.name.to_uppercase());
+                    self.write_keyword(&id.name.to_ascii_uppercase());
                 } else {
                     self.generate_expression(this)?;
                 }
@@ -28514,11 +28666,11 @@ impl Generator {
 
     fn generate_interval_span(&mut self, e: &IntervalSpan) -> Result<()> {
         // unit TO unit (e.g., HOUR TO SECOND)
-        self.write(&format!("{:?}", e.this).to_uppercase());
+        self.write(&format!("{:?}", e.this).to_ascii_uppercase());
         self.write_space();
         self.write_keyword("TO");
         self.write_space();
-        self.write(&format!("{:?}", e.expression).to_uppercase());
+        self.write(&format!("{:?}", e.expression).to_ascii_uppercase());
         Ok(())
     }
 
@@ -29871,7 +30023,7 @@ impl Generator {
     fn generate_match_recognize_measure(&mut self, e: &MatchRecognizeMeasure) -> Result<()> {
         // Python: [window_frame] this
         if let Some(window_frame) = &e.window_frame {
-            self.write(&format!("{:?}", window_frame).to_uppercase());
+            self.write(&format!("{:?}", window_frame).to_ascii_uppercase());
             self.write_space();
         }
         self.generate_expression(&e.this)?;
@@ -30459,7 +30611,7 @@ impl Generator {
         if let Some(action) = &e.action {
             // Check if action is "NOTHING" or an UPDATE set
             if let Expression::Identifier(id) = action.as_ref() {
-                if id.name == "NOTHING" || id.name.to_uppercase() == "NOTHING" {
+                if id.name.eq_ignore_ascii_case("NOTHING") {
                     self.write_keyword(" DO NOTHING");
                 } else {
                     self.write_keyword(" DO ");
@@ -33337,20 +33489,39 @@ impl Generator {
 
     /// Convert strftime format to Teradata date format (YYYY, DD, MM, etc.)
     fn strftime_to_teradata_format(fmt: &str) -> String {
-        let mut result = fmt.to_string();
-        result = result.replace("%Y", "YYYY");
-        result = result.replace("%y", "YY");
-        result = result.replace("%m", "MM");
-        result = result.replace("%B", "MMMM");
-        result = result.replace("%b", "MMM");
-        result = result.replace("%d", "DD");
-        result = result.replace("%j", "DDD");
-        result = result.replace("%H", "HH");
-        result = result.replace("%M", "MI");
-        result = result.replace("%S", "SS");
-        result = result.replace("%f", "SSSSSS");
-        result = result.replace("%A", "EEEE");
-        result = result.replace("%a", "EEE");
+        let mut result = String::with_capacity(fmt.len() * 2);
+        let bytes = fmt.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'%' && i + 1 < len {
+                let replacement = match bytes[i + 1] {
+                    b'Y' => "YYYY",
+                    b'y' => "YY",
+                    b'm' => "MM",
+                    b'B' => "MMMM",
+                    b'b' => "MMM",
+                    b'd' => "DD",
+                    b'j' => "DDD",
+                    b'H' => "HH",
+                    b'M' => "MI",
+                    b'S' => "SS",
+                    b'f' => "SSSSSS",
+                    b'A' => "EEEE",
+                    b'a' => "EEE",
+                    _ => {
+                        result.push('%');
+                        i += 1;
+                        continue;
+                    }
+                };
+                result.push_str(replacement);
+                i += 2;
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
         result
     }
 
@@ -33362,52 +33533,114 @@ impl Generator {
 
     /// Convert strftime format (%Y, %m, %d, etc.) to Java date format (yyyy, MM, dd, etc.)
     fn strftime_to_java_format(fmt: &str) -> String {
-        let mut result = fmt.to_string();
-        // Handle non-padded variants BEFORE their padded counterparts
-        result = result.replace("%-d", "d");
-        result = result.replace("%-m", "M");
-        result = result.replace("%-H", "H");
-        result = result.replace("%-M", "m");
-        result = result.replace("%-S", "s");
-        result = result.replace("%Y", "yyyy");
-        result = result.replace("%y", "yy");
-        result = result.replace("%m", "MM");
-        result = result.replace("%B", "MMMM");
-        result = result.replace("%b", "MMM");
-        result = result.replace("%d", "dd");
-        result = result.replace("%j", "DDD");
-        result = result.replace("%H", "HH");
-        result = result.replace("%M", "mm");
-        result = result.replace("%S", "ss");
-        result = result.replace("%f", "SSSSSS");
-        result = result.replace("%A", "EEEE");
-        result = result.replace("%a", "EEE");
+        let mut result = String::with_capacity(fmt.len() * 2);
+        let bytes = fmt.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'%' && i + 1 < len {
+                // Check for non-padded variants (%-X)
+                if bytes[i + 1] == b'-' && i + 2 < len {
+                    let replacement = match bytes[i + 2] {
+                        b'd' => "d",
+                        b'm' => "M",
+                        b'H' => "H",
+                        b'M' => "m",
+                        b'S' => "s",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 3;
+                } else {
+                    let replacement = match bytes[i + 1] {
+                        b'Y' => "yyyy",
+                        b'y' => "yy",
+                        b'm' => "MM",
+                        b'B' => "MMMM",
+                        b'b' => "MMM",
+                        b'd' => "dd",
+                        b'j' => "DDD",
+                        b'H' => "HH",
+                        b'M' => "mm",
+                        b'S' => "ss",
+                        b'f' => "SSSSSS",
+                        b'A' => "EEEE",
+                        b'a' => "EEE",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 2;
+                }
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
         result
     }
 
     /// Convert strftime format (%Y, %m, %d, etc.) to .NET date format for TSQL FORMAT()
     /// Similar to Java but uses ffffff for microseconds instead of SSSSSS
     fn strftime_to_tsql_format(fmt: &str) -> String {
-        let mut result = fmt.to_string();
-        // Handle non-padded variants BEFORE their padded counterparts
-        result = result.replace("%-d", "d");
-        result = result.replace("%-m", "M");
-        result = result.replace("%-H", "H");
-        result = result.replace("%-M", "m");
-        result = result.replace("%-S", "s");
-        result = result.replace("%Y", "yyyy");
-        result = result.replace("%y", "yy");
-        result = result.replace("%m", "MM");
-        result = result.replace("%B", "MMMM");
-        result = result.replace("%b", "MMM");
-        result = result.replace("%d", "dd");
-        result = result.replace("%j", "DDD");
-        result = result.replace("%H", "HH");
-        result = result.replace("%M", "mm");
-        result = result.replace("%S", "ss");
-        result = result.replace("%f", "ffffff");
-        result = result.replace("%A", "dddd");
-        result = result.replace("%a", "ddd");
+        let mut result = String::with_capacity(fmt.len() * 2);
+        let bytes = fmt.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'%' && i + 1 < len {
+                // Check for non-padded variants (%-X)
+                if bytes[i + 1] == b'-' && i + 2 < len {
+                    let replacement = match bytes[i + 2] {
+                        b'd' => "d",
+                        b'm' => "M",
+                        b'H' => "H",
+                        b'M' => "m",
+                        b'S' => "s",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 3;
+                } else {
+                    let replacement = match bytes[i + 1] {
+                        b'Y' => "yyyy",
+                        b'y' => "yy",
+                        b'm' => "MM",
+                        b'B' => "MMMM",
+                        b'b' => "MMM",
+                        b'd' => "dd",
+                        b'j' => "DDD",
+                        b'H' => "HH",
+                        b'M' => "mm",
+                        b'S' => "ss",
+                        b'f' => "ffffff",
+                        b'A' => "dddd",
+                        b'a' => "ddd",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 2;
+                }
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
         result
     }
 
@@ -33485,43 +33718,105 @@ impl Generator {
 
     /// Convert strftime format to PostgreSQL date format (YYYY, MM, DD, etc.)
     fn strftime_to_postgres_format(fmt: &str) -> String {
-        let mut result = fmt.to_string();
-        // Handle non-padded variants BEFORE their padded counterparts
-        result = result.replace("%-d", "FMDD");
-        result = result.replace("%-m", "FMMM");
-        result = result.replace("%-H", "FMHH24");
-        result = result.replace("%-M", "FMMI");
-        result = result.replace("%-S", "FMSS");
-        result = result.replace("%Y", "YYYY");
-        result = result.replace("%y", "YY");
-        result = result.replace("%m", "MM");
-        result = result.replace("%B", "Month");
-        result = result.replace("%b", "Mon");
-        result = result.replace("%d", "DD");
-        result = result.replace("%j", "DDD");
-        result = result.replace("%H", "HH24");
-        result = result.replace("%M", "MI");
-        result = result.replace("%S", "SS");
-        result = result.replace("%f", "US");
-        result = result.replace("%A", "Day");
-        result = result.replace("%a", "Dy");
+        let mut result = String::with_capacity(fmt.len() * 2);
+        let bytes = fmt.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'%' && i + 1 < len {
+                // Check for non-padded variants (%-X)
+                if bytes[i + 1] == b'-' && i + 2 < len {
+                    let replacement = match bytes[i + 2] {
+                        b'd' => "FMDD",
+                        b'm' => "FMMM",
+                        b'H' => "FMHH24",
+                        b'M' => "FMMI",
+                        b'S' => "FMSS",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 3;
+                } else {
+                    let replacement = match bytes[i + 1] {
+                        b'Y' => "YYYY",
+                        b'y' => "YY",
+                        b'm' => "MM",
+                        b'B' => "Month",
+                        b'b' => "Mon",
+                        b'd' => "DD",
+                        b'j' => "DDD",
+                        b'H' => "HH24",
+                        b'M' => "MI",
+                        b'S' => "SS",
+                        b'f' => "US",
+                        b'A' => "Day",
+                        b'a' => "Dy",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 2;
+                }
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
         result
     }
 
     /// Convert strftime format to Snowflake date format (yyyy, mm, DD, etc.)
     fn strftime_to_snowflake_format(fmt: &str) -> String {
-        let mut result = fmt.to_string();
-        // Handle %-d (non-padded day) before %d (padded day)
-        result = result.replace("%-d", "dd");
-        result = result.replace("%-m", "mm"); // non-padded month
-        result = result.replace("%Y", "yyyy");
-        result = result.replace("%y", "yy");
-        result = result.replace("%m", "mm");
-        result = result.replace("%d", "DD");
-        result = result.replace("%H", "hh24");
-        result = result.replace("%M", "mi");
-        result = result.replace("%S", "ss");
-        result = result.replace("%f", "ff");
+        let mut result = String::with_capacity(fmt.len() * 2);
+        let bytes = fmt.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            if bytes[i] == b'%' && i + 1 < len {
+                // Check for non-padded variants (%-X)
+                if bytes[i + 1] == b'-' && i + 2 < len {
+                    let replacement = match bytes[i + 2] {
+                        b'd' => "dd",
+                        b'm' => "mm",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 3;
+                } else {
+                    let replacement = match bytes[i + 1] {
+                        b'Y' => "yyyy",
+                        b'y' => "yy",
+                        b'm' => "mm",
+                        b'd' => "DD",
+                        b'H' => "hh24",
+                        b'M' => "mi",
+                        b'S' => "ss",
+                        b'f' => "ff",
+                        _ => {
+                            result.push('%');
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    result.push_str(replacement);
+                    i += 2;
+                }
+            } else {
+                result.push(bytes[i] as char);
+                i += 1;
+            }
+        }
         result
     }
 
@@ -35025,10 +35320,9 @@ impl Generator {
             // Check if `this` is a transaction kind (DEFERRED/IMMEDIATE/EXCLUSIVE)
             let is_kind = e.this.as_ref().map_or(false, |t| {
                 if let Expression::Identifier(id) = t.as_ref() {
-                    matches!(
-                        id.name.to_uppercase().as_str(),
-                        "DEFERRED" | "IMMEDIATE" | "EXCLUSIVE"
-                    )
+                    id.name.eq_ignore_ascii_case("DEFERRED")
+                        || id.name.eq_ignore_ascii_case("IMMEDIATE")
+                        || id.name.eq_ignore_ascii_case("EXCLUSIVE")
                 } else {
                     false
                 }

@@ -135,7 +135,7 @@ fn builder_table_ref(name: &str) -> TableRef {
 /// ```
 pub fn col(name: &str) -> Expr {
     if let Some((table, column)) = name.rsplit_once('.') {
-        Expr(Expression::Column(Column {
+        Expr(Expression::boxed_column(Column {
             name: builder_identifier(column),
             table: Some(builder_identifier(table)),
             join_mark: false,
@@ -144,7 +144,7 @@ pub fn col(name: &str) -> Expr {
             inferred_type: None,
         }))
     } else {
-        Expr(Expression::Column(Column {
+        Expr(Expression::boxed_column(Column {
             name: builder_identifier(name),
             table: None,
             join_mark: false,
@@ -206,7 +206,7 @@ pub fn boolean(value: bool) -> Expr {
 /// assert_eq!(t.to_sql(), "my_schema.users");
 /// ```
 pub fn table(name: &str) -> Expr {
-    Expr(Expression::Table(builder_table_ref(name)))
+    Expr(Expression::Table(Box::new(builder_table_ref(name))))
 }
 
 /// Create a SQL function call expression.
@@ -782,7 +782,7 @@ where
 pub fn from(table_name: &str) -> SelectBuilder {
     let mut builder = SelectBuilder::new();
     builder.select.from = Some(From {
-        expressions: vec![Expression::Table(builder_table_ref(table_name))],
+        expressions: vec![Expression::Table(Box::new(builder_table_ref(table_name)))],
     });
     builder
 }
@@ -1231,7 +1231,7 @@ impl SelectBuilder {
     /// Set the FROM clause to reference the given table by name.
     pub fn from(mut self, table_name: &str) -> Self {
         self.select.from = Some(From {
-            expressions: vec![Expression::Table(builder_table_ref(table_name))],
+            expressions: vec![Expression::Table(Box::new(builder_table_ref(table_name)))],
         });
         self
     }
@@ -1251,7 +1251,7 @@ impl SelectBuilder {
     pub fn join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Inner,
-            this: Expression::Table(builder_table_ref(table_name)),
+            this: Expression::Table(Box::new(builder_table_ref(table_name))),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1271,7 +1271,7 @@ impl SelectBuilder {
     pub fn left_join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Left,
-            this: Expression::Table(builder_table_ref(table_name)),
+            this: Expression::Table(Box::new(builder_table_ref(table_name))),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1439,7 +1439,7 @@ impl SelectBuilder {
     pub fn right_join(mut self, table_name: &str, on: Expr) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Right,
-            this: Expression::Table(builder_table_ref(table_name)),
+            this: Expression::Table(Box::new(builder_table_ref(table_name))),
             on: Some(on.0),
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1459,7 +1459,7 @@ impl SelectBuilder {
     pub fn cross_join(mut self, table_name: &str) -> Self {
         self.select.joins.push(Join {
             kind: JoinKind::Cross,
-            this: Expression::Table(builder_table_ref(table_name)),
+            this: Expression::Table(Box::new(builder_table_ref(table_name))),
             on: None,
             using: Vec::new(),
             use_inner_keyword: false,
@@ -1785,7 +1785,7 @@ impl UpdateBuilder {
     /// This allows joining against other tables within the UPDATE statement.
     pub fn from(mut self, table_name: &str) -> Self {
         self.update.from_clause = Some(From {
-            expressions: vec![Expression::Table(builder_table_ref(table_name))],
+            expressions: vec![Expression::Table(Box::new(builder_table_ref(table_name)))],
         });
         self
     }
@@ -2412,7 +2412,7 @@ fn binary_op(left: Expression, right: Expression) -> BinaryOp {
 /// ```
 pub fn merge_into(target: &str) -> MergeBuilder {
     MergeBuilder {
-        target: Expression::Table(builder_table_ref(target)),
+        target: Expression::Table(Box::new(builder_table_ref(target))),
         using: None,
         on: None,
         whens: Vec::new(),
@@ -2432,7 +2432,7 @@ pub struct MergeBuilder {
 impl MergeBuilder {
     /// Set the source table and ON join condition.
     pub fn using(mut self, source: &str, on: Expr) -> Self {
-        self.using = Some(Expression::Table(builder_table_ref(source)));
+        self.using = Some(Expression::Table(Box::new(builder_table_ref(source))));
         self.on = Some(on.0);
         self
     }
@@ -2443,7 +2443,7 @@ impl MergeBuilder {
             .into_iter()
             .map(|(col_name, val)| {
                 Expression::Eq(Box::new(BinaryOp {
-                    left: Expression::Column(Column {
+                    left: Expression::boxed_column(Column {
                         name: builder_identifier(col_name),
                         table: None,
                         join_mark: false,
@@ -2491,7 +2491,7 @@ impl MergeBuilder {
             .into_iter()
             .map(|(col_name, val)| {
                 Expression::Eq(Box::new(BinaryOp {
-                    left: Expression::Column(Column {
+                    left: Expression::boxed_column(Column {
                         name: builder_identifier(col_name),
                         table: None,
                         join_mark: false,
@@ -2552,7 +2552,7 @@ impl MergeBuilder {
         let col_exprs: Vec<Expression> = columns
             .iter()
             .map(|c| {
-                Expression::Column(Column {
+                Expression::boxed_column(Column {
                     name: builder_identifier(c),
                     table: None,
                     join_mark: false,

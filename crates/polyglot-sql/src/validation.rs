@@ -2010,7 +2010,7 @@ fn check_query_reference_quality(
 
             let mut seen = HashSet::new();
             for column_expr in select_expr
-                .find_all(|e| matches!(e, Expression::Column(Column { table: None, .. })))
+                .find_all(|e| matches!(e, Expression::Column(col) if col.table.is_none()))
             {
                 let Expression::Column(column) = column_expr else {
                     continue;

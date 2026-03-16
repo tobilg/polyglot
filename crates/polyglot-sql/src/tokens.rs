@@ -5,7 +5,9 @@
 
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::LazyLock;
 #[cfg(feature = "bindings")]
 use ts_rs::TS;
 
@@ -972,19 +974,340 @@ impl fmt::Display for TokenType {
     }
 }
 
+// ── Cached default maps for TokenizerConfig ─────────────────────────────────
+
+static DEFAULT_KEYWORDS: LazyLock<HashMap<String, TokenType>> = LazyLock::new(|| {
+    let mut keywords = HashMap::with_capacity(300);
+    // Add basic SQL keywords
+    keywords.insert("SELECT".to_string(), TokenType::Select);
+    keywords.insert("FROM".to_string(), TokenType::From);
+    keywords.insert("WHERE".to_string(), TokenType::Where);
+    keywords.insert("AND".to_string(), TokenType::And);
+    keywords.insert("OR".to_string(), TokenType::Or);
+    keywords.insert("NOT".to_string(), TokenType::Not);
+    keywords.insert("AS".to_string(), TokenType::As);
+    keywords.insert("ON".to_string(), TokenType::On);
+    keywords.insert("JOIN".to_string(), TokenType::Join);
+    keywords.insert("LEFT".to_string(), TokenType::Left);
+    keywords.insert("RIGHT".to_string(), TokenType::Right);
+    keywords.insert("INNER".to_string(), TokenType::Inner);
+    keywords.insert("OUTER".to_string(), TokenType::Outer);
+    keywords.insert("OUTPUT".to_string(), TokenType::Output);
+    keywords.insert("FULL".to_string(), TokenType::Full);
+    keywords.insert("CROSS".to_string(), TokenType::Cross);
+    keywords.insert("SEMI".to_string(), TokenType::Semi);
+    keywords.insert("ANTI".to_string(), TokenType::Anti);
+    keywords.insert("STRAIGHT_JOIN".to_string(), TokenType::StraightJoin);
+    keywords.insert("UNION".to_string(), TokenType::Union);
+    keywords.insert("EXCEPT".to_string(), TokenType::Except);
+    keywords.insert("MINUS".to_string(), TokenType::Except); // Oracle/Redshift alias for EXCEPT
+    keywords.insert("INTERSECT".to_string(), TokenType::Intersect);
+    keywords.insert("GROUP".to_string(), TokenType::Group);
+    keywords.insert("CUBE".to_string(), TokenType::Cube);
+    keywords.insert("ROLLUP".to_string(), TokenType::Rollup);
+    keywords.insert("WITHIN".to_string(), TokenType::Within);
+    keywords.insert("ORDER".to_string(), TokenType::Order);
+    keywords.insert("BY".to_string(), TokenType::By);
+    keywords.insert("HAVING".to_string(), TokenType::Having);
+    keywords.insert("LIMIT".to_string(), TokenType::Limit);
+    keywords.insert("OFFSET".to_string(), TokenType::Offset);
+    keywords.insert("ORDINALITY".to_string(), TokenType::Ordinality);
+    keywords.insert("FETCH".to_string(), TokenType::Fetch);
+    keywords.insert("FIRST".to_string(), TokenType::First);
+    keywords.insert("NEXT".to_string(), TokenType::Next);
+    keywords.insert("ONLY".to_string(), TokenType::Only);
+    keywords.insert("KEEP".to_string(), TokenType::Keep);
+    keywords.insert("IGNORE".to_string(), TokenType::Ignore);
+    keywords.insert("INPUT".to_string(), TokenType::Input);
+    keywords.insert("CASE".to_string(), TokenType::Case);
+    keywords.insert("WHEN".to_string(), TokenType::When);
+    keywords.insert("THEN".to_string(), TokenType::Then);
+    keywords.insert("ELSE".to_string(), TokenType::Else);
+    keywords.insert("END".to_string(), TokenType::End);
+    keywords.insert("ENDIF".to_string(), TokenType::End); // Exasol alias for END
+    keywords.insert("NULL".to_string(), TokenType::Null);
+    keywords.insert("TRUE".to_string(), TokenType::True);
+    keywords.insert("FALSE".to_string(), TokenType::False);
+    keywords.insert("IS".to_string(), TokenType::Is);
+    keywords.insert("IN".to_string(), TokenType::In);
+    keywords.insert("BETWEEN".to_string(), TokenType::Between);
+    keywords.insert("OVERLAPS".to_string(), TokenType::Overlaps);
+    keywords.insert("LIKE".to_string(), TokenType::Like);
+    keywords.insert("ILIKE".to_string(), TokenType::ILike);
+    keywords.insert("RLIKE".to_string(), TokenType::RLike);
+    keywords.insert("REGEXP".to_string(), TokenType::RLike);
+    keywords.insert("ESCAPE".to_string(), TokenType::Escape);
+    keywords.insert("EXISTS".to_string(), TokenType::Exists);
+    keywords.insert("DISTINCT".to_string(), TokenType::Distinct);
+    keywords.insert("ALL".to_string(), TokenType::All);
+    keywords.insert("WITH".to_string(), TokenType::With);
+    keywords.insert("CREATE".to_string(), TokenType::Create);
+    keywords.insert("DROP".to_string(), TokenType::Drop);
+    keywords.insert("ALTER".to_string(), TokenType::Alter);
+    keywords.insert("TRUNCATE".to_string(), TokenType::Truncate);
+    keywords.insert("TABLE".to_string(), TokenType::Table);
+    keywords.insert("VIEW".to_string(), TokenType::View);
+    keywords.insert("INDEX".to_string(), TokenType::Index);
+    keywords.insert("COLUMN".to_string(), TokenType::Column);
+    keywords.insert("CONSTRAINT".to_string(), TokenType::Constraint);
+    keywords.insert("ADD".to_string(), TokenType::Add);
+    keywords.insert("CASCADE".to_string(), TokenType::Cascade);
+    keywords.insert("RESTRICT".to_string(), TokenType::Restrict);
+    keywords.insert("RENAME".to_string(), TokenType::Rename);
+    keywords.insert("TEMPORARY".to_string(), TokenType::Temporary);
+    keywords.insert("TEMP".to_string(), TokenType::Temporary);
+    keywords.insert("UNIQUE".to_string(), TokenType::Unique);
+    keywords.insert("PRIMARY".to_string(), TokenType::PrimaryKey);
+    keywords.insert("FOREIGN".to_string(), TokenType::ForeignKey);
+    keywords.insert("KEY".to_string(), TokenType::Key);
+    keywords.insert("KILL".to_string(), TokenType::Kill);
+    keywords.insert("REFERENCES".to_string(), TokenType::References);
+    keywords.insert("DEFAULT".to_string(), TokenType::Default);
+    keywords.insert("DECLARE".to_string(), TokenType::Declare);
+    keywords.insert("AUTO_INCREMENT".to_string(), TokenType::AutoIncrement);
+    keywords.insert("AUTOINCREMENT".to_string(), TokenType::AutoIncrement); // Snowflake style
+    keywords.insert("MATERIALIZED".to_string(), TokenType::Materialized);
+    keywords.insert("REPLACE".to_string(), TokenType::Replace);
+    keywords.insert("TO".to_string(), TokenType::To);
+    keywords.insert("INSERT".to_string(), TokenType::Insert);
+    keywords.insert("OVERWRITE".to_string(), TokenType::Overwrite);
+    keywords.insert("UPDATE".to_string(), TokenType::Update);
+    keywords.insert("USE".to_string(), TokenType::Use);
+    keywords.insert("WAREHOUSE".to_string(), TokenType::Warehouse);
+    keywords.insert("GLOB".to_string(), TokenType::Glob);
+    keywords.insert("DELETE".to_string(), TokenType::Delete);
+    keywords.insert("MERGE".to_string(), TokenType::Merge);
+    keywords.insert("CACHE".to_string(), TokenType::Cache);
+    keywords.insert("UNCACHE".to_string(), TokenType::Uncache);
+    keywords.insert("REFRESH".to_string(), TokenType::Refresh);
+    keywords.insert("GRANT".to_string(), TokenType::Grant);
+    keywords.insert("REVOKE".to_string(), TokenType::Revoke);
+    keywords.insert("COMMENT".to_string(), TokenType::Comment);
+    keywords.insert("COLLATE".to_string(), TokenType::Collate);
+    keywords.insert("INTO".to_string(), TokenType::Into);
+    keywords.insert("VALUES".to_string(), TokenType::Values);
+    keywords.insert("SET".to_string(), TokenType::Set);
+    keywords.insert("SETTINGS".to_string(), TokenType::Settings);
+    keywords.insert("SEPARATOR".to_string(), TokenType::Separator);
+    keywords.insert("ASC".to_string(), TokenType::Asc);
+    keywords.insert("DESC".to_string(), TokenType::Desc);
+    keywords.insert("NULLS".to_string(), TokenType::Nulls);
+    keywords.insert("RESPECT".to_string(), TokenType::Respect);
+    keywords.insert("FIRST".to_string(), TokenType::First);
+    keywords.insert("LAST".to_string(), TokenType::Last);
+    keywords.insert("IF".to_string(), TokenType::If);
+    keywords.insert("CAST".to_string(), TokenType::Cast);
+    keywords.insert("TRY_CAST".to_string(), TokenType::TryCast);
+    keywords.insert("SAFE_CAST".to_string(), TokenType::SafeCast);
+    keywords.insert("OVER".to_string(), TokenType::Over);
+    keywords.insert("PARTITION".to_string(), TokenType::Partition);
+    keywords.insert("PLACING".to_string(), TokenType::Placing);
+    keywords.insert("WINDOW".to_string(), TokenType::Window);
+    keywords.insert("ROWS".to_string(), TokenType::Rows);
+    keywords.insert("RANGE".to_string(), TokenType::Range);
+    keywords.insert("FILTER".to_string(), TokenType::Filter);
+    keywords.insert("NATURAL".to_string(), TokenType::Natural);
+    keywords.insert("USING".to_string(), TokenType::Using);
+    keywords.insert("UNBOUNDED".to_string(), TokenType::Unbounded);
+    keywords.insert("PRECEDING".to_string(), TokenType::Preceding);
+    keywords.insert("FOLLOWING".to_string(), TokenType::Following);
+    keywords.insert("CURRENT".to_string(), TokenType::Current);
+    keywords.insert("ROW".to_string(), TokenType::Row);
+    keywords.insert("GROUPS".to_string(), TokenType::Groups);
+    keywords.insert("RECURSIVE".to_string(), TokenType::Recursive);
+    // TRIM function position keywords
+    keywords.insert("BOTH".to_string(), TokenType::Both);
+    keywords.insert("LEADING".to_string(), TokenType::Leading);
+    keywords.insert("TRAILING".to_string(), TokenType::Trailing);
+    keywords.insert("INTERVAL".to_string(), TokenType::Interval);
+    // Phase 3: Additional keywords
+    keywords.insert("TOP".to_string(), TokenType::Top);
+    keywords.insert("QUALIFY".to_string(), TokenType::Qualify);
+    keywords.insert("SAMPLE".to_string(), TokenType::Sample);
+    keywords.insert("TABLESAMPLE".to_string(), TokenType::TableSample);
+    keywords.insert("BERNOULLI".to_string(), TokenType::Bernoulli);
+    keywords.insert("SYSTEM".to_string(), TokenType::System);
+    keywords.insert("BLOCK".to_string(), TokenType::Block);
+    keywords.insert("SEED".to_string(), TokenType::Seed);
+    keywords.insert("REPEATABLE".to_string(), TokenType::Repeatable);
+    keywords.insert("TIES".to_string(), TokenType::Ties);
+    keywords.insert("LATERAL".to_string(), TokenType::Lateral);
+    keywords.insert("LAMBDA".to_string(), TokenType::Lambda);
+    keywords.insert("APPLY".to_string(), TokenType::Apply);
+    // Oracle CONNECT BY keywords
+    keywords.insert("CONNECT".to_string(), TokenType::Connect);
+    // Hive/Spark specific keywords
+    keywords.insert("CLUSTER".to_string(), TokenType::Cluster);
+    keywords.insert("DISTRIBUTE".to_string(), TokenType::Distribute);
+    keywords.insert("SORT".to_string(), TokenType::Sort);
+    keywords.insert("PIVOT".to_string(), TokenType::Pivot);
+    keywords.insert("PREWHERE".to_string(), TokenType::Prewhere);
+    keywords.insert("UNPIVOT".to_string(), TokenType::Unpivot);
+    keywords.insert("FOR".to_string(), TokenType::For);
+    keywords.insert("ANY".to_string(), TokenType::Any);
+    keywords.insert("SOME".to_string(), TokenType::Some);
+    keywords.insert("ASOF".to_string(), TokenType::AsOf);
+    keywords.insert("PERCENT".to_string(), TokenType::Percent);
+    keywords.insert("EXCLUDE".to_string(), TokenType::Exclude);
+    keywords.insert("NO".to_string(), TokenType::No);
+    keywords.insert("OTHERS".to_string(), TokenType::Others);
+    // PostgreSQL OPERATOR() syntax for schema-qualified operators
+    keywords.insert("OPERATOR".to_string(), TokenType::Operator);
+    // Phase 4: DDL keywords
+    keywords.insert("SCHEMA".to_string(), TokenType::Schema);
+    keywords.insert("NAMESPACE".to_string(), TokenType::Namespace);
+    keywords.insert("DATABASE".to_string(), TokenType::Database);
+    keywords.insert("FUNCTION".to_string(), TokenType::Function);
+    keywords.insert("PROCEDURE".to_string(), TokenType::Procedure);
+    keywords.insert("PROC".to_string(), TokenType::Procedure);
+    keywords.insert("SEQUENCE".to_string(), TokenType::Sequence);
+    keywords.insert("TRIGGER".to_string(), TokenType::Trigger);
+    keywords.insert("TYPE".to_string(), TokenType::Type);
+    keywords.insert("DOMAIN".to_string(), TokenType::Domain);
+    keywords.insert("RETURNS".to_string(), TokenType::Returns);
+    keywords.insert("RETURNING".to_string(), TokenType::Returning);
+    keywords.insert("LANGUAGE".to_string(), TokenType::Language);
+    keywords.insert("ROLLBACK".to_string(), TokenType::Rollback);
+    keywords.insert("COMMIT".to_string(), TokenType::Commit);
+    keywords.insert("BEGIN".to_string(), TokenType::Begin);
+    keywords.insert("DESCRIBE".to_string(), TokenType::Describe);
+    keywords.insert("PRESERVE".to_string(), TokenType::Preserve);
+    keywords.insert("TRANSACTION".to_string(), TokenType::Transaction);
+    keywords.insert("SAVEPOINT".to_string(), TokenType::Savepoint);
+    keywords.insert("BODY".to_string(), TokenType::Body);
+    keywords.insert("INCREMENT".to_string(), TokenType::Increment);
+    keywords.insert("MINVALUE".to_string(), TokenType::Minvalue);
+    keywords.insert("MAXVALUE".to_string(), TokenType::Maxvalue);
+    keywords.insert("CYCLE".to_string(), TokenType::Cycle);
+    keywords.insert("NOCYCLE".to_string(), TokenType::NoCycle);
+    keywords.insert("PRIOR".to_string(), TokenType::Prior);
+    // MATCH_RECOGNIZE keywords
+    keywords.insert("MATCH".to_string(), TokenType::Match);
+    keywords.insert("MATCH_RECOGNIZE".to_string(), TokenType::MatchRecognize);
+    keywords.insert("MEASURES".to_string(), TokenType::Measures);
+    keywords.insert("PATTERN".to_string(), TokenType::Pattern);
+    keywords.insert("DEFINE".to_string(), TokenType::Define);
+    keywords.insert("RUNNING".to_string(), TokenType::Running);
+    keywords.insert("FINAL".to_string(), TokenType::Final);
+    keywords.insert("OWNED".to_string(), TokenType::Owned);
+    keywords.insert("AFTER".to_string(), TokenType::After);
+    keywords.insert("BEFORE".to_string(), TokenType::Before);
+    keywords.insert("INSTEAD".to_string(), TokenType::Instead);
+    keywords.insert("EACH".to_string(), TokenType::Each);
+    keywords.insert("STATEMENT".to_string(), TokenType::Statement);
+    keywords.insert("REFERENCING".to_string(), TokenType::Referencing);
+    keywords.insert("OLD".to_string(), TokenType::Old);
+    keywords.insert("NEW".to_string(), TokenType::New);
+    keywords.insert("OF".to_string(), TokenType::Of);
+    keywords.insert("CHECK".to_string(), TokenType::Check);
+    keywords.insert("START".to_string(), TokenType::Start);
+    keywords.insert("ENUM".to_string(), TokenType::Enum);
+    keywords.insert("AUTHORIZATION".to_string(), TokenType::Authorization);
+    keywords.insert("RESTART".to_string(), TokenType::Restart);
+    // Date/time literal keywords
+    keywords.insert("DATE".to_string(), TokenType::Date);
+    keywords.insert("TIME".to_string(), TokenType::Time);
+    keywords.insert("TIMESTAMP".to_string(), TokenType::Timestamp);
+    keywords.insert("DATETIME".to_string(), TokenType::DateTime);
+    keywords.insert("GENERATED".to_string(), TokenType::Generated);
+    keywords.insert("IDENTITY".to_string(), TokenType::Identity);
+    keywords.insert("ALWAYS".to_string(), TokenType::Always);
+    // LOAD DATA keywords
+    keywords.insert("LOAD".to_string(), TokenType::Load);
+    keywords.insert("LOCAL".to_string(), TokenType::Local);
+    keywords.insert("INPATH".to_string(), TokenType::Inpath);
+    keywords.insert("INPUTFORMAT".to_string(), TokenType::InputFormat);
+    keywords.insert("SERDE".to_string(), TokenType::Serde);
+    keywords.insert("SERDEPROPERTIES".to_string(), TokenType::SerdeProperties);
+    keywords.insert("FORMAT".to_string(), TokenType::Format);
+    // SQLite
+    keywords.insert("PRAGMA".to_string(), TokenType::Pragma);
+    // SHOW statement
+    keywords.insert("SHOW".to_string(), TokenType::Show);
+    // Oracle ORDER SIBLINGS BY (hierarchical queries)
+    keywords.insert("SIBLINGS".to_string(), TokenType::Siblings);
+    // COPY and PUT statements (Snowflake, PostgreSQL)
+    keywords.insert("COPY".to_string(), TokenType::Copy);
+    keywords.insert("PUT".to_string(), TokenType::Put);
+    keywords.insert("GET".to_string(), TokenType::Get);
+    // EXEC/EXECUTE statement (TSQL, etc.)
+    keywords.insert("EXEC".to_string(), TokenType::Execute);
+    keywords.insert("EXECUTE".to_string(), TokenType::Execute);
+    // Postfix null check operators (PostgreSQL/SQLite)
+    keywords.insert("ISNULL".to_string(), TokenType::IsNull);
+    keywords.insert("NOTNULL".to_string(), TokenType::NotNull);
+    keywords
+});
+
+static DEFAULT_SINGLE_TOKENS: LazyLock<HashMap<char, TokenType>> = LazyLock::new(|| {
+    let mut single_tokens = HashMap::with_capacity(30);
+    single_tokens.insert('(', TokenType::LParen);
+    single_tokens.insert(')', TokenType::RParen);
+    single_tokens.insert('[', TokenType::LBracket);
+    single_tokens.insert(']', TokenType::RBracket);
+    single_tokens.insert('{', TokenType::LBrace);
+    single_tokens.insert('}', TokenType::RBrace);
+    single_tokens.insert(',', TokenType::Comma);
+    single_tokens.insert('.', TokenType::Dot);
+    single_tokens.insert(';', TokenType::Semicolon);
+    single_tokens.insert('+', TokenType::Plus);
+    single_tokens.insert('-', TokenType::Dash);
+    single_tokens.insert('*', TokenType::Star);
+    single_tokens.insert('/', TokenType::Slash);
+    single_tokens.insert('%', TokenType::Percent);
+    single_tokens.insert('&', TokenType::Amp);
+    single_tokens.insert('|', TokenType::Pipe);
+    single_tokens.insert('^', TokenType::Caret);
+    single_tokens.insert('~', TokenType::Tilde);
+    single_tokens.insert('<', TokenType::Lt);
+    single_tokens.insert('>', TokenType::Gt);
+    single_tokens.insert('=', TokenType::Eq);
+    single_tokens.insert('!', TokenType::Exclamation);
+    single_tokens.insert(':', TokenType::Colon);
+    single_tokens.insert('@', TokenType::DAt);
+    single_tokens.insert('#', TokenType::Hash);
+    single_tokens.insert('$', TokenType::Dollar);
+    single_tokens.insert('?', TokenType::Parameter);
+    single_tokens
+});
+
+static DEFAULT_QUOTES: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+    let mut quotes = HashMap::with_capacity(4);
+    quotes.insert("'".to_string(), "'".to_string());
+    // Triple-quoted strings (e.g., """x""")
+    quotes.insert("\"\"\"".to_string(), "\"\"\"".to_string());
+    quotes
+});
+
+static DEFAULT_IDENTIFIERS: LazyLock<HashMap<char, char>> = LazyLock::new(|| {
+    let mut identifiers = HashMap::with_capacity(4);
+    identifiers.insert('"', '"');
+    identifiers.insert('`', '`');
+    // Note: TSQL bracket-quoted identifiers [name] are handled in the parser
+    // because [ is also used for arrays and subscripts
+    identifiers
+});
+
+static DEFAULT_COMMENTS: LazyLock<HashMap<String, Option<String>>> = LazyLock::new(|| {
+    let mut comments = HashMap::with_capacity(4);
+    comments.insert("--".to_string(), None);
+    comments.insert("/*".to_string(), Some("*/".to_string()));
+    comments
+});
+
 /// Tokenizer configuration for a dialect
 #[derive(Debug, Clone)]
 pub struct TokenizerConfig {
     /// Keywords mapping (uppercase keyword -> token type)
-    pub keywords: std::collections::HashMap<String, TokenType>,
+    pub keywords: HashMap<String, TokenType>,
     /// Single character tokens
-    pub single_tokens: std::collections::HashMap<char, TokenType>,
+    pub single_tokens: HashMap<char, TokenType>,
     /// Quote characters (start -> end)
-    pub quotes: std::collections::HashMap<String, String>,
+    pub quotes: HashMap<String, String>,
     /// Identifier quote characters (start -> end)
-    pub identifiers: std::collections::HashMap<char, char>,
+    pub identifiers: HashMap<char, char>,
     /// Comment definitions (start -> optional end)
-    pub comments: std::collections::HashMap<String, Option<String>>,
+    pub comments: HashMap<String, Option<String>>,
     /// String escape characters
     pub string_escapes: Vec<char>,
     /// Whether to support nested comments
@@ -999,7 +1322,7 @@ pub struct TokenizerConfig {
     pub b_prefix_is_byte_string: bool,
     /// Numeric literal suffixes (uppercase suffix -> type name), e.g. {"L": "BIGINT", "S": "SMALLINT"}
     /// Used by Hive/Spark to parse 1L as CAST(1 AS BIGINT)
-    pub numeric_literals: std::collections::HashMap<String, String>,
+    pub numeric_literals: HashMap<String, String>,
     /// Whether unquoted identifiers can start with a digit (e.g., `1a`, `1_a`).
     /// When true, a number followed by letters/underscore is treated as an identifier.
     /// Used by Hive, Spark, MySQL, ClickHouse.
@@ -1031,316 +1354,12 @@ pub struct TokenizerConfig {
 
 impl Default for TokenizerConfig {
     fn default() -> Self {
-        let mut keywords = std::collections::HashMap::new();
-        // Add basic SQL keywords
-        keywords.insert("SELECT".to_string(), TokenType::Select);
-        keywords.insert("FROM".to_string(), TokenType::From);
-        keywords.insert("WHERE".to_string(), TokenType::Where);
-        keywords.insert("AND".to_string(), TokenType::And);
-        keywords.insert("OR".to_string(), TokenType::Or);
-        keywords.insert("NOT".to_string(), TokenType::Not);
-        keywords.insert("AS".to_string(), TokenType::As);
-        keywords.insert("ON".to_string(), TokenType::On);
-        keywords.insert("JOIN".to_string(), TokenType::Join);
-        keywords.insert("LEFT".to_string(), TokenType::Left);
-        keywords.insert("RIGHT".to_string(), TokenType::Right);
-        keywords.insert("INNER".to_string(), TokenType::Inner);
-        keywords.insert("OUTER".to_string(), TokenType::Outer);
-        keywords.insert("OUTPUT".to_string(), TokenType::Output);
-        keywords.insert("FULL".to_string(), TokenType::Full);
-        keywords.insert("CROSS".to_string(), TokenType::Cross);
-        keywords.insert("SEMI".to_string(), TokenType::Semi);
-        keywords.insert("ANTI".to_string(), TokenType::Anti);
-        keywords.insert("STRAIGHT_JOIN".to_string(), TokenType::StraightJoin);
-        keywords.insert("UNION".to_string(), TokenType::Union);
-        keywords.insert("EXCEPT".to_string(), TokenType::Except);
-        keywords.insert("MINUS".to_string(), TokenType::Except); // Oracle/Redshift alias for EXCEPT
-        keywords.insert("INTERSECT".to_string(), TokenType::Intersect);
-        keywords.insert("GROUP".to_string(), TokenType::Group);
-        keywords.insert("CUBE".to_string(), TokenType::Cube);
-        keywords.insert("ROLLUP".to_string(), TokenType::Rollup);
-        keywords.insert("WITHIN".to_string(), TokenType::Within);
-        keywords.insert("ORDER".to_string(), TokenType::Order);
-        keywords.insert("BY".to_string(), TokenType::By);
-        keywords.insert("HAVING".to_string(), TokenType::Having);
-        keywords.insert("LIMIT".to_string(), TokenType::Limit);
-        keywords.insert("OFFSET".to_string(), TokenType::Offset);
-        keywords.insert("ORDINALITY".to_string(), TokenType::Ordinality);
-        keywords.insert("FETCH".to_string(), TokenType::Fetch);
-        keywords.insert("FIRST".to_string(), TokenType::First);
-        keywords.insert("NEXT".to_string(), TokenType::Next);
-        keywords.insert("ONLY".to_string(), TokenType::Only);
-        keywords.insert("KEEP".to_string(), TokenType::Keep);
-        keywords.insert("IGNORE".to_string(), TokenType::Ignore);
-        keywords.insert("INPUT".to_string(), TokenType::Input);
-        keywords.insert("CASE".to_string(), TokenType::Case);
-        keywords.insert("WHEN".to_string(), TokenType::When);
-        keywords.insert("THEN".to_string(), TokenType::Then);
-        keywords.insert("ELSE".to_string(), TokenType::Else);
-        keywords.insert("END".to_string(), TokenType::End);
-        keywords.insert("ENDIF".to_string(), TokenType::End); // Exasol alias for END
-        keywords.insert("NULL".to_string(), TokenType::Null);
-        keywords.insert("TRUE".to_string(), TokenType::True);
-        keywords.insert("FALSE".to_string(), TokenType::False);
-        keywords.insert("IS".to_string(), TokenType::Is);
-        keywords.insert("IN".to_string(), TokenType::In);
-        keywords.insert("BETWEEN".to_string(), TokenType::Between);
-        keywords.insert("OVERLAPS".to_string(), TokenType::Overlaps);
-        keywords.insert("LIKE".to_string(), TokenType::Like);
-        keywords.insert("ILIKE".to_string(), TokenType::ILike);
-        keywords.insert("RLIKE".to_string(), TokenType::RLike);
-        keywords.insert("REGEXP".to_string(), TokenType::RLike);
-        keywords.insert("ESCAPE".to_string(), TokenType::Escape);
-        keywords.insert("EXISTS".to_string(), TokenType::Exists);
-        keywords.insert("DISTINCT".to_string(), TokenType::Distinct);
-        keywords.insert("ALL".to_string(), TokenType::All);
-        keywords.insert("WITH".to_string(), TokenType::With);
-        keywords.insert("CREATE".to_string(), TokenType::Create);
-        keywords.insert("DROP".to_string(), TokenType::Drop);
-        keywords.insert("ALTER".to_string(), TokenType::Alter);
-        keywords.insert("TRUNCATE".to_string(), TokenType::Truncate);
-        keywords.insert("TABLE".to_string(), TokenType::Table);
-        keywords.insert("VIEW".to_string(), TokenType::View);
-        keywords.insert("INDEX".to_string(), TokenType::Index);
-        keywords.insert("COLUMN".to_string(), TokenType::Column);
-        keywords.insert("CONSTRAINT".to_string(), TokenType::Constraint);
-        keywords.insert("ADD".to_string(), TokenType::Add);
-        keywords.insert("CASCADE".to_string(), TokenType::Cascade);
-        keywords.insert("RESTRICT".to_string(), TokenType::Restrict);
-        keywords.insert("RENAME".to_string(), TokenType::Rename);
-        keywords.insert("TEMPORARY".to_string(), TokenType::Temporary);
-        keywords.insert("TEMP".to_string(), TokenType::Temporary);
-        keywords.insert("UNIQUE".to_string(), TokenType::Unique);
-        keywords.insert("PRIMARY".to_string(), TokenType::PrimaryKey);
-        keywords.insert("FOREIGN".to_string(), TokenType::ForeignKey);
-        keywords.insert("KEY".to_string(), TokenType::Key);
-        keywords.insert("KILL".to_string(), TokenType::Kill);
-        keywords.insert("REFERENCES".to_string(), TokenType::References);
-        keywords.insert("DEFAULT".to_string(), TokenType::Default);
-        keywords.insert("DECLARE".to_string(), TokenType::Declare);
-        keywords.insert("AUTO_INCREMENT".to_string(), TokenType::AutoIncrement);
-        keywords.insert("AUTOINCREMENT".to_string(), TokenType::AutoIncrement); // Snowflake style
-        keywords.insert("MATERIALIZED".to_string(), TokenType::Materialized);
-        keywords.insert("REPLACE".to_string(), TokenType::Replace);
-        keywords.insert("TO".to_string(), TokenType::To);
-        keywords.insert("INSERT".to_string(), TokenType::Insert);
-        keywords.insert("OVERWRITE".to_string(), TokenType::Overwrite);
-        keywords.insert("UPDATE".to_string(), TokenType::Update);
-        keywords.insert("USE".to_string(), TokenType::Use);
-        keywords.insert("WAREHOUSE".to_string(), TokenType::Warehouse);
-        keywords.insert("GLOB".to_string(), TokenType::Glob);
-        keywords.insert("DELETE".to_string(), TokenType::Delete);
-        keywords.insert("MERGE".to_string(), TokenType::Merge);
-        keywords.insert("CACHE".to_string(), TokenType::Cache);
-        keywords.insert("UNCACHE".to_string(), TokenType::Uncache);
-        keywords.insert("REFRESH".to_string(), TokenType::Refresh);
-        keywords.insert("GRANT".to_string(), TokenType::Grant);
-        keywords.insert("REVOKE".to_string(), TokenType::Revoke);
-        keywords.insert("COMMENT".to_string(), TokenType::Comment);
-        keywords.insert("COLLATE".to_string(), TokenType::Collate);
-        keywords.insert("INTO".to_string(), TokenType::Into);
-        keywords.insert("VALUES".to_string(), TokenType::Values);
-        keywords.insert("SET".to_string(), TokenType::Set);
-        keywords.insert("SETTINGS".to_string(), TokenType::Settings);
-        keywords.insert("SEPARATOR".to_string(), TokenType::Separator);
-        keywords.insert("ASC".to_string(), TokenType::Asc);
-        keywords.insert("DESC".to_string(), TokenType::Desc);
-        keywords.insert("NULLS".to_string(), TokenType::Nulls);
-        keywords.insert("RESPECT".to_string(), TokenType::Respect);
-        keywords.insert("FIRST".to_string(), TokenType::First);
-        keywords.insert("LAST".to_string(), TokenType::Last);
-        keywords.insert("IF".to_string(), TokenType::If);
-        keywords.insert("CAST".to_string(), TokenType::Cast);
-        keywords.insert("TRY_CAST".to_string(), TokenType::TryCast);
-        keywords.insert("SAFE_CAST".to_string(), TokenType::SafeCast);
-        keywords.insert("OVER".to_string(), TokenType::Over);
-        keywords.insert("PARTITION".to_string(), TokenType::Partition);
-        keywords.insert("PLACING".to_string(), TokenType::Placing);
-        keywords.insert("WINDOW".to_string(), TokenType::Window);
-        keywords.insert("ROWS".to_string(), TokenType::Rows);
-        keywords.insert("RANGE".to_string(), TokenType::Range);
-        keywords.insert("FILTER".to_string(), TokenType::Filter);
-        keywords.insert("NATURAL".to_string(), TokenType::Natural);
-        keywords.insert("USING".to_string(), TokenType::Using);
-        keywords.insert("UNBOUNDED".to_string(), TokenType::Unbounded);
-        keywords.insert("PRECEDING".to_string(), TokenType::Preceding);
-        keywords.insert("FOLLOWING".to_string(), TokenType::Following);
-        keywords.insert("CURRENT".to_string(), TokenType::Current);
-        keywords.insert("ROW".to_string(), TokenType::Row);
-        keywords.insert("GROUPS".to_string(), TokenType::Groups);
-        keywords.insert("RECURSIVE".to_string(), TokenType::Recursive);
-        // TRIM function position keywords
-        keywords.insert("BOTH".to_string(), TokenType::Both);
-        keywords.insert("LEADING".to_string(), TokenType::Leading);
-        keywords.insert("TRAILING".to_string(), TokenType::Trailing);
-        keywords.insert("INTERVAL".to_string(), TokenType::Interval);
-        // Phase 3: Additional keywords
-        keywords.insert("TOP".to_string(), TokenType::Top);
-        keywords.insert("QUALIFY".to_string(), TokenType::Qualify);
-        keywords.insert("SAMPLE".to_string(), TokenType::Sample);
-        keywords.insert("TABLESAMPLE".to_string(), TokenType::TableSample);
-        keywords.insert("BERNOULLI".to_string(), TokenType::Bernoulli);
-        keywords.insert("SYSTEM".to_string(), TokenType::System);
-        keywords.insert("BLOCK".to_string(), TokenType::Block);
-        keywords.insert("SEED".to_string(), TokenType::Seed);
-        keywords.insert("REPEATABLE".to_string(), TokenType::Repeatable);
-        keywords.insert("TIES".to_string(), TokenType::Ties);
-        keywords.insert("LATERAL".to_string(), TokenType::Lateral);
-        keywords.insert("LAMBDA".to_string(), TokenType::Lambda);
-        keywords.insert("APPLY".to_string(), TokenType::Apply);
-        // Oracle CONNECT BY keywords
-        keywords.insert("CONNECT".to_string(), TokenType::Connect);
-        // Hive/Spark specific keywords
-        keywords.insert("CLUSTER".to_string(), TokenType::Cluster);
-        keywords.insert("DISTRIBUTE".to_string(), TokenType::Distribute);
-        keywords.insert("SORT".to_string(), TokenType::Sort);
-        keywords.insert("PIVOT".to_string(), TokenType::Pivot);
-        keywords.insert("PREWHERE".to_string(), TokenType::Prewhere);
-        keywords.insert("UNPIVOT".to_string(), TokenType::Unpivot);
-        keywords.insert("FOR".to_string(), TokenType::For);
-        keywords.insert("ANY".to_string(), TokenType::Any);
-        keywords.insert("SOME".to_string(), TokenType::Some);
-        keywords.insert("ASOF".to_string(), TokenType::AsOf);
-        keywords.insert("PERCENT".to_string(), TokenType::Percent);
-        keywords.insert("EXCLUDE".to_string(), TokenType::Exclude);
-        keywords.insert("NO".to_string(), TokenType::No);
-        keywords.insert("OTHERS".to_string(), TokenType::Others);
-        // PostgreSQL OPERATOR() syntax for schema-qualified operators
-        keywords.insert("OPERATOR".to_string(), TokenType::Operator);
-        // Phase 4: DDL keywords
-        keywords.insert("SCHEMA".to_string(), TokenType::Schema);
-        keywords.insert("NAMESPACE".to_string(), TokenType::Namespace);
-        keywords.insert("DATABASE".to_string(), TokenType::Database);
-        keywords.insert("FUNCTION".to_string(), TokenType::Function);
-        keywords.insert("PROCEDURE".to_string(), TokenType::Procedure);
-        keywords.insert("PROC".to_string(), TokenType::Procedure);
-        keywords.insert("SEQUENCE".to_string(), TokenType::Sequence);
-        keywords.insert("TRIGGER".to_string(), TokenType::Trigger);
-        keywords.insert("TYPE".to_string(), TokenType::Type);
-        keywords.insert("DOMAIN".to_string(), TokenType::Domain);
-        keywords.insert("RETURNS".to_string(), TokenType::Returns);
-        keywords.insert("RETURNING".to_string(), TokenType::Returning);
-        keywords.insert("LANGUAGE".to_string(), TokenType::Language);
-        keywords.insert("ROLLBACK".to_string(), TokenType::Rollback);
-        keywords.insert("COMMIT".to_string(), TokenType::Commit);
-        keywords.insert("BEGIN".to_string(), TokenType::Begin);
-        keywords.insert("DESCRIBE".to_string(), TokenType::Describe);
-        keywords.insert("PRESERVE".to_string(), TokenType::Preserve);
-        keywords.insert("TRANSACTION".to_string(), TokenType::Transaction);
-        keywords.insert("SAVEPOINT".to_string(), TokenType::Savepoint);
-        keywords.insert("BODY".to_string(), TokenType::Body);
-        keywords.insert("INCREMENT".to_string(), TokenType::Increment);
-        keywords.insert("MINVALUE".to_string(), TokenType::Minvalue);
-        keywords.insert("MAXVALUE".to_string(), TokenType::Maxvalue);
-        keywords.insert("CYCLE".to_string(), TokenType::Cycle);
-        keywords.insert("NOCYCLE".to_string(), TokenType::NoCycle);
-        keywords.insert("PRIOR".to_string(), TokenType::Prior);
-        // MATCH_RECOGNIZE keywords
-        keywords.insert("MATCH".to_string(), TokenType::Match);
-        keywords.insert("MATCH_RECOGNIZE".to_string(), TokenType::MatchRecognize);
-        keywords.insert("MEASURES".to_string(), TokenType::Measures);
-        keywords.insert("PATTERN".to_string(), TokenType::Pattern);
-        keywords.insert("DEFINE".to_string(), TokenType::Define);
-        keywords.insert("RUNNING".to_string(), TokenType::Running);
-        keywords.insert("FINAL".to_string(), TokenType::Final);
-        keywords.insert("OWNED".to_string(), TokenType::Owned);
-        keywords.insert("AFTER".to_string(), TokenType::After);
-        keywords.insert("BEFORE".to_string(), TokenType::Before);
-        keywords.insert("INSTEAD".to_string(), TokenType::Instead);
-        keywords.insert("EACH".to_string(), TokenType::Each);
-        keywords.insert("STATEMENT".to_string(), TokenType::Statement);
-        keywords.insert("REFERENCING".to_string(), TokenType::Referencing);
-        keywords.insert("OLD".to_string(), TokenType::Old);
-        keywords.insert("NEW".to_string(), TokenType::New);
-        keywords.insert("OF".to_string(), TokenType::Of);
-        keywords.insert("CHECK".to_string(), TokenType::Check);
-        keywords.insert("START".to_string(), TokenType::Start);
-        keywords.insert("ENUM".to_string(), TokenType::Enum);
-        keywords.insert("AUTHORIZATION".to_string(), TokenType::Authorization);
-        keywords.insert("RESTART".to_string(), TokenType::Restart);
-        // Date/time literal keywords
-        keywords.insert("DATE".to_string(), TokenType::Date);
-        keywords.insert("TIME".to_string(), TokenType::Time);
-        keywords.insert("TIMESTAMP".to_string(), TokenType::Timestamp);
-        keywords.insert("DATETIME".to_string(), TokenType::DateTime);
-        keywords.insert("GENERATED".to_string(), TokenType::Generated);
-        keywords.insert("IDENTITY".to_string(), TokenType::Identity);
-        keywords.insert("ALWAYS".to_string(), TokenType::Always);
-        // LOAD DATA keywords
-        keywords.insert("LOAD".to_string(), TokenType::Load);
-        keywords.insert("LOCAL".to_string(), TokenType::Local);
-        keywords.insert("INPATH".to_string(), TokenType::Inpath);
-        keywords.insert("INPUTFORMAT".to_string(), TokenType::InputFormat);
-        keywords.insert("SERDE".to_string(), TokenType::Serde);
-        keywords.insert("SERDEPROPERTIES".to_string(), TokenType::SerdeProperties);
-        keywords.insert("FORMAT".to_string(), TokenType::Format);
-        // SQLite
-        keywords.insert("PRAGMA".to_string(), TokenType::Pragma);
-        // SHOW statement
-        keywords.insert("SHOW".to_string(), TokenType::Show);
-        // Oracle ORDER SIBLINGS BY (hierarchical queries)
-        keywords.insert("SIBLINGS".to_string(), TokenType::Siblings);
-        // COPY and PUT statements (Snowflake, PostgreSQL)
-        keywords.insert("COPY".to_string(), TokenType::Copy);
-        keywords.insert("PUT".to_string(), TokenType::Put);
-        keywords.insert("GET".to_string(), TokenType::Get);
-        // EXEC/EXECUTE statement (TSQL, etc.)
-        keywords.insert("EXEC".to_string(), TokenType::Execute);
-        keywords.insert("EXECUTE".to_string(), TokenType::Execute);
-        // Postfix null check operators (PostgreSQL/SQLite)
-        keywords.insert("ISNULL".to_string(), TokenType::IsNull);
-        keywords.insert("NOTNULL".to_string(), TokenType::NotNull);
-
-        let mut single_tokens = std::collections::HashMap::new();
-        single_tokens.insert('(', TokenType::LParen);
-        single_tokens.insert(')', TokenType::RParen);
-        single_tokens.insert('[', TokenType::LBracket);
-        single_tokens.insert(']', TokenType::RBracket);
-        single_tokens.insert('{', TokenType::LBrace);
-        single_tokens.insert('}', TokenType::RBrace);
-        single_tokens.insert(',', TokenType::Comma);
-        single_tokens.insert('.', TokenType::Dot);
-        single_tokens.insert(';', TokenType::Semicolon);
-        single_tokens.insert('+', TokenType::Plus);
-        single_tokens.insert('-', TokenType::Dash);
-        single_tokens.insert('*', TokenType::Star);
-        single_tokens.insert('/', TokenType::Slash);
-        single_tokens.insert('%', TokenType::Percent);
-        single_tokens.insert('&', TokenType::Amp);
-        single_tokens.insert('|', TokenType::Pipe);
-        single_tokens.insert('^', TokenType::Caret);
-        single_tokens.insert('~', TokenType::Tilde);
-        single_tokens.insert('<', TokenType::Lt);
-        single_tokens.insert('>', TokenType::Gt);
-        single_tokens.insert('=', TokenType::Eq);
-        single_tokens.insert('!', TokenType::Exclamation);
-        single_tokens.insert(':', TokenType::Colon);
-        single_tokens.insert('@', TokenType::DAt);
-        single_tokens.insert('#', TokenType::Hash);
-        single_tokens.insert('$', TokenType::Dollar);
-        single_tokens.insert('?', TokenType::Parameter);
-
-        let mut quotes = std::collections::HashMap::new();
-        quotes.insert("'".to_string(), "'".to_string());
-        // Triple-quoted strings (e.g., """x""")
-        quotes.insert("\"\"\"".to_string(), "\"\"\"".to_string());
-
-        let mut identifiers = std::collections::HashMap::new();
-        identifiers.insert('"', '"');
-        identifiers.insert('`', '`');
-        // Note: TSQL bracket-quoted identifiers [name] are handled in the parser
-        // because [ is also used for arrays and subscripts
-
-        let mut comments = std::collections::HashMap::new();
-        comments.insert("--".to_string(), None);
-        comments.insert("/*".to_string(), Some("*/".to_string()));
-
         Self {
-            keywords,
-            single_tokens,
-            quotes,
-            identifiers,
-            comments,
+            keywords: DEFAULT_KEYWORDS.clone(),
+            single_tokens: DEFAULT_SINGLE_TOKENS.clone(),
+            quotes: DEFAULT_QUOTES.clone(),
+            identifiers: DEFAULT_IDENTIFIERS.clone(),
+            comments: DEFAULT_COMMENTS.clone(),
             // Standard SQL: only '' (doubled quote) escapes a quote
             // Backslash escapes are dialect-specific (MySQL, etc.)
             string_escapes: vec!['\''],
@@ -1349,7 +1368,7 @@ impl Default for TokenizerConfig {
             escape_follow_chars: vec![],
             // Default: b'...' is bit string (standard SQL), not byte string (BigQuery)
             b_prefix_is_byte_string: false,
-            numeric_literals: std::collections::HashMap::new(),
+            numeric_literals: HashMap::new(),
             identifiers_can_start_with_digit: false,
             hex_number_strings: false,
             hex_string_is_integer_type: false,
@@ -1461,6 +1480,7 @@ impl<'a> TokenizerState<'a> {
         Ok(std::mem::take(&mut self.tokens))
     }
 
+    #[inline]
     fn is_at_end(&self) -> bool {
         self.current >= self.size
     }
@@ -1474,6 +1494,7 @@ impl<'a> TokenizerState<'a> {
         }
     }
 
+    #[inline]
     fn peek(&self) -> char {
         if self.is_at_end() {
             '\0'
@@ -1482,6 +1503,7 @@ impl<'a> TokenizerState<'a> {
         }
     }
 
+    #[inline]
     fn peek_next(&self) -> char {
         if self.current + 1 >= self.size {
             '\0'
@@ -1490,6 +1512,7 @@ impl<'a> TokenizerState<'a> {
         }
     }
 
+    #[inline]
     fn advance(&mut self) -> char {
         let c = self.peek();
         self.current += 1;
@@ -2633,13 +2656,15 @@ impl<'a> TokenizerState<'a> {
 
         // Check for numeric literal suffixes (e.g., 1L -> BIGINT, 1s -> SMALLINT in Hive/Spark)
         if !self.config.numeric_literals.is_empty() && !self.is_at_end() {
-            let next_char = self.peek().to_uppercase().to_string();
+            let next_char: String = self.peek().to_ascii_uppercase().to_string();
             // Try 2-char suffix first (e.g., "BD"), then 1-char
             let suffix_match = if self.current + 1 < self.size {
-                let two_char: String = vec![self.chars[self.current], self.chars[self.current + 1]]
-                    .iter()
-                    .collect::<String>()
-                    .to_uppercase();
+                let two_char: String = [
+                    self.chars[self.current].to_ascii_uppercase(),
+                    self.chars[self.current + 1].to_ascii_uppercase(),
+                ]
+                .iter()
+                .collect();
                 if self.config.numeric_literals.contains_key(&two_char) {
                     // Make sure the 2-char suffix is not followed by more identifier chars
                     let after_suffix = if self.current + 2 < self.size {
@@ -2749,6 +2774,24 @@ impl<'a> TokenizerState<'a> {
         Ok(())
     }
 
+    /// Look up a keyword using a stack buffer for ASCII uppercasing, avoiding heap allocation.
+    /// Returns `TokenType::Var` for texts longer than 128 bytes or non-UTF-8 results.
+    #[inline]
+    fn lookup_keyword_ascii(keywords: &HashMap<String, TokenType>, text: &str) -> TokenType {
+        if text.len() > 128 {
+            return TokenType::Var;
+        }
+        let mut buf = [0u8; 128];
+        for (i, b) in text.bytes().enumerate() {
+            buf[i] = b.to_ascii_uppercase();
+        }
+        if let Ok(upper) = std::str::from_utf8(&buf[..text.len()]) {
+            keywords.get(upper).copied().unwrap_or(TokenType::Var)
+        } else {
+            TokenType::Var
+        }
+    }
+
     fn scan_identifier_or_keyword(&mut self) -> Result<()> {
         // Guard against unrecognized characters that could cause infinite loops
         let first_char = self.peek();
@@ -2787,10 +2830,9 @@ impl<'a> TokenizerState<'a> {
         }
 
         let text = self.text_from_range(self.start, self.current);
-        let upper = text.to_uppercase();
 
         // Special-case NOT= (Teradata and other dialects)
-        if upper == "NOT" && self.peek() == '=' {
+        if text.eq_ignore_ascii_case("NOT") && self.peek() == '=' {
             self.advance(); // consume '='
             self.add_token(TokenType::Neq);
             return Ok(());
@@ -2807,7 +2849,7 @@ impl<'a> TokenizerState<'a> {
 
         // Handle raw strings first - they're special because they work with both ' and "
         // even in dialects where " is normally an identifier delimiter (like Databricks)
-        if upper == "R" && (is_single_quote || is_double_quote_for_raw) {
+        if text.eq_ignore_ascii_case("R") && (is_single_quote || is_double_quote_for_raw) {
             // Raw string r'...' or r"..." or r'''...''' or r"""...""" (BigQuery style)
             // In raw strings, backslashes are treated literally (no escape processing)
             let quote_char = if is_single_quote { '\'' } else { '"' };
@@ -2828,68 +2870,61 @@ impl<'a> TokenizerState<'a> {
         }
 
         if is_single_quote || is_double_quote {
-            match upper.as_str() {
-                "N" => {
-                    // National string N'...'
-                    self.advance(); // consume the opening quote
-                    let string_value = if is_single_quote {
-                        self.scan_string_content()?
-                    } else {
-                        self.scan_double_quoted_string_content()?
-                    };
-                    self.add_token_with_text(TokenType::NationalString, string_value);
-                    return Ok(());
-                }
-                "E" => {
-                    // PostgreSQL escape string E'...' or e'...'
-                    // Preserve the case by prefixing with "e:" or "E:"
-                    // Always use backslash escapes for escape strings (e.g., \' is an escaped quote)
-                    let lowercase = text == "e";
-                    let prefix = if lowercase { "e:" } else { "E:" };
-                    self.advance(); // consume the opening quote
-                    let string_value = self.scan_string_content_with_escapes(true)?;
-                    self.add_token_with_text(
-                        TokenType::EscapeString,
-                        format!("{}{}", prefix, string_value),
-                    );
-                    return Ok(());
-                }
-                "X" => {
-                    // Hex string X'...'
-                    self.advance(); // consume the opening quote
-                    let string_value = if is_single_quote {
-                        self.scan_string_content()?
-                    } else {
-                        self.scan_double_quoted_string_content()?
-                    };
-                    self.add_token_with_text(TokenType::HexString, string_value);
-                    return Ok(());
-                }
-                "B" if is_double_quote => {
-                    // Byte string b"..." (BigQuery style) - MUST check before single quote B'...'
-                    self.advance(); // consume the opening quote
-                    let string_value = self.scan_double_quoted_string_content()?;
+            if text.eq_ignore_ascii_case("N") {
+                // National string N'...'
+                self.advance(); // consume the opening quote
+                let string_value = if is_single_quote {
+                    self.scan_string_content()?
+                } else {
+                    self.scan_double_quoted_string_content()?
+                };
+                self.add_token_with_text(TokenType::NationalString, string_value);
+                return Ok(());
+            } else if text.eq_ignore_ascii_case("E") {
+                // PostgreSQL escape string E'...' or e'...'
+                // Preserve the case by prefixing with "e:" or "E:"
+                // Always use backslash escapes for escape strings (e.g., \' is an escaped quote)
+                let lowercase = text == "e";
+                let prefix = if lowercase { "e:" } else { "E:" };
+                self.advance(); // consume the opening quote
+                let string_value = self.scan_string_content_with_escapes(true)?;
+                self.add_token_with_text(
+                    TokenType::EscapeString,
+                    format!("{}{}", prefix, string_value),
+                );
+                return Ok(());
+            } else if text.eq_ignore_ascii_case("X") {
+                // Hex string X'...'
+                self.advance(); // consume the opening quote
+                let string_value = if is_single_quote {
+                    self.scan_string_content()?
+                } else {
+                    self.scan_double_quoted_string_content()?
+                };
+                self.add_token_with_text(TokenType::HexString, string_value);
+                return Ok(());
+            } else if text.eq_ignore_ascii_case("B") && is_double_quote {
+                // Byte string b"..." (BigQuery style) - MUST check before single quote B'...'
+                self.advance(); // consume the opening quote
+                let string_value = self.scan_double_quoted_string_content()?;
+                self.add_token_with_text(TokenType::ByteString, string_value);
+                return Ok(());
+            } else if text.eq_ignore_ascii_case("B") && is_single_quote {
+                // For BigQuery: b'...' is a byte string (bytes data)
+                // For standard SQL: B'...' is a bit string (binary digits)
+                self.advance(); // consume the opening quote
+                let string_value = self.scan_string_content()?;
+                if self.config.b_prefix_is_byte_string {
                     self.add_token_with_text(TokenType::ByteString, string_value);
-                    return Ok(());
+                } else {
+                    self.add_token_with_text(TokenType::BitString, string_value);
                 }
-                "B" if is_single_quote => {
-                    // For BigQuery: b'...' is a byte string (bytes data)
-                    // For standard SQL: B'...' is a bit string (binary digits)
-                    self.advance(); // consume the opening quote
-                    let string_value = self.scan_string_content()?;
-                    if self.config.b_prefix_is_byte_string {
-                        self.add_token_with_text(TokenType::ByteString, string_value);
-                    } else {
-                        self.add_token_with_text(TokenType::BitString, string_value);
-                    }
-                    return Ok(());
-                }
-                _ => {}
+                return Ok(());
             }
         }
 
         // Check for U&'...' Unicode string syntax (SQL standard)
-        if upper == "U"
+        if text.eq_ignore_ascii_case("U")
             && self.peek() == '&'
             && self.current + 1 < self.size
             && self.chars[self.current + 1] == '\''
@@ -2901,12 +2936,7 @@ impl<'a> TokenizerState<'a> {
             return Ok(());
         }
 
-        let token_type = self
-            .config
-            .keywords
-            .get(&upper)
-            .copied()
-            .unwrap_or(TokenType::Var);
+        let token_type = Self::lookup_keyword_ascii(&self.config.keywords, &text);
 
         self.add_token_with_text(token_type, text);
         Ok(())
