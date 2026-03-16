@@ -1,6 +1,6 @@
 {
   "name": "@polyglot-sql/sdk",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "SQL dialect translator powered by WebAssembly",
   "type": "module",
   "main": "./dist/index.cjs",
