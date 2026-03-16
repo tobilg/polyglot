@@ -10986,7 +10986,9 @@ impl Parser {
             let mut with_connection = None;
             let mut properties = Vec::new();
 
-            // Parse WITH PARTITION COLUMNS / WITH CONNECTION in any order
+            // Parse WITH PARTITION COLUMNS / WITH CONNECTION in any order.
+            // Note: duplicate WITH PARTITION COLUMNS clauses silently overwrite;
+            // this isn't a real-world concern so we don't error on it.
             while self.check(TokenType::With) {
                 let save = self.current;
                 self.advance(); // consume WITH
@@ -10994,7 +10996,11 @@ impl Parser {
                 if self.check(TokenType::Partition) {
                     // WITH PARTITION COLUMNS (col_name col_type, ...)
                     self.advance(); // consume PARTITION
-                    self.match_identifier("COLUMNS");
+                    if !self.match_identifier("COLUMNS") {
+                        return Err(self.parse_error(
+                            "Expected COLUMNS after WITH PARTITION",
+                        ));
+                    }
                     if self.check(TokenType::LParen) {
                         self.advance(); // consume (
                         let (part_cols, _) = self.parse_column_definitions()?;
@@ -56562,7 +56568,36 @@ OPTIONS (
     }
 
     #[test]
+    fn test_bigquery_create_external_table_reversed_clauses() {
+        use crate::DialectType;
+        let sql = "CREATE EXTERNAL TABLE t WITH CONNECTION `project.us.my_conn` WITH PARTITION COLUMNS (dt DATE) OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.with_connection.is_some(), "Expected WITH CONNECTION");
+        assert_eq!(create.with_partition_columns.len(), 1, "Expected 1 partition column");
+        // Roundtrip: generator always emits PARTITION COLUMNS before CONNECTION
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        let expected = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS (dt DATE) WITH CONNECTION `project.us.my_conn` OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        assert_eq!(generated, expected);
+    }
 
+    #[test]
+    fn test_bigquery_create_external_table_bare_partition_columns() {
+        use crate::DialectType;
+        let sql = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.with_partition_columns.is_empty(), "Bare WITH PARTITION COLUMNS should produce empty partition column list");
+        assert!(!create.properties.is_empty(), "Expected OPTIONS");
+    }
+
+    #[test]
     fn test_parse_drop_table() {
         let result = Parser::parse_sql("DROP TABLE IF EXISTS users CASCADE").unwrap();
         assert!(matches!(result[0], Expression::DropTable(_)));
