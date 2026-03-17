@@ -40,6 +40,8 @@ impl DialectImpl for ClickHouseDialect {
         // ClickHouse supports 0xDEADBEEF hex integer literals
         config.hex_number_strings = true;
         config.hex_string_is_integer_type = true;
+        // ClickHouse allows underscores as digit separators in numeric literals
+        config.numbers_can_be_underscore_separated = true;
         config
     }
 

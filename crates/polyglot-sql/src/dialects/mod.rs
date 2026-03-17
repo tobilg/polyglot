@@ -1562,6 +1562,11 @@ where
             f.this = transform_recursive(f.this, transform_fn)?;
             Expression::ArrayDistinct(f)
         }
+        Expression::ArrayPosition(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            f.expression = transform_recursive(f.expression, transform_fn)?;
+            Expression::ArrayPosition(f)
+        }
 
         // Pass through leaf nodes unchanged
         other => other,
@@ -2591,6 +2596,132 @@ impl Dialect {
                     normalized
                 };
 
+                // Snowflake source to DuckDB target: RANDOM()/RANDOM(seed) -> scaled RANDOM()
+                // Snowflake RANDOM() returns integer in [-2^63, 2^63-1], DuckDB RANDOM() returns float [0, 1)
+                // Skip RANDOM inside UNIFORM/NORMAL/ZIPF/RANDSTR generator args since those
+                // functions handle their generator args differently (as float seeds).
+                let normalized = if matches!(self.dialect_type, DialectType::Snowflake)
+                    && matches!(target, DialectType::DuckDB)
+                {
+                    fn make_scaled_random() -> Expression {
+                        let lower = Expression::Literal(crate::expressions::Literal::Number("-9.223372036854776E+18".to_string()));
+                        let upper = Expression::Literal(crate::expressions::Literal::Number("9.223372036854776e+18".to_string()));
+                        let random_call = Expression::Random(crate::expressions::Random);
+                        let range_size = Expression::Paren(Box::new(crate::expressions::Paren {
+                            this: Expression::Sub(Box::new(crate::expressions::BinaryOp {
+                                left: upper,
+                                right: lower.clone(),
+                                left_comments: vec![],
+                                operator_comments: vec![],
+                                trailing_comments: vec![],
+                                inferred_type: None,
+                            })),
+                            trailing_comments: vec![],
+                        }));
+                        let scaled = Expression::Mul(Box::new(crate::expressions::BinaryOp {
+                            left: random_call,
+                            right: range_size,
+                            left_comments: vec![],
+                            operator_comments: vec![],
+                            trailing_comments: vec![],
+                            inferred_type: None,
+                        }));
+                        let shifted = Expression::Add(Box::new(crate::expressions::BinaryOp {
+                            left: lower,
+                            right: scaled,
+                            left_comments: vec![],
+                            operator_comments: vec![],
+                            trailing_comments: vec![],
+                            inferred_type: None,
+                        }));
+                        Expression::Cast(Box::new(crate::expressions::Cast {
+                            this: shifted,
+                            to: crate::expressions::DataType::BigInt { length: None },
+                            trailing_comments: vec![],
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: None,
+                        }))
+                    }
+
+                    // Pre-process: protect seeded RANDOM(seed) inside UNIFORM/NORMAL/ZIPF/RANDSTR
+                    // by converting Rand{seed: Some(s)} to Function{name:"RANDOM", args:[s]}.
+                    // This prevents transform_recursive (which is bottom-up) from expanding
+                    // seeded RANDOM into make_scaled_random() and losing the seed value.
+                    // Unseeded RANDOM()/Rand{seed:None} is left as-is so it gets expanded
+                    // and then un-expanded back to Expression::Random by the code below.
+                    let normalized = transform_recursive(normalized, &|e| {
+                        if let Expression::Function(ref f) = e {
+                            let n = f.name.to_ascii_uppercase();
+                            if n == "UNIFORM" || n == "NORMAL" || n == "ZIPF" || n == "RANDSTR" {
+                                if let Expression::Function(mut f) = e {
+                                    for arg in f.args.iter_mut() {
+                                        if let Expression::Rand(ref r) = arg {
+                                            if r.lower.is_none() && r.upper.is_none() {
+                                                if let Some(ref seed) = r.seed {
+                                                    // Convert Rand{seed: Some(s)} to Function("RANDOM", [s])
+                                                    // so it won't be expanded by the RANDOM expansion below
+                                                    *arg = Expression::Function(Box::new(crate::expressions::Function::new(
+                                                        "RANDOM".to_string(),
+                                                        vec![*seed.clone()],
+                                                    )));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return Ok(Expression::Function(f));
+                                }
+                            }
+                        }
+                        Ok(e)
+                    })?;
+
+                    // transform_recursive processes bottom-up, so RANDOM() (unseeded) inside
+                    // generator functions (UNIFORM, NORMAL, ZIPF) gets expanded before
+                    // we see the parent. We detect this and undo the expansion by replacing
+                    // the expanded pattern back with Expression::Random.
+                    // Seeded RANDOM(seed) was already protected above as Function("RANDOM", [seed]).
+                    // Note: RANDSTR is NOT included here — it needs the expanded form for unseeded
+                    // RANDOM() since the DuckDB handler uses the expanded SQL as-is in the hash.
+                    transform_recursive(normalized, &|e| {
+                        if let Expression::Function(ref f) = e {
+                            let n = f.name.to_ascii_uppercase();
+                            if n == "UNIFORM" || n == "NORMAL" || n == "ZIPF" {
+                                if let Expression::Function(mut f) = e {
+                                    for arg in f.args.iter_mut() {
+                                        // Detect expanded RANDOM pattern: CAST(-9.22... + RANDOM() * (...) AS BIGINT)
+                                        if let Expression::Cast(ref cast) = arg {
+                                            if matches!(cast.to, crate::expressions::DataType::BigInt { .. }) {
+                                                if let Expression::Add(ref add) = cast.this {
+                                                    if let Expression::Literal(crate::expressions::Literal::Number(ref num)) = add.left {
+                                                        if num == "-9.223372036854776E+18" {
+                                                            *arg = Expression::Random(crate::expressions::Random);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    return Ok(Expression::Function(f));
+                                }
+                                return Ok(e);
+                            }
+                        }
+                        match e {
+                            Expression::Random(_) => Ok(make_scaled_random()),
+                            // Rand(seed) with no bounds: drop seed and expand
+                            // (DuckDB RANDOM doesn't support seeds)
+                            Expression::Rand(ref r) if r.lower.is_none() && r.upper.is_none() => {
+                                Ok(make_scaled_random())
+                            }
+                            _ => Ok(e),
+                        }
+                    })?
+                } else {
+                    normalized
+                };
+
                 // Apply cross-dialect semantic normalizations
                 let normalized =
                     Self::cross_dialect_normalize(normalized, self.dialect_type, target)?;
@@ -2871,7 +3002,7 @@ impl Dialect {
     ///   SELECT ..., alias, ... FROM t CROSS JOIN UNNEST(GENERATE_DATE_ARRAY(start, end, INTERVAL '1' unit)) AS alias
     /// To:
     ///   SELECT ..., DATEADD(unit, CAST(alias AS INT), CAST(start AS DATE)) AS alias, ...
-    ///   FROM t, LATERAL FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1)) AS _t0(seq, key, path, index, alias, this)
+    ///   FROM t, LATERAL FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, DATEDIFF(unit, start, end) + 1)) AS _t0(seq, key, path, index, alias, this)
     fn transform_generate_date_array_snowflake(expr: Expression) -> Result<Expression> {
         use crate::expressions::*;
         transform_recursive(expr, &|e| {
@@ -2981,7 +3112,9 @@ impl Dialect {
             };
             let join_idx = gda_join_idx.unwrap();
 
-            // Build ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1)
+            // Build ARRAY_GENERATE_RANGE(0, DATEDIFF(unit, start, end) + 1)
+            // ARRAY_GENERATE_RANGE uses exclusive end, and we need DATEDIFF + 1 values
+            // (inclusive date range), so the exclusive end is DATEDIFF + 1.
             let datediff = Expression::Function(Box::new(Function::new(
                 "DATEDIFF".to_string(),
                 vec![
@@ -2997,29 +3130,8 @@ impl Dialect {
                     end_expr.clone(),
                 ],
             )));
-            // (DATEDIFF(...) + 1 - 1) + 1
-            let plus_one = Expression::Add(Box::new(BinaryOp {
+            let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
                 left: datediff,
-                right: Expression::Literal(Literal::Number("1".to_string())),
-                left_comments: vec![],
-                operator_comments: vec![],
-                trailing_comments: vec![],
-                inferred_type: None,
-            }));
-            let minus_one = Expression::Sub(Box::new(BinaryOp {
-                left: plus_one,
-                right: Expression::Literal(Literal::Number("1".to_string())),
-                left_comments: vec![],
-                operator_comments: vec![],
-                trailing_comments: vec![],
-                inferred_type: None,
-            }));
-            let paren_inner = Expression::Paren(Box::new(Paren {
-                this: minus_one,
-                trailing_comments: vec![],
-            }));
-            let outer_plus_one = Expression::Add(Box::new(BinaryOp {
-                left: paren_inner,
                 right: Expression::Literal(Literal::Number("1".to_string())),
                 left_comments: vec![],
                 operator_comments: vec![],
@@ -3031,7 +3143,7 @@ impl Dialect {
                 "ARRAY_GENERATE_RANGE".to_string(),
                 vec![
                     Expression::Literal(Literal::Number("0".to_string())),
-                    outer_plus_one,
+                    datediff_plus_one,
                 ],
             )));
 
@@ -3302,7 +3414,7 @@ impl Dialect {
 
         // Build the Snowflake subquery:
         // (SELECT DATEADD(unit, CAST(col_name AS INT), CAST(start AS DATE)) AS col_name
-        //  FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1))) AS _t0(seq, key, path, index, col_name, this))
+        //  FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, DATEDIFF(unit, start, end) + 1))) AS _t0(seq, key, path, index, col_name, this))
 
         // DATEDIFF(unit, start, end)
         let datediff = Expression::Function(Box::new(Function::new(
@@ -3320,29 +3432,9 @@ impl Dialect {
                 end_expr.clone(),
             ],
         )));
-        // (DATEDIFF(...) + 1 - 1) + 1
-        let plus_one = Expression::Add(Box::new(BinaryOp {
+        // DATEDIFF(...) + 1
+        let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
             left: datediff,
-            right: Expression::Literal(Literal::Number("1".to_string())),
-            left_comments: vec![],
-            operator_comments: vec![],
-            trailing_comments: vec![],
-            inferred_type: None,
-        }));
-        let minus_one = Expression::Sub(Box::new(BinaryOp {
-            left: plus_one,
-            right: Expression::Literal(Literal::Number("1".to_string())),
-            left_comments: vec![],
-            operator_comments: vec![],
-            trailing_comments: vec![],
-            inferred_type: None,
-        }));
-        let paren_inner = Expression::Paren(Box::new(Paren {
-            this: minus_one,
-            trailing_comments: vec![],
-        }));
-        let outer_plus_one = Expression::Add(Box::new(BinaryOp {
-            left: paren_inner,
             right: Expression::Literal(Literal::Number("1".to_string())),
             left_comments: vec![],
             operator_comments: vec![],
@@ -3354,7 +3446,7 @@ impl Dialect {
             "ARRAY_GENERATE_RANGE".to_string(),
             vec![
                 Expression::Literal(Literal::Number("0".to_string())),
-                outer_plus_one,
+                datediff_plus_one,
             ],
         )));
 
@@ -3486,7 +3578,7 @@ impl Dialect {
 
     /// Convert ARRAY_SIZE(GENERATE_DATE_ARRAY(start, end, step)) for Snowflake.
     /// Produces: ARRAY_SIZE((SELECT ARRAY_AGG(*) FROM (SELECT DATEADD(unit, CAST(value AS INT), start) AS value
-    ///   FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, (DATEDIFF(unit, start, end) + 1 - 1) + 1))) AS _t0(...))))
+    ///   FROM TABLE(FLATTEN(INPUT => ARRAY_GENERATE_RANGE(0, DATEDIFF(unit, start, end) + 1))) AS _t0(...))))
     fn convert_array_size_gda_snowflake(f: &crate::expressions::Function) -> Result<Expression> {
         use crate::expressions::*;
 
@@ -3512,28 +3604,9 @@ impl Dialect {
                 end_expr.clone(),
             ],
         )));
-        let plus_one = Expression::Add(Box::new(BinaryOp {
+        // DATEDIFF(...) + 1
+        let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
             left: datediff,
-            right: Expression::Literal(Literal::Number("1".to_string())),
-            left_comments: vec![],
-            operator_comments: vec![],
-            trailing_comments: vec![],
-            inferred_type: None,
-        }));
-        let minus_one = Expression::Sub(Box::new(BinaryOp {
-            left: plus_one,
-            right: Expression::Literal(Literal::Number("1".to_string())),
-            left_comments: vec![],
-            operator_comments: vec![],
-            trailing_comments: vec![],
-            inferred_type: None,
-        }));
-        let paren_inner = Expression::Paren(Box::new(Paren {
-            this: minus_one,
-            trailing_comments: vec![],
-        }));
-        let outer_plus_one = Expression::Add(Box::new(BinaryOp {
-            left: paren_inner,
             right: Expression::Literal(Literal::Number("1".to_string())),
             left_comments: vec![],
             operator_comments: vec![],
@@ -3545,7 +3618,7 @@ impl Dialect {
             "ARRAY_GENERATE_RANGE".to_string(),
             vec![
                 Expression::Literal(Literal::Number("0".to_string())),
-                outer_plus_one,
+                datediff_plus_one,
             ],
         )));
 
@@ -3940,8 +4013,14 @@ impl Dialect {
             RlikeSnowflakeToDuckDB, // RLIKE(a, b[, flags]) -> REGEXP_MATCHES(a, anchored_pattern) for DuckDB
             RegexpExtractAllToSnowflake, // BigQuery REGEXP_EXTRACT_ALL -> REGEXP_SUBSTR_ALL for Snowflake
             ArrayExceptConvert, // ARRAY_EXCEPT -> DuckDB complex CASE / Snowflake ARRAY_EXCEPT / Presto ARRAY_EXCEPT
+            ArrayPositionSnowflakeSwap, // ARRAY_POSITION(arr, elem) -> ARRAY_POSITION(elem, arr) for Snowflake
+            RegexpLikeExasolAnchor, // RegexpLike -> Exasol REGEXP_LIKE with .*pattern.* anchoring
             ArrayDistinctConvert, // ARRAY_DISTINCT -> DuckDB LIST_DISTINCT with NULL-aware CASE
+            ArrayDistinctClickHouse, // ARRAY_DISTINCT -> arrayDistinct for ClickHouse
             ArrayContainsDuckDBConvert, // ARRAY_CONTAINS -> DuckDB CASE with NULL-aware check
+            SnowflakeWindowFrameStrip, // Strip default ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING for Snowflake target
+            SnowflakeWindowFrameAdd, // Add default ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING for non-Snowflake target
+            SnowflakeArrayPositionToDuckDB, // ARRAY_POSITION(val, arr) -> ARRAY_POSITION(arr, val) - 1 for DuckDB
         }
 
         // Handle SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake/etc.
@@ -5950,6 +6029,9 @@ impl Dialect {
                                 | "ARRAY_MIN"
                                 | "JAROWINKLER_SIMILARITY"
                                 | "CURRENT_SCHEMAS"
+                                | "TO_VARIANT"
+                                | "JSON_GROUP_ARRAY" | "JSON_GROUP_OBJECT"
+                                | "ARRAYS_OVERLAP" | "ARRAY_INTERSECTION"
                                     => Action::GenericFunctionNormalize,
                                 // Canonical date functions -> dialect-specific
                                 "TS_OR_DS_TO_DATE" => Action::TsOrDsToDateConvert,
@@ -6677,6 +6759,12 @@ impl Dialect {
                     {
                         Action::RegexpLikeToDuckDB
                     }
+                    // RegexpLike -> Exasol: anchor pattern with .*...*
+                    Expression::RegexpLike(_)
+                        if matches!(target, DialectType::Exasol) =>
+                    {
+                        Action::RegexpLikeExasolAnchor
+                    }
                     // Safe-division source -> non-safe target: NULLIF wrapping and/or CAST
                     // Safe-division dialects: MySQL, DuckDB, SingleStore, TiDB, ClickHouse, Doris
                     Expression::Div(ref op)
@@ -6773,6 +6861,13 @@ impl Dialect {
                     // Also handles GROUP_CONCAT normalization for MySQL/SQLite targets
                     Expression::GroupConcat(_) => Action::GroupConcatConvert,
                     // CARDINALITY/ARRAY_LENGTH/ARRAY_SIZE -> target-specific array length
+                    // DuckDB CARDINALITY -> keep as CARDINALITY for DuckDB target (used for maps)
+                    Expression::Cardinality(_)
+                        if matches!(source, DialectType::DuckDB)
+                            && matches!(target, DialectType::DuckDB) =>
+                    {
+                        Action::None
+                    }
                     Expression::Cardinality(_) | Expression::ArrayLength(_) => {
                         Action::ArrayLengthConvert
                     }
@@ -7201,18 +7296,54 @@ impl Dialect {
                             {
                                 Action::MysqlNullsLastRewrite
                             } else {
-                                match &wf.this {
-                                    Expression::FirstValue(ref vf)
-                                    | Expression::LastValue(ref vf)
-                                        if vf.ignore_nulls == Some(false) =>
-                                    {
-                                        // RESPECT NULLS
-                                        match target {
-                                            DialectType::SQLite => Action::RespectNullsConvert,
+                                // Check for Snowflake window frame handling for FIRST_VALUE/LAST_VALUE/NTH_VALUE
+                                let is_ranking_window_func = matches!(
+                                    &wf.this,
+                                    Expression::FirstValue(_)
+                                        | Expression::LastValue(_)
+                                        | Expression::NthValue(_)
+                                );
+                                let has_full_unbounded_frame = wf.over.frame.as_ref().map_or(false, |f| {
+                                    matches!(f.kind, crate::expressions::WindowFrameKind::Rows)
+                                        && matches!(f.start, crate::expressions::WindowFrameBound::UnboundedPreceding)
+                                        && matches!(f.end, Some(crate::expressions::WindowFrameBound::UnboundedFollowing))
+                                        && f.exclude.is_none()
+                                });
+                                if is_ranking_window_func && matches!(source, DialectType::Snowflake) {
+                                    if has_full_unbounded_frame && matches!(target, DialectType::Snowflake) {
+                                        // Strip the default frame for Snowflake target
+                                        Action::SnowflakeWindowFrameStrip
+                                    } else if !has_full_unbounded_frame && wf.over.frame.is_none() && !matches!(target, DialectType::Snowflake) {
+                                        // Add default frame for non-Snowflake target
+                                        Action::SnowflakeWindowFrameAdd
+                                    } else {
+                                        match &wf.this {
+                                            Expression::FirstValue(ref vf)
+                                            | Expression::LastValue(ref vf)
+                                                if vf.ignore_nulls == Some(false) =>
+                                            {
+                                                match target {
+                                                    DialectType::SQLite => Action::RespectNullsConvert,
+                                                    _ => Action::None,
+                                                }
+                                            }
                                             _ => Action::None,
                                         }
                                     }
-                                    _ => Action::None,
+                                } else {
+                                    match &wf.this {
+                                        Expression::FirstValue(ref vf)
+                                        | Expression::LastValue(ref vf)
+                                            if vf.ignore_nulls == Some(false) =>
+                                        {
+                                            // RESPECT NULLS
+                                            match target {
+                                                DialectType::SQLite => Action::RespectNullsConvert,
+                                                _ => Action::None,
+                                            }
+                                        }
+                                        _ => Action::None,
+                                    }
                                 }
                             }
                         }
@@ -7414,6 +7545,26 @@ impl Dialect {
                         ) =>
                     {
                         Action::ArrayExceptConvert
+                    }
+                    // ARRAY_POSITION -> swap args for Snowflake target (only when source is not Snowflake)
+                    Expression::ArrayPosition(_)
+                        if matches!(target, DialectType::Snowflake)
+                            && !matches!(source, DialectType::Snowflake) =>
+                    {
+                        Action::ArrayPositionSnowflakeSwap
+                    }
+                    // ARRAY_POSITION(val, arr) -> ARRAY_POSITION(arr, val) - 1 for DuckDB from Snowflake source
+                    Expression::ArrayPosition(_)
+                        if matches!(target, DialectType::DuckDB)
+                            && matches!(source, DialectType::Snowflake) =>
+                    {
+                        Action::SnowflakeArrayPositionToDuckDB
+                    }
+                    // ARRAY_DISTINCT -> arrayDistinct for ClickHouse
+                    Expression::ArrayDistinct(_)
+                        if matches!(target, DialectType::ClickHouse) =>
+                    {
+                        Action::ArrayDistinctClickHouse
                     }
                     // ARRAY_DISTINCT -> DuckDB LIST_DISTINCT with NULL-aware CASE
                     Expression::ArrayDistinct(_)
@@ -7754,13 +7905,74 @@ impl Dialect {
                     let end = f.args[1].clone();
                     let step = f.args.get(2).cloned();
 
-                    let end_minus_1 = Expression::Sub(Box::new(BinaryOp::new(
-                        end.clone(),
-                        Expression::number(1),
-                    )));
+                    // Helper: compute end - 1 for converting exclusive→inclusive end.
+                    // When end is a literal number, simplify to a computed literal.
+                    fn exclusive_to_inclusive_end(end: &Expression) -> Expression {
+                        // Try to simplify literal numbers
+                        match end {
+                            Expression::Literal(Literal::Number(n)) => {
+                                if let Ok(val) = n.parse::<i64>() {
+                                    return Expression::number(val - 1);
+                                }
+                            }
+                            Expression::Neg(u) => {
+                                if let Expression::Literal(Literal::Number(n)) = &u.this {
+                                    if let Ok(val) = n.parse::<i64>() {
+                                        return Expression::number(-val - 1);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        // Non-literal: produce end - 1 expression
+                        Expression::Sub(Box::new(BinaryOp::new(
+                            end.clone(),
+                            Expression::number(1),
+                        )))
+                    }
 
                     match target {
+                        // Snowflake ARRAY_GENERATE_RANGE and DuckDB RANGE both use exclusive end,
+                        // so no adjustment needed — just rename the function.
+                        DialectType::Snowflake => {
+                            let mut args = vec![start, end];
+                            if let Some(s) = step {
+                                args.push(s);
+                            }
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "ARRAY_GENERATE_RANGE".to_string(),
+                                args,
+                            ))))
+                        }
+                        DialectType::DuckDB => {
+                            let mut args = vec![start, end];
+                            if let Some(s) = step {
+                                args.push(s);
+                            }
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "RANGE".to_string(),
+                                args,
+                            ))))
+                        }
+                        // These dialects use inclusive end, so convert exclusive→inclusive.
+                        // Presto/Trino: simplify literal numbers (3 → 2).
+                        DialectType::Presto | DialectType::Trino => {
+                            let end_inclusive = exclusive_to_inclusive_end(&end);
+                            let mut args = vec![start, end_inclusive];
+                            if let Some(s) = step {
+                                args.push(s);
+                            }
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "SEQUENCE".to_string(),
+                                args,
+                            ))))
+                        }
+                        // PostgreSQL, Redshift, BigQuery: keep as end - 1 expression form.
                         DialectType::PostgreSQL | DialectType::Redshift => {
+                            let end_minus_1 = Expression::Sub(Box::new(BinaryOp::new(
+                                end.clone(),
+                                Expression::number(1),
+                            )));
                             let mut args = vec![start, end_minus_1];
                             if let Some(s) = step {
                                 args.push(s);
@@ -7770,40 +7982,17 @@ impl Dialect {
                                 args,
                             ))))
                         }
-                        DialectType::Presto | DialectType::Trino => {
-                            let mut args = vec![start, end_minus_1];
-                            if let Some(s) = step {
-                                args.push(s);
-                            }
-                            Ok(Expression::Function(Box::new(Function::new(
-                                "SEQUENCE".to_string(),
-                                args,
-                            ))))
-                        }
                         DialectType::BigQuery => {
+                            let end_minus_1 = Expression::Sub(Box::new(BinaryOp::new(
+                                end.clone(),
+                                Expression::number(1),
+                            )));
                             let mut args = vec![start, end_minus_1];
                             if let Some(s) = step {
                                 args.push(s);
                             }
                             Ok(Expression::Function(Box::new(Function::new(
                                 "GENERATE_ARRAY".to_string(),
-                                args,
-                            ))))
-                        }
-                        DialectType::Snowflake => {
-                            let normalized_end = Expression::Add(Box::new(BinaryOp::new(
-                                Expression::Paren(Box::new(Paren {
-                                    this: end_minus_1,
-                                    trailing_comments: vec![],
-                                })),
-                                Expression::number(1),
-                            )));
-                            let mut args = vec![start, normalized_end];
-                            if let Some(s) = step {
-                                args.push(s);
-                            }
-                            Ok(Expression::Function(Box::new(Function::new(
-                                "ARRAY_GENERATE_RANGE".to_string(),
                                 args,
                             ))))
                         }
@@ -9770,11 +9959,11 @@ impl Dialect {
                                     f.args,
                                 ))))
                             }
-                            // LIST_SORT(x) -> SORT_ARRAY(x) / ARRAY_SORT(x)
+                            // LIST_SORT(x) -> LIST_SORT(x) for DuckDB, ARRAY_SORT(x) for Presto/Trino, SORT_ARRAY(x) for others
                             "LIST_SORT" if f.args.len() >= 1 => {
                                 let name = match target {
-                                    DialectType::DuckDB
-                                    | DialectType::Presto
+                                    DialectType::DuckDB => "LIST_SORT",
+                                    DialectType::Presto
                                     | DialectType::Trino => "ARRAY_SORT",
                                     _ => "SORT_ARRAY",
                                 };
@@ -9945,6 +10134,65 @@ impl Dialect {
                                     f.args,
                                 ))))
                             }
+                            // SPLIT(str, delim) from Snowflake -> DuckDB with CASE wrapper
+                            "SPLIT"
+                                if f.args.len() == 2
+                                    && matches!(source, DialectType::Snowflake)
+                                    && matches!(target, DialectType::DuckDB) =>
+                            {
+                                let mut args = f.args;
+                                let str_arg = args.remove(0);
+                                let delim_arg = args.remove(0);
+
+                                // STR_SPLIT(str, delim) as the base
+                                let base_func = Expression::Function(Box::new(Function::new(
+                                    "STR_SPLIT".to_string(),
+                                    vec![str_arg.clone(), delim_arg.clone()],
+                                )));
+
+                                // [str] - array with single element
+                                let array_with_input = Expression::Array(Box::new(
+                                    crate::expressions::Array {
+                                        expressions: vec![str_arg],
+                                    },
+                                ));
+
+                                // CASE
+                                //   WHEN delim IS NULL THEN NULL
+                                //   WHEN delim = '' THEN [str]
+                                //   ELSE STR_SPLIT(str, delim)
+                                // END
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None,
+                                    whens: vec![
+                                        (
+                                            Expression::Is(Box::new(BinaryOp {
+                                                left: delim_arg.clone(),
+                                                right: Expression::Null(Null),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            Expression::Null(Null),
+                                        ),
+                                        (
+                                            Expression::Eq(Box::new(BinaryOp {
+                                                left: delim_arg,
+                                                right: Expression::string(""),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            array_with_input,
+                                        ),
+                                    ],
+                                    else_: Some(base_func),
+                                    comments: vec![],
+                                    inferred_type: None,
+                                })))
+                            }
                             // SPLIT(x, sep) from Presto/StarRocks/Doris -> target-specific split with regex escaping for Hive/Spark
                             "SPLIT"
                                 if f.args.len() == 2
@@ -9988,6 +10236,13 @@ impl Dialect {
                             }
                             // ARRAY_LENGTH/SIZE/CARDINALITY -> target-specific array length function
                             "ARRAY_LENGTH" | "SIZE" | "CARDINALITY" => {
+                                // DuckDB source CARDINALITY -> DuckDB target: keep as CARDINALITY (used for maps)
+                                if name == "CARDINALITY"
+                                    && matches!(source, DialectType::DuckDB)
+                                    && matches!(target, DialectType::DuckDB)
+                                {
+                                    return Ok(Expression::Function(f));
+                                }
                                 // Get the array argument (first arg, drop dimension args)
                                 let mut args = f.args;
                                 let arr = if args.is_empty() {
@@ -10028,6 +10283,50 @@ impl Dialect {
                                     name.to_string(),
                                     vec![arr],
                                 ))))
+                            }
+                            // TO_VARIANT(x) -> CAST(x AS VARIANT) for DuckDB
+                            "TO_VARIANT" if f.args.len() == 1 => {
+                                match target {
+                                    DialectType::DuckDB => {
+                                        let arg = f.args.into_iter().next().unwrap();
+                                        Ok(Expression::Cast(Box::new(Cast {
+                                            this: arg,
+                                            to: DataType::Custom {
+                                                name: "VARIANT".to_string(),
+                                            },
+                                            double_colon_syntax: false,
+                                            trailing_comments: Vec::new(),
+                                            format: None,
+                                            default: None,
+                                            inferred_type: None,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // JSON_GROUP_ARRAY(x) -> JSON_AGG(x) for PostgreSQL
+                            "JSON_GROUP_ARRAY" if f.args.len() == 1 => {
+                                match target {
+                                    DialectType::PostgreSQL => {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "JSON_AGG".to_string(),
+                                            f.args,
+                                        ))))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
+                            }
+                            // JSON_GROUP_OBJECT(key, value) -> JSON_OBJECT_AGG(key, value) for PostgreSQL
+                            "JSON_GROUP_OBJECT" if f.args.len() == 2 => {
+                                match target {
+                                    DialectType::PostgreSQL => {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "JSON_OBJECT_AGG".to_string(),
+                                            f.args,
+                                        ))))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
+                                }
                             }
                             // UNICODE(x) -> target-specific codepoint function
                             "UNICODE" if f.args.len() == 1 => {
@@ -11376,6 +11675,100 @@ impl Dialect {
                                         ))))
                                     }
                                     DialectType::DuckDB
+                                        if matches!(source, DialectType::Snowflake) =>
+                                    {
+                                        // Snowflake SPLIT_PART -> DuckDB with CASE wrapper:
+                                        // - part_index 0 treated as 1
+                                        // - empty delimiter: return whole string if index 1 or -1, else ''
+                                        let mut args = f.args;
+                                        let str_arg = args.remove(0);
+                                        let delim_arg = args.remove(0);
+                                        let idx_arg = args.remove(0);
+
+                                        // (CASE WHEN idx = 0 THEN 1 ELSE idx END)
+                                        let adjusted_idx = Expression::Paren(Box::new(Paren {
+                                            this: Expression::Case(Box::new(Case {
+                                                operand: None,
+                                                whens: vec![(
+                                                    Expression::Eq(Box::new(BinaryOp {
+                                                        left: idx_arg.clone(),
+                                                        right: Expression::number(0),
+                                                        left_comments: vec![],
+                                                        operator_comments: vec![],
+                                                        trailing_comments: vec![],
+                                                        inferred_type: None,
+                                                    })),
+                                                    Expression::number(1),
+                                                )],
+                                                else_: Some(idx_arg.clone()),
+                                                comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            trailing_comments: vec![],
+                                        }));
+
+                                        // SPLIT_PART(str, delim, adjusted_idx)
+                                        let base_func = Expression::Function(Box::new(Function::new(
+                                            "SPLIT_PART".to_string(),
+                                            vec![str_arg.clone(), delim_arg.clone(), adjusted_idx.clone()],
+                                        )));
+
+                                        // (CASE WHEN adjusted_idx = 1 OR adjusted_idx = -1 THEN str ELSE '' END)
+                                        let empty_delim_case = Expression::Paren(Box::new(Paren {
+                                            this: Expression::Case(Box::new(Case {
+                                                operand: None,
+                                                whens: vec![(
+                                                    Expression::Or(Box::new(BinaryOp {
+                                                        left: Expression::Eq(Box::new(BinaryOp {
+                                                            left: adjusted_idx.clone(),
+                                                            right: Expression::number(1),
+                                                            left_comments: vec![],
+                                                            operator_comments: vec![],
+                                                            trailing_comments: vec![],
+                                                            inferred_type: None,
+                                                        })),
+                                                        right: Expression::Eq(Box::new(BinaryOp {
+                                                            left: adjusted_idx,
+                                                            right: Expression::number(-1),
+                                                            left_comments: vec![],
+                                                            operator_comments: vec![],
+                                                            trailing_comments: vec![],
+                                                            inferred_type: None,
+                                                        })),
+                                                        left_comments: vec![],
+                                                        operator_comments: vec![],
+                                                        trailing_comments: vec![],
+                                                        inferred_type: None,
+                                                    })),
+                                                    str_arg,
+                                                )],
+                                                else_: Some(Expression::string("")),
+                                                comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            trailing_comments: vec![],
+                                        }));
+
+                                        // CASE WHEN delim = '' THEN (empty case) ELSE SPLIT_PART(...) END
+                                        Ok(Expression::Case(Box::new(Case {
+                                            operand: None,
+                                            whens: vec![(
+                                                Expression::Eq(Box::new(BinaryOp {
+                                                    left: delim_arg,
+                                                    right: Expression::string(""),
+                                                    left_comments: vec![],
+                                                    operator_comments: vec![],
+                                                    trailing_comments: vec![],
+                                                    inferred_type: None,
+                                                })),
+                                                empty_delim_case,
+                                            )],
+                                            else_: Some(base_func),
+                                            comments: vec![],
+                                            inferred_type: None,
+                                        })))
+                                    }
+                                    DialectType::DuckDB
                                     | DialectType::PostgreSQL
                                     | DialectType::Snowflake
                                     | DialectType::Redshift
@@ -11702,7 +12095,7 @@ impl Dialect {
                                     precision: None,
                                 }))
                             }
-                            // ARRAY_SORT(x) or ARRAY_SORT(x, lambda) -> SORT_ARRAY(x) for Hive (drop lambda)
+                            // ARRAY_SORT(x) or ARRAY_SORT(x, lambda) -> SORT_ARRAY(x) for Hive, LIST_SORT for DuckDB
                             "ARRAY_SORT" if f.args.len() >= 1 => {
                                 match target {
                                     DialectType::Hive => {
@@ -11713,14 +12106,107 @@ impl Dialect {
                                             args,
                                         ))))
                                     }
+                                    DialectType::DuckDB if matches!(source, DialectType::Snowflake) => {
+                                        // Snowflake ARRAY_SORT(arr[, asc_bool[, nulls_first_bool]]) -> DuckDB LIST_SORT(arr[, 'ASC'/'DESC'[, 'NULLS FIRST']])
+                                        let mut args_iter = f.args.into_iter();
+                                        let arr = args_iter.next().unwrap();
+                                        let asc_arg = args_iter.next();
+                                        let nulls_first_arg = args_iter.next();
+
+                                        let is_asc_bool = asc_arg.as_ref().map(|a| matches!(a, Expression::Boolean(_))).unwrap_or(false);
+                                        let is_nf_bool = nulls_first_arg.as_ref().map(|a| matches!(a, Expression::Boolean(_))).unwrap_or(false);
+
+                                        // No boolean args: pass through as-is
+                                        if !is_asc_bool && !is_nf_bool {
+                                            let mut result_args = vec![arr];
+                                            if let Some(asc) = asc_arg {
+                                                result_args.push(asc);
+                                                if let Some(nf) = nulls_first_arg {
+                                                    result_args.push(nf);
+                                                }
+                                            }
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "LIST_SORT".to_string(),
+                                                result_args,
+                                            ))))
+                                        } else {
+                                            // Has boolean args: convert to DuckDB LIST_SORT format
+                                            let descending = matches!(&asc_arg, Some(Expression::Boolean(b)) if !b.value);
+
+                                            // Snowflake defaults: nulls_first = TRUE for DESC, FALSE for ASC
+                                            let nulls_are_first = match &nulls_first_arg {
+                                                Some(Expression::Boolean(b)) => b.value,
+                                                None if is_asc_bool => descending, // Snowflake default
+                                                _ => false,
+                                            };
+                                            let nulls_first_sql = if nulls_are_first {
+                                                Some(Expression::string("NULLS FIRST"))
+                                            } else {
+                                                None
+                                            };
+
+                                            if !is_asc_bool {
+                                                // asc is non-boolean expression, nulls_first is boolean
+                                                let mut result_args = vec![arr];
+                                                if let Some(asc) = asc_arg {
+                                                    result_args.push(asc);
+                                                }
+                                                if let Some(nf) = nulls_first_sql {
+                                                    result_args.push(nf);
+                                                }
+                                                Ok(Expression::Function(Box::new(Function::new(
+                                                    "LIST_SORT".to_string(),
+                                                    result_args,
+                                                ))))
+                                            } else {
+                                                if !descending && !nulls_are_first {
+                                                    // ASC, NULLS LAST (default) -> LIST_SORT(arr)
+                                                    Ok(Expression::Function(Box::new(Function::new(
+                                                        "LIST_SORT".to_string(),
+                                                        vec![arr],
+                                                    ))))
+                                                } else if descending && !nulls_are_first {
+                                                    // DESC, NULLS LAST -> ARRAY_REVERSE_SORT(arr)
+                                                    Ok(Expression::Function(Box::new(Function::new(
+                                                        "ARRAY_REVERSE_SORT".to_string(),
+                                                        vec![arr],
+                                                    ))))
+                                                } else {
+                                                    // NULLS FIRST -> LIST_SORT(arr, 'ASC'/'DESC', 'NULLS FIRST')
+                                                    let order_str = if descending { "DESC" } else { "ASC" };
+                                                    Ok(Expression::Function(Box::new(Function::new(
+                                                        "LIST_SORT".to_string(),
+                                                        vec![
+                                                            arr,
+                                                            Expression::string(order_str),
+                                                            Expression::string("NULLS FIRST"),
+                                                        ],
+                                                    ))))
+                                                }
+                                            }
+                                        }
+                                    }
+                                    DialectType::DuckDB => {
+                                        // Non-Snowflake source: ARRAY_SORT(x, lambda) -> ARRAY_SORT(x) (drop comparator)
+                                        let mut args = f.args;
+                                        args.truncate(1); // Drop lambda comparator for DuckDB
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "ARRAY_SORT".to_string(),
+                                            args,
+                                        ))))
+                                    }
                                     _ => Ok(Expression::Function(f)),
                                 }
                             }
-                            // SORT_ARRAY(x) -> ARRAY_SORT(x) for non-Hive/Spark
+                            // SORT_ARRAY(x) -> LIST_SORT(x) for DuckDB, ARRAY_SORT(x) for Presto/Trino, keep for Hive/Spark
                             "SORT_ARRAY" if f.args.len() == 1 => match target {
                                 DialectType::Hive
                                 | DialectType::Spark
                                 | DialectType::Databricks => Ok(Expression::Function(f)),
+                                DialectType::DuckDB => Ok(Expression::Function(Box::new(Function::new(
+                                    "LIST_SORT".to_string(),
+                                    f.args,
+                                )))),
                                 _ => Ok(Expression::Function(Box::new(Function::new(
                                     "ARRAY_SORT".to_string(),
                                     f.args,
@@ -11805,9 +12291,13 @@ impl Dialect {
                                         _ => Ok(Expression::Function(f)),
                                     }
                                 } else {
-                                    // SORT_ARRAY(x, TRUE) -> ARRAY_SORT(x)
+                                    // SORT_ARRAY(x, TRUE) -> LIST_SORT(x) for DuckDB, ARRAY_SORT(x) for others
                                     match target {
                                         DialectType::Hive => Ok(Expression::Function(f)),
+                                        DialectType::DuckDB => Ok(Expression::Function(Box::new(Function::new(
+                                            "LIST_SORT".to_string(),
+                                            vec![f.args.into_iter().next().unwrap()],
+                                        )))),
                                         _ => Ok(Expression::Function(Box::new(Function::new(
                                             "ARRAY_SORT".to_string(),
                                             vec![f.args.into_iter().next().unwrap()],
@@ -16321,6 +16811,18 @@ impl Dialect {
                                 let end = f.args[1].clone();
                                 let step = f.args.get(2).cloned();
                                 match target {
+                                    // Snowflake ARRAY_GENERATE_RANGE uses exclusive end (same as DuckDB RANGE),
+                                    // so just rename without adjusting the end argument.
+                                    DialectType::Snowflake => {
+                                        let mut args = vec![start, end];
+                                        if let Some(s) = step {
+                                            args.push(s);
+                                        }
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "ARRAY_GENERATE_RANGE".to_string(),
+                                            args,
+                                        ))))
+                                    }
                                     DialectType::Spark | DialectType::Databricks => {
                                         // RANGE(start, end) -> SEQUENCE(start, end-1)
                                         // RANGE(start, end, step) -> SEQUENCE(start, end-step, step) when step constant
@@ -16405,12 +16907,12 @@ impl Dialect {
                                                 }
                                             }
                                         } else {
-                                            // Variable end: IF((end - 1) <= start, ARRAY(), SEQUENCE(start, (end - 1)))
+                                            // Variable end: IF((end - 1) < start, ARRAY(), SEQUENCE(start, (end - 1)))
                                             let end_m1 = Expression::Sub(Box::new(BinaryOp::new(
                                                 end.clone(),
                                                 Expression::number(1),
                                             )));
-                                            let cond = Expression::Lte(Box::new(BinaryOp::new(
+                                            let cond = Expression::Lt(Box::new(BinaryOp::new(
                                                 Expression::Paren(Box::new(Paren {
                                                     this: end_m1.clone(),
                                                     trailing_comments: Vec::new(),
@@ -18279,6 +18781,74 @@ impl Dialect {
                             },
                             // ARRAY_SLICE(x, start, end) -> SLICE(x, start, end) for Presto/Trino/Databricks, arraySlice for ClickHouse
                             "ARRAY_SLICE" if f.args.len() >= 2 => match target {
+                                DialectType::DuckDB
+                                    if f.args.len() == 3
+                                        && matches!(source, DialectType::Snowflake) =>
+                                {
+                                    // Snowflake ARRAY_SLICE (0-indexed, exclusive end)
+                                    // -> DuckDB ARRAY_SLICE (1-indexed, inclusive end)
+                                    let mut args = f.args;
+                                    let arr = args.remove(0);
+                                    let start = args.remove(0);
+                                    let end = args.remove(0);
+
+                                    // CASE WHEN start >= 0 THEN start + 1 ELSE start END
+                                    let adjusted_start = Expression::Case(Box::new(Case {
+                                        operand: None,
+                                        whens: vec![(
+                                            Expression::Gte(Box::new(BinaryOp {
+                                                left: start.clone(),
+                                                right: Expression::number(0),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            Expression::Add(Box::new(BinaryOp {
+                                                left: start.clone(),
+                                                right: Expression::number(1),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                        )],
+                                        else_: Some(start),
+                                        comments: vec![],
+                                        inferred_type: None,
+                                    }));
+
+                                    // CASE WHEN end < 0 THEN end - 1 ELSE end END
+                                    let adjusted_end = Expression::Case(Box::new(Case {
+                                        operand: None,
+                                        whens: vec![(
+                                            Expression::Lt(Box::new(BinaryOp {
+                                                left: end.clone(),
+                                                right: Expression::number(0),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                            Expression::Sub(Box::new(BinaryOp {
+                                                left: end.clone(),
+                                                right: Expression::number(1),
+                                                left_comments: vec![],
+                                                operator_comments: vec![],
+                                                trailing_comments: vec![],
+                                                inferred_type: None,
+                                            })),
+                                        )],
+                                        else_: Some(end),
+                                        comments: vec![],
+                                        inferred_type: None,
+                                    }));
+
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "ARRAY_SLICE".to_string(),
+                                        vec![arr, adjusted_start, adjusted_end],
+                                    ))))
+                                }
                                 DialectType::Presto
                                 | DialectType::Trino
                                 | DialectType::Athena
@@ -18974,6 +19544,283 @@ impl Dialect {
                                             is_end_exclusive: None,
                                         },
                                     )))
+                                }
+                            }
+                            // ARRAYS_OVERLAP(arr1, arr2) from Snowflake -> DuckDB:
+                            // (arr1 && arr2) OR (ARRAY_LENGTH(arr1) <> LIST_COUNT(arr1) AND ARRAY_LENGTH(arr2) <> LIST_COUNT(arr2))
+                            "ARRAYS_OVERLAP"
+                                if f.args.len() == 2
+                                    && matches!(source, DialectType::Snowflake)
+                                    && matches!(target, DialectType::DuckDB) =>
+                            {
+                                let mut args = f.args;
+                                let arr1 = args.remove(0);
+                                let arr2 = args.remove(0);
+
+                                // (arr1 && arr2)
+                                let overlap = Expression::Paren(Box::new(Paren {
+                                    this: Expression::ArrayOverlaps(Box::new(BinaryOp {
+                                        left: arr1.clone(),
+                                        right: arr2.clone(),
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    trailing_comments: vec![],
+                                }));
+
+                                // ARRAY_LENGTH(arr1) <> LIST_COUNT(arr1)
+                                let arr1_has_null = Expression::Neq(Box::new(BinaryOp {
+                                    left: Expression::Function(Box::new(Function::new(
+                                        "ARRAY_LENGTH".to_string(),
+                                        vec![arr1.clone()],
+                                    ))),
+                                    right: Expression::Function(Box::new(Function::new(
+                                        "LIST_COUNT".to_string(),
+                                        vec![arr1],
+                                    ))),
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // ARRAY_LENGTH(arr2) <> LIST_COUNT(arr2)
+                                let arr2_has_null = Expression::Neq(Box::new(BinaryOp {
+                                    left: Expression::Function(Box::new(Function::new(
+                                        "ARRAY_LENGTH".to_string(),
+                                        vec![arr2.clone()],
+                                    ))),
+                                    right: Expression::Function(Box::new(Function::new(
+                                        "LIST_COUNT".to_string(),
+                                        vec![arr2],
+                                    ))),
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // (ARRAY_LENGTH(arr1) <> LIST_COUNT(arr1) AND ARRAY_LENGTH(arr2) <> LIST_COUNT(arr2))
+                                let null_check = Expression::Paren(Box::new(Paren {
+                                    this: Expression::And(Box::new(BinaryOp {
+                                        left: arr1_has_null,
+                                        right: arr2_has_null,
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    trailing_comments: vec![],
+                                }));
+
+                                // (arr1 && arr2) OR (null_check)
+                                Ok(Expression::Or(Box::new(BinaryOp {
+                                    left: overlap,
+                                    right: null_check,
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                })))
+                            }
+                            // ARRAY_INTERSECTION([1, 2], [2, 3]) from Snowflake -> DuckDB:
+                            // Bag semantics using LIST_TRANSFORM/LIST_FILTER with GENERATE_SERIES
+                            "ARRAY_INTERSECTION"
+                                if f.args.len() == 2
+                                    && matches!(source, DialectType::Snowflake)
+                                    && matches!(target, DialectType::DuckDB) =>
+                            {
+                                let mut args = f.args;
+                                let arr1 = args.remove(0);
+                                let arr2 = args.remove(0);
+
+                                // Build: arr1 IS NULL
+                                let arr1_is_null = Expression::IsNull(Box::new(IsNull {
+                                    this: arr1.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                let arr2_is_null = Expression::IsNull(Box::new(IsNull {
+                                    this: arr2.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                let null_check = Expression::Or(Box::new(BinaryOp {
+                                    left: arr1_is_null,
+                                    right: arr2_is_null,
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // GENERATE_SERIES(1, LENGTH(arr1))
+                                let gen_series = Expression::Function(Box::new(Function::new(
+                                    "GENERATE_SERIES".to_string(),
+                                    vec![
+                                        Expression::number(1),
+                                        Expression::Function(Box::new(Function::new(
+                                            "LENGTH".to_string(),
+                                            vec![arr1.clone()],
+                                        ))),
+                                    ],
+                                )));
+
+                                // LIST_ZIP(arr1, GENERATE_SERIES(1, LENGTH(arr1)))
+                                let list_zip = Expression::Function(Box::new(Function::new(
+                                    "LIST_ZIP".to_string(),
+                                    vec![arr1.clone(), gen_series],
+                                )));
+
+                                // pair[1] and pair[2]
+                                let pair_col = Expression::column("pair");
+                                let pair_1 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(1),
+                                }));
+                                let pair_2 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(2),
+                                }));
+
+                                // arr1[1:pair[2]]
+                                let arr1_slice = Expression::ArraySlice(Box::new(crate::expressions::ArraySlice {
+                                    this: arr1.clone(),
+                                    start: Some(Expression::number(1)),
+                                    end: Some(pair_2),
+                                }));
+
+                                // e IS NOT DISTINCT FROM pair[1]
+                                let e_col = Expression::column("e");
+                                let is_not_distinct = Expression::NullSafeEq(Box::new(BinaryOp {
+                                    left: e_col.clone(),
+                                    right: pair_1.clone(),
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // e -> e IS NOT DISTINCT FROM pair[1]
+                                let inner_lambda1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: is_not_distinct,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(arr1[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1])
+                                let inner_filter1 = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![arr1_slice, inner_lambda1],
+                                )));
+
+                                // LENGTH(LIST_FILTER(arr1[1:pair[2]], ...))
+                                let len1 = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![inner_filter1],
+                                )));
+
+                                // e -> e IS NOT DISTINCT FROM pair[1]
+                                let inner_lambda2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: Expression::NullSafeEq(Box::new(BinaryOp {
+                                        left: e_col,
+                                        right: pair_1.clone(),
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(arr2, e -> e IS NOT DISTINCT FROM pair[1])
+                                let inner_filter2 = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![arr2.clone(), inner_lambda2],
+                                )));
+
+                                // LENGTH(LIST_FILTER(arr2, ...))
+                                let len2 = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![inner_filter2],
+                                )));
+
+                                // LENGTH(...) <= LENGTH(...)
+                                let cond = Expression::Paren(Box::new(Paren {
+                                    this: Expression::Lte(Box::new(BinaryOp {
+                                        left: len1,
+                                        right: len2,
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    trailing_comments: vec![],
+                                }));
+
+                                // pair -> (condition)
+                                let filter_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: cond,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(LIST_ZIP(...), pair -> ...)
+                                let outer_filter = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![list_zip, filter_lambda],
+                                )));
+
+                                // pair -> pair[1]
+                                let transform_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: pair_1,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_TRANSFORM(LIST_FILTER(...), pair -> pair[1])
+                                let list_transform = Expression::Function(Box::new(Function::new(
+                                    "LIST_TRANSFORM".to_string(),
+                                    vec![outer_filter, transform_lambda],
+                                )));
+
+                                // CASE WHEN arr1 IS NULL OR arr2 IS NULL THEN NULL
+                                // ELSE LIST_TRANSFORM(LIST_FILTER(...), pair -> pair[1])
+                                // END
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None,
+                                    whens: vec![(null_check, Expression::Null(Null))],
+                                    else_: Some(list_transform),
+                                    comments: vec![],
+                                    inferred_type: None,
+                                })))
+                            }
+                            // ARRAY_CONSTRUCT(args) -> Expression::Array for all targets
+                            "ARRAY_CONSTRUCT" => {
+                                Ok(Expression::Array(Box::new(crate::expressions::Array {
+                                    expressions: f.args,
+                                })))
+                            }
+                            // ARRAY(args) function -> Expression::Array for DuckDB/Snowflake/Presto/Trino/Athena
+                            "ARRAY" if !f.args.iter().any(|a| matches!(a, Expression::Select(_) | Expression::Subquery(_))) => {
+                                match target {
+                                    DialectType::DuckDB
+                                    | DialectType::Snowflake
+                                    | DialectType::Presto
+                                    | DialectType::Trino
+                                    | DialectType::Athena => {
+                                        Ok(Expression::Array(Box::new(crate::expressions::Array {
+                                            expressions: f.args,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(f)),
                                 }
                             }
                             _ => Ok(Expression::Function(f)),
@@ -21198,6 +22045,36 @@ impl Dialect {
                     }
                 }
 
+                Action::SnowflakeWindowFrameStrip => {
+                    // Strip the default ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    // for FIRST_VALUE/LAST_VALUE/NTH_VALUE when targeting Snowflake
+                    if let Expression::WindowFunction(mut wf) = e {
+                        wf.over.frame = None;
+                        Ok(Expression::WindowFunction(wf))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::SnowflakeWindowFrameAdd => {
+                    // Add default ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    // for FIRST_VALUE/LAST_VALUE/NTH_VALUE when transpiling from Snowflake to non-Snowflake
+                    if let Expression::WindowFunction(mut wf) = e {
+                        wf.over.frame = Some(crate::expressions::WindowFrame {
+                            kind: crate::expressions::WindowFrameKind::Rows,
+                            start: crate::expressions::WindowFrameBound::UnboundedPreceding,
+                            end: Some(crate::expressions::WindowFrameBound::UnboundedFollowing),
+                            exclude: None,
+                            kind_text: None,
+                            start_side_text: None,
+                            end_side_text: None,
+                        });
+                        Ok(Expression::WindowFunction(wf))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
                 Action::CreateTableStripComment => {
                     // Strip COMMENT column constraint, USING, PARTITIONED BY for DuckDB
                     if let Expression::CreateTable(mut ct) = e {
@@ -22187,13 +23064,182 @@ impl Dialect {
                         let source_arr = f.this;
                         let exclude_arr = f.expression;
                         match target {
-                            DialectType::DuckDB => {
-                                // ARRAY_EXCEPT(source, exclude) -> complex CASE expression for DuckDB:
+                            DialectType::DuckDB if matches!(source, DialectType::Snowflake) => {
+                                // Snowflake ARRAY_EXCEPT -> DuckDB bag semantics:
                                 // CASE WHEN source IS NULL OR exclude IS NULL THEN NULL
-                                // ELSE LIST_TRANSFORM(LIST_FILTER(LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source))),
+                                // ELSE LIST_TRANSFORM(LIST_FILTER(
+                                //   LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source))),
                                 //   pair -> (LENGTH(LIST_FILTER(source[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1]))
-                                //           > LENGTH(LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])))),
+                                //            > LENGTH(LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])))),
                                 //   pair -> pair[1])
+                                // END
+
+                                // Build null check
+                                let source_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                    this: source_arr.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                let exclude_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                    this: exclude_arr.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                let null_check = Expression::Or(Box::new(crate::expressions::BinaryOp {
+                                    left: source_is_null,
+                                    right: exclude_is_null,
+                                    left_comments: vec![],
+                                    operator_comments: vec![],
+                                    trailing_comments: vec![],
+                                    inferred_type: None,
+                                }));
+
+                                // GENERATE_SERIES(1, LENGTH(source))
+                                let gen_series = Expression::Function(Box::new(Function::new(
+                                    "GENERATE_SERIES".to_string(),
+                                    vec![
+                                        Expression::number(1),
+                                        Expression::Function(Box::new(Function::new(
+                                            "LENGTH".to_string(),
+                                            vec![source_arr.clone()],
+                                        ))),
+                                    ],
+                                )));
+
+                                // LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source)))
+                                let list_zip = Expression::Function(Box::new(Function::new(
+                                    "LIST_ZIP".to_string(),
+                                    vec![source_arr.clone(), gen_series],
+                                )));
+
+                                // pair[1] and pair[2]
+                                let pair_col = Expression::column("pair");
+                                let pair_1 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(1),
+                                }));
+                                let pair_2 = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                                    this: pair_col.clone(),
+                                    index: Expression::number(2),
+                                }));
+
+                                // source[1:pair[2]]
+                                let source_slice = Expression::ArraySlice(Box::new(crate::expressions::ArraySlice {
+                                    this: source_arr.clone(),
+                                    start: Some(Expression::number(1)),
+                                    end: Some(pair_2),
+                                }));
+
+                                let e_col = Expression::column("e");
+
+                                // e -> e IS NOT DISTINCT FROM pair[1]
+                                let inner_lambda1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
+                                        left: e_col.clone(),
+                                        right: pair_1.clone(),
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(source[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1])
+                                let inner_filter1 = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![source_slice, inner_lambda1],
+                                )));
+
+                                // LENGTH(LIST_FILTER(source[1:pair[2]], ...))
+                                let len1 = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![inner_filter1],
+                                )));
+
+                                // e -> e IS NOT DISTINCT FROM pair[1]
+                                let inner_lambda2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("e")],
+                                    body: Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
+                                        left: e_col,
+                                        right: pair_1.clone(),
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])
+                                let inner_filter2 = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![exclude_arr.clone(), inner_lambda2],
+                                )));
+
+                                // LENGTH(LIST_FILTER(exclude, ...))
+                                let len2 = Expression::Function(Box::new(Function::new(
+                                    "LENGTH".to_string(),
+                                    vec![inner_filter2],
+                                )));
+
+                                // (LENGTH(...) > LENGTH(...))
+                                let cond = Expression::Paren(Box::new(Paren {
+                                    this: Expression::Gt(Box::new(crate::expressions::BinaryOp {
+                                        left: len1,
+                                        right: len2,
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    trailing_comments: vec![],
+                                }));
+
+                                // pair -> (condition)
+                                let filter_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: cond,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_FILTER(LIST_ZIP(...), pair -> ...)
+                                let outer_filter = Expression::Function(Box::new(Function::new(
+                                    "LIST_FILTER".to_string(),
+                                    vec![list_zip, filter_lambda],
+                                )));
+
+                                // pair -> pair[1]
+                                let transform_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("pair")],
+                                    body: pair_1,
+                                    colon: false,
+                                    parameter_types: vec![],
+                                }));
+
+                                // LIST_TRANSFORM(LIST_FILTER(...), pair -> pair[1])
+                                let list_transform = Expression::Function(Box::new(Function::new(
+                                    "LIST_TRANSFORM".to_string(),
+                                    vec![outer_filter, transform_lambda],
+                                )));
+
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None,
+                                    whens: vec![(null_check, Expression::Null(Null))],
+                                    else_: Some(list_transform),
+                                    comments: Vec::new(),
+                                    inferred_type: None,
+                                })))
+                            }
+                            DialectType::DuckDB => {
+                                // ARRAY_EXCEPT(source, exclude) -> set semantics for DuckDB:
+                                // CASE WHEN source IS NULL OR exclude IS NULL THEN NULL
+                                // ELSE LIST_FILTER(LIST_DISTINCT(source),
+                                //   e -> LENGTH(LIST_FILTER(exclude, x -> x IS NOT DISTINCT FROM e)) = 0)
                                 // END
 
                                 // Build: source IS NULL
@@ -22218,150 +23264,76 @@ impl Dialect {
                                     inferred_type: None,
                                 }));
 
-                                // GENERATE_SERIES(1, LENGTH(source))
-                                let length_source = Expression::Function(Box::new(Function::new(
-                                    "LENGTH".to_string(),
+                                // LIST_DISTINCT(source)
+                                let list_distinct = Expression::Function(Box::new(Function::new(
+                                    "LIST_DISTINCT".to_string(),
                                     vec![source_arr.clone()],
                                 )));
-                                let gen_series = Expression::Function(Box::new(Function::new(
-                                    "GENERATE_SERIES".to_string(),
-                                    vec![Expression::number(1), length_source],
-                                )));
 
-                                // LIST_ZIP(source, GENERATE_SERIES(1, LENGTH(source)))
-                                let list_zip = Expression::Function(Box::new(Function::new(
-                                    "LIST_ZIP".to_string(),
-                                    vec![source_arr.clone(), gen_series],
-                                )));
-
-                                // pair[1] - first element of pair
-                                let pair_col = Expression::column("pair");
-                                let pair_1 = Expression::Subscript(Box::new(crate::expressions::Subscript {
-                                    this: pair_col.clone(),
-                                    index: Expression::number(1),
-                                }));
-                                // pair[2] - second element of pair (index)
-                                let pair_2 = Expression::Subscript(Box::new(crate::expressions::Subscript {
-                                    this: pair_col.clone(),
-                                    index: Expression::number(2),
-                                }));
-
-                                // source[1:pair[2]] - slice from 1 to pair[2]
-                                let source_slice = Expression::ArraySlice(Box::new(crate::expressions::ArraySlice {
-                                    this: source_arr.clone(),
-                                    start: Some(Expression::number(1)),
-                                    end: Some(pair_2.clone()),
-                                }));
-
-                                // e column for lambda
+                                // x IS NOT DISTINCT FROM e
+                                let x_col = Expression::column("x");
                                 let e_col = Expression::column("e");
-
-                                // e IS NOT DISTINCT FROM pair[1] (for source slice filter)
-                                let is_not_distinct_1 = Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
-                                    left: e_col.clone(),
-                                    right: pair_1.clone(),
+                                let is_not_distinct = Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
+                                    left: x_col,
+                                    right: e_col.clone(),
                                     left_comments: vec![],
                                     operator_comments: vec![],
                                     trailing_comments: vec![],
                                     inferred_type: None,
                                 }));
 
-                                // LIST_FILTER(source[1:pair[2]], e -> e IS NOT DISTINCT FROM pair[1])
-                                let lambda_1 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
-                                    parameters: vec![crate::expressions::Identifier::new("e")],
-                                    body: is_not_distinct_1,
+                                // x -> x IS NOT DISTINCT FROM e
+                                let inner_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![crate::expressions::Identifier::new("x")],
+                                    body: is_not_distinct,
                                     colon: false,
                                     parameter_types: vec![],
                                 }));
-                                let list_filter_source_slice = Expression::Function(Box::new(Function::new(
+
+                                // LIST_FILTER(exclude, x -> x IS NOT DISTINCT FROM e)
+                                let inner_list_filter = Expression::Function(Box::new(Function::new(
                                     "LIST_FILTER".to_string(),
-                                    vec![source_slice, lambda_1],
+                                    vec![exclude_arr.clone(), inner_lambda],
                                 )));
-                                // LENGTH(LIST_FILTER(source[1:pair[2]], e -> ...))
-                                let len_source_slice = Expression::Function(Box::new(Function::new(
+
+                                // LENGTH(LIST_FILTER(exclude, x -> x IS NOT DISTINCT FROM e))
+                                let len_inner = Expression::Function(Box::new(Function::new(
                                     "LENGTH".to_string(),
-                                    vec![list_filter_source_slice],
+                                    vec![inner_list_filter],
                                 )));
 
-                                // e IS NOT DISTINCT FROM pair[1] (for exclude filter)
-                                let is_not_distinct_2 = Expression::NullSafeEq(Box::new(crate::expressions::BinaryOp {
-                                    left: e_col.clone(),
-                                    right: pair_1.clone(),
+                                // LENGTH(...) = 0
+                                let eq_zero = Expression::Eq(Box::new(crate::expressions::BinaryOp {
+                                    left: len_inner,
+                                    right: Expression::number(0),
                                     left_comments: vec![],
                                     operator_comments: vec![],
                                     trailing_comments: vec![],
                                     inferred_type: None,
                                 }));
 
-                                // LIST_FILTER(exclude, e -> e IS NOT DISTINCT FROM pair[1])
-                                let lambda_2 = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                // e -> LENGTH(LIST_FILTER(...)) = 0
+                                let outer_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
                                     parameters: vec![crate::expressions::Identifier::new("e")],
-                                    body: is_not_distinct_2,
+                                    body: eq_zero,
                                     colon: false,
                                     parameter_types: vec![],
                                 }));
-                                let list_filter_exclude = Expression::Function(Box::new(Function::new(
+
+                                // LIST_FILTER(LIST_DISTINCT(source), e -> ...)
+                                let outer_list_filter = Expression::Function(Box::new(Function::new(
                                     "LIST_FILTER".to_string(),
-                                    vec![exclude_arr.clone(), lambda_2],
-                                )));
-                                // LENGTH(LIST_FILTER(exclude, e -> ...))
-                                let len_exclude = Expression::Function(Box::new(Function::new(
-                                    "LENGTH".to_string(),
-                                    vec![list_filter_exclude],
+                                    vec![list_distinct, outer_lambda],
                                 )));
 
-                                // LENGTH(...) > LENGTH(...)
-                                let gt_expr = Expression::Gt(Box::new(crate::expressions::BinaryOp {
-                                    left: len_source_slice,
-                                    right: len_exclude,
-                                    left_comments: vec![],
-                                    operator_comments: vec![],
-                                    trailing_comments: vec![],
-                                    inferred_type: None,
-                                }));
-
-                                // Wrap in parens for the lambda body
-                                let gt_paren = Expression::Paren(Box::new(crate::expressions::Paren {
-                                    this: gt_expr,
-                                    trailing_comments: vec![],
-                                }));
-
-                                // pair -> (LENGTH(...) > LENGTH(...))
-                                let filter_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
-                                    parameters: vec![crate::expressions::Identifier::new("pair")],
-                                    body: gt_paren,
-                                    colon: false,
-                                    parameter_types: vec![],
-                                }));
-
-                                // LIST_FILTER(LIST_ZIP(...), pair -> (...))
-                                let list_filter_outer = Expression::Function(Box::new(Function::new(
-                                    "LIST_FILTER".to_string(),
-                                    vec![list_zip, filter_lambda],
-                                )));
-
-                                // pair -> pair[1]  (for LIST_TRANSFORM)
-                                let transform_lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
-                                    parameters: vec![crate::expressions::Identifier::new("pair")],
-                                    body: pair_1.clone(),
-                                    colon: false,
-                                    parameter_types: vec![],
-                                }));
-
-                                // LIST_TRANSFORM(LIST_FILTER(...), pair -> pair[1])
-                                let list_transform = Expression::Function(Box::new(Function::new(
-                                    "LIST_TRANSFORM".to_string(),
-                                    vec![list_filter_outer, transform_lambda],
-                                )));
-
-                                // CASE WHEN ... IS NULL ... THEN NULL ELSE LIST_TRANSFORM(...) END
+                                // CASE WHEN ... IS NULL ... THEN NULL ELSE LIST_FILTER(...) END
                                 Ok(Expression::Case(Box::new(Case {
                                     operand: None,
                                     whens: vec![(
                                         null_check,
                                         Expression::Null(Null),
                                     )],
-                                    else_: Some(list_transform),
+                                    else_: Some(outer_list_filter),
                                     comments: Vec::new(),
                                     inferred_type: None,
                                 })))
@@ -22389,6 +23361,86 @@ impl Dialect {
                                 inferred_type: None,
                             }))),
                         }
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::RegexpLikeExasolAnchor => {
+                    // RegexpLike -> Exasol: wrap pattern with .*...*
+                    // Exasol REGEXP_LIKE does full-string match, but RLIKE/REGEXP from other
+                    // dialects does partial match, so we need to anchor with .* on both sides
+                    if let Expression::RegexpLike(mut f) = e {
+                        match &f.pattern {
+                            Expression::Literal(Literal::String(s)) => {
+                                // String literal: wrap with .*...*
+                                f.pattern = Expression::Literal(Literal::String(
+                                    format!(".*{}.*", s),
+                                ));
+                            }
+                            _ => {
+                                // Non-literal: wrap with CONCAT('.*', pattern, '.*')
+                                f.pattern = Expression::Paren(Box::new(crate::expressions::Paren {
+                                    this: Expression::Concat(Box::new(crate::expressions::BinaryOp {
+                                        left: Expression::Concat(Box::new(crate::expressions::BinaryOp {
+                                            left: Expression::Literal(Literal::String(".*".to_string())),
+                                            right: f.pattern,
+                                            left_comments: vec![],
+                                            operator_comments: vec![],
+                                            trailing_comments: vec![],
+                                            inferred_type: None,
+                                        })),
+                                        right: Expression::Literal(Literal::String(".*".to_string())),
+                                        left_comments: vec![],
+                                        operator_comments: vec![],
+                                        trailing_comments: vec![],
+                                        inferred_type: None,
+                                    })),
+                                    trailing_comments: vec![],
+                                }));
+                            }
+                        }
+                        Ok(Expression::RegexpLike(f))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::ArrayPositionSnowflakeSwap => {
+                    // ARRAY_POSITION(arr, elem) -> ARRAY_POSITION(elem, arr) for Snowflake
+                    if let Expression::ArrayPosition(f) = e {
+                        Ok(Expression::ArrayPosition(Box::new(crate::expressions::BinaryFunc {
+                            this: f.expression,
+                            expression: f.this,
+                            original_name: f.original_name,
+                            inferred_type: f.inferred_type,
+                        })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::SnowflakeArrayPositionToDuckDB => {
+                    // Snowflake ARRAY_POSITION(value, array) -> DuckDB ARRAY_POSITION(array, value) - 1
+                    // Snowflake uses 0-based indexing, DuckDB uses 1-based
+                    // The parser has this=value, expression=array (Snowflake order)
+                    if let Expression::ArrayPosition(f) = e {
+                        // Create ARRAY_POSITION(array, value) in standard order
+                        let standard_pos = Expression::ArrayPosition(Box::new(crate::expressions::BinaryFunc {
+                            this: f.expression, // array
+                            expression: f.this,  // value
+                            original_name: f.original_name,
+                            inferred_type: f.inferred_type,
+                        }));
+                        // Subtract 1 for zero-based indexing
+                        Ok(Expression::Sub(Box::new(BinaryOp {
+                            left: standard_pos,
+                            right: Expression::number(1),
+                            left_comments: vec![],
+                            operator_comments: vec![],
+                            trailing_comments: vec![],
+                            inferred_type: None,
+                        })))
                     } else {
                         Ok(e)
                     }
@@ -22472,6 +23524,18 @@ impl Dialect {
                             comments: Vec::new(),
                             inferred_type: None,
                         })))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::ArrayDistinctClickHouse => {
+                    // ARRAY_DISTINCT(arr) -> arrayDistinct(arr) for ClickHouse
+                    if let Expression::ArrayDistinct(f) = e {
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "arrayDistinct".to_string(),
+                            vec![f.this],
+                        ))))
                     } else {
                         Ok(e)
                     }
@@ -26714,6 +27778,7 @@ impl Dialect {
                         Ok(e)
                     }
                 }
+
             }
         })
     }
@@ -34073,11 +35138,10 @@ mod tests {
                     .unwrap();
                 eprintln!("ARRAY_EXCEPT Generic->DuckDB: {}", result[0]);
                 assert!(result[0].contains("CASE WHEN"), "Expected CASE WHEN: {}", result[0]);
-                assert!(result[0].contains("LIST_TRANSFORM"), "Expected LIST_TRANSFORM: {}", result[0]);
                 assert!(result[0].contains("LIST_FILTER"), "Expected LIST_FILTER: {}", result[0]);
-                assert!(result[0].contains("LIST_ZIP"), "Expected LIST_ZIP: {}", result[0]);
-                assert!(result[0].contains("GENERATE_SERIES"), "Expected GENERATE_SERIES: {}", result[0]);
+                assert!(result[0].contains("LIST_DISTINCT"), "Expected LIST_DISTINCT: {}", result[0]);
                 assert!(result[0].contains("IS NOT DISTINCT FROM"), "Expected IS NOT DISTINCT FROM: {}", result[0]);
+                assert!(result[0].contains("= 0"), "Expected = 0 filter: {}", result[0]);
             })
             .unwrap();
         handle.join().unwrap();

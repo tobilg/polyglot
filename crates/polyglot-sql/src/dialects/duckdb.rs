@@ -92,6 +92,8 @@ impl DialectImpl for DuckDBDialect {
         config.identifiers.insert('"', '"');
         // DuckDB supports nested comments
         config.nested_comments = true;
+        // DuckDB allows underscores as digit separators in numeric literals
+        config.numbers_can_be_underscore_separated = true;
         config
     }
 
@@ -540,11 +542,9 @@ impl DialectImpl for DuckDBDialect {
                 Ok(Expression::JsonExtractScalar(f))
             }
 
-            // CARDINALITY -> ARRAY_LENGTH in DuckDB
-            Expression::Cardinality(f) => Ok(Expression::Function(Box::new(Function::new(
-                "ARRAY_LENGTH".to_string(),
-                vec![f.this],
-            )))),
+            // CARDINALITY: keep as Expression::Cardinality - cross_dialect_normalize handles
+            // the conversion to target-specific form. For DuckDB->DuckDB, CARDINALITY is preserved
+            // (used for maps), for DuckDB->other it goes through ArrayLengthConvert.
 
             // ADD_MONTHS(date, n) -> convert to Function and handle in transform_function
             Expression::AddMonths(f) => {

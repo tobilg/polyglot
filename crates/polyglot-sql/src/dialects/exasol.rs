@@ -255,9 +255,38 @@ impl ExasolDialect {
             ))),
 
             // TO_CHAR is native for date formatting
-            "TO_CHAR" | "DATE_FORMAT" | "STRFTIME" => Ok(Expression::Function(Box::new(
-                Function::new("TO_CHAR".to_string(), f.args),
-            ))),
+            // DATE_FORMAT/STRFTIME: convert format codes and CAST value to TIMESTAMP
+            "TO_CHAR" | "DATE_FORMAT" | "STRFTIME" => {
+                let mut args = f.args;
+                if args.len() >= 2 {
+                    // Convert format codes from C-style (%Y, %m, etc.) to Exasol format
+                    if let Expression::Literal(Literal::String(fmt)) = &args[1] {
+                        let exasol_fmt = Self::convert_c_format_to_exasol(fmt);
+                        args[1] = Expression::Literal(Literal::String(exasol_fmt));
+                    }
+                    // CAST string literal values to TIMESTAMP for date formatting functions
+                    if matches!(&args[0], Expression::Literal(Literal::String(_)))
+                        && (f.name.eq_ignore_ascii_case("DATE_FORMAT")
+                            || f.name.eq_ignore_ascii_case("STRFTIME"))
+                    {
+                        args[0] = Expression::Cast(Box::new(crate::expressions::Cast {
+                            this: args[0].clone(),
+                            to: crate::expressions::DataType::Timestamp {
+                                timezone: false,
+                                precision: None,
+                            },
+                            trailing_comments: vec![],
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: None,
+                        }));
+                    }
+                }
+                Ok(Expression::Function(Box::new(
+                    Function::new("TO_CHAR".to_string(), args),
+                )))
+            }
 
             // TO_DATE is native but format specifiers need uppercasing
             "TO_DATE" => {
@@ -429,6 +458,54 @@ impl ExasolDialect {
                     'W' => "UW",    // Week number (Monday as first day)
                     'U' => "UW",    // Week number (Sunday as first day)
                     'z' => "Z",     // timezone offset
+                    _ => {
+                        // Unknown specifier, keep as-is
+                        result.push('%');
+                        result.push(spec);
+                        i += 2;
+                        continue;
+                    }
+                };
+                result.push_str(exasol_spec);
+                i += 2;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    /// Convert C-style / MySQL format codes to Exasol format codes.
+    /// Handles both standard strptime codes and MySQL-specific codes (%i, %T).
+    fn convert_c_format_to_exasol(format: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = format.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '%' && i + 1 < chars.len() {
+                let spec = chars[i + 1];
+                let exasol_spec = match spec {
+                    'Y' => "YYYY",
+                    'y' => "YY",
+                    'm' => "MM",
+                    'd' => "DD",
+                    'H' => "HH",
+                    'M' => "MI",     // strptime minutes
+                    'i' => "MI",     // MySQL minutes
+                    'S' | 's' => "SS",
+                    'T' => "HH:MI:SS", // MySQL %T = time (HH:MM:SS)
+                    'a' => "DY",     // abbreviated weekday name
+                    'A' => "DAY",    // full weekday name
+                    'b' => "MON",    // abbreviated month name
+                    'B' => "MONTH",  // full month name
+                    'I' => "H12",    // 12-hour format
+                    'u' => "ID",     // ISO weekday (1-7)
+                    'V' => "IW",     // ISO week number
+                    'G' => "IYYY",   // ISO year
+                    'W' => "UW",     // Week number
+                    'U' => "UW",     // Week number
+                    'z' => "Z",      // timezone offset
                     _ => {
                         // Unknown specifier, keep as-is
                         result.push('%');

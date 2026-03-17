@@ -2457,6 +2457,7 @@ impl Generator {
             Expression::Collation(coll) => self.generate_collation(coll),
             Expression::Case(case) => self.generate_case(case),
             Expression::Function(func) => self.generate_function(func),
+            Expression::FunctionEmits(fe) => self.generate_function_emits(fe),
             Expression::AggregateFunction(func) => self.generate_aggregate_function(func),
             Expression::WindowFunction(wf) => self.generate_window_function(wf),
             Expression::WithinGroup(wg) => self.generate_within_group(wg),
@@ -2578,8 +2579,8 @@ impl Generator {
             }
             Expression::Median(f) => self.generate_agg_func("MEDIAN", f),
             Expression::Mode(f) => self.generate_agg_func("MODE", f),
-            Expression::First(f) => self.generate_agg_func("FIRST", f),
-            Expression::Last(f) => self.generate_agg_func("LAST", f),
+            Expression::First(f) => self.generate_agg_func_with_ignore_nulls_bool("FIRST", f),
+            Expression::Last(f) => self.generate_agg_func_with_ignore_nulls_bool("LAST", f),
             Expression::AnyValue(f) => self.generate_agg_func("ANY_VALUE", f),
             Expression::ApproxDistinct(f) => {
                 match self.config.dialect {
@@ -2689,8 +2690,8 @@ impl Generator {
             Expression::NTile(f) => self.generate_ntile(f),
             Expression::Lead(f) => self.generate_lead_lag("LEAD", f),
             Expression::Lag(f) => self.generate_lead_lag("LAG", f),
-            Expression::FirstValue(f) => self.generate_value_func("FIRST_VALUE", f),
-            Expression::LastValue(f) => self.generate_value_func("LAST_VALUE", f),
+            Expression::FirstValue(f) => self.generate_value_func_with_ignore_nulls_bool("FIRST_VALUE", f),
+            Expression::LastValue(f) => self.generate_value_func_with_ignore_nulls_bool("LAST_VALUE", f),
             Expression::NthValue(f) => self.generate_nth_value(f),
             Expression::PercentRank(pr) => {
                 self.write_keyword("PERCENT_RANK");
@@ -3450,6 +3451,7 @@ impl Generator {
             }
             Expression::CharacterSetProperty(e) => self.generate_character_set_property(e),
             Expression::CheckColumnConstraint(e) => self.generate_check_column_constraint(e),
+            Expression::AssumeColumnConstraint(e) => self.generate_assume_column_constraint(e),
             Expression::CheckJson(e) => self.generate_check_json(e),
             Expression::CheckXml(e) => self.generate_check_xml(e),
             Expression::ChecksumProperty(e) => self.generate_checksum_property(e),
@@ -9169,6 +9171,21 @@ impl Generator {
                 self.write(")");
                 self.generate_constraint_modifiers(modifiers);
             }
+            TableConstraint::Assume {
+                name,
+                expression,
+            } => {
+                if let Some(ref n) = name {
+                    self.write_keyword("CONSTRAINT");
+                    self.write_space();
+                    self.generate_identifier(n)?;
+                    self.write_space();
+                }
+                self.write_keyword("ASSUME");
+                self.write(" (");
+                self.generate_expression(expression)?;
+                self.write(")");
+            }
             TableConstraint::Index {
                 name,
                 columns,
@@ -9724,6 +9741,11 @@ impl Generator {
         if dt.purge {
             self.write_space();
             self.write_keyword("PURGE");
+        }
+
+        if dt.sync {
+            self.write_space();
+            self.write_keyword("SYNC");
         }
 
         // Restore Athena Hive context
@@ -10709,8 +10731,8 @@ impl Generator {
             self.write(definer);
         }
 
-        // MySQL: SQL SECURITY DEFINER/INVOKER (before VIEW keyword)
-        if cv.security_sql_style {
+        // MySQL: SQL SECURITY DEFINER/INVOKER (before VIEW keyword, unless it appeared after view name)
+        if cv.security_sql_style && !cv.security_after_name {
             if let Some(ref security) = cv.security {
                 self.write_space();
                 self.write_keyword("SQL SECURITY");
@@ -10796,10 +10818,15 @@ impl Generator {
             }
 
             // Presto/Trino/StarRocks: SECURITY DEFINER/INVOKER/NONE (after columns)
-            if !cv.security_sql_style {
+            // Also handles SQL SECURITY after view name (security_after_name)
+            if !cv.security_sql_style || cv.security_after_name {
                 if let Some(ref security) = cv.security {
                     self.write_space();
-                    self.write_keyword("SECURITY");
+                    if cv.security_sql_style {
+                        self.write_keyword("SQL SECURITY");
+                    } else {
+                        self.write_keyword("SECURITY");
+                    }
                     self.write_space();
                     match security {
                         FunctionSecurity::Definer => self.write_keyword("DEFINER"),
@@ -11501,10 +11528,28 @@ impl Generator {
             }
             self.write_space();
 
-            // Kind modifier (GLOBAL, LOCAL, SESSION, PERSIST, PERSIST_ONLY)
+            // Kind modifier (GLOBAL, LOCAL, SESSION, PERSIST, PERSIST_ONLY, VARIABLE)
+            let has_variable_kind = item.kind.as_deref() == Some("VARIABLE");
             if let Some(ref kind) = item.kind {
-                self.write_keyword(kind);
-                self.write_space();
+                // For VARIABLE kind, only output the keyword for dialects that require it
+                // (Spark, Databricks, DuckDB) - matching Python sqlglot's
+                // SET_ASSIGNMENT_REQUIRES_VARIABLE_KEYWORD flag
+                if has_variable_kind {
+                    if matches!(
+                        self.config.dialect,
+                        Some(
+                            DialectType::Spark
+                                | DialectType::Databricks
+                                | DialectType::DuckDB
+                        )
+                    ) {
+                        self.write_keyword("VARIABLE");
+                        self.write_space();
+                    }
+                } else {
+                    self.write_keyword(kind);
+                    self.write_space();
+                }
             }
 
             // Check for special SET forms by name
@@ -11517,9 +11562,6 @@ impl Generator {
             let is_character_set = name_str == Some("CHARACTER SET");
             let is_names = name_str == Some("NAMES");
             let is_collate = name_str == Some("COLLATE");
-            let has_variable_kind = item.kind.as_deref() == Some("VARIABLE");
-            let name_has_variable_prefix = name_str.map_or(false, |n| n.starts_with("VARIABLE "));
-            let is_variable = has_variable_kind || name_has_variable_prefix;
             let is_value_only =
                 matches!(&item.value, Expression::Identifier(id) if id.name.is_empty());
 
@@ -11547,24 +11589,11 @@ impl Generator {
                 self.write_keyword("COLLATE");
                 self.write_space();
                 self.generate_set_value(&item.value)?;
-            } else if is_variable {
+            } else if has_variable_kind {
                 // Output: SET [VARIABLE] <name> = <value>
-                // If kind=VARIABLE, the keyword was already written above.
-                // If name has VARIABLE prefix, write VARIABLE keyword for DuckDB target only.
-                if name_has_variable_prefix && !has_variable_kind {
-                    if matches!(self.config.dialect, Some(DialectType::DuckDB)) {
-                        self.write_keyword("VARIABLE");
-                        self.write_space();
-                    }
-                }
-                // Extract actual variable name (strip VARIABLE prefix if present)
+                // VARIABLE keyword already written above if dialect requires it
                 if let Some(ns) = name_str {
-                    let var_name = if name_has_variable_prefix {
-                        &ns["VARIABLE ".len()..]
-                    } else {
-                        ns
-                    };
-                    self.write(var_name);
+                    self.write(ns);
                 } else {
                     self.generate_expression(&item.name)?;
                 }
@@ -11961,6 +11990,11 @@ impl Generator {
         self.write_space();
         self.generate_identifier(&dd.name)?;
 
+        if dd.sync {
+            self.write_space();
+            self.write_keyword("SYNC");
+        }
+
         Ok(())
     }
 
@@ -12189,6 +12223,24 @@ impl Generator {
                         if !cf.environment.is_empty() {
                             self.write_space();
                             self.generate_environment_clause(&cf.environment)?;
+                        }
+                    }
+                    FunctionPropertyKind::Handler => {
+                        if let Some(ref h) = cf.handler {
+                            self.write_space();
+                            self.write_keyword("HANDLER");
+                            self.write_space();
+                            self.write("'");
+                            self.write(h);
+                            self.write("'");
+                        }
+                    }
+                    FunctionPropertyKind::ParameterStyle => {
+                        if let Some(ref ps) = cf.parameter_style {
+                            self.write_space();
+                            self.write_keyword("PARAMETER STYLE");
+                            self.write_space();
+                            self.write_keyword(ps);
                         }
                     }
                 }
@@ -12494,7 +12546,15 @@ impl Generator {
     fn generate_function_security(&mut self, cf: &CreateFunction) -> Result<()> {
         if let Some(security) = &cf.security {
             self.write_space();
-            self.write_keyword("SECURITY");
+            // MySQL uses SQL SECURITY prefix
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::MySQL)
+            ) {
+                self.write_keyword("SQL SECURITY");
+            } else {
+                self.write_keyword("SECURITY");
+            }
             self.write_space();
             match security {
                 FunctionSecurity::Definer => self.write_keyword("DEFINER"),
@@ -16631,6 +16691,35 @@ impl Generator {
             return Ok(());
         }
 
+        // Snowflake: GENERATOR(val) -> GENERATOR(ROWCOUNT => val)
+        // GENERATOR(val1, val2) -> GENERATOR(ROWCOUNT => val1, TIMELIMIT => val2)
+        // Positional args are mapped to named parameters.
+        if matches!(self.config.dialect, Some(DialectType::Snowflake))
+            && func.name.eq_ignore_ascii_case("GENERATOR")
+        {
+            let has_positional_args = !func.args.is_empty()
+                && !matches!(&func.args[0], Expression::NamedArgument(_));
+            if has_positional_args {
+                let param_names = ["ROWCOUNT", "TIMELIMIT"];
+                self.write_keyword("GENERATOR");
+                self.write("(");
+                for (i, arg) in func.args.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    if i < param_names.len() {
+                        self.write_keyword(param_names[i]);
+                        self.write(" => ");
+                        self.generate_expression(arg)?;
+                    } else {
+                        self.generate_expression(arg)?;
+                    }
+                }
+                self.write(")");
+                return Ok(());
+            }
+        }
+
         // Redshift: DATE_TRUNC('unit', date) -> DATE_TRUNC('UNIT', date)
         // Unit should be quoted uppercase string
         if self.config.dialect == Some(DialectType::Redshift)
@@ -16932,6 +17021,13 @@ impl Generator {
             self.write_space();
             self.write_formatted_comment(comment);
         }
+        Ok(())
+    }
+
+    fn generate_function_emits(&mut self, fe: &FunctionEmits) -> Result<()> {
+        self.generate_expression(&fe.this)?;
+        self.write_keyword(" EMITS ");
+        self.generate_expression(&fe.emits)?;
         Ok(())
     }
 
@@ -18046,6 +18142,11 @@ impl Generator {
             self.generate_expression(&f.this)?;
             self.write(" ~ ");
             self.generate_expression(&f.pattern)?;
+        } else if matches!(self.config.dialect, Some(DialectType::Exasol)) && f.flags.is_none() {
+            // Exasol uses REGEXP_LIKE as infix binary operator
+            self.generate_expression(&f.this)?;
+            self.write_keyword(" REGEXP_LIKE ");
+            self.generate_expression(&f.pattern)?;
         } else if matches!(
             self.config.dialect,
             Some(DialectType::SingleStore)
@@ -18810,6 +18911,48 @@ impl Generator {
         Ok(())
     }
 
+    /// Generate FIRST/LAST aggregate functions with Hive/Spark2-style boolean argument
+    /// for IGNORE NULLS. In Hive/Spark2, `FIRST(col) IGNORE NULLS` is written as `FIRST(col, TRUE)`.
+    fn generate_agg_func_with_ignore_nulls_bool(
+        &mut self,
+        name: &str,
+        f: &AggFunc,
+    ) -> Result<()> {
+        // For Hive/Spark2 dialects, convert IGNORE NULLS to boolean TRUE argument
+        if matches!(
+            self.config.dialect,
+            Some(DialectType::Hive)
+        ) && f.ignore_nulls == Some(true)
+        {
+            // Create a modified copy without ignore_nulls, add TRUE as part of the output
+            let func_name: Cow<'_, str> = match self.config.normalize_functions {
+                NormalizeFunctions::Upper => Cow::Owned(name.to_ascii_uppercase()),
+                NormalizeFunctions::Lower => Cow::Owned(name.to_ascii_lowercase()),
+                NormalizeFunctions::None => {
+                    if let Some(ref original) = f.name {
+                        Cow::Owned(original.clone())
+                    } else {
+                        Cow::Owned(name.to_ascii_lowercase())
+                    }
+                }
+            };
+            self.write(func_name.as_ref());
+            self.write("(");
+            if f.distinct {
+                self.write_keyword("DISTINCT");
+                self.write_space();
+            }
+            if !matches!(f.this, Expression::Null(_)) {
+                self.generate_expression(&f.this)?;
+            }
+            self.write(", ");
+            self.write_keyword("TRUE");
+            self.write(")");
+            return Ok(());
+        }
+        self.generate_agg_func(name, f)
+    }
+
     fn generate_group_concat(&mut self, f: &GroupConcatFunc) -> Result<()> {
         self.write_keyword("GROUP_CONCAT");
         self.write("(");
@@ -19135,7 +19278,19 @@ impl Generator {
         self.write_keyword(name);
         self.write("(");
         self.generate_expression(&f.this)?;
-        // IGNORE NULLS / RESPECT NULLS inside parens for dialects like BigQuery
+        // ORDER BY inside parens (e.g., DuckDB: LAST_VALUE(x ORDER BY x))
+        if !f.order_by.is_empty() {
+            self.write_space();
+            self.write_keyword("ORDER BY");
+            self.write_space();
+            for (i, ordered) in f.order_by.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_ordered(ordered)?;
+            }
+        }
+        // IGNORE NULLS / RESPECT NULLS inside parens for dialects like BigQuery, DuckDB
         if self.config.ignore_nulls_in_func {
             match f.ignore_nulls {
                 Some(true) => {
@@ -19165,6 +19320,29 @@ impl Generator {
             }
         }
         Ok(())
+    }
+
+    /// Generate FIRST_VALUE/LAST_VALUE with Hive/Spark2-style boolean argument for IGNORE NULLS.
+    /// In Hive/Spark2, `FIRST_VALUE(col) IGNORE NULLS` is written as `FIRST_VALUE(col, TRUE)`.
+    fn generate_value_func_with_ignore_nulls_bool(
+        &mut self,
+        name: &str,
+        f: &ValueFunc,
+    ) -> Result<()> {
+        if matches!(
+            self.config.dialect,
+            Some(DialectType::Hive)
+        ) && f.ignore_nulls == Some(true)
+        {
+            self.write_keyword(name);
+            self.write("(");
+            self.generate_expression(&f.this)?;
+            self.write(", ");
+            self.write_keyword("TRUE");
+            self.write(")");
+            return Ok(());
+        }
+        self.generate_value_func(name, f)
     }
 
     fn generate_nth_value(&mut self, f: &NthValueFunc) -> Result<()> {
@@ -20772,7 +20950,17 @@ impl Generator {
     // Array/struct/map access generators
 
     fn generate_subscript(&mut self, s: &Subscript) -> Result<()> {
+        // Wrap the base expression in parentheses when it uses arrow syntax (->)
+        // which has lower precedence than bracket subscript ([]).
+        // E.g., (t.v -> '$.a')[s.x] instead of t.v -> '$.a'[s.x]
+        let needs_parens = matches!(&s.this, Expression::JsonExtract(ref f) if f.arrow_syntax);
+        if needs_parens {
+            self.write("(");
+        }
         self.generate_expression(&s.this)?;
+        if needs_parens {
+            self.write(")");
+        }
         self.write("[");
         self.generate_expression(&s.index)?;
         self.write("]");
@@ -22122,7 +22310,7 @@ impl Generator {
             }
             DataType::Int {
                 length,
-                integer_spelling,
+                integer_spelling: _,
             } => {
                 // BigQuery uses INT64 for INT
                 if matches!(self.config.dialect, Some(DialectType::BigQuery)) {
@@ -22138,8 +22326,6 @@ impl Generator {
                         | Some(DialectType::Trino)
                         | Some(DialectType::SQLite)
                         | Some(DialectType::Redshift) => true,
-                        // Databricks preserves the original spelling
-                        Some(DialectType::Databricks) => *integer_spelling,
                         _ => false,
                     };
                     if use_integer {
@@ -24950,7 +25136,13 @@ impl Generator {
                 self.write(")");
             }
         } else if matches!(self.config.dialect, Some(DialectType::Databricks)) {
-            self.write_keyword("GENERATED ALWAYS AS IDENTITY");
+            // IDENTITY(start, increment) -> GENERATED BY DEFAULT AS IDENTITY
+            // Plain IDENTITY/AUTO_INCREMENT -> GENERATED ALWAYS AS IDENTITY
+            if col.auto_increment_start.is_some() || col.auto_increment_increment.is_some() {
+                self.write_keyword("GENERATED BY DEFAULT AS IDENTITY");
+            } else {
+                self.write_keyword("GENERATED ALWAYS AS IDENTITY");
+            }
             if col.auto_increment_start.is_some() || col.auto_increment_increment.is_some() {
                 self.write(" (");
                 let mut first = true;
@@ -25235,6 +25427,15 @@ impl Generator {
             self.write_space();
             self.write_keyword("ENFORCED");
         }
+        Ok(())
+    }
+
+    fn generate_assume_column_constraint(&mut self, e: &AssumeColumnConstraint) -> Result<()> {
+        // Python: return f"ASSUME ({self.sql(e, 'this')})"
+        self.write_keyword("ASSUME");
+        self.write(" (");
+        self.generate_expression(&e.this)?;
+        self.write(")");
         Ok(())
     }
 
@@ -26773,9 +26974,15 @@ impl Generator {
     }
 
     fn generate_declare(&mut self, e: &Declare) -> Result<()> {
-        // DECLARE var1 AS type1, var2 AS type2, ...
+        // DECLARE [OR REPLACE] var1 AS type1, var2 AS type2, ...
         self.write_keyword("DECLARE");
         self.write_space();
+        if e.replace {
+            self.write_keyword("OR");
+            self.write_space();
+            self.write_keyword("REPLACE");
+            self.write_space();
+        }
         for (i, expr) in e.expressions.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
@@ -26992,7 +27199,8 @@ impl Generator {
                 } else {
                     for (i, pair) in t.expressions.iter().enumerate() {
                         if i > 0 {
-                            self.write(", ");
+                            // ClickHouse dict properties are space-separated, not comma-separated
+                            self.write(" ");
                         }
                         if let Expression::Tuple(pair_tuple) = pair {
                             if let Some(k) = pair_tuple.expressions.first() {
@@ -27011,7 +27219,8 @@ impl Generator {
                 self.generate_expression(settings)?;
             }
             self.write(")");
-        } else if property_name.eq_ignore_ascii_case("LAYOUT") {
+        } else {
+            // No settings but kind had parens (e.g., SOURCE(NULL()), LAYOUT(FLAT()))
             self.write("()");
         }
         self.write(")");
@@ -28981,8 +29190,32 @@ impl Generator {
     fn generate_json_cast(&mut self, e: &JSONCast) -> Result<()> {
         self.generate_expression(&e.this)?;
         self.write(".:");
-        self.generate_data_type(&e.to)?;
+        // If the data type has nested type parameters (like Array(JSON), Map(String, Int)),
+        // wrap the entire type string in double quotes.
+        // This matches Python sqlglot's ClickHouse _json_cast_sql behavior.
+        if Self::data_type_has_nested_expressions(&e.to) {
+            // Generate the data type to a temporary string buffer, then wrap in quotes
+            let saved = std::mem::take(&mut self.output);
+            self.generate_data_type(&e.to)?;
+            let type_sql = std::mem::replace(&mut self.output, saved);
+            self.write("\"");
+            self.write(&type_sql);
+            self.write("\"");
+        } else {
+            self.generate_data_type(&e.to)?;
+        }
         Ok(())
+    }
+
+    /// Check if a DataType has nested type expressions (sub-types).
+    /// This corresponds to Python sqlglot's `to.expressions` being non-empty.
+    fn data_type_has_nested_expressions(dt: &DataType) -> bool {
+        matches!(
+            dt,
+            DataType::Array { .. }
+                | DataType::Map { .. }
+                | DataType::Struct { .. }
+        )
     }
 
     fn generate_json_extract_array(&mut self, e: &JSONExtractArray) -> Result<()> {
@@ -29030,13 +29263,13 @@ impl Generator {
             use crate::dialects::DialectType;
             if matches!(self.config.dialect, Some(DialectType::Databricks)) {
                 // Databricks: output col:path syntax (e.g., c1:price, c1:price.foo, c1:price.bar[1])
+                // Keys that are not safe identifiers (contain hyphens, spaces, etc.) must use
+                // bracket notation: c:["x-y"] instead of c:x-y
                 self.generate_expression(&e.this)?;
                 self.write(":");
-                // The expression is a string literal containing the path (e.g., 'price' or 'price.foo')
-                // We need to output it without quotes
                 match e.expression.as_ref() {
                     Expression::Literal(Literal::String(s)) => {
-                        self.write(s);
+                        self.write_databricks_json_path(s);
                     }
                     _ => {
                         // Fallback: generate as-is (shouldn't happen in typical cases)
@@ -29065,6 +29298,65 @@ impl Generator {
             self.write(")");
         }
         Ok(())
+    }
+
+    /// Write a Databricks JSON colon-path, using bracket notation for keys
+    /// that are not safe identifiers (e.g., contain hyphens, spaces, etc.)
+    /// Safe identifier regex: ^[_a-zA-Z]\w*$
+    fn write_databricks_json_path(&mut self, path: &str) {
+        // If the path already starts with bracket notation (e.g., '["fr\'uit"]'),
+        // it was already formatted by the parser - output as-is
+        if path.starts_with("[\"") || path.starts_with("['") {
+            self.write(path);
+            return;
+        }
+        // Split the path into segments at '.' boundaries, but preserve bracket subscripts
+        // e.g., "price.items[0].name" -> ["price", "items[0]", "name"]
+        // e.g., "x-y" -> ["x-y"]
+        let mut first = true;
+        for segment in path.split('.') {
+            if !first {
+                self.write(".");
+            }
+            first = false;
+            // Check if there's a bracket subscript in this segment: "items[0]"
+            if let Some(bracket_pos) = segment.find('[') {
+                let key = &segment[..bracket_pos];
+                let subscript = &segment[bracket_pos..];
+                if key.is_empty() {
+                    // Bracket notation at start of segment (e.g., already formatted)
+                    self.write(segment);
+                } else if Self::is_safe_json_path_key(key) {
+                    self.write(key);
+                    self.write(subscript);
+                } else {
+                    self.write("[\"");
+                    self.write(key);
+                    self.write("\"]");
+                    self.write(subscript);
+                }
+            } else if Self::is_safe_json_path_key(segment) {
+                self.write(segment);
+            } else {
+                self.write("[\"");
+                self.write(segment);
+                self.write("\"]");
+            }
+        }
+    }
+
+    /// Check if a JSON path key is a safe identifier that doesn't need bracket quoting.
+    /// Matches Python sqlglot's SAFE_IDENTIFIER_RE: ^[_a-zA-Z]\w*$
+    fn is_safe_json_path_key(key: &str) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+        let mut chars = key.chars();
+        let first = chars.next().unwrap();
+        if first != '_' && !first.is_ascii_alphabetic() {
+            return false;
+        }
+        chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
     }
 
     fn generate_json_format(&mut self, e: &JSONFormat) -> Result<()> {
@@ -36077,6 +36369,13 @@ impl Generator {
                     self.write(&format!(" / POWER(10, {}))", scale));
                 }
                 self.write(" * INTERVAL '1 SECOND')");
+            }
+            Some(DialectType::Exasol) => {
+                // Exasol: FROM_POSIX_TIME(value)
+                self.write_keyword("FROM_POSIX_TIME");
+                self.write("(");
+                self.generate_expression(&e.this)?;
+                self.write(")");
             }
             _ => {
                 // Default: TO_TIMESTAMP(value[, scale])

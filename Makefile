@@ -22,7 +22,7 @@
 # =============================================================================
 
 SQLGLOT_REPO := https://github.com/tobymao/sqlglot.git
-SQLGLOT_REF := v29.0.1
+SQLGLOT_REF := v30.0.1
 
 CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
 CLICKHOUSE_REF := v26.2.4.23-stable
@@ -347,12 +347,12 @@ bench-parse-full:
 # Simple parse benchmark (core): polyglot-sql vs sqlglot, median-of-5
 bench-simple:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
-		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
+		uv run --python 3.13 --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
 
 # Simple parse benchmark (full): include optional third-party parsers
 bench-simple-full:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
-		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
+		uv run --python 3.13 --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
 
 # =============================================================================
 # Build

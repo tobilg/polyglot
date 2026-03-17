@@ -1350,6 +1350,10 @@ pub struct TokenizerConfig {
     /// When true, after tokenizing `INSERT ... FORMAT <non-VALUES-name>`, all text until
     /// the next blank line or end of input is consumed as a raw data token.
     pub insert_format_raw_data: bool,
+    /// Whether numeric literals can contain underscores as digit separators.
+    /// When true, `1_000` is tokenized as `1000`. Used by ClickHouse and DuckDB.
+    /// Python sqlglot: NUMBERS_CAN_BE_UNDERSCORE_SEPARATED (default False)
+    pub numbers_can_be_underscore_separated: bool,
 }
 
 impl Default for TokenizerConfig {
@@ -1378,6 +1382,7 @@ impl Default for TokenizerConfig {
             hash_comments: false,
             dollar_sign_is_identifier: false,
             insert_format_raw_data: false,
+            numbers_can_be_underscore_separated: false,
         }
     }
 }
@@ -2588,15 +2593,30 @@ impl<'a> TokenizerState<'a> {
                     }
                     if is_hex_float {
                         // Hex float literal — emit as regular Number token with full text
-                        let full_text = self.text_from_range(self.start, self.current);
+                        let raw_text = self.text_from_range(self.start, self.current);
+                        let full_text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
+                            raw_text.replace('_', "")
+                        } else {
+                            raw_text
+                        };
                         self.add_token_with_text(TokenType::Number, full_text);
                     } else if self.config.hex_string_is_integer_type {
                         // BigQuery/ClickHouse: 0xA represents an integer in hex notation
-                        let hex_value = self.text_from_range(hex_start, self.current);
+                        let raw_value = self.text_from_range(hex_start, self.current);
+                        let hex_value = if self.config.numbers_can_be_underscore_separated && raw_value.contains('_') {
+                            raw_value.replace('_', "")
+                        } else {
+                            raw_value
+                        };
                         self.add_token_with_text(TokenType::HexNumber, hex_value);
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
-                        let hex_value = self.text_from_range(hex_start, self.current);
+                        let raw_value = self.text_from_range(hex_start, self.current);
+                        let hex_value = if self.config.numbers_can_be_underscore_separated && raw_value.contains('_') {
+                            raw_value.replace('_', "")
+                        } else {
+                            raw_value
+                        };
                         self.add_token_with_text(TokenType::HexString, hex_value);
                     }
                     return Ok(());
@@ -2652,7 +2672,14 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text = self.text_from_range(self.start, self.current);
+        let raw_text = self.text_from_range(self.start, self.current);
+        // Strip underscore digit separators (e.g., 20_000 -> 20000, 1_2E+1_0 -> 12E+10)
+        // Only for dialects that support this (ClickHouse, DuckDB)
+        let text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
+            raw_text.replace('_', "")
+        } else {
+            raw_text
+        };
 
         // Check for numeric literal suffixes (e.g., 1L -> BIGINT, 1s -> SMALLINT in Hive/Spark)
         if !self.config.numeric_literals.is_empty() && !self.is_at_end() {
@@ -2769,7 +2796,14 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text = self.text_from_range(self.start, self.current);
+        let raw_text = self.text_from_range(self.start, self.current);
+        // Strip underscore digit separators (e.g., .1_5 -> .15)
+        // Only for dialects that support this (ClickHouse, DuckDB)
+        let text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
+            raw_text.replace('_', "")
+        } else {
+            raw_text
+        };
         self.add_token_with_text(TokenType::Number, text);
         Ok(())
     }
@@ -3782,5 +3816,34 @@ mod tests {
             "CREATE FUNCTION add_one(x INT) RETURNS INT LANGUAGE PYTHON AS $FOO$def add_one(x):\n  return x+1$FOO$",
             None
         );
+    }
+
+    #[test]
+    fn test_numeric_underscore_stripping() {
+        // Underscore stripping only happens when numbers_can_be_underscore_separated is true
+        let mut config = TokenizerConfig::default();
+        config.numbers_can_be_underscore_separated = true;
+        let tokenizer = Tokenizer::new(config);
+
+        // Simple integer with underscores
+        let tokens = tokenizer.tokenize("SELECT 1_2_3_4_5").unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Number);
+        assert_eq!(tokens[1].text, "12345");
+
+        // Thousands separator
+        let tokens = tokenizer.tokenize("SELECT 20_000").unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Number);
+        assert_eq!(tokens[1].text, "20000");
+
+        // Scientific notation with underscores
+        let tokens = tokenizer.tokenize("SELECT 1_2E+1_0").unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Number);
+        assert_eq!(tokens[1].text, "12E+10");
+
+        // Default tokenizer should NOT strip underscores
+        let default_tokenizer = Tokenizer::default();
+        let tokens = default_tokenizer.tokenize("SELECT 1_2_3_4_5").unwrap();
+        assert_eq!(tokens[1].token_type, TokenType::Number);
+        assert_eq!(tokens[1].text, "1_2_3_4_5");
     }
 }

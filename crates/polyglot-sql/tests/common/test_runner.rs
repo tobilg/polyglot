@@ -144,6 +144,10 @@ pub fn dialect_identity_test(
                 | DialectType::Fabric
                 | DialectType::BigQuery
                 | DialectType::Snowflake
+                | DialectType::ClickHouse
+                | DialectType::Databricks
+                | DialectType::Spark
+                | DialectType::Hive
         );
         if skip_identify {
             false

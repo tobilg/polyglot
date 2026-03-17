@@ -482,6 +482,9 @@ pub enum Expression {
     TransformKeys(Box<TransformFunc>),
     TransformValues(Box<TransformFunc>),
 
+    // Exasol: function call with EMITS clause
+    FunctionEmits(Box<FunctionEmits>),
+
     // JSON functions
     JsonExtract(Box<JsonExtractFunc>),
     JsonExtractScalar(Box<JsonExtractFunc>),
@@ -632,6 +635,7 @@ pub enum Expression {
     CaseSpecificColumnConstraint(Box<CaseSpecificColumnConstraint>),
     CharacterSetColumnConstraint(Box<CharacterSetColumnConstraint>),
     CheckColumnConstraint(Box<CheckColumnConstraint>),
+    AssumeColumnConstraint(Box<AssumeColumnConstraint>),
     CompressColumnConstraint(Box<CompressColumnConstraint>),
     DateFormatColumnConstraint(Box<DateFormatColumnConstraint>),
     EphemeralColumnConstraint(Box<EphemeralColumnConstraint>),
@@ -5174,6 +5178,9 @@ pub struct ValueFunc {
     /// None = not specified, Some(true) = IGNORE NULLS, Some(false) = RESPECT NULLS
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignore_nulls: Option<bool>,
+    /// ORDER BY inside the function parens (e.g., DuckDB: LAST_VALUE(x ORDER BY x))
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order_by: Vec<Ordered>,
 }
 
 /// NTH_VALUE function
@@ -5459,6 +5466,17 @@ pub struct MapConstructor {
 pub struct TransformFunc {
     pub this: Expression,
     pub transform: Expression,
+}
+
+/// Function call with EMITS clause (Exasol)
+/// Used for JSON_EXTRACT(...) EMITS (col1 TYPE1, col2 TYPE2)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct FunctionEmits {
+    /// The function call expression
+    pub this: Expression,
+    /// The EMITS schema definition
+    pub emits: Expression,
 }
 
 // ============================================================================
@@ -6296,6 +6314,11 @@ pub enum TableConstraint {
         #[serde(default)]
         modifiers: ConstraintModifiers,
     },
+    /// ClickHouse ASSUME constraint (query optimization assumption)
+    Assume {
+        name: Option<Identifier>,
+        expression: Expression,
+    },
     /// INDEX / KEY constraint (MySQL)
     Index {
         name: Option<Identifier>,
@@ -6455,6 +6478,9 @@ pub struct DropTable {
     /// When set, TSQL generator outputs IF NOT OBJECT_ID(...) IS NULL BEGIN DROP TABLE ...; END
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_id_args: Option<String>,
+    /// ClickHouse: SYNC modifier
+    #[serde(default)]
+    pub sync: bool,
 }
 
 impl DropTable {
@@ -6467,6 +6493,7 @@ impl DropTable {
             purge: false,
             leading_comments: Vec::new(),
             object_id_args: None,
+            sync: false,
         }
     }
 }
@@ -6844,6 +6871,9 @@ pub struct CreateView {
     /// True for MySQL-style "SQL SECURITY", false for Presto-style "SECURITY"
     #[serde(default = "default_true")]
     pub security_sql_style: bool,
+    /// True when SQL SECURITY appears after the view name (not before VIEW keyword)
+    #[serde(default)]
+    pub security_after_name: bool,
     /// Whether the query was parenthesized: AS (SELECT ...)
     #[serde(default)]
     pub query_parenthesized: bool,
@@ -6910,6 +6940,7 @@ impl CreateView {
             definer: None,
             security: None,
             security_sql_style: true,
+            security_after_name: false,
             query_parenthesized: false,
             locking_mode: None,
             locking_access: None,
@@ -7431,6 +7462,9 @@ impl CreateDatabase {
 pub struct DropDatabase {
     pub name: Identifier,
     pub if_exists: bool,
+    /// ClickHouse: SYNC modifier
+    #[serde(default)]
+    pub sync: bool,
 }
 
 impl DropDatabase {
@@ -7438,6 +7472,7 @@ impl DropDatabase {
         Self {
             name: Identifier::new(name),
             if_exists: false,
+            sync: false,
         }
     }
 }
@@ -7487,6 +7522,12 @@ pub struct CreateFunction {
     /// Databricks: ENVIRONMENT (dependencies = '...', environment_version = '...')
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<Expression>,
+    /// HANDLER 'handler_function' clause (Databricks)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handler: Option<String>,
+    /// PARAMETER STYLE clause (e.g., PANDAS for Databricks)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameter_style: Option<String>,
 }
 
 /// A SET option in CREATE FUNCTION (PostgreSQL)
@@ -7543,6 +7584,10 @@ pub enum FunctionPropertyKind {
     Options,
     /// ENVIRONMENT clause (Databricks)
     Environment,
+    /// HANDLER clause (Databricks)
+    Handler,
+    /// PARAMETER STYLE clause (Databricks)
+    ParameterStyle,
 }
 
 /// Function parameter
@@ -7626,6 +7671,8 @@ impl CreateFunction {
             is_table_function: false,
             property_order: Vec::new(),
             environment: Vec::new(),
+            handler: None,
+            parameter_style: None,
         }
     }
 }
@@ -8349,6 +8396,8 @@ pub struct Summarize {
 pub struct Declare {
     #[serde(default)]
     pub expressions: Vec<Expression>,
+    #[serde(default)]
+    pub replace: bool,
 }
 
 /// DeclareItem
@@ -8632,6 +8681,13 @@ pub struct CheckColumnConstraint {
     pub this: Box<Expression>,
     #[serde(default)]
     pub enforced: Option<Box<Expression>>,
+}
+
+/// AssumeColumnConstraint (ClickHouse ASSUME constraint)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct AssumeColumnConstraint {
+    pub this: Box<Expression>,
 }
 
 /// CompressColumnConstraint

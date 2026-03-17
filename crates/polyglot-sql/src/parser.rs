@@ -13333,20 +13333,21 @@ impl Parser {
                 constraints.push(self.parse_like_clause()?);
             }
             // Check for table-level constraint
-            // For CHECK, only treat as constraint if followed by '(' (or in ClickHouse where parens are optional).
+            // For CHECK, only treat as constraint if followed by '(' (NOT in ClickHouse — there
+            // CHECK/ASSUME without CONSTRAINT keyword is not supported, and 'check' can be a column name).
             // Otherwise, 'check' is a column name (e.g., CREATE TABLE t (check INT)).
             else if self.check(TokenType::Constraint)
                 || self.check(TokenType::PrimaryKey)
                 || self.check(TokenType::ForeignKey)
                 || self.check(TokenType::Unique)
                 || (self.check(TokenType::Check)
-                    && (self
+                    && !matches!(
+                        self.config.dialect,
+                        Some(crate::dialects::DialectType::ClickHouse)
+                    )
+                    && self
                         .peek_nth(1)
-                        .map_or(false, |t| t.token_type == TokenType::LParen)
-                        || matches!(
-                            self.config.dialect,
-                            Some(crate::dialects::DialectType::ClickHouse)
-                        )))
+                        .map_or(false, |t| t.token_type == TokenType::LParen))
                 || self.check(TokenType::Exclude)
             {
                 constraints.push(self.parse_table_constraint()?);
@@ -15433,23 +15434,9 @@ impl Parser {
             // CHECK (expression) or CHECK (SELECT ...) or ClickHouse: CHECK expression (without parens)
             let expression = if self.match_token(TokenType::LParen) {
                 let expr = if self.check(TokenType::Select) || self.check(TokenType::With) {
-                    // Subquery in CHECK constraint
-                    let stmt = self.parse_statement()?;
-                    Expression::Subquery(Box::new(Subquery {
-                        this: stmt,
-                        alias: None,
-                        column_aliases: Vec::new(),
-                        order_by: None,
-                        limit: None,
-                        offset: None,
-                        distribute_by: None,
-                        sort_by: None,
-                        cluster_by: None,
-                        lateral: false,
-                        modifiers_inside: false,
-                        trailing_comments: Vec::new(),
-                        inferred_type: None,
-                    }))
+                    // SELECT/WITH in CHECK constraint — parse directly, no Subquery wrapper
+                    // The generator already wraps CHECK content in parens
+                    self.parse_statement()?
                 } else {
                     self.parse_expression()?
                 };
@@ -15598,13 +15585,23 @@ impl Parser {
         ) && self.check_identifier("ASSUME")
         {
             // ClickHouse: CONSTRAINT name ASSUME expression
-            // Used for query optimization assumptions — store as CHECK constraint
+            // Used for query optimization assumptions
             self.skip(); // consume ASSUME
-            let expr = self.parse_expression()?;
-            Ok(TableConstraint::Check {
+            let expression = if self.match_token(TokenType::LParen) {
+                // ASSUME (expr) or ASSUME (SELECT ...)
+                let expr = if self.check(TokenType::Select) || self.check(TokenType::With) {
+                    self.parse_statement()?
+                } else {
+                    self.parse_expression()?
+                };
+                self.expect(TokenType::RParen)?;
+                expr
+            } else {
+                self.parse_expression()?
+            };
+            Ok(TableConstraint::Assume {
                 name,
-                expression: expr,
-                modifiers: Default::default(),
+                expression,
             })
         } else {
             Err(self.parse_error("Expected PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, or EXCLUDE"))
@@ -16055,10 +16052,30 @@ impl Parser {
         let copy_grants = copy_grants || self.match_text_seq(&["COPY", "GRANTS"]);
 
         // Presto/Trino/StarRocks: SECURITY DEFINER/INVOKER/NONE (after view name, before AS)
-        // This differs from MySQL's SQL SECURITY which comes before VIEW keyword
-        let (security, security_sql_style) = if security.is_some() {
+        // MySQL also allows SQL SECURITY DEFINER/INVOKER after the view name
+        // This differs from MySQL's SQL SECURITY which can also come before VIEW keyword
+        let (security, security_sql_style, security_after_name) = if security.is_some() {
             // MySQL-style SQL SECURITY was parsed before VIEW keyword
-            (security, true)
+            (security, true, false)
+        } else if self.check_identifier("SQL")
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("SECURITY")
+        {
+            // SQL SECURITY after view name
+            self.skip(); // consume SQL
+            self.skip(); // consume SECURITY
+            let sec = if self.match_identifier("DEFINER") {
+                Some(FunctionSecurity::Definer)
+            } else if self.match_identifier("INVOKER") {
+                Some(FunctionSecurity::Invoker)
+            } else if self.match_identifier("NONE") {
+                Some(FunctionSecurity::None)
+            } else {
+                None
+            };
+            (sec, true, true)
         } else if self.match_identifier("SECURITY") {
             // Presto-style SECURITY after view name
             let sec = if self.match_identifier("DEFINER") {
@@ -16070,9 +16087,9 @@ impl Parser {
             } else {
                 None
             };
-            (sec, false)
+            (sec, false, false)
         } else {
-            (None, true)
+            (None, true, false)
         };
 
         // Snowflake: COMMENT = 'text'
@@ -16234,6 +16251,7 @@ impl Parser {
                 definer,
                 security,
                 security_sql_style,
+                security_after_name,
                 query_parenthesized: false,
                 locking_mode: None,
                 locking_access: None,
@@ -16311,6 +16329,7 @@ impl Parser {
             definer,
             security,
             security_sql_style,
+            security_after_name,
             query_parenthesized,
             locking_mode,
             locking_access,
@@ -16828,14 +16847,17 @@ impl Parser {
         }
 
         // ClickHouse: SYNC keyword
-        if matches!(
+        let sync = if matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::ClickHouse)
         ) {
-            self.match_identifier("SYNC");
+            let s = self.match_identifier("SYNC");
             self.match_identifier("NO");
             self.match_identifier("DELAY");
-        }
+            s
+        } else {
+            false
+        };
 
         Ok(Expression::DropTable(Box::new(DropTable {
             names,
@@ -16845,6 +16867,7 @@ impl Parser {
             purge,
             leading_comments,
             object_id_args: None,
+            sync,
         })))
     }
 
@@ -22043,6 +22066,31 @@ impl Parser {
             return Ok(Expression::SetStatement(Box::new(SetStatement { items })));
         }
 
+        // Track whether SET VAR/VARIABLE was used (only first item gets the VARIABLE kind)
+        let mut set_is_variable = if self.check(TokenType::Var) {
+            let text = self.peek().text.to_uppercase();
+            if text == "VARIABLE" || text == "VAR" {
+                // Look ahead: VAR/VARIABLE should be followed by another name, not by = or TO
+                if let Some(next) = self.tokens.get(self.current + 1) {
+                    if next.token_type != TokenType::Eq
+                        && next.token_type != TokenType::To
+                        && next.token_type != TokenType::ColonEq
+                    {
+                        self.skip(); // consume VAR/VARIABLE
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         loop {
             // Check for GLOBAL, LOCAL, SESSION, PERSIST, PERSIST_ONLY modifiers
             // LOCAL is a token type, others are identifiers
@@ -22056,6 +22104,9 @@ impl Parser {
                 Some("PERSIST".to_string())
             } else if self.match_identifier("PERSIST_ONLY") {
                 Some("PERSIST_ONLY".to_string())
+            } else if set_is_variable {
+                set_is_variable = false; // Only first item gets VARIABLE kind
+                Some("VARIABLE".to_string())
             } else {
                 None
             };
@@ -22107,29 +22158,6 @@ impl Parser {
                 break;
             }
 
-            // Handle DuckDB: SET VARIABLE var = value
-            // Only match if "VARIABLE" is followed by another identifier (not by = or TO)
-            let is_variable = if self.check(TokenType::Var)
-                && self.peek().text.eq_ignore_ascii_case("VARIABLE")
-            {
-                // Look ahead: VARIABLE should be followed by another name, not by = or TO
-                if let Some(next) = self.tokens.get(self.current + 1) {
-                    if next.token_type != TokenType::Eq
-                        && next.token_type != TokenType::To
-                        && next.token_type != TokenType::ColonEq
-                    {
-                        self.skip(); // consume VARIABLE
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
             // Parse variable name - use a simple approach to avoid expression parsing issues
             // Variable names can be dotted identifiers or keywords used as names
             let name = {
@@ -22153,6 +22181,28 @@ impl Parser {
                     let first = self.advance().text.clone();
                     name_str.push_str(&first);
                     Expression::Identifier(Identifier::new(name_str))
+                } else if self.check(TokenType::LParen) {
+                    // Tuple of variable names: SET VARIABLE (v1, v2) = (SELECT ...)
+                    self.skip(); // consume (
+                    let mut vars = Vec::new();
+                    loop {
+                        let var_name = self.advance().text.clone();
+                        vars.push(Expression::Column(Box::new(Column {
+                            name: Identifier::new(var_name),
+                            table: None,
+                            join_mark: false,
+                            trailing_comments: Vec::new(),
+                            span: None,
+                            inferred_type: None,
+                        })));
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenType::RParen)?;
+                    Expression::Tuple(Box::new(crate::expressions::Tuple {
+                        expressions: vars,
+                    }))
                 } else {
                     let first = self.advance().text.clone();
                     let mut name_str = first;
@@ -22172,19 +22222,6 @@ impl Parser {
                     }
                     Expression::Identifier(Identifier::new(name_str))
                 }
-            };
-
-            // Wrap name with VARIABLE marker if SET VARIABLE was used
-            let name = if is_variable {
-                // Store as "VARIABLE name" identifier
-                let name_str = match &name {
-                    Expression::Column(col) => col.name.name.clone(),
-                    Expression::Identifier(id) => id.name.clone(),
-                    _ => format!("{:?}", name),
-                };
-                Expression::Identifier(Identifier::new(format!("VARIABLE {}", name_str)))
-            } else {
-                name
             };
 
             // Expect = or := or TO
@@ -22708,17 +22745,20 @@ impl Parser {
         let name = Identifier::new(self.expect_identifier()?);
 
         // ClickHouse: ON CLUSTER clause
-        if matches!(
+        let sync = if matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::ClickHouse)
         ) {
             let _ = self.parse_on_cluster_clause()?;
-            self.match_identifier("SYNC");
-        }
+            self.match_identifier("SYNC")
+        } else {
+            false
+        };
 
         Ok(Expression::DropDatabase(Box::new(DropDatabase {
             name,
             if_exists,
+            sync,
         })))
     }
 
@@ -22879,6 +22919,8 @@ impl Parser {
         let mut property_order: Vec<FunctionPropertyKind> = Vec::new();
         let mut options: Vec<Expression> = Vec::new();
         let mut environment: Vec<Expression> = Vec::new();
+        let mut handler: Option<String> = None;
+        let mut parameter_style: Option<String> = None;
 
         // Parse function options
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
@@ -23088,6 +23130,42 @@ impl Parser {
                 if !property_order.contains(&FunctionPropertyKind::Environment) {
                     property_order.push(FunctionPropertyKind::Environment);
                 }
+            } else if self.match_identifier("HANDLER") {
+                // Databricks: HANDLER 'handler_function'
+                if self.check(TokenType::String) {
+                    let tok = self.advance();
+                    handler = Some(tok.text.clone());
+                }
+                if !property_order.contains(&FunctionPropertyKind::Handler) {
+                    property_order.push(FunctionPropertyKind::Handler);
+                }
+            } else if self.match_text_seq(&["PARAMETER", "STYLE"]) {
+                // Databricks: PARAMETER STYLE PANDAS
+                let style = self.expect_identifier_or_keyword()?;
+                parameter_style = Some(style.to_ascii_uppercase());
+                if !property_order.contains(&FunctionPropertyKind::ParameterStyle) {
+                    property_order.push(FunctionPropertyKind::ParameterStyle);
+                }
+            } else if self.check_identifier("SQL") && self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1].text.eq_ignore_ascii_case("SECURITY") {
+                // SQL SECURITY DEFINER/INVOKER
+                self.skip(); // consume SQL
+                self.skip(); // consume SECURITY
+                if self.match_identifier("DEFINER") {
+                    security = Some(FunctionSecurity::Definer);
+                } else if self.match_identifier("INVOKER") {
+                    security = Some(FunctionSecurity::Invoker);
+                }
+                if !property_order.contains(&FunctionPropertyKind::Security) {
+                    property_order.push(FunctionPropertyKind::Security);
+                }
+            } else if self.check(TokenType::Select) || self.check(TokenType::With) {
+                // Bare SELECT/WITH body (without AS keyword) - e.g., MySQL
+                let stmt = self.parse_statement()?;
+                body = Some(FunctionBody::Expression(stmt));
+                if !property_order.contains(&FunctionPropertyKind::As) {
+                    property_order.push(FunctionPropertyKind::As);
+                }
             } else {
                 break;
             }
@@ -23124,6 +23202,8 @@ impl Parser {
             is_table_function,
             property_order,
             environment,
+            handler,
+            parameter_style,
         })))
     }
 
@@ -23333,7 +23413,16 @@ impl Parser {
     /// Parse a data type for function RETURNS clause, preserving original type names.
     /// For simple type names like 'integer', preserves the original name rather than
     /// normalizing to INT. This matches Python sqlglot's behavior.
+    /// For MySQL, uses standard parse_data_type() to ensure proper type mapping (e.g., VARCHAR -> TEXT).
     fn parse_function_return_type(&mut self) -> Result<DataType> {
+        // MySQL needs standard data type parsing for proper type mapping
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::MySQL)
+        ) {
+            return self.parse_data_type();
+        }
+
         // Check if it's a simple identifier that could be a type name
         if (self.check(TokenType::Identifier) || self.check(TokenType::Var))
             && !self.check_next(TokenType::LParen)  // Not a parameterized type like VARCHAR(10)
@@ -25199,7 +25288,19 @@ impl Parser {
                 let right = self.parse_bitwise_or()?;
                 Expression::Match(Box::new(BinaryOp::new(left, right)))
             } else if self.match_token(TokenType::RLike) || self.match_token(TokenType::Tilde) {
-                // PostgreSQL ~ (regexp match) operator
+                // PostgreSQL ~ (regexp match) operator / RLIKE / REGEXP
+                let right = self.parse_bitwise_or()?;
+                Expression::RegexpLike(Box::new(RegexpFunc {
+                    this: left,
+                    pattern: right,
+                    flags: None,
+                }))
+            } else if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Exasol)
+            ) && self.check_identifier("REGEXP_LIKE") {
+                // Exasol: REGEXP_LIKE as infix binary operator
+                self.skip(); // consume REGEXP_LIKE
                 let right = self.parse_bitwise_or()?;
                 Expression::RegexpLike(Box::new(RegexpFunc {
                     this: left,
@@ -26638,7 +26739,7 @@ impl Parser {
     ///   a:b.c.d -> GET_PATH(a, 'b.c.d')
     ///   a:from::STRING -> CAST(GET_PATH(a, 'from') AS VARCHAR)
     ///   a:b:c.d -> GET_PATH(a, 'b.c.d') (multiple colons joined into single path)
-    fn parse_colon_json_path(&mut self, this: Expression) -> Result<Expression> {
+    fn parse_colon_json_path(&mut self, mut this: Expression) -> Result<Expression> {
         // DuckDB uses colon for prefix alias syntax (e.g., "alias: expr" means "expr AS alias")
         // Skip JSON path extraction for DuckDB - it's handled separately in parse_select_expressions
         if matches!(
@@ -26832,11 +26933,120 @@ impl Parser {
                         }
                         path_string.push_str("\"]");
                     } else if self.is_identifier_token() {
-                        path_string.push('[');
-                        let idx = self.advance().text;
-                        path_string.push_str(&idx);
-                        self.expect(TokenType::RBracket)?;
-                        path_string.push(']');
+                        // Check if this is a "dynamic bracket" — a column reference like s.x
+                        // inside brackets. We detect this by checking if the identifier is
+                        // followed by a dot (making it a qualified column reference).
+                        let saved_bracket_pos = self.current;
+                        let ident_text = self.advance().text.clone();
+                        if self.check(TokenType::Dot) {
+                            // Dynamic bracket: [s.x] where s.x is a column reference
+                            // Backtrack to before the identifier so we can parse the full expression
+                            self.current = saved_bracket_pos;
+                            // Parse the full expression inside the brackets
+                            let index_expr = self.parse_expression()?;
+                            self.expect(TokenType::RBracket)?;
+
+                            // Build JSONExtract for the path accumulated so far
+                            let path_expr = Expression::Literal(Literal::String(path_string.clone()));
+                            let json_extract = Expression::JSONExtract(Box::new(JSONExtract {
+                                this: Box::new(this),
+                                expression: Box::new(path_expr),
+                                only_json_types: None,
+                                expressions: Vec::new(),
+                                variant_extract: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                                    value: true,
+                                }))),
+                                json_query: None,
+                                option: None,
+                                quote: None,
+                                on_condition: None,
+                                requires_json: None,
+                            }));
+
+                            // Wrap in Subscript
+                            let subscript = Expression::Subscript(Box::new(Subscript {
+                                this: json_extract,
+                                index: index_expr,
+                            }));
+
+                            // Now continue parsing any remaining path after the dynamic bracket.
+                            // This handles patterns like [s.x].r.d or [s.x]:r or [s.x].r.d[s.y]
+                            // We parse dots into a new path string, and if we encounter another
+                            // dynamic bracket, we recurse.
+                            let mut suffix_path = String::new();
+                            loop {
+                                if self.match_token(TokenType::Dot) {
+                                    // Dot access after dynamic bracket: [s.x].r.d
+                                    if !suffix_path.is_empty() {
+                                        suffix_path.push('.');
+                                    }
+                                    if self.is_identifier_token()
+                                        || self.is_safe_keyword_as_identifier()
+                                        || self.is_reserved_keyword_as_identifier()
+                                    {
+                                        let part = self.advance().text;
+                                        suffix_path.push_str(&part);
+                                    } else {
+                                        return Err(self.parse_error("Expected identifier after . in JSON path"));
+                                    }
+                                } else if self.check(TokenType::LBracket) {
+                                    // Another bracket after dot path: [s.x].r.d[s.y]
+                                    // We need to check if this bracket contains a dynamic expression
+                                    break;
+                                } else {
+                                    break;
+                                }
+                            }
+
+                            // Build the result depending on whether there are suffix dot paths
+                            let result_base = if suffix_path.is_empty() {
+                                subscript
+                            } else {
+                                // Create another JSONExtract for the suffix path
+                                Expression::JSONExtract(Box::new(JSONExtract {
+                                    this: Box::new(subscript),
+                                    expression: Box::new(Expression::Literal(Literal::String(suffix_path))),
+                                    only_json_types: None,
+                                    expressions: Vec::new(),
+                                    variant_extract: Some(Box::new(Expression::Boolean(BooleanLiteral {
+                                        value: true,
+                                    }))),
+                                    json_query: None,
+                                    option: None,
+                                    quote: None,
+                                    on_condition: None,
+                                    requires_json: None,
+                                }))
+                            };
+
+                            // Check for another bracket (e.g., [s.y] after .r.d)
+                            if self.match_token(TokenType::LBracket) {
+                                // Parse the index expression
+                                let index_expr2 = self.parse_expression()?;
+                                self.expect(TokenType::RBracket)?;
+                                let subscript2 = Expression::Subscript(Box::new(Subscript {
+                                    this: result_base,
+                                    index: index_expr2,
+                                }));
+                                // Update `this` and `path_string` so we properly continue the outer loop
+                                this = subscript2;
+                                path_string = String::new();
+                            } else {
+                                this = result_base;
+                                path_string = String::new();
+                            }
+
+                            // Continue parsing more colon segments or break
+                            // Need to break out of the inner loop to let the outer while loop
+                            // check for more colon segments
+                            break;
+                        } else {
+                            // Simple identifier index: [idx]
+                            path_string.push('[');
+                            path_string.push_str(&ident_text);
+                            self.expect(TokenType::RBracket)?;
+                            path_string.push(']');
+                        }
                     } else {
                         // Empty brackets or unexpected token - just close the bracket
                         path_string.push('[');
@@ -32850,9 +33060,22 @@ impl Parser {
                 } else {
                     (None, None)
                 };
+                // Check for IGNORE NULLS / RESPECT NULLS inside parens (e.g., Redshift: LAG(x IGNORE NULLS))
+                let ignore_nulls_inside = if self.match_token(TokenType::Ignore)
+                    && self.match_token(TokenType::Nulls)
+                {
+                    Some(true)
+                } else if self.match_token(TokenType::Respect) && self.match_token(TokenType::Nulls)
+                {
+                    Some(false)
+                } else {
+                    None
+                };
                 self.expect(TokenType::RParen)?;
-                // Check for IGNORE NULLS / RESPECT NULLS
-                let ignore_nulls = if self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]) {
+                // Also check for IGNORE NULLS / RESPECT NULLS after parens
+                let ignore_nulls = if ignore_nulls_inside.is_some() {
+                    ignore_nulls_inside
+                } else if self.match_keywords(&[TokenType::Ignore, TokenType::Nulls]) {
                     Some(true)
                 } else if self.match_keywords(&[TokenType::Respect, TokenType::Nulls]) {
                     Some(false)
@@ -32875,6 +33098,12 @@ impl Parser {
             // FIRST_VALUE / LAST_VALUE
             "FIRST_VALUE" | "LAST_VALUE" => {
                 let this = self.parse_expression()?;
+                // Parse ORDER BY inside parens (e.g., DuckDB: LAST_VALUE(x ORDER BY x))
+                let order_by = if self.match_keywords(&[TokenType::Order, TokenType::By]) {
+                    self.parse_order_by_list()?
+                } else {
+                    Vec::new()
+                };
                 // Check for IGNORE NULLS / RESPECT NULLS inside the parens
                 let mut ignore_nulls_inside = if self.match_token(TokenType::Ignore)
                     && self.match_token(TokenType::Nulls)
@@ -32905,7 +33134,7 @@ impl Parser {
                 } else {
                     None
                 };
-                let func = ValueFunc { this, ignore_nulls };
+                let func = ValueFunc { this, ignore_nulls, order_by };
                 Ok(if upper_name == "FIRST_VALUE" {
                     Expression::FirstValue(Box::new(func))
                 } else {
@@ -32997,7 +33226,7 @@ impl Parser {
                         args.push(self.parse_expression()?);
                     }
                     self.expect(TokenType::RParen)?;
-                    return Ok(Expression::Function(Box::new(Function {
+                    let func_expr = Expression::Function(Box::new(Function {
                         name: name.to_string(),
                         args,
                         distinct: false,
@@ -33007,7 +33236,21 @@ impl Parser {
                         quoted: false,
                         span: None,
                         inferred_type: None,
-                    })));
+                    }));
+                    // Exasol: JSON_EXTRACT(...) EMITS (col1 TYPE1, col2 TYPE2)
+                    if matches!(
+                        self.config.dialect,
+                        Some(crate::dialects::DialectType::Exasol)
+                    ) && self.check_identifier("EMITS") {
+                        self.skip(); // consume EMITS
+                        if let Some(schema) = self.parse_schema()? {
+                            return Ok(Expression::FunctionEmits(Box::new(FunctionEmits {
+                                this: func_expr,
+                                emits: schema,
+                            })));
+                        }
+                    }
+                    return Ok(func_expr);
                 }
 
                 // Parse JSON_QUERY/JSON_VALUE options (Trino/Presto style)
@@ -34514,6 +34757,47 @@ impl Parser {
     /// Maybe parse subscript access (array[index], struct.field)
     fn maybe_parse_subscript(&mut self, mut expr: Expression) -> Result<Expression> {
         loop {
+            // ClickHouse: empty brackets [] in JSON paths represent Array(JSON) type access.
+            // json.a.b[] -> json.a.b.:"Array(JSON)"
+            // json.a.b[][] -> json.a.b.:"Array(Array(JSON))"
+            // Check for consecutive empty bracket pairs before normal bracket handling.
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && self.check(TokenType::LBracket)
+            {
+                let is_empty_bracket = self
+                    .peek_nth(1)
+                    .map_or(false, |t| t.token_type == TokenType::RBracket);
+                if is_empty_bracket {
+                    let mut bracket_json_type: Option<DataType> = None;
+                    while self.check(TokenType::LBracket) {
+                        let is_empty = self
+                            .peek_nth(1)
+                            .map_or(false, |t| t.token_type == TokenType::RBracket);
+                        if is_empty {
+                            self.skip(); // consume [
+                            self.skip(); // consume ]
+                            bracket_json_type = Some(DataType::Array {
+                                element_type: Box::new(
+                                    bracket_json_type.unwrap_or(DataType::Json),
+                                ),
+                                dimension: None,
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(json_type) = bracket_json_type {
+                        expr = Expression::JSONCast(Box::new(crate::expressions::JSONCast {
+                            this: Box::new(expr),
+                            to: json_type,
+                        }));
+                        continue;
+                    }
+                }
+            }
+
             if self.match_token(TokenType::LBracket) {
                 // Check if expr is an array/list constructor keyword (ARRAY[...] or LIST[...])
                 let array_constructor_type = match &expr {
@@ -34709,7 +34993,19 @@ impl Parser {
                     }
                 }
             } else if self.match_token(TokenType::DotColon) {
-                let data_type = self.parse_data_type()?;
+                // In ClickHouse, the type after .: may be a quoted identifier like "Array(JSON)"
+                // which needs to be re-parsed as a proper data type.
+                let data_type = if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::ClickHouse)
+                ) && self.check(TokenType::QuotedIdentifier)
+                {
+                    let type_text = self.advance().text.clone();
+                    // Re-parse the quoted identifier text as a data type
+                    self.parse_data_type_from_text(&type_text)?
+                } else {
+                    self.parse_data_type()?
+                };
                 expr = Expression::JSONCast(Box::new(JSONCast {
                     this: Box::new(expr),
                     to: data_type,
@@ -36922,6 +37218,9 @@ impl Parser {
                     // ClickHouse: JSON(subcolumn_specs) e.g. JSON(a String, b UInt32) or JSON(max_dynamic_paths=8)
                     let args = self.parse_custom_type_args_balanced()?;
                     self.expect(TokenType::RParen)?;
+                    // Uppercase the SKIP keyword in JSON type declarations
+                    // e.g., "col1 String, skip col2" -> "col1 String, SKIP col2"
+                    let args = Self::uppercase_json_type_skip_keyword(&args);
                     Ok(DataType::Custom {
                         name: format!("JSON({})", args),
                     })
@@ -38124,6 +38423,57 @@ impl Parser {
         }
 
         Ok(out)
+    }
+
+    /// Uppercase the `skip` keyword in ClickHouse JSON type declarations.
+    /// In ClickHouse, `SKIP col` within JSON(...) type specs must use uppercase SKIP.
+    fn uppercase_json_type_skip_keyword(args: &str) -> String {
+        // Replace "skip " at the start of the string or after ", " with "SKIP "
+        let mut result = String::with_capacity(args.len());
+        let mut rest = args;
+        let mut at_start = true;
+        while !rest.is_empty() {
+            if at_start
+                && rest.len() >= 5
+                && rest[..4].eq_ignore_ascii_case("skip")
+                && rest.as_bytes()[4] == b' '
+            {
+                result.push_str("SKIP");
+                rest = &rest[4..];
+                at_start = false;
+            } else if rest.starts_with(", ") {
+                result.push_str(", ");
+                rest = &rest[2..];
+                at_start = true;
+            } else {
+                result.push(rest.as_bytes()[0] as char);
+                rest = &rest[1..];
+                at_start = false;
+            }
+        }
+        result
+    }
+
+    /// Parse a data type from a text string by tokenizing and sub-parsing it.
+    /// Used for ClickHouse JSON path types where a quoted identifier like "Array(JSON)"
+    /// needs to be parsed as a proper structured DataType.
+    fn parse_data_type_from_text(&mut self, text: &str) -> Result<DataType> {
+        use crate::tokens::Tokenizer;
+        let tokenizer = Tokenizer::default();
+        let tokens = tokenizer.tokenize(text)?;
+        if tokens.is_empty() {
+            return Ok(DataType::Custom {
+                name: text.to_string(),
+            });
+        }
+        // Save parser state and temporarily swap in the sub-tokens
+        let saved_tokens = std::mem::replace(&mut self.tokens, tokens);
+        let saved_current = std::mem::replace(&mut self.current, 0);
+        let result = self.parse_data_type();
+        // Restore original parser state
+        self.tokens = saved_tokens;
+        self.current = saved_current;
+        result
     }
 
     /// Try to parse a data type optionally - returns None if no valid type found
@@ -43973,6 +44323,9 @@ impl Parser {
     /// Python: _parse_declare
     /// Format: DECLARE var1 type [DEFAULT expr], var2 type [DEFAULT expr], ...
     pub fn parse_declare(&mut self) -> Result<Option<Expression>> {
+        // Check for OR REPLACE (Spark/Databricks)
+        let replace = self.match_text_seq(&["OR", "REPLACE"]);
+
         // Try to parse comma-separated declare items
         let mut expressions = Vec::new();
 
@@ -44013,7 +44366,7 @@ impl Parser {
                         has_as: false,
                         additional_names: multi_names,
                     })));
-                    return Ok(Some(Expression::Declare(Box::new(Declare { expressions }))));
+                    return Ok(Some(Expression::Declare(Box::new(Declare { expressions, replace }))));
                 }
             }
         }
@@ -44033,7 +44386,7 @@ impl Parser {
 
         // If we successfully parsed at least one item, return the Declare
         if !expressions.is_empty() {
-            return Ok(Some(Expression::Declare(Box::new(Declare { expressions }))));
+            return Ok(Some(Expression::Declare(Box::new(Declare { expressions, replace }))));
         }
 
         Ok(None)
@@ -44131,9 +44484,17 @@ impl Parser {
             }
         }
 
-        // Parse the data type
-        let data_type = self.parse_data_type()?;
-        let kind_str = self.data_type_to_sql(&data_type);
+        // Check if next token is = or DEFAULT (no type, just default value)
+        // or if at end of statement (no type, no default)
+        let kind_str = if self.check(TokenType::Eq) || self.check(TokenType::Default)
+            || self.is_at_end() || self.check(TokenType::Semicolon) || self.check(TokenType::Comma) {
+            // No type specified
+            None
+        } else {
+            // Parse the data type
+            let data_type = self.parse_data_type()?;
+            Some(self.data_type_to_sql(&data_type))
+        };
 
         // Parse optional DEFAULT value or = value (TSQL uses =)
         let default = if self.match_token(TokenType::Default) || self.match_token(TokenType::Eq) {
@@ -44144,7 +44505,7 @@ impl Parser {
 
         Ok(Some(Expression::DeclareItem(Box::new(DeclareItem {
             this: Box::new(var),
-            kind: Some(kind_str),
+            kind: kind_str,
             default,
             has_as,
             additional_names: Vec::new(),
@@ -44254,6 +44615,8 @@ impl Parser {
                 }
             }
             DataType::Blob => "BLOB".to_string(),
+            DataType::String { length: Some(n) } => format!("STRING({})", n),
+            DataType::String { length: None } => "STRING".to_string(),
             DataType::Json => "JSON".to_string(),
             DataType::Uuid => "UUID".to_string(),
             DataType::Custom { name } => name.clone(), // Custom types (INT64, FLOAT64, etc.)
@@ -46184,6 +46547,7 @@ impl Parser {
                                     purge: false,
                                     leading_comments: Vec::new(),
                                     object_id_args: object_id_args_text,
+                                    sync: false,
                                 },
                             ))));
                         }

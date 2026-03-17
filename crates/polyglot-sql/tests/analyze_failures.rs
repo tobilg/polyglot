@@ -6,7 +6,7 @@ use common::{identity_test, IdentityFixtures};
 use std::collections::HashMap;
 use std::fs;
 
-const FIXTURES_PATH: &str = "tests/fixtures";
+const FIXTURES_PATH: &str = "tests/sqlglot_fixtures";
 
 /// Analyze identity test failures and categorize them.
 ///

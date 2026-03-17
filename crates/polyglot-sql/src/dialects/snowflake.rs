@@ -95,6 +95,8 @@ impl DialectImpl for SnowflakeDialect {
             unnest_with_ordinality: false,
             // Snowflake uses space before paren: ALL (subquery)
             quantified_no_paren_space: false,
+            // Snowflake uses bracket-only array syntax: [1, 2, 3]
+            array_bracket_only: true,
             ..Default::default()
         }
     }
