@@ -194,7 +194,7 @@ fn lineage_from_expression(
 /// Expand SELECT * in CTEs by walking CTE definitions in order and propagating
 /// resolved column lists. This handles nested CTEs (e.g., cte2 AS (SELECT * FROM cte1))
 /// which qualify_columns cannot resolve because it processes each SELECT independently.
-fn expand_cte_stars(expr: &mut Expression) {
+pub fn expand_cte_stars(expr: &mut Expression) {
     let select = match expr {
         Expression::Select(s) => s,
         _ => return,
