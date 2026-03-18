@@ -518,6 +518,10 @@ pub fn collect_source_tables(node: &LineageNode, tables: &mut HashSet<String>) {
 // Core recursive lineage builder
 // ---------------------------------------------------------------------------
 
+/// Maximum recursion depth for lineage tracing to prevent stack overflow
+/// on circular or deeply nested CTE chains.
+const MAX_LINEAGE_DEPTH: usize = 64;
+
 /// Recursively build a lineage node for a column in a scope.
 fn to_node(
     column: ColumnRef<'_>,
@@ -537,6 +541,7 @@ fn to_node(
         reference_node_name,
         trim_selects,
         &[],
+        0,
     )
 }
 
@@ -549,7 +554,13 @@ fn to_node_inner(
     reference_node_name: &str,
     trim_selects: bool,
     ancestor_cte_scopes: &[Scope],
+    depth: usize,
 ) -> Result<LineageNode> {
+    if depth > MAX_LINEAGE_DEPTH {
+        return Err(Error::internal(format!(
+            "lineage recursion depth exceeded (>{MAX_LINEAGE_DEPTH}) — possible circular CTE reference for scope '{scope_name}'"
+        )));
+    }
     let scope_expr = &scope.expression;
 
     // Build combined CTE scopes: current scope's cte_scopes + ancestors
@@ -588,6 +599,7 @@ fn to_node_inner(
                 reference_node_name,
                 trim_selects,
                 ancestor_cte_scopes,
+                depth,
             );
         }
         return handle_set_operation(
@@ -599,6 +611,7 @@ fn to_node_inner(
             reference_node_name,
             trim_selects,
             ancestor_cte_scopes,
+            depth,
         );
     }
 
@@ -654,6 +667,7 @@ fn to_node_inner(
                         "",
                         trim_selects,
                         ancestor_cte_scopes,
+                        depth + 1,
                     ) {
                         node.downstream.push(child);
                     }
@@ -678,6 +692,7 @@ fn to_node_inner(
                 &column_name,
                 trim_selects,
                 &all_cte_scopes,
+                depth,
             );
         } else {
             resolve_unqualified_column(
@@ -688,6 +703,7 @@ fn to_node_inner(
                 &column_name,
                 trim_selects,
                 &all_cte_scopes,
+                depth,
             );
         }
     }
@@ -708,6 +724,7 @@ fn handle_set_operation(
     reference_node_name: &str,
     trim_selects: bool,
     ancestor_cte_scopes: &[Scope],
+    depth: usize,
 ) -> Result<LineageNode> {
     let scope_expr = &scope.expression;
 
@@ -737,6 +754,7 @@ fn handle_set_operation(
             "",
             trim_selects,
             ancestor_cte_scopes,
+            depth + 1,
         ) {
             node.downstream.push(child);
         }
@@ -758,6 +776,7 @@ fn resolve_qualified_column(
     parent_name: &str,
     trim_selects: bool,
     all_cte_scopes: &[&Scope],
+    depth: usize,
 ) {
     // Check if table is a CTE reference — check both the current scope's cte_sources
     // and ancestor CTE scopes (for sibling CTEs in parent WITH clauses).
@@ -778,6 +797,7 @@ fn resolve_qualified_column(
                 parent_name,
                 trim_selects,
                 &ancestors,
+                depth + 1,
             ) {
                 node.downstream.push(child);
                 return;
@@ -799,6 +819,7 @@ fn resolve_qualified_column(
                     parent_name,
                     trim_selects,
                     &ancestors,
+                    depth + 1,
                 ) {
                     node.downstream.push(child);
                     return;
@@ -833,6 +854,7 @@ fn resolve_unqualified_column(
     parent_name: &str,
     trim_selects: bool,
     all_cte_scopes: &[&Scope],
+    depth: usize,
 ) {
     // Try to find which source this column belongs to.
     // Build the source list from the actual FROM/JOIN clauses to avoid
@@ -850,6 +872,7 @@ fn resolve_unqualified_column(
             parent_name,
             trim_selects,
             all_cte_scopes,
+            depth,
         );
         return;
     }
