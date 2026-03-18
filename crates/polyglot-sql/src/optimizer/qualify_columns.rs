@@ -57,6 +57,9 @@ pub struct QualifyColumnsOptions {
     pub infer_schema: Option<bool>,
     /// Whether to allow partial qualification
     pub allow_partial_qualification: bool,
+    /// Whether to qualify column references (add table qualifiers).
+    /// When false, only star expansion and alias ref expansion are performed.
+    pub qualify_columns: bool,
     /// The dialect for dialect-specific behavior
     pub dialect: Option<DialectType>,
 }
@@ -69,6 +72,7 @@ impl QualifyColumnsOptions {
             expand_stars: true,
             infer_schema: None,
             allow_partial_qualification: false,
+            qualify_columns: true,
             dialect: None,
         }
     }
@@ -94,6 +98,12 @@ impl QualifyColumnsOptions {
     /// Set whether to allow partial qualification
     pub fn with_allow_partial(mut self, allow: bool) -> Self {
         self.allow_partial_qualification = allow;
+        self
+    }
+
+    /// Set whether to qualify column references
+    pub fn with_qualify_columns(mut self, qualify: bool) -> Self {
+        self.qualify_columns = qualify;
         self
     }
 }
@@ -150,7 +160,7 @@ pub fn qualify_columns(
                 };
 
                 // 2. Qualify columns (add table qualifiers)
-                if first_error.borrow().is_none() {
+                if first_error.borrow().is_none() && options.qualify_columns {
                     if let Err(err) = qualify_columns_in_scope(
                         &mut select,
                         &scope,

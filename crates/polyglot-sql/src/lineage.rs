@@ -9,7 +9,7 @@ use crate::dialects::DialectType;
 use crate::expressions::Expression;
 use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
-use crate::schema::{normalize_name, Schema};
+use crate::schema::{normalize_name, MappingSchema, Schema};
 use crate::scope::{build_scope, Scope};
 use crate::traversal::ExpressionWalk;
 use crate::{Error, Result};
@@ -170,7 +170,22 @@ fn lineage_from_expression(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    let scope = build_scope(sql);
+    // Pre-qualify with an empty schema to expand CTE-based SELECT * expressions.
+    // This enables lineage() (without schema) to resolve columns through CTEs,
+    // matching the behavior of Python sqlglot.
+    //
+    // TODO: Nested CTE star expansion (e.g., cte2 AS (SELECT * FROM cte1))
+    // does not work because qualify_columns processes each SELECT independently
+    // via transform_recursive, so inter-CTE references are not resolved.
+    // See dlin-mml.2.2 comments for detailed analysis.
+    let empty_schema = MappingSchema::new();
+    let options = QualifyColumnsOptions::new()
+        .with_expand_stars(true)
+        .with_expand_alias_refs(false)
+        .with_qualify_columns(false);
+    let qualified = qualify_columns(sql.clone(), &empty_schema, &options).unwrap_or(sql.clone());
+
+    let scope = build_scope(&qualified);
     to_node(
         ColumnRef::Name(column),
         &scope,
@@ -2667,6 +2682,99 @@ mod tests {
             names.iter().any(|n| n == "t.name"),
             "Expected t.name in downstream, got: {:?}",
             names
+        );
+    }
+
+    // --- CTE + SELECT * tests (ported from sqlglot test_lineage.py) ---
+
+    #[test]
+    fn test_lineage_cte_select_star() {
+        // Ported from sqlglot: test_lineage_source_with_star
+        // WITH y AS (SELECT * FROM x) SELECT a FROM y
+        // After star expansion: SELECT y.a AS a FROM y
+        let expr = parse("WITH y AS (SELECT * FROM x) SELECT a FROM y");
+        let node = lineage("a", &expr, None, false).unwrap();
+
+        assert_eq!(node.name, "a");
+        // Should successfully resolve column 'a' through the CTE
+        // (previously failed with "Cannot find column 'a' in query")
+        assert!(
+            !node.downstream.is_empty(),
+            "Expected downstream nodes tracing through CTE, got none"
+        );
+    }
+
+    #[test]
+    fn test_lineage_cte_select_star_renamed_column() {
+        // dbt standard pattern: CTE with column rename + outer SELECT *
+        // This is the primary use case for dbt projects (jaffle-shop etc.)
+        let expr =
+            parse("WITH renamed AS (SELECT id AS customer_id FROM source) SELECT * FROM renamed");
+        let node = lineage("customer_id", &expr, None, false).unwrap();
+
+        assert_eq!(node.name, "customer_id");
+        // Should trace customer_id → renamed CTE → source.id
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.len() >= 2,
+            "Expected at least 2 nodes (customer_id → source), got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_cte_select_star_multiple_columns() {
+        // CTE exposes multiple columns, outer SELECT * should resolve each
+        let expr = parse("WITH cte AS (SELECT a, b, c FROM t) SELECT * FROM cte");
+
+        for col in &["a", "b", "c"] {
+            let node = lineage(col, &expr, None, false).unwrap();
+            assert_eq!(node.name, *col);
+            // Verify lineage resolves without error (star expanded to explicit columns)
+            let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+            assert!(
+                all_names.len() >= 2,
+                "Expected at least 2 nodes for column {}, got: {:?}",
+                col,
+                all_names
+            );
+        }
+    }
+
+    #[test]
+    fn test_lineage_nested_cte_select_star() {
+        // TODO: Nested CTE star expansion is not yet supported.
+        // qualify_columns processes each SELECT independently via transform_recursive,
+        // so inter-CTE references (cte2 referencing cte1) are not resolved.
+        // See dlin-mml.2.2 comments for detailed analysis.
+        let expr = parse(
+            "WITH cte1 AS (SELECT a FROM t), \
+             cte2 AS (SELECT * FROM cte1) \
+             SELECT * FROM cte2",
+        );
+        let result = lineage("a", &expr, None, false);
+
+        // Currently fails — once nested CTE star expansion is implemented,
+        // this test should be updated to assert success and trace through
+        // cte2 → cte1 → t.a (at least 3 nodes).
+        assert!(
+            result.is_err(),
+            "Nested CTE star expansion is not yet supported; \
+             update this test when it is implemented"
+        );
+    }
+
+    #[test]
+    fn test_lineage_subquery_select_star() {
+        // Ported from sqlglot: test_select_star
+        // SELECT x FROM (SELECT * FROM table_a)
+        let expr = parse("SELECT x FROM (SELECT * FROM table_a)");
+        let node = lineage("x", &expr, None, false).unwrap();
+
+        assert_eq!(node.name, "x");
+        assert!(
+            !node.downstream.is_empty(),
+            "Expected downstream nodes for subquery with SELECT *, got none"
         );
     }
 }
