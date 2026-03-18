@@ -295,8 +295,9 @@ fn rewrite_stars_in_select(
                     schema,
                     &source_fq_names,
                 ) {
-                    for col_name in &expanded {
-                        new_expressions.push(make_column_expr(col_name, None));
+                    for (src_alias, col_name) in &expanded {
+                        let table_id = Identifier::new(src_alias);
+                        new_expressions.push(make_column_expr(col_name, Some(&table_id)));
                         result_columns.push(col_name.clone());
                     }
                 } else {
@@ -313,7 +314,8 @@ fn rewrite_stars_in_select(
                     schema,
                     &source_fq_names,
                 ) {
-                    for col_name in &expanded {
+                    for (_src_alias, col_name) in &expanded {
+                        // Keep the original table qualifier for qualified stars (table.*)
                         new_expressions.push(make_column_expr(col_name, c.table.as_ref()));
                         result_columns.push(col_name.clone());
                     }
@@ -337,6 +339,7 @@ fn rewrite_stars_in_select(
 
 /// Try to expand a star expression by looking up source columns from resolved CTEs,
 /// falling back to the schema for external tables.
+/// Returns (source_alias, column_name) pairs so the caller can set table qualifiers.
 /// `qualifier`: Optional table qualifier name (for `table.*`). If None, expand all sources.
 /// `source_fq_names`: Fully-qualified table names for schema lookup, parallel to `source_names`.
 fn expand_star_from_sources(
@@ -345,7 +348,7 @@ fn expand_star_from_sources(
     resolved_ctes: &HashMap<String, Vec<String>>,
     schema: Option<&dyn Schema>,
     source_fq_names: &[String],
-) -> Option<Vec<String>> {
+) -> Option<Vec<(String, String)>> {
     let mut expanded = Vec::new();
 
     if let Some(qual) = qualifier {
@@ -355,12 +358,12 @@ fn expand_star_from_sources(
             if alias.to_lowercase() == qual_lower || original.to_lowercase() == qual_lower {
                 // Try CTE first
                 if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
-                    expanded.extend(cols.iter().cloned());
+                    expanded.extend(cols.iter().map(|c| (alias.clone(), c.clone())));
                     return Some(expanded);
                 }
                 // Fall back to schema
                 if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
-                    expanded.extend(cols);
+                    expanded.extend(cols.into_iter().map(|c| (alias.clone(), c)));
                     return Some(expanded);
                 }
             }
@@ -369,12 +372,12 @@ fn expand_star_from_sources(
     } else {
         // Unqualified star: expand all sources
         let mut any_expanded = false;
-        for (i, (_alias, original)) in source_names.iter().enumerate() {
+        for (i, (alias, original)) in source_names.iter().enumerate() {
             if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
-                expanded.extend(cols.iter().cloned());
+                expanded.extend(cols.iter().map(|c| (alias.clone(), c.clone())));
                 any_expanded = true;
             } else if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
-                expanded.extend(cols);
+                expanded.extend(cols.into_iter().map(|c| (alias.clone(), c)));
                 any_expanded = true;
             } else {
                 // Source is not a resolved CTE and not in schema — can't fully expand
@@ -756,8 +759,13 @@ fn resolve_qualified_column(
     trim_selects: bool,
     all_cte_scopes: &[&Scope],
 ) {
-    // Check if table is a CTE reference (cte_sources tracks CTE names)
-    if scope.cte_sources.contains_key(table) {
+    // Check if table is a CTE reference — check both the current scope's cte_sources
+    // and ancestor CTE scopes (for sibling CTEs in parent WITH clauses).
+    let is_cte = scope.cte_sources.contains_key(table)
+        || all_cte_scopes.iter().any(|s| {
+            matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == table)
+        });
+    if is_cte {
         if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, table) {
             // Build ancestor CTE scopes from all_cte_scopes for the recursive call
             let ancestors: Vec<Scope> = all_cte_scopes.iter().map(|s| (*s).clone()).collect();
@@ -3286,5 +3294,62 @@ SELECT * FROM orders"#;
         // No schema — should still resolve through CTE chain
         let node = lineage("id", &expr, None, false).unwrap();
         assert_eq!(node.name, "id");
+    }
+
+    #[test]
+    fn test_lineage_nested_cte_star_with_join_and_schema() {
+        // Reproduces dbt pattern: CTE chain with qualified star and JOIN
+        // base_orders -> with_payments (JOIN) -> final -> outer SELECT
+        let sql = r#"WITH
+base_orders AS (
+    SELECT * FROM stg_orders
+),
+with_payments AS (
+    SELECT
+        base_orders.*,
+        p.amount
+    FROM base_orders
+    LEFT JOIN stg_payments p ON base_orders.order_id = p.order_id
+),
+final_cte AS (
+    SELECT * FROM with_payments
+)
+SELECT * FROM final_cte"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        let order_cols = vec![
+            ("order_id".to_string(), crate::expressions::DataType::Unknown),
+            ("customer_id".to_string(), crate::expressions::DataType::Unknown),
+            ("status".to_string(), crate::expressions::DataType::Unknown),
+        ];
+        let pay_cols = vec![
+            ("payment_id".to_string(), crate::expressions::DataType::Unknown),
+            ("order_id".to_string(), crate::expressions::DataType::Unknown),
+            ("amount".to_string(), crate::expressions::DataType::Unknown),
+        ];
+        schema.add_table("stg_orders", &order_cols, None).unwrap();
+        schema.add_table("stg_payments", &pay_cols, None).unwrap();
+
+        // order_id should trace back to stg_orders
+        let node = lineage_with_schema(
+            "order_id", &expr, Some(&schema as &dyn Schema), None, false,
+        ).unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+
+        // The leaf should be "stg_orders.order_id" (not just "order_id")
+        let has_table_qualified = all_names.iter().any(|n| n.contains('.') && n.contains("order_id"));
+        assert!(has_table_qualified,
+            "Expected table-qualified leaf like 'stg_orders.order_id', got: {:?}", all_names);
+
+        // amount should trace back to stg_payments
+        let node = lineage_with_schema(
+            "amount", &expr, Some(&schema as &dyn Schema), None, false,
+        ).unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+
+        let has_table_qualified = all_names.iter().any(|n| n.contains('.') && n.contains("amount"));
+        assert!(has_table_qualified,
+            "Expected table-qualified leaf like 'stg_payments.amount', got: {:?}", all_names);
     }
 }
