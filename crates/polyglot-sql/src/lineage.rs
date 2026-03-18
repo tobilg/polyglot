@@ -119,7 +119,9 @@ pub fn lineage(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    lineage_from_expression(column, sql, dialect, trim_selects)
+    let mut owned = sql.clone();
+    expand_cte_stars(&mut owned);
+    lineage_from_expression(column, &owned, dialect, trim_selects)
 }
 
 /// Build the lineage graph for a column in a SQL query using optional schema metadata.
@@ -161,6 +163,9 @@ pub fn lineage_with_schema(
     // Annotate types in-place so lineage nodes carry type information
     annotate_types(&mut qualified_expression, schema, dialect);
 
+    // Expand CTE stars on the already-owned expression (no extra clone)
+    expand_cte_stars(&mut qualified_expression);
+
     lineage_from_expression(column, &qualified_expression, dialect, trim_selects)
 }
 
@@ -170,12 +175,7 @@ fn lineage_from_expression(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
-    // Expand CTE-based SELECT * expressions by walking CTEs in definition order
-    // and propagating resolved column lists, enabling nested CTE star resolution.
-    let mut qualified = sql.clone();
-    expand_cte_stars(&mut qualified);
-
-    let scope = build_scope(&qualified);
+    let scope = build_scope(sql);
     to_node(
         ColumnRef::Name(column),
         &scope,
@@ -228,12 +228,12 @@ fn expand_cte_stars(expr: &mut Expression) {
             None => continue,
         };
 
-        let columns = extract_and_expand_select_columns(body_select, &resolved_cte_columns);
+        let columns = rewrite_stars_in_select(body_select, &resolved_cte_columns);
         resolved_cte_columns.insert(cte_name, columns);
     }
 
     // Also expand stars in the outer SELECT itself
-    expand_select_stars(select, &resolved_cte_columns);
+    rewrite_stars_in_select(select, &resolved_cte_columns);
 }
 
 /// Get the leftmost SELECT from an expression, drilling through UNION/INTERSECT/EXCEPT.
@@ -248,9 +248,9 @@ fn get_leftmost_select_mut(expr: &mut Expression) -> Option<&mut Select> {
     }
 }
 
-/// Extract column names from a SELECT, expanding any Star expressions using resolved CTEs.
-/// If stars are found and can be expanded, the SELECT's expressions are rewritten in place.
-fn extract_and_expand_select_columns(
+/// Rewrite star expressions in a SELECT using resolved CTE column lists.
+/// Returns the list of output column names after expansion.
+fn rewrite_stars_in_select(
     select: &mut Select,
     resolved_ctes: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
@@ -260,7 +260,7 @@ fn extract_and_expand_select_columns(
     });
 
     if !has_star && !has_qualified_star {
-        // No stars — just extract column names
+        // No stars — just extract column names without rewriting
         return select
             .expressions
             .iter()
@@ -268,7 +268,6 @@ fn extract_and_expand_select_columns(
             .collect();
     }
 
-    // Expand stars
     let source_names = get_select_source_names(select);
     let mut new_expressions = Vec::new();
     let mut result_columns = Vec::new();
@@ -315,56 +314,6 @@ fn extract_and_expand_select_columns(
 
     select.expressions = new_expressions;
     result_columns
-}
-
-/// Expand stars in the outer SELECT (not a CTE body).
-fn expand_select_stars(select: &mut Select, resolved_ctes: &HashMap<String, Vec<String>>) {
-    let has_star = select.expressions.iter().any(|e| matches!(e, Expression::Star(_)));
-    let has_qualified_star = select.expressions.iter().any(|e| {
-        matches!(e, Expression::Column(c) if c.name.name == "*")
-    });
-
-    if !has_star && !has_qualified_star {
-        return;
-    }
-
-    let source_names = get_select_source_names(select);
-    let mut new_expressions = Vec::new();
-
-    for expr in &select.expressions {
-        match expr {
-            Expression::Star(star) => {
-                let qual = star.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &source_names, resolved_ctes)
-                {
-                    for col_name in &expanded {
-                        new_expressions.push(make_column_expr(col_name, None));
-                    }
-                } else {
-                    new_expressions.push(expr.clone());
-                }
-            }
-            Expression::Column(c) if c.name.name == "*" => {
-                let qual = c.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &source_names, resolved_ctes)
-                {
-                    for col_name in &expanded {
-                        new_expressions
-                            .push(make_column_expr(col_name, c.table.as_ref()));
-                    }
-                } else {
-                    new_expressions.push(expr.clone());
-                }
-            }
-            _ => {
-                new_expressions.push(expr.clone());
-            }
-        }
-    }
-
-    select.expressions = new_expressions;
 }
 
 /// Try to expand a star expression by looking up source columns from resolved CTEs.
@@ -3095,6 +3044,26 @@ mod tests {
         );
         let node = lineage("x", &expr, None, false).unwrap();
         assert_eq!(node.name, "x");
+    }
+
+    #[test]
+    fn test_lineage_cte_qualified_star() {
+        // Qualified star: SELECT cte.* FROM cte
+        let expr = parse(
+            "WITH cte AS (SELECT a, b FROM t) \
+             SELECT cte.* FROM cte",
+        );
+        for col in &["a", "b"] {
+            let node = lineage(col, &expr, None, false).unwrap();
+            assert_eq!(node.name, *col);
+            let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+            assert!(
+                all_names.len() >= 2,
+                "Expected at least 2 nodes for qualified star column {}, got: {:?}",
+                col,
+                all_names
+            );
+        }
     }
 
     #[test]
