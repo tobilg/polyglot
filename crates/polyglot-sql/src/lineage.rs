@@ -120,7 +120,7 @@ pub fn lineage(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     let mut owned = sql.clone();
-    expand_cte_stars(&mut owned);
+    expand_cte_stars(&mut owned, None);
     lineage_from_expression(column, &owned, dialect, trim_selects)
 }
 
@@ -163,8 +163,9 @@ pub fn lineage_with_schema(
     // Annotate types in-place so lineage nodes carry type information
     annotate_types(&mut qualified_expression, schema, dialect);
 
-    // Expand CTE stars on the already-owned expression (no extra clone)
-    expand_cte_stars(&mut qualified_expression);
+    // Expand CTE stars on the already-owned expression (no extra clone).
+    // Pass schema so that stars from external tables can also be resolved.
+    expand_cte_stars(&mut qualified_expression, schema);
 
     lineage_from_expression(column, &qualified_expression, dialect, trim_selects)
 }
@@ -194,7 +195,11 @@ fn lineage_from_expression(
 /// Expand SELECT * in CTEs by walking CTE definitions in order and propagating
 /// resolved column lists. This handles nested CTEs (e.g., cte2 AS (SELECT * FROM cte1))
 /// which qualify_columns cannot resolve because it processes each SELECT independently.
-pub fn expand_cte_stars(expr: &mut Expression) {
+///
+/// When `schema` is provided, stars from external tables (not CTEs) are also resolved
+/// by looking up column names in the schema. This enables correct expansion of patterns
+/// like `WITH cte AS (SELECT * FROM external_table) SELECT * FROM cte`.
+pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
     let select = match expr {
         Expression::Select(s) => s,
         _ => return,
@@ -228,12 +233,12 @@ pub fn expand_cte_stars(expr: &mut Expression) {
             None => continue,
         };
 
-        let columns = rewrite_stars_in_select(body_select, &resolved_cte_columns);
+        let columns = rewrite_stars_in_select(body_select, &resolved_cte_columns, schema);
         resolved_cte_columns.insert(cte_name, columns);
     }
 
     // Also expand stars in the outer SELECT itself
-    rewrite_stars_in_select(select, &resolved_cte_columns);
+    rewrite_stars_in_select(select, &resolved_cte_columns, schema);
 }
 
 /// Get the leftmost SELECT from an expression, drilling through UNION/INTERSECT/EXCEPT.
@@ -249,10 +254,12 @@ fn get_leftmost_select_mut(expr: &mut Expression) -> Option<&mut Select> {
 }
 
 /// Rewrite star expressions in a SELECT using resolved CTE column lists.
+/// Falls back to `schema` for external table column lookup.
 /// Returns the list of output column names after expansion.
 fn rewrite_stars_in_select(
     select: &mut Select,
     resolved_ctes: &HashMap<String, Vec<String>>,
+    schema: Option<&dyn Schema>,
 ) -> Vec<String> {
     let has_star = select
         .expressions
@@ -273,6 +280,7 @@ fn rewrite_stars_in_select(
     }
 
     let source_names = get_select_source_names(select);
+    let source_fq_names = get_select_source_fq_names(select);
     let mut new_expressions = Vec::new();
     let mut result_columns = Vec::new();
 
@@ -280,8 +288,13 @@ fn rewrite_stars_in_select(
         match expr {
             Expression::Star(star) => {
                 let qual = star.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) = expand_star_from_sources(qual, &source_names, resolved_ctes)
-                {
+                if let Some(expanded) = expand_star_from_sources(
+                    qual,
+                    &source_names,
+                    resolved_ctes,
+                    schema,
+                    &source_fq_names,
+                ) {
                     for col_name in &expanded {
                         new_expressions.push(make_column_expr(col_name, None));
                         result_columns.push(col_name.clone());
@@ -293,8 +306,13 @@ fn rewrite_stars_in_select(
             }
             Expression::Column(c) if c.name.name == "*" => {
                 let qual = c.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) = expand_star_from_sources(qual, &source_names, resolved_ctes)
-                {
+                if let Some(expanded) = expand_star_from_sources(
+                    qual,
+                    &source_names,
+                    resolved_ctes,
+                    schema,
+                    &source_fq_names,
+                ) {
                     for col_name in &expanded {
                         new_expressions.push(make_column_expr(col_name, c.table.as_ref()));
                         result_columns.push(col_name.clone());
@@ -317,37 +335,49 @@ fn rewrite_stars_in_select(
     result_columns
 }
 
-/// Try to expand a star expression by looking up source columns from resolved CTEs.
+/// Try to expand a star expression by looking up source columns from resolved CTEs,
+/// falling back to the schema for external tables.
 /// `qualifier`: Optional table qualifier name (for `table.*`). If None, expand all sources.
+/// `source_fq_names`: Fully-qualified table names for schema lookup, parallel to `source_names`.
 fn expand_star_from_sources(
     qualifier: Option<&str>,
     source_names: &[(String, String)],
     resolved_ctes: &HashMap<String, Vec<String>>,
+    schema: Option<&dyn Schema>,
+    source_fq_names: &[String],
 ) -> Option<Vec<String>> {
     let mut expanded = Vec::new();
 
     if let Some(qual) = qualifier {
         // Qualified star: table.*
         let qual_lower = qual.to_lowercase();
-        // Find which source this qualifier refers to
-        for (alias, original) in source_names {
+        for (i, (alias, original)) in source_names.iter().enumerate() {
             if alias.to_lowercase() == qual_lower || original.to_lowercase() == qual_lower {
+                // Try CTE first
                 if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
                     expanded.extend(cols.iter().cloned());
+                    return Some(expanded);
+                }
+                // Fall back to schema
+                if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
+                    expanded.extend(cols);
                     return Some(expanded);
                 }
             }
         }
         None
     } else {
-        // Unqualified star: expand all CTE sources
+        // Unqualified star: expand all sources
         let mut any_expanded = false;
-        for (_alias, original) in source_names {
+        for (i, (_alias, original)) in source_names.iter().enumerate() {
             if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
                 expanded.extend(cols.iter().cloned());
                 any_expanded = true;
+            } else if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
+                expanded.extend(cols);
+                any_expanded = true;
             } else {
-                // Source is not a resolved CTE — can't fully expand
+                // Source is not a resolved CTE and not in schema — can't fully expand
                 return None;
             }
         }
@@ -357,6 +387,13 @@ fn expand_star_from_sources(
             None
         }
     }
+}
+
+/// Look up column names for a table from the schema.
+fn lookup_schema_columns(schema: Option<&dyn Schema>, fq_name: Option<&String>) -> Option<Vec<String>> {
+    let schema = schema?;
+    let name = fq_name?;
+    schema.column_names(name).ok().filter(|cols| !cols.is_empty() && !cols.contains(&"*".to_string()))
 }
 
 /// Create a Column expression with the given name and optional table qualifier.
@@ -418,6 +455,41 @@ fn get_select_source_names(select: &Select) -> Vec<(String, String)> {
         if let Some(pair) = extract_source(&join.this) {
             names.push(pair);
         }
+    }
+    names
+}
+
+/// Extract fully-qualified source names from a SELECT's FROM and JOIN clauses.
+/// Returns names in the same order as `get_select_source_names`.
+fn get_select_source_fq_names(select: &Select) -> Vec<String> {
+    let mut names = Vec::new();
+
+    fn extract_fq_name(expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Table(t) => {
+                let mut parts = Vec::new();
+                if let Some(catalog) = &t.catalog {
+                    parts.push(catalog.name.clone());
+                }
+                if let Some(schema) = &t.schema {
+                    parts.push(schema.name.clone());
+                }
+                parts.push(t.name.name.clone());
+                Some(parts.join("."))
+            }
+            Expression::Subquery(s) => s.alias.as_ref().map(|a| a.name.clone()),
+            Expression::Paren(p) => extract_fq_name(&p.this),
+            _ => None,
+        }
+    }
+
+    if let Some(from) = &select.from {
+        for expr in &from.expressions {
+            names.push(extract_fq_name(expr).unwrap_or_default());
+        }
+    }
+    for join in &select.joins {
+        names.push(extract_fq_name(&join.this).unwrap_or_default());
     }
     names
 }
@@ -3079,5 +3151,140 @@ mod tests {
             !node.downstream.is_empty(),
             "Expected downstream nodes for subquery with SELECT *, got none"
         );
+    }
+
+    #[test]
+    fn test_lineage_cte_star_with_schema_external_table() {
+        // CTE references an external table via SELECT * — schema enables expansion
+        let sql = r#"WITH orders AS (SELECT * FROM stg_orders)
+SELECT * FROM orders"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        let cols = vec![
+            ("order_id".to_string(), DataType::Unknown),
+            ("customer_id".to_string(), DataType::Unknown),
+            ("amount".to_string(), DataType::Unknown),
+        ];
+        schema.add_table("stg_orders", &cols, None).unwrap();
+
+        let node = lineage_with_schema(
+            "order_id",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(node.name, "order_id");
+    }
+
+    #[test]
+    fn test_lineage_cte_star_with_schema_three_part_name() {
+        // CTE references an external table with fully-qualified 3-part name
+        let sql = r#"WITH orders AS (SELECT * FROM "db"."schema"."stg_orders")
+SELECT * FROM orders"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        let cols = vec![
+            ("order_id".to_string(), DataType::Unknown),
+            ("customer_id".to_string(), DataType::Unknown),
+        ];
+        schema.add_table("db.schema.stg_orders", &cols, None).unwrap();
+
+        let node = lineage_with_schema(
+            "customer_id",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(node.name, "customer_id");
+    }
+
+    #[test]
+    fn test_lineage_cte_star_with_schema_nested() {
+        // Nested CTEs: outer CTE references inner CTE with SELECT *,
+        // inner CTE references external table with SELECT *
+        let sql = r#"WITH
+            raw AS (SELECT * FROM external_table),
+            enriched AS (SELECT * FROM raw)
+        SELECT * FROM enriched"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        let cols = vec![
+            ("id".to_string(), DataType::Unknown),
+            ("name".to_string(), DataType::Unknown),
+        ];
+        schema.add_table("external_table", &cols, None).unwrap();
+
+        let node = lineage_with_schema(
+            "name",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(node.name, "name");
+    }
+
+    #[test]
+    fn test_lineage_cte_qualified_star_with_schema() {
+        // CTE uses qualified star (orders.*) from a CTE whose columns
+        // come from an external table via SELECT *
+        let sql = r#"WITH
+            orders AS (SELECT * FROM stg_orders),
+            enriched AS (
+                SELECT orders.*, 'extra' AS extra
+                FROM orders
+            )
+        SELECT * FROM enriched"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        let cols = vec![
+            ("order_id".to_string(), DataType::Unknown),
+            ("total".to_string(), DataType::Unknown),
+        ];
+        schema.add_table("stg_orders", &cols, None).unwrap();
+
+        let node = lineage_with_schema(
+            "order_id",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(node.name, "order_id");
+
+        // Also verify the extra column works
+        let extra = lineage_with_schema(
+            "extra",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(extra.name, "extra");
+    }
+
+    #[test]
+    fn test_lineage_cte_star_without_schema_still_works() {
+        // Without schema, CTE-to-CTE star expansion still works
+        let sql = r#"WITH
+            cte1 AS (SELECT id, name FROM raw_table),
+            cte2 AS (SELECT * FROM cte1)
+        SELECT * FROM cte2"#;
+        let expr = parse(sql);
+
+        // No schema — should still resolve through CTE chain
+        let node = lineage("id", &expr, None, false).unwrap();
+        assert_eq!(node.name, "id");
     }
 }
