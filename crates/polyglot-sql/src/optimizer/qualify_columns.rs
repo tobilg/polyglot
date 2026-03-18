@@ -96,7 +96,6 @@ impl QualifyColumnsOptions {
         self.allow_partial_qualification = allow;
         self
     }
-
 }
 
 /// Rewrite SQL AST to have fully qualified columns.

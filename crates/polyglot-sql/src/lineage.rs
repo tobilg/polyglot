@@ -254,17 +254,21 @@ fn rewrite_stars_in_select(
     select: &mut Select,
     resolved_ctes: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
-    let has_star = select.expressions.iter().any(|e| matches!(e, Expression::Star(_)));
-    let has_qualified_star = select.expressions.iter().any(|e| {
-        matches!(e, Expression::Column(c) if c.name.name == "*")
-    });
+    let has_star = select
+        .expressions
+        .iter()
+        .any(|e| matches!(e, Expression::Star(_)));
+    let has_qualified_star = select
+        .expressions
+        .iter()
+        .any(|e| matches!(e, Expression::Column(c) if c.name.name == "*"));
 
     if !has_star && !has_qualified_star {
         // No stars — just extract column names without rewriting
         return select
             .expressions
             .iter()
-            .filter_map(|e| get_expression_output_name(e))
+            .filter_map(get_expression_output_name)
             .collect();
     }
 
@@ -276,8 +280,7 @@ fn rewrite_stars_in_select(
         match expr {
             Expression::Star(star) => {
                 let qual = star.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &source_names, resolved_ctes)
+                if let Some(expanded) = expand_star_from_sources(qual, &source_names, resolved_ctes)
                 {
                     for col_name in &expanded {
                         new_expressions.push(make_column_expr(col_name, None));
@@ -290,12 +293,10 @@ fn rewrite_stars_in_select(
             }
             Expression::Column(c) if c.name.name == "*" => {
                 let qual = c.table.as_ref().map(|t| t.name.as_str());
-                if let Some(expanded) =
-                    expand_star_from_sources(qual, &source_names, resolved_ctes)
+                if let Some(expanded) = expand_star_from_sources(qual, &source_names, resolved_ctes)
                 {
                     for col_name in &expanded {
-                        new_expressions
-                            .push(make_column_expr(col_name, c.table.as_ref()));
+                        new_expressions.push(make_column_expr(col_name, c.table.as_ref()));
                         result_columns.push(col_name.clone());
                     }
                 } else {
