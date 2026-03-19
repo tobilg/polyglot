@@ -28957,6 +28957,8 @@ impl Dialect {
                             copy_grants: false,
                             using_template: None,
                             rollup: None,
+                            with_partition_columns: Vec::new(),
+                            with_connection: None,
                         };
                         return Expression::CreateTable(Box::new(ct));
                     }

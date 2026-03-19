@@ -11080,10 +11080,123 @@ impl Parser {
                 copy_grants: false,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
-        // Handle WITH properties before columns/AS (e.g., CREATE TABLE z WITH (FORMAT='parquet') AS SELECT 1)
+        // Handle WITH properties before columns/AS.
+        // BigQuery EXTERNAL tables use WITH differently (WITH PARTITION COLUMNS,
+        // WITH CONNECTION), so handle that complete flow here and early-return.
+        let is_bigquery_external = is_special_modifier
+            && table_modifier == Some("EXTERNAL")
+            && matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::BigQuery)
+            );
+
+        if is_bigquery_external {
+            // BigQuery: CREATE EXTERNAL TABLE [IF NOT EXISTS] name
+            //   [(col_name col_type, ...)]
+            //   [WITH PARTITION COLUMNS (col_name col_type, ...)]
+            //   [WITH CONNECTION `project.region.connection`]
+            //   OPTIONS (key = value, ...)
+
+            // Parse optional column definitions
+            let (columns, constraints) = if self.check(TokenType::LParen) {
+                self.advance(); // consume (
+                let result = self.parse_column_definitions()?;
+                self.expect(TokenType::RParen)?;
+                result
+            } else {
+                (Vec::new(), Vec::new())
+            };
+
+            let mut with_partition_columns = Vec::new();
+            let mut with_connection = None;
+            let mut properties = Vec::new();
+
+            // Parse WITH PARTITION COLUMNS / WITH CONNECTION in any order.
+            // Note: duplicate WITH PARTITION COLUMNS clauses silently overwrite;
+            // this isn't a real-world concern so we don't error on it.
+            while self.check(TokenType::With) {
+                let save = self.current;
+                self.advance(); // consume WITH
+
+                if self.check(TokenType::Partition) {
+                    // WITH PARTITION COLUMNS (col_name col_type, ...)
+                    self.advance(); // consume PARTITION
+                    if !self.match_identifier("COLUMNS") {
+                        return Err(self.parse_error(
+                            "Expected COLUMNS after WITH PARTITION",
+                        ));
+                    }
+                    if self.check(TokenType::LParen) {
+                        self.advance(); // consume (
+                        let (part_cols, _) = self.parse_column_definitions()?;
+                        self.expect(TokenType::RParen)?;
+                        with_partition_columns = part_cols;
+                    }
+                } else if self.match_identifier("CONNECTION") {
+                    // WITH CONNECTION `project.region.connection`
+                    with_connection = Some(self.parse_table_ref()?);
+                } else {
+                    // Not a BQ clause - revert and break
+                    self.current = save;
+                    break;
+                }
+            }
+
+            // Parse OPTIONS (...)
+            if let Some(opts) = self.parse_bigquery_options_property()? {
+                properties.push(opts);
+            }
+
+            return Ok(Expression::CreateTable(Box::new(CreateTable {
+                name,
+                on_cluster: on_cluster.clone(),
+                columns,
+                constraints,
+                if_not_exists,
+                temporary,
+                or_replace,
+                table_modifier: Some("EXTERNAL".to_string()),
+                // BigQuery EXTERNAL tables don't support AS SELECT
+                as_select: None,
+                as_select_parenthesized: false,
+                // Not applicable to BigQuery — Snowflake/Teradata/other-dialect features
+                on_commit: None,
+                clone_source: None,
+                clone_at_clause: None,
+                shallow_clone: false,
+                is_copy: false,
+                leading_comments,
+                // BigQuery EXTERNAL uses OPTIONS(), not generic WITH (key=value) properties
+                with_properties: Vec::new(),
+                teradata_post_name_options: teradata_post_name_options.clone(),
+                with_data: None,
+                with_statistics: None,
+                teradata_indexes: Vec::new(),
+                with_cte: None,
+                // BigQuery OPTIONS are stored here via parse_bigquery_options_property()
+                properties,
+                partition_of: None,
+                post_table_properties: Vec::new(),
+                mysql_table_options: Vec::new(),
+                inherits: Vec::new(),
+                on_property: None,
+                // COPY GRANTS is a Snowflake feature, not applicable to BigQuery
+                copy_grants: false,
+                // USING TEMPLATE is a Snowflake feature, not applicable to BigQuery
+                using_template: None,
+                rollup: None,
+                // BigQuery-specific fields parsed above
+                with_partition_columns,
+                with_connection,
+            })));
+        }
+
+        // Generic WITH properties (e.g., CREATE TABLE z WITH (FORMAT='parquet') AS SELECT 1)
         let with_properties = if self.match_token(TokenType::With) {
             self.parse_with_properties()?
         } else {
@@ -11134,6 +11247,8 @@ impl Parser {
                 copy_grants,
                 using_template,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11299,6 +11414,8 @@ impl Parser {
                         copy_grants,
                         using_template: None,
                         rollup: None,
+                        with_partition_columns: Vec::new(),
+                        with_connection: None,
                     })));
                 } else {
                     self.parse_table_ref()?
@@ -11338,6 +11455,8 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    with_partition_columns: Vec::new(),
+                    with_connection: None,
                 })));
             }
 
@@ -11442,6 +11561,8 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11501,9 +11622,12 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    with_partition_columns: Vec::new(),
+                    with_connection: None,
                 })));
             }
         }
+
 
         // For DYNAMIC/ICEBERG/EXTERNAL tables, columns might be optional (use AS SELECT or other syntax)
         // Check if we have a left paren for columns or if we're going straight to options
@@ -11583,6 +11707,8 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11625,6 +11751,8 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11665,6 +11793,8 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11721,6 +11851,8 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                with_partition_columns: Vec::new(),
+                with_connection: None,
             })));
         }
 
@@ -11772,6 +11904,8 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    with_partition_columns: Vec::new(),
+                    with_connection: None,
                 })));
             }
         }
@@ -12829,6 +12963,8 @@ impl Parser {
             copy_grants,
             using_template: None,
             rollup,
+            with_partition_columns: Vec::new(),
+            with_connection: None,
         })))
     }
 
@@ -12976,6 +13112,8 @@ impl Parser {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            with_partition_columns: Vec::new(),
+            with_connection: None,
         })))
     }
 
@@ -56841,6 +56979,338 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
         assert_eq!(generated, expected);
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_basic() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t OPTIONS (format='CSV', uris=['gs://bucket/path/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert_eq!(
+            create.table_modifier.as_deref(),
+            Some("EXTERNAL"),
+            "Expected EXTERNAL table modifier"
+        );
+        assert!(
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::OptionsProperty(_))),
+            "Expected typed OPTIONS property"
+        );
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_with_columns() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t (id INT64, name STRING) OPTIONS (format='CSV')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert_eq!(
+            create.table_modifier.as_deref(),
+            Some("EXTERNAL"),
+        );
+        assert_eq!(create.columns.len(), 2, "Expected 2 column definitions");
+        assert_eq!(create.columns[0].name.name, "id");
+        assert_eq!(create.columns[1].name.name, "name");
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_with_partition_columns() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS (dt DATE, region STRING) OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert_eq!(
+            create.with_partition_columns.len(),
+            2,
+            "Expected 2 partition columns"
+        );
+        assert_eq!(create.with_partition_columns[0].name.name, "dt");
+        assert_eq!(create.with_partition_columns[1].name.name, "region");
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_with_connection() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t WITH CONNECTION `project.us.my_connection` OPTIONS (format='CSV')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert!(
+            create.with_connection.is_some(),
+            "Expected WITH CONNECTION to be set"
+        );
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_full() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE `project.dataset.my_table` WITH PARTITION COLUMNS (dt DATE) WITH CONNECTION `project.us.my_conn` OPTIONS (format='PARQUET', uris=['gs://bucket/path/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        };
+
+        assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
+        assert_eq!(create.with_partition_columns.len(), 1);
+        assert!(create.with_connection.is_some());
+        assert!(
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::OptionsProperty(_))),
+        );
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_roundtrip() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t OPTIONS (format='CSV', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, sql);
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_with_partition_columns_roundtrip() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS (dt DATE, region STRING) OPTIONS (format='PARQUET')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, sql);
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_with_connection_roundtrip() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE t WITH CONNECTION `project.us.my_connection` OPTIONS (format='CSV')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, sql);
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_full_roundtrip() {
+        use crate::DialectType;
+
+        let sql = "CREATE EXTERNAL TABLE `project.dataset.my_table` WITH PARTITION COLUMNS (dt DATE) WITH CONNECTION `project.us.conn` OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, sql);
+    }
+
+    // === BigQuery WITH syntax compatibility tests ===
+    // These verify that the is_bigquery_external guard does NOT break other BigQuery syntaxes.
+
+    #[test]
+    fn test_bigquery_create_table_as_select_no_with() {
+        use crate::DialectType;
+        let sql = "CREATE TABLE my_table AS SELECT 1 AS id, 'hello' AS name";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        assert_eq!(generated, sql);
+    }
+
+    #[test]
+    fn test_bigquery_create_table_with_cte_in_as_select() {
+        use crate::DialectType;
+        // CTE (WITH ... AS) inside the AS SELECT clause — the WITH is part of the query, not table properties
+        let sql = "CREATE TABLE my_table AS WITH cte AS (SELECT 1 AS id) SELECT * FROM cte";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.as_select.is_some(), "Expected AS SELECT with CTE");
+        assert!(create.table_modifier.is_none(), "Should NOT have EXTERNAL modifier");
+    }
+
+    #[test]
+    fn test_bigquery_create_table_with_multiple_ctes() {
+        use crate::DialectType;
+        let sql = "CREATE TABLE result AS WITH cte1 AS (SELECT 1 AS a), cte2 AS (SELECT 2 AS b) SELECT * FROM cte1 CROSS JOIN cte2";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.as_select.is_some(), "Expected AS SELECT with multiple CTEs");
+    }
+
+    #[test]
+    fn test_bigquery_create_table_partition_cluster_options_roundtrip() {
+        use crate::DialectType;
+        let sql = "CREATE TABLE t1 PARTITION BY dt CLUSTER BY region OPTIONS (description='partitioned') AS SELECT CURRENT_DATE() AS dt, 'us' AS region";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.table_modifier.is_none());
+        assert!(
+            create.properties.iter().any(|p| matches!(p, Expression::PartitionByProperty(_))),
+            "Expected PARTITION BY"
+        );
+        assert!(
+            create.properties.iter().any(|p| matches!(p, Expression::ClusterByColumnsProperty(_))),
+            "Expected CLUSTER BY"
+        );
+        assert!(
+            create.properties.iter().any(|p| matches!(p, Expression::OptionsProperty(_))),
+            "Expected OPTIONS"
+        );
+    }
+
+    #[test]
+    fn test_bigquery_create_or_replace_table_as_select() {
+        use crate::DialectType;
+        let sql = "CREATE OR REPLACE TABLE my_table AS SELECT 1 AS id";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.or_replace);
+        assert!(create.table_modifier.is_none());
+    }
+
+    #[test]
+    fn test_bigquery_create_table_if_not_exists_with_columns() {
+        use crate::DialectType;
+        let sql = "CREATE TABLE IF NOT EXISTS my_table (id INT64, name STRING)";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.if_not_exists);
+        assert_eq!(create.columns.len(), 2);
+    }
+
+    #[test]
+    fn test_bigquery_external_table_if_not_exists() {
+        use crate::DialectType;
+        let sql = "CREATE EXTERNAL TABLE IF NOT EXISTS ext_t OPTIONS (format='CSV')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.if_not_exists);
+        assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
+    }
+
+    #[test]
+    fn test_bigquery_or_replace_external_table() {
+        use crate::DialectType;
+        let sql = "CREATE OR REPLACE EXTERNAL TABLE ext_t OPTIONS (format='CSV')";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.or_replace);
+        assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
+    }
+
+    #[test]
+    fn test_bigquery_external_table_pr_description_sql() {
+        use crate::DialectType;
+        // Exact SQL from the PR description — the query that was failing before this fix
+        let sql = r#"CREATE EXTERNAL TABLE IF NOT EXISTS `my_project.my_dataset.my_table`
+WITH PARTITION COLUMNS (
+  table_name  STRING,
+  sync_date   DATE,
+  start_date  DATE,
+  end_date    DATE,
+  sync_id     STRING
+)
+OPTIONS (
+  format                        = 'PARQUET',
+  uris                          = ['gs://my-bucket/data/table_name=my_table/*'],
+  hive_partition_uri_prefix     = 'gs://my-bucket/data',
+  require_hive_partition_filter = false
+)"#;
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.if_not_exists);
+        assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
+        assert_eq!(create.with_partition_columns.len(), 5, "Expected 5 partition columns");
+        assert!(!create.properties.is_empty(), "Expected OPTIONS properties");
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_reversed_clauses() {
+        use crate::DialectType;
+        let sql = "CREATE EXTERNAL TABLE t WITH CONNECTION `project.us.my_conn` WITH PARTITION COLUMNS (dt DATE) OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.with_connection.is_some(), "Expected WITH CONNECTION");
+        assert_eq!(create.with_partition_columns.len(), 1, "Expected 1 partition column");
+        // Roundtrip: generator always emits PARTITION COLUMNS before CONNECTION
+        let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
+        let expected = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS (dt DATE) WITH CONNECTION `project.us.my_conn` OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        assert_eq!(generated, expected);
+    }
+
+    #[test]
+    fn test_bigquery_create_external_table_bare_partition_columns() {
+        use crate::DialectType;
+        let sql = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
+        let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
+        let create = match &parsed[0] {
+            Expression::CreateTable(ct) => ct,
+            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+        };
+        assert!(create.with_partition_columns.is_empty(), "Bare WITH PARTITION COLUMNS should produce empty partition column list");
+        assert!(!create.properties.is_empty(), "Expected OPTIONS");
     }
 
     #[test]
