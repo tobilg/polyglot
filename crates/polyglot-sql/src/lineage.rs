@@ -778,14 +778,19 @@ fn resolve_qualified_column(
     all_cte_scopes: &[&Scope],
     depth: usize,
 ) {
+    // Resolve CTE alias: if `table` is a FROM alias for a CTE (e.g., `FROM my_cte AS t`),
+    // resolve it to the actual CTE name so the CTE scope lookup succeeds.
+    let resolved_cte_name = resolve_cte_alias(scope, table);
+    let effective_table = resolved_cte_name.as_deref().unwrap_or(table);
+
     // Check if table is a CTE reference — check both the current scope's cte_sources
     // and ancestor CTE scopes (for sibling CTEs in parent WITH clauses).
-    let is_cte = scope.cte_sources.contains_key(table)
+    let is_cte = scope.cte_sources.contains_key(effective_table)
         || all_cte_scopes.iter().any(|s| {
-            matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == table)
+            matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == effective_table)
         });
     if is_cte {
-        if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, table) {
+        if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, effective_table) {
             // Build ancestor CTE scopes from all_cte_scopes for the recursive call
             let ancestors: Vec<Scope> = all_cte_scopes.iter().map(|s| (*s).clone()).collect();
             if let Ok(child) = to_node_inner(
@@ -793,7 +798,7 @@ fn resolve_qualified_column(
                 child_scope,
                 dialect,
                 parent_name,
-                table,
+                effective_table,
                 parent_name,
                 trim_selects,
                 &ancestors,
@@ -844,6 +849,30 @@ fn resolve_qualified_column(
     // Base table or unresolved — terminal node
     node.downstream
         .push(make_table_column_node(table, col_name));
+}
+
+/// Resolve a FROM alias to the original CTE name.
+///
+/// When a query uses `FROM my_cte AS alias`, the scope's `sources` map contains
+/// `"alias"` → CTE expression, but `cte_sources` only contains `"my_cte"`.
+/// This function checks if `name` is such an alias and returns the CTE name.
+fn resolve_cte_alias(scope: &Scope, name: &str) -> Option<String> {
+    // If it's already a known CTE name, no resolution needed
+    if scope.cte_sources.contains_key(name) {
+        return None;
+    }
+    // Check if the source's expression is a CTE — if so, extract the CTE name
+    if let Some(source_info) = scope.sources.get(name) {
+        if source_info.is_scope {
+            if let Expression::Cte(cte) = &source_info.expression {
+                let cte_name = &cte.alias.name;
+                if scope.cte_sources.contains_key(cte_name) {
+                    return Some(cte_name.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn resolve_unqualified_column(
@@ -3374,5 +3403,92 @@ SELECT * FROM final_cte"#;
         let has_table_qualified = all_names.iter().any(|n| n.contains('.') && n.contains("amount"));
         assert!(has_table_qualified,
             "Expected table-qualified leaf like 'stg_payments.amount', got: {:?}", all_names);
+    }
+
+    #[test]
+    fn test_lineage_cte_alias_resolution() {
+        // FROM cte_name AS alias pattern: alias should resolve through CTE to source table
+        let sql = r#"WITH import_stg_items AS (
+    SELECT item_id, name, status FROM stg_items
+)
+SELECT base.item_id, base.status
+FROM import_stg_items AS base"#;
+        let expr = parse(sql);
+
+        let node = lineage("item_id", &expr, None, false).unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        // Should trace through alias "base" → CTE "import_stg_items" → "stg_items.item_id"
+        assert!(
+            all_names.iter().any(|n| n == "stg_items.item_id"),
+            "Expected leaf 'stg_items.item_id', got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_cte_alias_with_schema_and_star() {
+        // CTE alias + SELECT * expansion: FROM cte AS alias with star in CTE body
+        let sql = r#"WITH import_stg AS (
+    SELECT * FROM stg_items
+)
+SELECT base.item_id, base.status
+FROM import_stg AS base"#;
+        let expr = parse(sql);
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "stg_items",
+                &[
+                    ("item_id".to_string(), DataType::Unknown),
+                    ("name".to_string(), DataType::Unknown),
+                    ("status".to_string(), DataType::Unknown),
+                ],
+                None,
+            )
+            .unwrap();
+
+        let node = lineage_with_schema(
+            "item_id",
+            &expr,
+            Some(&schema as &dyn Schema),
+            None,
+            false,
+        )
+        .unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|n| n == "stg_items.item_id"),
+            "Expected leaf 'stg_items.item_id', got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_cte_alias_with_join() {
+        // Multiple CTE aliases in a JOIN: each should resolve independently
+        let sql = r#"WITH
+    import_users AS (SELECT id, name FROM users),
+    import_orders AS (SELECT id, user_id, amount FROM orders)
+SELECT u.name, o.amount
+FROM import_users AS u
+LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
+        let expr = parse(sql);
+
+        let node = lineage("name", &expr, None, false).unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|n| n == "users.name"),
+            "Expected leaf 'users.name', got: {:?}",
+            all_names
+        );
+
+        let node = lineage("amount", &expr, None, false).unwrap();
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|n| n == "orders.amount"),
+            "Expected leaf 'orders.amount', got: {:?}",
+            all_names
+        );
     }
 }
