@@ -523,8 +523,9 @@ impl DialectImpl for BigQueryDialect {
             Expression::Split(f) => {
                 // Check if delimiter is empty or a placeholder - add default comma
                 let delimiter = match &f.delimiter {
-                    Expression::Literal(Literal::String(s)) if s.is_empty() => {
-                        Expression::Literal(Literal::String(",".to_string()))
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.is_empty()) => {
+                        let Literal::String(_) = lit.as_ref() else { unreachable!() };
+                        Expression::Literal(Box::new(Literal::String(",".to_string())))
                     }
                     _ => f.delimiter,
                 };
@@ -598,7 +599,7 @@ impl DialectImpl for BigQueryDialect {
                     if let Some(ref mut group_by) = select.group_by {
                         for grouped in group_by.expressions.iter_mut() {
                             // Skip numeric indices (already aliased)
-                            if matches!(grouped, Expression::Literal(Literal::Number(_))) {
+                            if matches!(grouped, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_))) {
                                 continue;
                             }
                             // Check if this GROUP BY expression matches a SELECT alias
@@ -661,7 +662,7 @@ impl DialectImpl for BigQueryDialect {
                     })),
                 };
                 let inner_select = Expression::Select(Box::new(Select {
-                    expressions: vec![Expression::Literal(Literal::Number("1".to_string()))],
+                    expressions: vec![Expression::Literal(Box::new(Literal::Number("1".to_string())))],
                     from: Some(From {
                         expressions: vec![aliased_unnest],
                     }),
@@ -716,15 +717,16 @@ impl DialectImpl for BigQueryDialect {
             // JSONExtract with variant_extract (Snowflake colon syntax) -> JSON_EXTRACT
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
-                            s
+                            s.clone()
                         } else if s.starts_with('[') {
                             format!("${}", s)
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     other => other,
                 };
@@ -1191,7 +1193,7 @@ impl BigQueryDialect {
             // SPLIT(foo) -> SPLIT(foo, ',')
             "SPLIT" if f.args.len() == 1 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(Literal::String(",".to_string())));
+                args.push(Expression::Literal(Box::new(Literal::String(",".to_string()))));
                 Ok(Expression::Split(Box::new(SplitFunc {
                     this: args.remove(0),
                     delimiter: args.remove(0),
@@ -1296,7 +1298,8 @@ impl BigQueryDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 let json_path = match &path {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -1304,7 +1307,7 @@ impl BigQueryDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     _ => path,
                 };
@@ -1378,9 +1381,11 @@ impl BigQueryDialect {
             .map(|(i, arg)| {
                 // Only transform the first argument (the format string)
                 if i == 0 {
-                    if let Expression::Literal(Literal::String(s)) = arg {
-                        let normalized = self.normalize_time_format(&s);
-                        return Expression::Literal(Literal::String(normalized));
+                    if let Expression::Literal(ref lit) = arg {
+                        if let Literal::String(s) = lit.as_ref() {
+                            let normalized = self.normalize_time_format(&s);
+                            return Expression::Literal(Box::new(Literal::String(normalized)));
+                        }
                     }
                 }
                 arg

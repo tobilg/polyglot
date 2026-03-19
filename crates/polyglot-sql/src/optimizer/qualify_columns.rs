@@ -886,7 +886,7 @@ fn replace_alias_refs_in_expression(
 
 fn positional_reference(expr: &Expression) -> Option<usize> {
     match expr {
-        Expression::Literal(Literal::Number(value)) => value.parse::<usize>().ok(),
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(value) = lit.as_ref() else { unreachable!() }; value.parse::<usize>().ok() },
         _ => None,
     }
 }

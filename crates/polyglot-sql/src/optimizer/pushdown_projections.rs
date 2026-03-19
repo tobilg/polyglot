@@ -311,7 +311,7 @@ pub fn default_selection(is_agg: bool) -> Expression {
         Expression::Alias(Box::new(Alias {
             this: Expression::AggregateFunction(Box::new(AggregateFunction {
                 name: "MAX".to_string(),
-                args: vec![Expression::Literal(Literal::Number("1".to_string()))],
+                args: vec![Expression::Literal(Box::new(Literal::Number("1".to_string())))],
                 distinct: false,
                 filter: None,
                 order_by: Vec::new(),
@@ -333,7 +333,7 @@ pub fn default_selection(is_agg: bool) -> Expression {
     } else {
         // 1 AS _
         Expression::Alias(Box::new(Alias {
-            this: Expression::Literal(Literal::Number("1".to_string())),
+            this: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             alias: Identifier {
                 name: "_".to_string(),
                 quoted: false,

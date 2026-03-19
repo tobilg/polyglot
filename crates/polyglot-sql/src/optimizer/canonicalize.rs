@@ -405,12 +405,15 @@ fn remove_redundant_casts(expression: Expression) -> Expression {
         // For now, just check simple cases
 
         // If casting a literal to its natural type, we might be able to simplify
-        if let Expression::Literal(Literal::String(_)) = &cast.this {
+        if let Expression::Literal(lit) = &cast.this {
+            if let Literal::String(_) = lit.as_ref() {
             if matches!(&cast.to, DataType::VarChar { .. } | DataType::Text) {
                 return cast.this.clone();
             }
         }
-        if let Expression::Literal(Literal::Number(_)) = &cast.this {
+        }
+        if let Expression::Literal(lit) = &cast.this {
+            if let Literal::Number(_) = lit.as_ref() {
             if matches!(
                 &cast.to,
                 DataType::Int { .. }
@@ -420,6 +423,7 @@ fn remove_redundant_casts(expression: Expression) -> Expression {
             ) {
                 // Could potentially remove cast, but be conservative
             }
+        }
         }
     }
     expression
@@ -508,7 +512,8 @@ fn coerce_date_operands(left: Expression, right: Expression) -> (Expression, Exp
 
 /// Coerce a string literal to date/datetime if comparing with a temporal type.
 fn coerce_date_string(expr: Expression, _other: &Expression) -> Expression {
-    if let Expression::Literal(Literal::String(ref s)) = expr {
+    if let Expression::Literal(ref lit) = expr {
+        if let Literal::String(ref s) = lit.as_ref() {
         // Check if the string is an ISO date or datetime
         if is_iso_date(s) {
             // In a full implementation, we would add CAST to DATE
@@ -517,6 +522,7 @@ fn coerce_date_string(expr: Expression, _other: &Expression) -> Expression {
             // In a full implementation, we would add CAST to DATETIME/TIMESTAMP
             // For now, return unchanged
         }
+    }
     }
     expr
 }

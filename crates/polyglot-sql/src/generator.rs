@@ -11,6 +11,7 @@
 //! and call [`Generator::generate`] for each expression.
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::expressions::*;
@@ -41,7 +42,7 @@ use crate::DialectType;
 /// let sql = gen.generate(&ast[0])?;
 /// ```
 pub struct Generator {
-    config: GeneratorConfig,
+    config: Arc<GeneratorConfig>,
     output: String,
     unsupported_messages: Vec<String>,
     indent_level: usize,
@@ -2129,6 +2130,14 @@ impl Generator {
     /// Use this when you need dialect-specific output, pretty-printing, or other
     /// non-default settings.
     pub fn with_config(config: GeneratorConfig) -> Self {
+        Self::with_arc_config(Arc::new(config))
+    }
+
+    /// Create a generator from a shared [`Arc<GeneratorConfig>`].
+    ///
+    /// This avoids cloning the configuration when multiple generators share the
+    /// same settings (e.g. during transpilation). The [`Arc`] is cheap to clone.
+    pub(crate) fn with_arc_config(config: Arc<GeneratorConfig>) -> Self {
         Self {
             config,
             output: String::new(),
@@ -2234,7 +2243,7 @@ impl Generator {
     /// otherwise returns the original expression.
     fn try_evaluate_constant(expr: &Expression) -> Option<i64> {
         match expr {
-            Expression::Literal(Literal::Number(n)) => n.parse::<i64>().ok(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.parse::<i64>().ok() },
             Expression::Add(op) => {
                 let left = Self::try_evaluate_constant(&op.left)?;
                 let right = Self::try_evaluate_constant(&op.right)?;
@@ -4100,7 +4109,7 @@ impl Generator {
                     self.write_keyword("TOP");
                     // Use parentheses for complex expressions, but not for simple literals
                     let is_simple_literal =
-                        matches!(&limit.this, Expression::Literal(Literal::Number(_)));
+                        matches!(&limit.this, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)));
                     if is_simple_literal {
                         self.write_space();
                         self.generate_expression(&limit.this)?;
@@ -8274,9 +8283,11 @@ impl Generator {
             if !compress.is_empty() {
                 // Single string literal: output without parentheses (Teradata syntax)
                 if compress.len() == 1 {
-                    if let Expression::Literal(Literal::String(_)) = &compress[0] {
+                    if let Expression::Literal(lit) = &compress[0] {
+                        if let Literal::String(_) = lit.as_ref() {
                         self.write_space();
                         self.generate_expression(&compress[0])?;
+                    }
                     } else {
                         self.write(" (");
                         self.generate_expression(&compress[0])?;
@@ -14246,7 +14257,8 @@ impl Generator {
         use crate::expressions::Literal;
 
         match expr {
-            Expression::Literal(Literal::Date(d)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => {
+                let Literal::Date(d) = lit.as_ref() else { unreachable!() };
                 // DATE 'value' -> CAST('value' AS DATE)
                 self.write("CAST('");
                 self.write(d);
@@ -15535,7 +15547,7 @@ impl Generator {
                 let arg_strings: Vec<String> = args
                     .iter()
                     .map(|arg| {
-                        let mut gen = Generator::with_config(self.config.clone());
+                        let mut gen = Generator::with_arc_config(self.config.clone());
                         gen.generate_expression(arg)?;
                         Ok(gen.output)
                     })
@@ -16083,11 +16095,13 @@ impl Generator {
 
                     // Normalize format string for Oracle (HH -> HH12)
                     // Oracle HH is 12-hour format, same as HH12. For clarity, Python sqlglot uses HH12.
-                    if let Expression::Literal(Literal::String(fmt_str)) = format.as_ref() {
+                    if let Expression::Literal(lit) = format.as_ref() {
+                        if let Literal::String(fmt_str) = lit.as_ref() {
                         let normalized = self.normalize_oracle_format(fmt_str);
                         self.write("'");
                         self.write(&normalized);
                         self.write("'");
+                    }
                     } else {
                         self.generate_expression(format)?;
                     }
@@ -16572,8 +16586,10 @@ impl Generator {
             self.generate_expression(&func.args[0])?;
             self.write("::?");
             // Extract the key from the string literal
-            if let Expression::Literal(crate::expressions::Literal::String(key)) = &func.args[1] {
+            if let Expression::Literal(lit) = &func.args[1] {
+                if let crate::expressions::Literal::String(key) = lit.as_ref() {
                 self.write(key);
+            }
             } else {
                 self.generate_expression(&func.args[1])?;
             }
@@ -16763,7 +16779,8 @@ impl Generator {
             self.write("(");
             // Extract the datetime field - if it's a string literal, strip quotes to make it a keyword
             match &func.args[0] {
-                Expression::Literal(crate::expressions::Literal::String(s)) => {
+                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                    let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                     self.write(&s.to_ascii_lowercase());
                 }
                 _ => self.generate_expression(&func.args[0])?,
@@ -16812,8 +16829,10 @@ impl Generator {
         {
             // Helper function to extract integer from number literal
             fn get_int_literal(expr: &Expression) -> Option<i64> {
-                if let Expression::Literal(crate::expressions::Literal::Number(s)) = expr {
+                if let Expression::Literal(lit) = expr {
+                    if let crate::expressions::Literal::Number(s) = lit.as_ref() {
                     s.parse::<i64>().ok()
+                } else { None }
                 } else {
                     None
                 }
@@ -16971,8 +16990,8 @@ impl Generator {
                 // Pre-render arguments to check total width
                 let mut expr_strings: Vec<String> = Vec::with_capacity(func.args.len());
                 for arg in &func.args {
-                    let mut temp_gen = Generator::with_config(self.config.clone());
-                    temp_gen.config.pretty = false; // Don't recurse into pretty
+                    let mut temp_gen = Generator::with_arc_config(self.config.clone());
+                    Arc::make_mut(&mut temp_gen.config).pretty = false; // Don't recurse into pretty
                     temp_gen.generate_expression(arg)?;
                     expr_strings.push(temp_gen.output);
                 }
@@ -17479,13 +17498,14 @@ impl Generator {
         // e.g., INTERVAL '1' DAY -> INTERVAL '1 DAY'
         if self.config.single_string_interval {
             if let (
-                Some(Expression::Literal(Literal::String(ref val))),
+                Some(Expression::Literal(lit)),
                 Some(IntervalUnitSpec::Simple {
                     ref unit,
                     ref use_plural,
                 }),
             ) = (&interval.this, &interval.unit)
             {
+                    if let Literal::String(ref val) = lit.as_ref() {
                 self.write_keyword("INTERVAL");
                 self.write_space();
                 let effective_plural = *use_plural && self.config.interval_allows_plural_form;
@@ -17497,6 +17517,7 @@ impl Generator {
                 self.write("'");
                 return Ok(());
             }
+                }
         }
 
         if !skip_interval_keyword {
@@ -17657,7 +17678,7 @@ impl Generator {
     /// Extract date part string from expression (handles string literals and identifiers)
     fn extract_date_part_string(&self, expr: &Expression) -> Option<String> {
         match expr {
-            Expression::Literal(crate::expressions::Literal::String(s)) => Some(s.clone()),
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => { let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
             Expression::Identifier(id) => Some(id.name.clone()),
             Expression::Column(col) if col.table.is_none() => {
                 // Simple column reference without table prefix, treat as identifier
@@ -18273,13 +18294,13 @@ impl Generator {
             // Check for LOG_BASE_FIRST = None dialects (Presto, Trino, ClickHouse, Athena)
             // These dialects use LOG2()/LOG10() instead of LOG(base, value)
             if self.is_log_base_none() {
-                if matches!(base, Expression::Literal(Literal::Number(s)) if s == "2") {
+                if matches!(base, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(s) if s == "2")) {
                     self.write_func_name("LOG2");
                     self.write("(");
                     self.generate_expression(&f.this)?;
                     self.write(")");
                     return Ok(());
-                } else if matches!(base, Expression::Literal(Literal::Number(s)) if s == "10") {
+                } else if matches!(base, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(s) if s == "10")) {
                     self.write_func_name("LOG10");
                     self.write("(");
                     self.generate_expression(&f.this)?;
@@ -18476,7 +18497,7 @@ impl Generator {
         use crate::expressions::{DataType, Literal};
         match expr {
             // Integer literals (no decimal point)
-            Expression::Literal(Literal::Number(n)) => !n.contains('.'),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; !n.contains('.') },
 
             // FLOOR(x) returns integer if x is integer
             Expression::Floor(f) => self.returns_integer_type(&f.this),
@@ -19750,8 +19771,8 @@ impl Generator {
         let should_split = if self.config.pretty && !expressions.is_empty() {
             let mut expr_strings: Vec<String> = Vec::with_capacity(expressions.len());
             for expr in expressions {
-                let mut temp_gen = Generator::with_config(self.config.clone());
-                temp_gen.config.pretty = false;
+                let mut temp_gen = Generator::with_arc_config(self.config.clone());
+                Arc::make_mut(&mut temp_gen.config).pretty = false;
                 temp_gen.generate_expression(expr)?;
                 expr_strings.push(temp_gen.output);
             }
@@ -20136,8 +20157,9 @@ impl Generator {
     /// Infer SQL type name for a Presto/Trino ROW CAST from a literal expression
     fn infer_sql_type_for_presto(expr: &Expression) -> String {
         match expr {
-            Expression::Literal(crate::expressions::Literal::String(_)) => "VARCHAR".to_string(),
-            Expression::Literal(crate::expressions::Literal::Number(n)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => "VARCHAR".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(_)) => {
+                let crate::expressions::Literal::Number(n) = lit.as_ref() else { unreachable!() };
                 if n.contains('.') {
                     "DOUBLE".to_string()
                 } else {
@@ -20145,11 +20167,11 @@ impl Generator {
                 }
             }
             Expression::Boolean(_) => "BOOLEAN".to_string(),
-            Expression::Literal(crate::expressions::Literal::Date(_)) => "DATE".to_string(),
-            Expression::Literal(crate::expressions::Literal::Timestamp(_)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Date(_)) => "DATE".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Timestamp(_)) => {
                 "TIMESTAMP".to_string()
             }
-            Expression::Literal(crate::expressions::Literal::Datetime(_)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Datetime(_)) => {
                 "TIMESTAMP".to_string()
             }
             Expression::Array(_) | Expression::ArrayFunc(_) => {
@@ -20338,13 +20360,15 @@ impl Generator {
             Some(DialectType::PostgreSQL) | Some(DialectType::Redshift)
         ) && (func_name == "JSON_EXTRACT_PATH" || func_name == "JSON_EXTRACT_PATH_TEXT")
         {
-            if let Expression::Literal(Literal::String(ref s)) = f.path {
+            if let Expression::Literal(ref lit) = f.path {
+                if let Literal::String(ref s) = lit.as_ref() {
                 let parts = Self::decompose_json_path(s);
                 for part in &parts {
                     self.write(", '");
                     self.write(part);
                     self.write("'");
                 }
+            }
             } else {
                 self.write(", ");
                 self.generate_expression(&f.path)?;
@@ -26012,8 +26036,7 @@ impl Generator {
 
         if let Some(this) = &e.this {
             let mut s = String::from("HISTORY_TABLE=");
-            let mut gen = Generator::new();
-            gen.config = self.config.clone();
+            let mut gen = Generator::with_arc_config(self.config.clone());
             gen.generate_expression(this)?;
             s.push_str(&gen.output);
             parts.push(s);
@@ -26021,8 +26044,7 @@ impl Generator {
 
         if let Some(data_consistency) = &e.data_consistency {
             let mut s = String::from("DATA_CONSISTENCY_CHECK=");
-            let mut gen = Generator::new();
-            gen.config = self.config.clone();
+            let mut gen = Generator::with_arc_config(self.config.clone());
             gen.generate_expression(data_consistency)?;
             s.push_str(&gen.output);
             parts.push(s);
@@ -26030,8 +26052,7 @@ impl Generator {
 
         if let Some(retention_period) = &e.retention_period {
             let mut s = String::from("HISTORY_RETENTION_PERIOD=");
-            let mut gen = Generator::new();
-            gen.config = self.config.clone();
+            let mut gen = Generator::with_arc_config(self.config.clone());
             gen.generate_expression(retention_period)?;
             s.push_str(&gen.output);
             parts.push(s);
@@ -26180,12 +26201,14 @@ impl Generator {
         self.write_space();
 
         // Generate target table or query (or stage for COPY INTO @stage)
-        if let Expression::Literal(Literal::String(s)) = &e.this {
+        if let Expression::Literal(lit) = &e.this {
+            if let Literal::String(s) = lit.as_ref() {
             if s.starts_with('@') {
                 self.write(s);
             } else {
                 self.generate_expression(&e.this)?;
             }
+        }
         } else {
             self.generate_expression(&e.this)?;
         }
@@ -26217,12 +26240,14 @@ impl Generator {
                 self.write_space();
             }
             // For stage references (strings starting with @), output without quotes
-            if let Expression::Literal(Literal::String(s)) = file {
+            if let Expression::Literal(lit) = file {
+                if let Literal::String(s) = lit.as_ref() {
                 if s.starts_with('@') {
                     self.write(s);
                 } else {
                     self.generate_expression(file)?;
                 }
+            }
             } else if let Expression::Identifier(id) = file {
                 // Backtick-quoted file path (Databricks style: `s3://link`)
                 if id.quoted {
@@ -26415,7 +26440,8 @@ impl Generator {
                 self.write("=");
                 // Generate value
                 match &eq.right {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         self.write("'");
                         self.write(s);
                         self.write("'");
@@ -26484,7 +26510,8 @@ impl Generator {
                 }
                 Ok(())
             }
-            Expression::Literal(Literal::String(s)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                let Literal::String(s) = lit.as_ref() else { unreachable!() };
                 // Output string with quotes
                 self.write("'");
                 self.write(s);
@@ -26817,7 +26844,8 @@ impl Generator {
                 self.write("(");
                 // Extract the string value from the expression if it's a string literal
                 match &e.this {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         self.write("'");
                         self.write(s);
                         self.write("'");
@@ -28055,20 +28083,24 @@ impl Generator {
             {
                 // Value is in iv.this
                 let count = match &iv.this {
-                    Some(Expression::Literal(Literal::String(s))) => s.clone(),
-                    Some(Expression::Literal(Literal::Number(s))) => s.clone(),
+                    Some(Expression::Literal(lit)) => match lit.as_ref() {
+                        Literal::String(s) | Literal::Number(s) => s.clone(),
+                        _ => return None,
+                    },
                     _ => return None,
                 };
                 (true, count)
             } else if iv.unit.is_none() {
                 // Check for string-encoded interval like "1 WEEK"
-                if let Some(Expression::Literal(Literal::String(s))) = &iv.this {
+                if let Some(Expression::Literal(lit)) = &iv.this {
+                    if let Literal::String(s) = lit.as_ref() {
                     let parts: Vec<&str> = s.trim().splitn(2, char::is_whitespace).collect();
                     if parts.len() == 2 && parts[1].eq_ignore_ascii_case("WEEK") {
                         (true, parts[0].to_string())
                     } else {
                         (false, String::new())
                     }
+                } else { (false, String::new()) }
                 } else {
                     (false, String::new())
                 }
@@ -28078,9 +28110,9 @@ impl Generator {
 
             if is_week {
                 // Build: (N * INTERVAL '7' DAY)
-                let count_expr = Expression::Literal(Literal::Number(count_str));
+                let count_expr = Expression::Literal(Box::new(Literal::Number(count_str)));
                 let day_interval = Expression::Interval(Box::new(Interval {
-                    this: Some(Expression::Literal(Literal::String("7".to_string()))),
+                    this: Some(Expression::Literal(Box::new(Literal::String("7".to_string())))),
                     unit: Some(IntervalUnitSpec::Simple {
                         unit: IntervalUnit::Day,
                         use_plural: false,
@@ -28508,8 +28540,10 @@ impl Generator {
         // DuckDB: convert dollar-tagged strings to single-quoted
         if matches!(self.config.dialect, Some(DialectType::DuckDB)) {
             // Extract the string content and output as single-quoted
-            if let Expression::Literal(Literal::String(ref s)) = *e.this {
+            if let Expression::Literal(ref lit) = *e.this {
+                if let Literal::String(ref s) = lit.as_ref() {
                 return self.generate_string_literal(s);
+            }
             }
         }
         // PostgreSQL: preserve dollar-quoting
@@ -29268,7 +29302,8 @@ impl Generator {
                 self.generate_expression(&e.this)?;
                 self.write(":");
                 match e.expression.as_ref() {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         self.write_databricks_json_path(s);
                     }
                     _ => {
@@ -29419,9 +29454,10 @@ impl Generator {
                 }
                 Expression::JSONPathKey(k) => {
                     // .key or ."key" (quote if key has special characters)
-                    if let Expression::Literal(crate::expressions::Literal::String(s)) =
+                    if let Expression::Literal(lit) =
                         k.this.as_ref()
                     {
+                        if let crate::expressions::Literal::String(s) = lit.as_ref() {
                         path_str.push('.');
                         // Quote the key if it contains non-alphanumeric characters (hyphens, spaces, etc.)
                         let needs_quoting = s.chars().any(|c| !c.is_alphanumeric() && c != '_');
@@ -29433,20 +29469,23 @@ impl Generator {
                             path_str.push_str(s);
                         }
                     }
+                    }
                 }
                 Expression::JSONPathSubscript(s) => {
                     // [index]
-                    if let Expression::Literal(crate::expressions::Literal::Number(n)) =
+                    if let Expression::Literal(lit) =
                         s.this.as_ref()
                     {
+                        if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                         path_str.push('[');
                         path_str.push_str(n);
                         path_str.push(']');
                     }
+                    }
                 }
                 _ => {
                     // For other path parts, try to generate them
-                    let mut temp_gen = Self::with_config(self.config.clone());
+                    let mut temp_gen = Self::with_arc_config(self.config.clone());
                     temp_gen.generate_expression(expr)?;
                     path_str.push_str(&temp_gen.output);
                 }
@@ -29565,7 +29604,7 @@ impl Generator {
             // First, generate all expressions into strings to check width
             let mut expr_strings: Vec<String> = Vec::with_capacity(e.expressions.len());
             for expr in &e.expressions {
-                let mut temp_gen = Generator::with_config(self.config.clone());
+                let mut temp_gen = Generator::with_arc_config(self.config.clone());
                 temp_gen.generate_expression(expr)?;
                 expr_strings.push(temp_gen.output);
             }
@@ -31450,12 +31489,11 @@ impl Generator {
                 // output it without quotes (matching Python sqlglot's
                 // partitionbyrangepropertydynamic_sql which converts back to number)
                 match value {
-                    Expression::Literal(Literal::String(s))
-                        if s.chars()
-                            .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
-                            && !s.is_empty() =>
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-') && !s.is_empty()) =>
                     {
-                        self.write(s);
+                        if let Literal::String(s) = lit.as_ref() {
+                            self.write(s);
+                        }
                     }
                     _ => {
                         self.generate_expression(value)?;
@@ -31660,11 +31698,13 @@ impl Generator {
         // When target dialect uses identifiers for UNPIVOT aliases, convert literals to identifiers
         if self.config.unpivot_aliases_are_identifiers {
             match &e.alias {
-                Expression::Literal(Literal::String(s)) => {
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                    let Literal::String(s) = lit.as_ref() else { unreachable!() };
                     // Convert string literal to identifier
                     self.generate_identifier(&Identifier::new(s.clone()))?;
                 }
-                Expression::Literal(Literal::Number(n)) => {
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                    let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                     // Convert number literal to quoted identifier
                     let mut id = Identifier::new(n.clone());
                     id.quoted = true;
@@ -31963,8 +32003,10 @@ impl Generator {
         self.write_space();
 
         // Target stage reference - output the string directly (includes @)
-        if let Expression::Literal(Literal::String(s)) = &e.target {
+        if let Expression::Literal(lit) = &e.target {
+            if let Literal::String(s) = lit.as_ref() {
             self.write(s);
+        }
         } else {
             self.generate_expression(&e.target)?;
         }
@@ -35330,7 +35372,8 @@ impl Generator {
                 // Extract the string value from the expression if it's a string literal
                 if let Some(this) = &e.this {
                     match this.as_ref() {
-                        Expression::Literal(Literal::String(s)) => {
+                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                            let Literal::String(s) = lit.as_ref() else { unreachable!() };
                             self.write("'");
                             self.write(s);
                             self.write("'");
@@ -35565,14 +35608,14 @@ impl Generator {
         // Check mark to determine the format
         let mark_text = e.mark.as_ref().map(|m| match m.as_ref() {
             Expression::Identifier(id) => id.name.clone(),
-            Expression::Literal(Literal::String(s)) => s.clone(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
             _ => String::new(),
         });
 
         let is_start = mark_text.as_ref().map_or(false, |s| s == "START");
         let has_transaction_keyword = mark_text.as_ref().map_or(false, |s| s == "TRANSACTION");
         let has_with_mark = e.mark.as_ref().map_or(false, |m| {
-            matches!(m.as_ref(), Expression::Literal(Literal::String(_)))
+            matches!(m.as_ref(), Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
         });
 
         // For Presto/Trino: always use START TRANSACTION
@@ -35648,11 +35691,13 @@ impl Generator {
             if has_with_mark {
                 self.write_space();
                 self.write_keyword("WITH MARK");
-                if let Some(Expression::Literal(Literal::String(desc))) = e.mark.as_deref() {
+                if let Some(Expression::Literal(lit)) = e.mark.as_deref() {
+                    if let Literal::String(desc) = lit.as_ref() {
                     if !desc.is_empty() {
                         self.write_space();
                         self.write(&format!("'{}'", desc));
                     }
+                }
                 }
             }
 

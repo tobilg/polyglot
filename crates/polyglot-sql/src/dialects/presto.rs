@@ -157,15 +157,16 @@ impl DialectImpl for PrestoDialect {
             // JSONExtract (variant_extract/colon accessor) -> JSON_EXTRACT in Presto
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
-                            s
+                            s.clone()
                         } else if s.starts_with('[') {
                             format!("${}", s)
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     other => other,
                 };
@@ -715,9 +716,11 @@ impl PrestoDialect {
             "TO_CHAR" if f.args.len() >= 2 => {
                 let mut args = f.args;
                 // Convert Oracle-style format string to Presto C-style
-                if let Expression::Literal(Literal::String(ref s)) = args[1] {
+                if let Expression::Literal(ref lit) = args[1] {
+                    if let Literal::String(ref s) = lit.as_ref() {
                     let converted = Self::oracle_to_presto_format(s);
-                    args[1] = Expression::Literal(Literal::String(converted));
+                    args[1] = Expression::Literal(Box::new(Literal::String(converted)));
+                }
                 }
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -783,7 +786,8 @@ impl PrestoDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 let json_path = match &path {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -791,7 +795,7 @@ impl PrestoDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     _ => path,
                 };
@@ -881,7 +885,7 @@ impl PrestoDialect {
                         )));
                         Ok(Expression::Mul(Box::new(BinaryOp {
                             left: unixtime,
-                            right: Expression::Literal(Literal::Number("1000".to_string())),
+                            right: Expression::Literal(Box::new(Literal::Number("1000".to_string()))),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),

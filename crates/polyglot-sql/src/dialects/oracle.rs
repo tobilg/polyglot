@@ -243,8 +243,9 @@ impl OracleDialect {
                     ))
                 } else if f.args.len() == 1 {
                     // Check if the argument is a numeric literal
-                    if let Expression::Literal(crate::expressions::Literal::Number(n)) = &f.args[0]
+                    if let Expression::Literal(lit) = &f.args[0]
                     {
+                        if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                         if let Ok(precision) = n.parse::<u32>() {
                             return Ok(Expression::CurrentTimestamp(
                                 crate::expressions::CurrentTimestamp {
@@ -253,6 +254,7 @@ impl OracleDialect {
                                 },
                             ));
                         }
+                    }
                     }
                     // Non-numeric argument, keep as function
                     Ok(Expression::Function(Box::new(f)))
@@ -296,7 +298,7 @@ impl OracleDialect {
             // For date truncation with a single temporal arg, add default 'DD' unit
             "TRUNC" if f.args.len() == 1 && Self::is_temporal_expr(&f.args[0]) => {
                 let mut args = f.args;
-                args.push(Expression::Literal(crate::expressions::Literal::String("DD".to_string())));
+                args.push(Expression::Literal(Box::new(crate::expressions::Literal::String("DD".to_string()))));
                 Ok(Expression::Function(Box::new(Function::new(
                     "TRUNC".to_string(),
                     args,

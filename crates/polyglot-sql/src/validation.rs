@@ -1360,7 +1360,7 @@ fn infer_expression_type_family_fallback(
     context: &TypeCheckContext,
 ) -> TypeFamily {
     match expr {
-        Expression::Literal(literal) => match literal {
+        Expression::Literal(literal) => match literal.as_ref() {
             crate::expressions::Literal::Number(value) => {
                 if value.contains('.') || value.contains('e') || value.contains('E') {
                     TypeFamily::Numeric

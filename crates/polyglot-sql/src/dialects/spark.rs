@@ -186,8 +186,9 @@ impl DialectImpl for SparkDialect {
             Expression::JSONExtract(je) if je.variant_extract.is_some() => {
                 // Convert path: 'item[1].price' -> '$.item[1].price'
                 let path = match *je.expression {
-                    Expression::Literal(Literal::String(s)) => {
-                        Expression::Literal(Literal::String(format!("$.{}", s)))
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        Expression::Literal(Box::new(Literal::String(format!("$.{}", s))))
                     }
                     other => other,
                 };
@@ -335,7 +336,7 @@ impl SparkDialect {
 
             // TO_DATE is native to Spark; strip default format 'yyyy-MM-dd'
             "TO_DATE" if f.args.len() == 2 => {
-                let is_default_format = matches!(&f.args[1], Expression::Literal(crate::expressions::Literal::String(s)) if s == "yyyy-MM-dd");
+                let is_default_format = matches!(&f.args[1], Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(s) if s == "yyyy-MM-dd"));
                 if is_default_format {
                     Ok(Expression::Function(Box::new(Function::new(
                         "TO_DATE".to_string(),
@@ -404,12 +405,12 @@ impl SparkDialect {
             "STR_TO_MAP" => {
                 if f.args.len() == 1 {
                     let mut args = f.args;
-                    args.push(Expression::Literal(crate::expressions::Literal::String(
+                    args.push(Expression::Literal(Box::new(crate::expressions::Literal::String(
                         ",".to_string(),
-                    )));
-                    args.push(Expression::Literal(crate::expressions::Literal::String(
+                    ))));
+                    args.push(Expression::Literal(Box::new(crate::expressions::Literal::String(
                         ":".to_string(),
-                    )));
+                    ))));
                     Ok(Expression::Function(Box::new(Function::new(
                         "STR_TO_MAP".to_string(),
                         args,
@@ -767,7 +768,7 @@ impl SparkDialect {
                 let group = if f.args.len() >= 6 {
                     let g = &f.args[5];
                     // If group is literal 1 (default), omit it
-                    if matches!(g, Expression::Literal(Literal::Number(n)) if n == "1") {
+                    if matches!(g, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1")) {
                         None
                     } else {
                         Some(g.clone())
@@ -798,7 +799,8 @@ impl SparkDialect {
                 // -> STRUCT('Winnipeg' AS Manitoba, 'bar' AS foo)
                 let mut struct_args = Vec::new();
                 for pair in f.args.chunks(2) {
-                    if let Expression::Literal(Literal::String(key)) = &pair[0] {
+                    if let Expression::Literal(lit) = &pair[0] {
+                        if let Literal::String(key) = lit.as_ref() {
                         struct_args.push(Expression::Alias(Box::new(crate::expressions::Alias {
                             this: pair[1].clone(),
                             alias: crate::expressions::Identifier::new(key.clone()),
@@ -807,6 +809,7 @@ impl SparkDialect {
                             trailing_comments: vec![],
                             inferred_type: None,
                         })));
+                    }
                     } else {
                         struct_args.push(pair[1].clone());
                     }
@@ -842,7 +845,8 @@ impl SparkDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 let json_path = match &path {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -850,7 +854,7 @@ impl SparkDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     _ => path,
                 };
@@ -979,7 +983,7 @@ impl SparkDialect {
 /// Convert an expression (string literal or identifier) to a DateTimeField
 fn expr_to_datetime_field(expr: &Expression) -> Option<DateTimeField> {
     let name = match expr {
-        Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
         Expression::Identifier(id) => id.name.to_uppercase(),
         Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
         _ => return None,

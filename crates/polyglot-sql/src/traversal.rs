@@ -1430,7 +1430,7 @@ mod tests {
     }
 
     fn make_literal(value: i64) -> Expression {
-        Expression::Literal(Literal::Number(value.to_string()))
+        Expression::Literal(Box::new(Literal::Number(value.to_string())))
     }
 
     #[test]
@@ -1648,9 +1648,9 @@ mod tests {
         let expr = ast[0].clone();
         let result = super::transform_map(expr, &|e| {
             if let Expression::Column(ref c) = e {
-                return Ok(Expression::Literal(Literal::Number(
+                return Ok(Expression::Literal(Box::new(Literal::Number(
                     if c.name.name == "a" { "1" } else { "2" }.to_string(),
-                )));
+                ))));
             }
             Ok(e)
         })

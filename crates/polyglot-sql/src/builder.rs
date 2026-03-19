@@ -1404,7 +1404,7 @@ impl SelectBuilder {
     /// Set the LIMIT clause to restrict the result set to `count` rows.
     pub fn limit(mut self, count: usize) -> Self {
         self.select.limit = Some(Limit {
-            this: Expression::Literal(Literal::Number(count.to_string())),
+            this: Expression::Literal(Box::new(Literal::Number(count.to_string()))),
             percent: false,
             comments: Vec::new(),
         });
@@ -1414,7 +1414,7 @@ impl SelectBuilder {
     /// Set the OFFSET clause to skip the first `count` rows.
     pub fn offset(mut self, count: usize) -> Self {
         self.select.offset = Some(Offset {
-            this: Expression::Literal(Literal::Number(count.to_string())),
+            this: Expression::Literal(Box::new(Literal::Number(count.to_string()))),
             rows: None,
         });
         self
@@ -2051,17 +2051,17 @@ impl SetOpBuilder {
 
     /// Restrict the combined set operation result to `count` rows.
     pub fn limit(mut self, count: usize) -> Self {
-        self.limit = Some(Box::new(Expression::Literal(Literal::Number(
+        self.limit = Some(Box::new(Expression::Literal(Box::new(Literal::Number(
             count.to_string(),
-        ))));
+        )))));
         self
     }
 
     /// Skip the first `count` rows from the combined set operation result.
     pub fn offset(mut self, count: usize) -> Self {
-        self.offset = Some(Box::new(Expression::Literal(Literal::Number(
+        self.offset = Some(Box::new(Expression::Literal(Box::new(Literal::Number(
             count.to_string(),
-        ))));
+        )))));
         self
     }
 
@@ -2328,42 +2328,42 @@ pub trait IntoLiteral {
 impl IntoLiteral for &str {
     /// Produce a SQL string literal (e.g. `'hello'`).
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::String(self.to_string())))
+        Expr(Expression::Literal(Box::new(Literal::String(self.to_string()))))
     }
 }
 
 impl IntoLiteral for String {
     /// Produce a SQL string literal from an owned string.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::String(self)))
+        Expr(Expression::Literal(Box::new(Literal::String(self))))
     }
 }
 
 impl IntoLiteral for i64 {
     /// Produce a SQL numeric literal from a 64-bit integer.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::Number(self.to_string())))
+        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
     }
 }
 
 impl IntoLiteral for i32 {
     /// Produce a SQL numeric literal from a 32-bit integer.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::Number(self.to_string())))
+        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
     }
 }
 
 impl IntoLiteral for usize {
     /// Produce a SQL numeric literal from a `usize`.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::Number(self.to_string())))
+        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
     }
 }
 
 impl IntoLiteral for f64 {
     /// Produce a SQL numeric literal from a 64-bit float.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Literal::Number(self.to_string())))
+        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
     }
 }
 

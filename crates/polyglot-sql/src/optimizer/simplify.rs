@@ -26,7 +26,8 @@ pub fn simplify(expression: Expression, dialect: Option<DialectType>) -> Express
 pub fn always_true(expr: &Expression) -> bool {
     match expr {
         Expression::Boolean(b) => b.value,
-        Expression::Literal(Literal::Number(n)) => {
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
             // Non-zero numbers are truthy
             if let Ok(num) = n.parse::<f64>() {
                 num != 0.0
@@ -66,7 +67,8 @@ pub fn is_null(expr: &Expression) -> bool {
 /// Check if expression is zero
 pub fn is_zero(expr: &Expression) -> bool {
     match expr {
-        Expression::Literal(Literal::Number(n)) => {
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
             if let Ok(num) = n.parse::<f64>() {
                 num == 0.0
             } else {
@@ -383,7 +385,7 @@ impl Simplifier {
 
         // Try constant folding for numbers
         if let (Some(a), Some(b)) = (get_number(&left), get_number(&right)) {
-            return Expression::Literal(Literal::Number((a + b).to_string()));
+            return Expression::Literal(Box::new(Literal::Number((a + b).to_string())));
         }
 
         // x + 0 -> x
@@ -406,7 +408,7 @@ impl Simplifier {
 
         // Try constant folding for numbers
         if let (Some(a), Some(b)) = (get_number(&left), get_number(&right)) {
-            return Expression::Literal(Literal::Number((a - b).to_string()));
+            return Expression::Literal(Box::new(Literal::Number((a - b).to_string())));
         }
 
         // x - 0 -> x
@@ -416,8 +418,10 @@ impl Simplifier {
 
         // x - x -> 0 (only for literals/constants)
         if expressions_equal(&left, &right) {
-            if let Expression::Literal(Literal::Number(_)) = &left {
-                return Expression::Literal(Literal::Number("0".to_string()));
+            if let Expression::Literal(lit) = &left {
+                if let Literal::Number(_) = lit.as_ref() {
+                return Expression::Literal(Box::new(Literal::Number("0".to_string())));
+            }
             }
         }
 
@@ -431,17 +435,17 @@ impl Simplifier {
 
         // Try constant folding for numbers
         if let (Some(a), Some(b)) = (get_number(&left), get_number(&right)) {
-            return Expression::Literal(Literal::Number((a * b).to_string()));
+            return Expression::Literal(Box::new(Literal::Number((a * b).to_string())));
         }
 
         // x * 0 -> 0
         if is_zero(&right) {
-            return Expression::Literal(Literal::Number("0".to_string()));
+            return Expression::Literal(Box::new(Literal::Number("0".to_string())));
         }
 
         // 0 * x -> 0
         if is_zero(&left) {
-            return Expression::Literal(Literal::Number("0".to_string()));
+            return Expression::Literal(Box::new(Literal::Number("0".to_string())));
         }
 
         // x * 1 -> x
@@ -466,13 +470,13 @@ impl Simplifier {
         if let (Some(a), Some(b)) = (get_number(&left), get_number(&right)) {
             // Only fold if both are floats to avoid integer division issues
             if b != 0.0 && (a.fract() != 0.0 || b.fract() != 0.0) {
-                return Expression::Literal(Literal::Number((a / b).to_string()));
+                return Expression::Literal(Box::new(Literal::Number((a / b).to_string())));
             }
         }
 
         // 0 / x -> 0 (when x != 0)
         if is_zero(&left) && !is_zero(&right) {
-            return Expression::Literal(Literal::Number("0".to_string()));
+            return Expression::Literal(Box::new(Literal::Number("0".to_string())));
         }
 
         // x / 1 -> x
@@ -494,7 +498,7 @@ impl Simplifier {
 
         // -(number) -> -number
         if let Some(n) = get_number(&inner) {
-            return Expression::Literal(Literal::Number((-n).to_string()));
+            return Expression::Literal(Box::new(Literal::Number((-n).to_string())));
         }
 
         Expression::Neg(Box::new(UnaryOp {
@@ -593,7 +597,7 @@ impl Simplifier {
 
         // Fold two string literals: 'a' || 'b' -> 'ab'
         if let (Some(a), Some(b)) = (get_string(&left), get_string(&right)) {
-            return Expression::Literal(Literal::String(format!("{}{}", a, b)));
+            return Expression::Literal(Box::new(Literal::String(format!("{}{}", a, b))));
         }
 
         // '' || x -> x
@@ -641,7 +645,7 @@ impl Simplifier {
 
         // If no expressions remain, return empty string
         if expressions.is_empty() {
-            return Expression::Literal(Literal::String(String::new()));
+            return Expression::Literal(Box::new(Literal::String(String::new())));
         }
 
         // Try to fold if all are string literals
@@ -650,7 +654,7 @@ impl Simplifier {
                 expressions.iter().map(|e| get_string(e)).collect();
 
             if let Some(strings) = all_strings {
-                return Expression::Literal(Literal::String(strings.join(&sep)));
+                return Expression::Literal(Box::new(Literal::String(strings.join(&sep))));
             }
         }
 
@@ -716,7 +720,7 @@ impl Simplifier {
                 // x + c = r -> x = r - c
                 if let Some(c) = get_number(&op.right) {
                     let new_right =
-                        Expression::Literal(Literal::Number((right_val - c).to_string()));
+                        Expression::Literal(Box::new(Literal::Number((right_val - c).to_string())));
                     return Some(Expression::Eq(Box::new(BinaryOp::new(
                         op.left.clone(),
                         new_right,
@@ -725,7 +729,7 @@ impl Simplifier {
                 // c + x = r -> x = r - c
                 if let Some(c) = get_number(&op.left) {
                     let new_right =
-                        Expression::Literal(Literal::Number((right_val - c).to_string()));
+                        Expression::Literal(Box::new(Literal::Number((right_val - c).to_string())));
                     return Some(Expression::Eq(Box::new(BinaryOp::new(
                         op.right.clone(),
                         new_right,
@@ -736,7 +740,7 @@ impl Simplifier {
                 // x - c = r -> x = r + c
                 if let Some(c) = get_number(&op.right) {
                     let new_right =
-                        Expression::Literal(Literal::Number((right_val + c).to_string()));
+                        Expression::Literal(Box::new(Literal::Number((right_val + c).to_string())));
                     return Some(Expression::Eq(Box::new(BinaryOp::new(
                         op.left.clone(),
                         new_right,
@@ -745,7 +749,7 @@ impl Simplifier {
                 // c - x = r -> x = c - r
                 if let Some(c) = get_number(&op.left) {
                     let new_right =
-                        Expression::Literal(Literal::Number((c - right_val).to_string()));
+                        Expression::Literal(Box::new(Literal::Number((c - right_val).to_string())));
                     return Some(Expression::Eq(Box::new(BinaryOp::new(
                         op.right.clone(),
                         new_right,
@@ -757,7 +761,7 @@ impl Simplifier {
                 if let Some(c) = get_number(&op.right) {
                     if c != 0.0 && right_val % c == 0.0 {
                         let new_right =
-                            Expression::Literal(Literal::Number((right_val / c).to_string()));
+                            Expression::Literal(Box::new(Literal::Number((right_val / c).to_string())));
                         return Some(Expression::Eq(Box::new(BinaryOp::new(
                             op.left.clone(),
                             new_right,
@@ -768,7 +772,7 @@ impl Simplifier {
                 if let Some(c) = get_number(&op.left) {
                     if c != 0.0 && right_val % c == 0.0 {
                         let new_right =
-                            Expression::Literal(Literal::Number((right_val / c).to_string()));
+                            Expression::Literal(Box::new(Literal::Number((right_val / c).to_string())));
                         return Some(Expression::Eq(Box::new(BinaryOp::new(
                             op.right.clone(),
                             new_right,
@@ -823,7 +827,8 @@ impl Simplifier {
 /// Check if expression equals 1
 fn is_one(expr: &Expression) -> bool {
     match expr {
-        Expression::Literal(Literal::Number(n)) => {
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
             if let Ok(num) = n.parse::<f64>() {
                 num == 1.0
             } else {
@@ -837,7 +842,7 @@ fn is_one(expr: &Expression) -> bool {
 /// Get numeric value from expression if it's a number literal
 fn get_number(expr: &Expression) -> Option<f64> {
     match expr {
-        Expression::Literal(Literal::Number(n)) => n.parse().ok(),
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.parse().ok() },
         _ => None,
     }
 }
@@ -845,7 +850,7 @@ fn get_number(expr: &Expression) -> Option<f64> {
 /// Get string value from expression if it's a string literal
 fn get_string(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Literal(Literal::String(s)) => Some(s.clone()),
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
         _ => None,
     }
 }
@@ -1148,7 +1153,7 @@ pub fn absorb_and_eliminate_or(left: Expression, right: Expression) -> Expressio
 /// Generate a simple string representation of an expression for sorting/deduping
 pub fn gen(expr: &Expression) -> String {
     match expr {
-        Expression::Literal(lit) => match lit {
+        Expression::Literal(lit) => match lit.as_ref() {
             Literal::String(s) => format!("'{}'", s),
             Literal::Number(n) => n.clone(),
             _ => format!("{:?}", lit),
@@ -1188,11 +1193,11 @@ mod tests {
     use super::*;
 
     fn make_int(val: i64) -> Expression {
-        Expression::Literal(Literal::Number(val.to_string()))
+        Expression::Literal(Box::new(Literal::Number(val.to_string())))
     }
 
     fn make_string(val: &str) -> Expression {
-        Expression::Literal(Literal::String(val.to_string()))
+        Expression::Literal(Box::new(Literal::String(val.to_string())))
     }
 
     fn make_bool(val: bool) -> Expression {

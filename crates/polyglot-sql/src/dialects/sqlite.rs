@@ -142,7 +142,7 @@ impl DialectImpl for SQLiteDialect {
             // Div: SQLite has TYPED_DIVISION - wrap left operand in CAST(AS REAL)
             Expression::Div(mut op) => {
                 // Don't add CAST AS REAL if either operand is already a float literal
-                let right_is_float = matches!(&op.right, Expression::Literal(crate::expressions::Literal::Number(n)) if n.contains('.'));
+                let right_is_float = matches!(&op.right, Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n.contains('.')));
                 let right_is_float_cast = Self::is_float_cast(&op.right);
                 if !Self::is_float_cast(&op.left) && !right_is_float && !right_is_float_cast {
                     op.left = Expression::Cast(Box::new(crate::expressions::Cast {
@@ -345,7 +345,7 @@ impl SQLiteDialect {
 
                 // Extract unit string
                 let unit_str = match &unit_expr {
-                    Expression::Literal(crate::expressions::Literal::String(s)) => s.to_lowercase(),
+                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => { let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_lowercase() },
                     Expression::Identifier(id) => id.name.to_lowercase(),
                     _ => "day".to_string(),
                 };
@@ -369,33 +369,33 @@ impl SQLiteDialect {
                 let adjusted = match unit_str.as_str() {
                     "hour" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number(
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                             "24.0".to_string(),
-                        )),
+                        ))),
                     ))),
                     "minute" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number(
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                             "1440.0".to_string(),
-                        )),
+                        ))),
                     ))),
                     "second" => Expression::Mul(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number(
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                             "86400.0".to_string(),
-                        )),
+                        ))),
                     ))),
                     "month" => Expression::Div(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number(
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                             "30.0".to_string(),
-                        )),
+                        ))),
                     ))),
                     "year" => Expression::Div(Box::new(BinaryOp::new(
                         paren_diff,
-                        Expression::Literal(crate::expressions::Literal::Number(
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                             "365.0".to_string(),
-                        )),
+                        ))),
                     ))),
                     _ => paren_diff, // day is the default
                 };

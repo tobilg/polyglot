@@ -161,7 +161,7 @@ impl DialectImpl for FabricDialect {
             // Build: column * 1e6
             let column_times_1e6 = Expression::Mul(Box::new(BinaryOp {
                 left: (*f.this).clone(),
-                right: Expression::Literal(Literal::Number("1e6".to_string())),
+                right: Expression::Literal(Box::new(Literal::Number("1e6".to_string()))),
                 left_comments: Vec::new(),
                 operator_comments: Vec::new(),
                 trailing_comments: Vec::new(),
@@ -173,7 +173,7 @@ impl DialectImpl for FabricDialect {
                 "ROUND".to_string(),
                 vec![
                     column_times_1e6,
-                    Expression::Literal(Literal::Number("0".to_string())),
+                    Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                 ],
             )));
 
@@ -190,7 +190,7 @@ impl DialectImpl for FabricDialect {
 
             // Build: CAST('1970-01-01' AS DATETIME2(6))
             let epoch_start = Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String("1970-01-01".to_string())),
+                this: Expression::Literal(Box::new(Literal::String("1970-01-01".to_string()))),
                 to: DataType::Custom {
                     name: "DATETIME2(6)".to_string(),
                 },
@@ -223,7 +223,7 @@ impl DialectImpl for FabricDialect {
                 // Build: column * 1e6
                 let column_times_1e6 = Expression::Mul(Box::new(BinaryOp {
                     left: timestamp_input,
-                    right: Expression::Literal(Literal::Number("1e6".to_string())),
+                    right: Expression::Literal(Box::new(Literal::Number("1e6".to_string()))),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
@@ -235,7 +235,7 @@ impl DialectImpl for FabricDialect {
                     "ROUND".to_string(),
                     vec![
                         column_times_1e6,
-                        Expression::Literal(Literal::Number("0".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                     ],
                 )));
 
@@ -252,7 +252,7 @@ impl DialectImpl for FabricDialect {
 
                 // Build: CAST('1970-01-01' AS DATETIME2(6))
                 let epoch_start = Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String("1970-01-01".to_string())),
+                    this: Expression::Literal(Box::new(Literal::String("1970-01-01".to_string()))),
                     to: DataType::Custom {
                         name: "DATETIME2(6)".to_string(),
                     },

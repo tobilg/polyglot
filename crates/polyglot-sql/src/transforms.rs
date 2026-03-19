@@ -289,7 +289,7 @@ pub fn replace_bool_with_int(expr: Expression) -> Result<Expression> {
     match expr {
         Expression::Boolean(b) => {
             let value = if b.value { "1" } else { "0" };
-            Ok(Expression::Literal(Literal::Number(value.to_string())))
+            Ok(Expression::Literal(Box::new(Literal::Number(value.to_string()))))
         }
         _ => Ok(expr),
     }
@@ -300,7 +300,8 @@ pub fn replace_bool_with_int(expr: Expression) -> Result<Expression> {
 /// Converts 1/0 to TRUE/FALSE
 pub fn replace_int_with_bool(expr: Expression) -> Result<Expression> {
     match expr {
-        Expression::Literal(Literal::Number(n)) if n == "1" || n == "0" => {
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1" || n == "0") => {
+            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
             Ok(Expression::Boolean(BooleanLiteral { value: n == "1" }))
         }
         _ => Ok(expr),
@@ -861,13 +862,13 @@ pub fn eliminate_distinct_on_for_dialect(
                                                         postfix_form: false,
                                                     },
                                                 )),
-                                                Expression::Literal(Literal::Number(
+                                                Expression::Literal(Box::new(Literal::Number(
                                                     "1".to_string(),
-                                                )),
+                                                ))),
                                             )],
-                                            else_: Some(Expression::Literal(Literal::Number(
+                                            else_: Some(Expression::Literal(Box::new(Literal::Number(
                                                 "0".to_string(),
-                                            ))),
+                                            )))),
                                             comments: Vec::new(),
                                             inferred_type: None,
                                         }));
@@ -1022,7 +1023,7 @@ pub fn eliminate_distinct_on_for_dialect(
                                     span: None,
                                     inferred_type: None,
                                 })),
-                                right: Expression::Literal(Literal::Number("1".to_string())),
+                                right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                                 left_comments: vec![],
                                 operator_comments: vec![],
                                 trailing_comments: vec![],
@@ -1060,9 +1061,9 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                         if let Some(on_condition) = join.on {
                             // Create: EXISTS (SELECT 1 FROM join_table WHERE on_condition)
                             let subquery_select = Select {
-                                expressions: vec![Expression::Literal(Literal::Number(
+                                expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                     "1".to_string(),
-                                ))],
+                                )))],
                                 from: Some(From {
                                     expressions: vec![join.this],
                                 }),
@@ -1096,9 +1097,9 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                         if let Some(on_condition) = join.on {
                             // Create: NOT EXISTS (SELECT 1 FROM join_table WHERE on_condition)
                             let subquery_select = Select {
-                                expressions: vec![Expression::Literal(Literal::Number(
+                                expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                     "1".to_string(),
-                                ))],
+                                )))],
                                 from: Some(From {
                                     expressions: vec![join.this],
                                 }),
@@ -1226,9 +1227,9 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                 if let (Some(ref from), Some(ref join_cond)) = (&select.from, &join_condition) {
                     if !from.expressions.is_empty() {
                         let anti_subquery = Expression::Select(Box::new(Select {
-                            expressions: vec![Expression::Literal(Literal::Number(
+                            expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                 "1".to_string(),
-                            ))],
+                            )))],
                             from: Some(from.clone()),
                             where_clause: Some(Where {
                                 this: join_cond.clone(),
@@ -1897,24 +1898,28 @@ pub fn add_recursive_cte_column_names(expr: Expression) -> Result<Expression> {
 pub fn epoch_cast_to_ts(expr: Expression) -> Result<Expression> {
     match expr {
         Expression::Cast(mut cast) => {
-            if let Expression::Literal(Literal::String(ref s)) = cast.this {
+            if let Expression::Literal(ref lit) = cast.this {
+                if let Literal::String(ref s) = lit.as_ref() {
                 if s.to_lowercase() == "epoch" {
                     if is_temporal_type(&cast.to) {
                         cast.this =
-                            Expression::Literal(Literal::String("1970-01-01 00:00:00".to_string()));
+                            Expression::Literal(Box::new(Literal::String("1970-01-01 00:00:00".to_string())));
                     }
                 }
+            }
             }
             Ok(Expression::Cast(cast))
         }
         Expression::TryCast(mut try_cast) => {
-            if let Expression::Literal(Literal::String(ref s)) = try_cast.this {
+            if let Expression::Literal(ref lit) = try_cast.this {
+                if let Literal::String(ref s) = lit.as_ref() {
                 if s.to_lowercase() == "epoch" {
                     if is_temporal_type(&try_cast.to) {
                         try_cast.this =
-                            Expression::Literal(Literal::String("1970-01-01 00:00:00".to_string()));
+                            Expression::Literal(Box::new(Literal::String("1970-01-01 00:00:00".to_string())));
                     }
                 }
+            }
             }
             Ok(Expression::TryCast(try_cast))
         }
@@ -2055,7 +2060,7 @@ fn is_boolean_expression(expr: &Expression) -> bool {
 fn wrap_neq_zero(expr: Expression) -> Expression {
     Expression::Neq(Box::new(BinaryOp {
         left: expr,
-        right: Expression::Literal(Literal::Number("0".to_string())),
+        right: Expression::Literal(Box::new(Literal::Number("0".to_string()))),
         left_comments: vec![],
         operator_comments: vec![],
         trailing_comments: vec![],
@@ -2107,8 +2112,8 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
         Expression::Boolean(BooleanLiteral { value: true }) => {
             Expression::Paren(Box::new(crate::expressions::Paren {
                 this: Expression::Eq(Box::new(BinaryOp {
-                    left: Expression::Literal(Literal::Number("1".to_string())),
-                    right: Expression::Literal(Literal::Number("1".to_string())),
+                    left: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
+                    right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
@@ -2120,8 +2125,8 @@ fn ensure_bool_condition(expr: Expression) -> Expression {
         Expression::Boolean(BooleanLiteral { value: false }) => {
             Expression::Paren(Box::new(crate::expressions::Paren {
                 this: Expression::Eq(Box::new(BinaryOp {
-                    left: Expression::Literal(Literal::Number("1".to_string())),
-                    right: Expression::Literal(Literal::Number("0".to_string())),
+                    left: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
+                    right: Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                     left_comments: vec![],
                     operator_comments: vec![],
                     trailing_comments: vec![],
@@ -2439,11 +2444,12 @@ fn try_convert_generate_date_array_with_name(
             // Helper: wrap expression in CAST(... AS DATE) unless already a date literal or CAST to DATE
             let cast_to_date = |expr: &Expression| -> Expression {
                 match expr {
-                    Expression::Literal(Literal::Date(_)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => {
                         // DATE '...' -> convert to CAST('...' AS DATE) to match expected output
-                        if let Expression::Literal(Literal::Date(d)) = expr {
+                        if let Expression::Literal(lit) = expr {
+                            if let Literal::Date(d) = lit.as_ref() {
                             Expression::Cast(Box::new(Cast {
-                                this: Expression::Literal(Literal::String(d.clone())),
+                                this: Expression::Literal(Box::new(Literal::String(d.clone()))),
                                 to: DataType::Date,
                                 trailing_comments: vec![],
                                 double_colon_syntax: false,
@@ -2451,6 +2457,7 @@ fn try_convert_generate_date_array_with_name(
                                 default: None,
                                 inferred_type: None,
                             }))
+                        } else { expr.clone() }
                         } else {
                             unreachable!()
                         }
@@ -2485,11 +2492,13 @@ fn try_convert_generate_date_array_with_name(
             let normalize_interval = |expr: &Expression| -> Expression {
                 if let Expression::Interval(ref iv) = expr {
                     let mut iv_clone = iv.as_ref().clone();
-                    if let Some(Expression::Literal(Literal::String(ref s))) = iv_clone.this {
+                    if let Some(Expression::Literal(ref lit)) = iv_clone.this {
+                        if let Literal::String(ref s) = lit.as_ref() {
                         // Convert numeric strings to Number literals for unquoted output
                         if s.parse::<f64>().is_ok() {
-                            iv_clone.this = Some(Expression::Literal(Literal::Number(s.clone())));
+                            iv_clone.this = Some(Expression::Literal(Box::new(Literal::Number(s.clone()))));
                         }
+                    }
                     }
                     Expression::Interval(Box::new(iv_clone))
                 } else {
@@ -2501,7 +2510,7 @@ fn try_convert_generate_date_array_with_name(
             // Extract interval unit and count from step expression
             let normalized_step = step.map(|s| normalize_interval(s)).unwrap_or_else(|| {
                 Expression::Interval(Box::new(crate::expressions::Interval {
-                    this: Some(Expression::Literal(Literal::Number("1".to_string()))),
+                    this: Some(Expression::Literal(Box::new(Literal::Number("1".to_string())))),
                     unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                         unit: crate::expressions::IntervalUnit::Day,
                         use_plural: false,
@@ -2667,7 +2676,7 @@ fn extract_interval_unit_and_count(
             if let IntervalUnitSpec::Simple { unit, .. } = unit_spec {
                 let count = match &iv.this {
                     Some(e) => e.clone(),
-                    None => Expression::Literal(Literal::Number("1".to_string())),
+                    None => Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                 };
                 return (unit.clone(), count);
             }
@@ -2676,8 +2685,11 @@ fn extract_interval_unit_and_count(
         // Second try: parse from string value like "1 WEEK" or "1"
         if let Some(ref val_expr) = iv.this {
             match val_expr {
-                Expression::Literal(Literal::String(s))
-                | Expression::Literal(Literal::Number(s)) => {
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_) | Literal::Number(_)) => {
+                    let s = match lit.as_ref() {
+                        Literal::String(s) | Literal::Number(s) => s,
+                        _ => unreachable!(),
+                    };
                     // Try to parse "count unit" format like "1 WEEK", "1 MONTH"
                     let parts: Vec<&str> = s.trim().splitn(2, char::is_whitespace).collect();
                     if parts.len() == 2 {
@@ -2698,14 +2710,14 @@ fn extract_interval_unit_and_count(
                         };
                         return (
                             unit,
-                            Expression::Literal(Literal::Number(count_str.to_string())),
+                            Expression::Literal(Box::new(Literal::Number(count_str.to_string()))),
                         );
                     }
                     // Just a number with no unit - default to Day
                     if s.parse::<f64>().is_ok() {
                         return (
                             IntervalUnit::Day,
-                            Expression::Literal(Literal::Number(s.clone())),
+                            Expression::Literal(Box::new(Literal::Number(s.clone()))),
                         );
                     }
                 }
@@ -2716,12 +2728,12 @@ fn extract_interval_unit_and_count(
         // Fallback
         (
             IntervalUnit::Day,
-            Expression::Literal(Literal::Number("1".to_string())),
+            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
         )
     } else {
         (
             IntervalUnit::Day,
-            Expression::Literal(Literal::Number("1".to_string())),
+            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
         )
     }
 }
@@ -3605,12 +3617,12 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                                 "GENERATE_SUBSCRIPTS".to_string(),
                                 vec![
                                     arg.clone(),
-                                    Expression::Literal(Literal::Number("1".to_string())),
+                                    Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                                 ],
                             )));
                             let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                                 gen_subscripts,
-                                Expression::Literal(Literal::Number("1".to_string())),
+                                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                             )));
                             let pos_alias = Expression::Alias(Box::new(Alias {
                                 this: sub_one,
@@ -3658,12 +3670,12 @@ pub fn expand_posexplode_duckdb(expr: Expression) -> Result<Expression> {
                             "GENERATE_SUBSCRIPTS".to_string(),
                             vec![
                                 arg.clone(),
-                                Expression::Literal(Literal::Number("1".to_string())),
+                                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                             ],
                         )));
                         let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                             gen_subscripts,
-                            Expression::Literal(Literal::Number("1".to_string())),
+                            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                         )));
                         let pos_alias = Expression::Alias(Box::new(Alias {
                             this: sub_one,
@@ -3747,12 +3759,12 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                         "GENERATE_SUBSCRIPTS".to_string(),
                         vec![
                             arg.clone(),
-                            Expression::Literal(Literal::Number("1".to_string())),
+                            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                         ],
                     )));
                     let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                         gen_subscripts,
-                        Expression::Literal(Literal::Number("1".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                     )));
                     let pos_alias = Expression::Alias(Box::new(Alias {
                         this: sub_one,
@@ -3813,12 +3825,12 @@ fn expand_posexplode_in_from_duckdb(from: &mut From) -> Result<()> {
                     "GENERATE_SUBSCRIPTS".to_string(),
                     vec![
                         arg.clone(),
-                        Expression::Literal(Literal::Number("1".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                     ],
                 )));
                 let sub_one = Expression::Sub(Box::new(BinaryOp::new(
                     gen_subscripts,
-                    Expression::Literal(Literal::Number("1".to_string())),
+                    Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                 )));
                 let pos_alias = Expression::Alias(Box::new(Alias {
                     this: sub_one,
@@ -3992,17 +4004,17 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
             Expression::Paren(Box::new(crate::expressions::Paren {
                 this: Expression::Sub(Box::new(BinaryOp::new(
                     greatest,
-                    Expression::Literal(Literal::Number("1".to_string())),
+                    Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                 ))),
                 trailing_comments: Vec::new(),
             })),
-            Expression::Literal(Literal::Number("1".to_string())),
+            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
         )));
 
         let series_range = Expression::Function(Box::new(Function::new(
             "ARRAY_GENERATE_RANGE".to_string(),
             vec![
-                Expression::Literal(Literal::Number("0".to_string())),
+                Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                 series_end,
             ],
         )));
@@ -4108,7 +4120,7 @@ fn snowflake_flatten_projection_to_unnest_impl(mut select: Select) -> Result<Exp
         let size_minus_1 = Expression::Paren(Box::new(crate::expressions::Paren {
             this: Expression::Sub(Box::new(BinaryOp::new(
                 array_size_call,
-                Expression::Literal(Literal::Number("1".to_string())),
+                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             ))),
             trailing_comments: Vec::new(),
         }));
@@ -4820,7 +4832,7 @@ fn make_unnest_subquery(unnest: UnnestFunc, alias: Option<Identifier>) -> Expres
     // Build UNNEST function call with max_depth => 2 named argument
     let max_depth_arg = Expression::NamedArgument(Box::new(NamedArgument {
         name: Identifier::new("max_depth".to_string()),
-        value: Expression::Literal(Literal::Number("2".to_string())),
+        value: Expression::Literal(Box::new(Literal::Number("2".to_string()))),
         separator: NamedArgSeparator::DArrow,
     }));
 
@@ -5173,7 +5185,7 @@ mod tests {
     fn test_preprocess() {
         let expr = Expression::Boolean(BooleanLiteral { value: true });
         let result = preprocess(expr, &[replace_bool_with_int]).unwrap();
-        assert!(matches!(result, Expression::Literal(Literal::Number(_))));
+        assert!(matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_))));
     }
 
     #[test]
@@ -5237,16 +5249,20 @@ mod tests {
     fn test_replace_bool_with_int() {
         let true_expr = Expression::Boolean(BooleanLiteral { value: true });
         let result = replace_bool_with_int(true_expr).unwrap();
-        if let Expression::Literal(Literal::Number(n)) = result {
+        if let Expression::Literal(lit) = result {
+            if let Literal::Number(n) = lit.as_ref() {
             assert_eq!(n, "1");
+        }
         } else {
             panic!("Expected number literal");
         }
 
         let false_expr = Expression::Boolean(BooleanLiteral { value: false });
         let result = replace_bool_with_int(false_expr).unwrap();
-        if let Expression::Literal(Literal::Number(n)) = result {
+        if let Expression::Literal(lit) = result {
+            if let Literal::Number(n) = lit.as_ref() {
             assert_eq!(n, "0");
+        }
         } else {
             panic!("Expected number literal");
         }
@@ -5254,7 +5270,7 @@ mod tests {
 
     #[test]
     fn test_replace_int_with_bool() {
-        let one_expr = Expression::Literal(Literal::Number("1".to_string()));
+        let one_expr = Expression::Literal(Box::new(Literal::Number("1".to_string())));
         let result = replace_int_with_bool(one_expr).unwrap();
         if let Expression::Boolean(b) = result {
             assert!(b.value);
@@ -5262,7 +5278,7 @@ mod tests {
             panic!("Expected boolean true");
         }
 
-        let zero_expr = Expression::Literal(Literal::Number("0".to_string()));
+        let zero_expr = Expression::Literal(Box::new(Literal::Number("0".to_string())));
         let result = replace_int_with_bool(zero_expr).unwrap();
         if let Expression::Boolean(b) = result {
             assert!(!b.value);
@@ -5271,9 +5287,9 @@ mod tests {
         }
 
         // Test that other numbers are not converted
-        let two_expr = Expression::Literal(Literal::Number("2".to_string()));
+        let two_expr = Expression::Literal(Box::new(Literal::Number("2".to_string())));
         let result = replace_int_with_bool(two_expr).unwrap();
-        assert!(matches!(result, Expression::Literal(Literal::Number(_))));
+        assert!(matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_))));
     }
 
     #[test]
@@ -5355,7 +5371,7 @@ mod tests {
     fn test_remove_precision_parameterized_types_cast() {
         // Create a CAST(1 AS DECIMAL(10, 2)) expression
         let cast_expr = Expression::Cast(Box::new(Cast {
-            this: Expression::Literal(Literal::Number("1".to_string())),
+            this: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             to: DataType::Decimal {
                 precision: Some(10),
                 scale: Some(2),
@@ -5385,7 +5401,7 @@ mod tests {
     fn test_remove_precision_parameterized_types_varchar() {
         // Create a CAST('hello' AS VARCHAR(10)) expression
         let cast_expr = Expression::Cast(Box::new(Cast {
-            this: Expression::Literal(Literal::String("hello".to_string())),
+            this: Expression::Literal(Box::new(Literal::String("hello".to_string()))),
             to: DataType::VarChar {
                 length: Some(10),
                 parenthesized_length: false,
@@ -5417,7 +5433,7 @@ mod tests {
         // The current implementation handles top-level Cast expressions;
         // a full implementation would need recursive AST traversal
         let cast = Expression::Cast(Box::new(Cast {
-            this: Expression::Literal(Literal::Number("1".to_string())),
+            this: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             to: DataType::Decimal {
                 precision: Some(10),
                 scale: Some(2),
@@ -5441,7 +5457,7 @@ mod tests {
     fn test_epoch_cast_to_ts() {
         // Test CAST('epoch' AS TIMESTAMP) → CAST('1970-01-01 00:00:00' AS TIMESTAMP)
         let cast_expr = Expression::Cast(Box::new(Cast {
-            this: Expression::Literal(Literal::String("epoch".to_string())),
+            this: Expression::Literal(Box::new(Literal::String("epoch".to_string()))),
             to: DataType::Timestamp {
                 precision: None,
                 timezone: false,
@@ -5455,8 +5471,10 @@ mod tests {
 
         let result = epoch_cast_to_ts(cast_expr).unwrap();
         if let Expression::Cast(cast) = result {
-            if let Expression::Literal(Literal::String(s)) = cast.this {
+            if let Expression::Literal(lit) = cast.this {
+                if let Literal::String(s) = lit.as_ref() {
                 assert_eq!(s, "1970-01-01 00:00:00");
+            }
             } else {
                 panic!("Expected string literal");
             }
@@ -5469,7 +5487,7 @@ mod tests {
     fn test_epoch_cast_to_ts_preserves_non_epoch() {
         // Test that non-epoch strings are preserved
         let cast_expr = Expression::Cast(Box::new(Cast {
-            this: Expression::Literal(Literal::String("2024-01-15".to_string())),
+            this: Expression::Literal(Box::new(Literal::String("2024-01-15".to_string()))),
             to: DataType::Timestamp {
                 precision: None,
                 timezone: false,
@@ -5483,8 +5501,10 @@ mod tests {
 
         let result = epoch_cast_to_ts(cast_expr).unwrap();
         if let Expression::Cast(cast) = result {
-            if let Expression::Literal(Literal::String(s)) = cast.this {
+            if let Expression::Literal(lit) = cast.this {
+                if let Literal::String(s) = lit.as_ref() {
                 assert_eq!(s, "2024-01-15");
+            }
             } else {
                 panic!("Expected string literal");
             }
@@ -5616,7 +5636,7 @@ mod tests {
                 span: None,
                 inferred_type: None,
             }),
-            right: Expression::Literal(Literal::String("%test%".to_string())),
+            right: Expression::Literal(Box::new(Literal::String("%test%".to_string()))),
             escape: None,
             quantifier: None,
             inferred_type: None,
@@ -5645,7 +5665,7 @@ mod tests {
     fn test_no_trycast_sql() {
         // Test TryCast conversion to Cast
         let trycast_expr = Expression::TryCast(Box::new(Cast {
-            this: Expression::Literal(Literal::String("123".to_string())),
+            this: Expression::Literal(Box::new(Literal::String("123".to_string()))),
             to: DataType::Int {
                 length: None,
                 integer_spelling: false,
@@ -5665,7 +5685,7 @@ mod tests {
     fn test_no_safe_cast_sql() {
         // Test SafeCast conversion to Cast
         let safe_cast_expr = Expression::SafeCast(Box::new(Cast {
-            this: Expression::Literal(Literal::String("123".to_string())),
+            this: Expression::Literal(Box::new(Literal::String("123".to_string()))),
             to: DataType::Int {
                 length: None,
                 integer_spelling: false,

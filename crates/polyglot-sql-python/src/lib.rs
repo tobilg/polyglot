@@ -3,6 +3,7 @@ mod dialects;
 mod diff;
 mod errors;
 mod expr;
+mod expr_types;
 mod format;
 mod generate;
 mod helpers;
@@ -20,9 +21,7 @@ use pyo3::prelude::*;
 fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(transpile::transpile, m)?)?;
     m.add_function(wrap_pyfunction!(parse::parse, m)?)?;
-    m.add_function(wrap_pyfunction!(parse::parse_expr, m)?)?;
     m.add_function(wrap_pyfunction!(parse::parse_one, m)?)?;
-    m.add_function(wrap_pyfunction!(parse::parse_one_expr, m)?)?;
     m.add_function(wrap_pyfunction!(generate::generate, m)?)?;
     m.add_function(wrap_pyfunction!(format::format_sql, m)?)?;
     m.add_function(wrap_pyfunction!(validate::validate, m)?)?;
@@ -38,6 +37,7 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     errors::register_exceptions(m)?;
     m.add_class::<expr::PyExpression>()?;
+    expr_types::register_expression_subclasses(m)?;
     m.add_class::<types::ValidationResult>()?;
     m.add_class::<types::ValidationErrorInfo>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

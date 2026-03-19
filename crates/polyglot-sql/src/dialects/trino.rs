@@ -132,7 +132,7 @@ impl DialectImpl for TrinoDialect {
             // LISTAGG: Add default separator ',' if none is specified (Trino style)
             Expression::ListAgg(mut f) => {
                 if f.separator.is_none() {
-                    f.separator = Some(Expression::Literal(Literal::String(",".to_string())));
+                    f.separator = Some(Expression::Literal(Box::new(Literal::String(",".to_string()))));
                 }
                 Ok(Expression::ListAgg(f))
             }
@@ -140,11 +140,13 @@ impl DialectImpl for TrinoDialect {
             // Interval: Split compound string intervals like INTERVAL '1 day' into INTERVAL '1' DAY
             Expression::Interval(mut interval) => {
                 if interval.unit.is_none() {
-                    if let Some(Expression::Literal(Literal::String(ref s))) = interval.this {
+                    if let Some(Expression::Literal(ref lit)) = interval.this {
+                        if let Literal::String(ref s) = lit.as_ref() {
                         if let Some((value, unit)) = Self::parse_compound_interval(s) {
-                            interval.this = Some(Expression::Literal(Literal::String(value)));
+                            interval.this = Some(Expression::Literal(Box::new(Literal::String(value))));
                             interval.unit = Some(unit);
                         }
+                    }
                     }
                 }
                 Ok(Expression::Interval(interval))

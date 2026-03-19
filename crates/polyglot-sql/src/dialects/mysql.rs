@@ -381,7 +381,8 @@ impl DialectImpl for MySQLDialect {
             // JSONExtract with variant_extract (Snowflake colon syntax) -> JSON_EXTRACT
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         // Convert bracket notation ["key"] to quoted dot notation ."key"
                         let s = Self::convert_bracket_to_quoted_path(&s);
                         let normalized = if s.starts_with('$') {
@@ -391,7 +392,7 @@ impl DialectImpl for MySQLDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     other => other,
                 };
@@ -693,11 +694,13 @@ impl MySQLDialect {
             // Normalize DATE_FORMAT short-hands to canonical MySQL forms.
             "DATE_FORMAT" if f.args.len() >= 2 => {
                 let mut f = f;
-                if let Some(Expression::Literal(Literal::String(fmt))) = f.args.get(1) {
+                if let Some(Expression::Literal(lit)) = f.args.get(1) {
+                    if let Literal::String(fmt) = lit.as_ref() {
                     let normalized = Self::normalize_mysql_date_format(fmt);
                     if normalized != *fmt {
-                        f.args[1] = Expression::Literal(Literal::String(normalized));
+                        f.args[1] = Expression::Literal(Box::new(Literal::String(normalized)));
                     }
+                }
                 }
                 Ok(Expression::Function(Box::new(f)))
             }
@@ -743,10 +746,12 @@ impl MySQLDialect {
             // Preserve precision if specified: CURRENT_TIMESTAMP(6)
             "CURRENT_TIMESTAMP" => {
                 let precision =
-                    if let Some(Expression::Literal(crate::expressions::Literal::Number(n))) =
+                    if let Some(Expression::Literal(lit)) =
                         f.args.first()
                     {
+                        if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                         n.parse::<u32>().ok()
+                    } else { None }
                     } else {
                         None
                     };
@@ -948,7 +953,8 @@ impl MySQLDialect {
 
                 // Extract sub-second precision from the string literal
                 let precision =
-                    if let Expression::Literal(crate::expressions::Literal::String(ref s)) = arg {
+                    if let Expression::Literal(ref lit) = arg {
+                        if let crate::expressions::Literal::String(ref s) = lit.as_ref() {
                         // Find fractional seconds: look for .NNN pattern after HH:MM:SS
                         if let Some(dot_pos) = s.rfind('.') {
                             let after_dot = &s[dot_pos + 1..];
@@ -968,6 +974,7 @@ impl MySQLDialect {
                         } else {
                             None
                         }
+                    } else { None }
                     } else {
                         None
                     };
@@ -1048,7 +1055,8 @@ impl MySQLDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 let json_path = match &path {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         // Convert bracket notation ["key"] to quoted dot notation ."key"
                         let s = Self::convert_bracket_to_quoted_path(s);
                         let normalized = if s.starts_with('$') {
@@ -1058,7 +1066,7 @@ impl MySQLDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     _ => path,
                 };
