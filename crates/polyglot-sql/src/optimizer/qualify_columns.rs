@@ -3144,6 +3144,50 @@ mod tests {
             sql.contains("t1.a"),
             "column should be qualified with table name: {sql}"
         );
+
+        // test that columns in agg functions also get qualified
+        let expr = parse("SELECT MAX(a) FROM raw.t1");
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+        assert!(
+            sql.contains("t1.a"),
+            "column in function should be qualified with table name: {sql}"
+        );
+
+        // test that columns in scalar functions also get qualified
+        let expr = parse("SELECT ABS(a) FROM raw.t1");
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+        assert!(
+            sql.contains("t1.a"),
+            "column in function should be qualified with table name: {sql}"
+        );
+    }
+
+    #[test]
+    fn test_qualify_columns_count_star() {
+        // COUNT(*) uses Count { this: None } — verify qualify_columns handles it without panic
+        let expr = parse("SELECT COUNT(*) FROM t1");
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("COUNT(*)"),
+            "COUNT(*) should be preserved: {sql}"
+        );
     }
 
     #[test]
