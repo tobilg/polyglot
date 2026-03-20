@@ -260,12 +260,14 @@ impl ExasolDialect {
                 let mut args = f.args;
                 if args.len() >= 2 {
                     // Convert format codes from C-style (%Y, %m, etc.) to Exasol format
-                    if let Expression::Literal(Literal::String(fmt)) = &args[1] {
+                    if let Expression::Literal(lit) = &args[1] {
+                        if let Literal::String(fmt) = lit.as_ref() {
                         let exasol_fmt = Self::convert_c_format_to_exasol(fmt);
-                        args[1] = Expression::Literal(Literal::String(exasol_fmt));
+                        args[1] = Expression::Literal(Box::new(Literal::String(exasol_fmt)));
+                    }
                     }
                     // CAST string literal values to TIMESTAMP for date formatting functions
-                    if matches!(&args[0], Expression::Literal(Literal::String(_)))
+                    if matches!(&args[0], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
                         && (f.name.eq_ignore_ascii_case("DATE_FORMAT")
                             || f.name.eq_ignore_ascii_case("STRFTIME"))
                     {
@@ -293,10 +295,12 @@ impl ExasolDialect {
                 if f.args.len() >= 2 {
                     // Uppercase format string if present
                     let mut new_args = f.args.clone();
-                    if let Expression::Literal(Literal::String(fmt)) = &f.args[1] {
-                        new_args[1] = Expression::Literal(Literal::String(
+                    if let Expression::Literal(lit) = &f.args[1] {
+                        if let Literal::String(fmt) = lit.as_ref() {
+                        new_args[1] = Expression::Literal(Box::new(Literal::String(
                             Self::uppercase_exasol_format(fmt),
-                        ));
+                        )));
+                    }
                     }
                     Ok(Expression::Function(Box::new(Function::new(
                         "TO_DATE".to_string(),
@@ -311,10 +315,12 @@ impl ExasolDialect {
             "TIME_TO_STR" => {
                 if f.args.len() >= 2 {
                     let mut new_args = vec![f.args[0].clone()];
-                    if let Expression::Literal(Literal::String(fmt)) = &f.args[1] {
-                        new_args.push(Expression::Literal(Literal::String(
+                    if let Expression::Literal(lit) = &f.args[1] {
+                        if let Literal::String(fmt) = lit.as_ref() {
+                        new_args.push(Expression::Literal(Box::new(Literal::String(
                             Self::convert_strptime_to_exasol_format(fmt),
-                        )));
+                        ))));
+                    }
                     } else {
                         new_args.push(f.args[1].clone());
                     }
@@ -334,10 +340,12 @@ impl ExasolDialect {
             "STR_TO_TIME" => {
                 if f.args.len() >= 2 {
                     let mut new_args = vec![f.args[0].clone()];
-                    if let Expression::Literal(Literal::String(fmt)) = &f.args[1] {
-                        new_args.push(Expression::Literal(Literal::String(
+                    if let Expression::Literal(lit) = &f.args[1] {
+                        if let Literal::String(fmt) = lit.as_ref() {
+                        new_args.push(Expression::Literal(Box::new(Literal::String(
                             Self::convert_strptime_to_exasol_format(fmt),
-                        )));
+                        ))));
+                    }
                     } else {
                         new_args.push(f.args[1].clone());
                     }

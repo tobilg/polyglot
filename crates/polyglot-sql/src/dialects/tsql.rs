@@ -157,7 +157,7 @@ impl DialectImpl for TSQLDialect {
             // ===== Boolean IS TRUE/FALSE -> = 1/0 for TSQL =====
             // TSQL doesn't have IS TRUE/IS FALSE syntax
             Expression::IsTrue(it) => {
-                let one = Expression::Literal(crate::expressions::Literal::Number("1".to_string()));
+                let one = Expression::Literal(Box::new(crate::expressions::Literal::Number("1".to_string())));
                 if it.not {
                     // a IS NOT TRUE -> NOT a = 1
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
@@ -185,7 +185,7 @@ impl DialectImpl for TSQLDialect {
             }
             Expression::IsFalse(it) => {
                 let zero =
-                    Expression::Literal(crate::expressions::Literal::Number("0".to_string()));
+                    Expression::Literal(Box::new(crate::expressions::Literal::Number("0".to_string())));
                 if it.not {
                     // a IS NOT FALSE -> NOT a = 0
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
@@ -361,9 +361,9 @@ impl DialectImpl for TSQLDialect {
             // Boolean literals TRUE/FALSE -> 1/0 in SQL Server
             Expression::Boolean(b) => {
                 let value = if b.value { 1 } else { 0 };
-                Ok(Expression::Literal(crate::expressions::Literal::Number(
+                Ok(Expression::Literal(Box::new(crate::expressions::Literal::Number(
                     value.to_string(),
-                )))
+                ))))
             }
 
             // LN -> LOG in SQL Server
@@ -562,15 +562,16 @@ impl DialectImpl for TSQLDialect {
             // JSONExtract with variant_extract (Snowflake colon syntax) -> ISNULL(JSON_QUERY, JSON_VALUE)
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
-                            s
+                            s.clone()
                         } else if s.starts_with('[') {
                             format!("${}", s)
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     other => other,
                 };
@@ -774,7 +775,8 @@ impl TSQLDialect {
                 let mut args = Self::uppercase_first_arg_if_identifier(f.args);
                 // Cast string literal date arg to DATETIME2
                 if args.len() >= 2 {
-                    if let Expression::Literal(Literal::String(_)) = &args[1] {
+                    if let Expression::Literal(lit) = &args[1] {
+                        if let Literal::String(_) = lit.as_ref() {
                         args[1] = Expression::Cast(Box::new(Cast {
                             this: args[1].clone(),
                             to: DataType::Custom {
@@ -786,6 +788,7 @@ impl TSQLDialect {
                             default: None,
                             inferred_type: None,
                         }));
+                    }
                     }
                 }
                 Ok(Expression::Function(Box::new(Function::new(
@@ -859,7 +862,8 @@ impl TSQLDialect {
                 let this = args.remove(0);
                 let path = args.remove(0);
                 let json_path = match &path {
-                    Expression::Literal(Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -867,7 +871,7 @@ impl TSQLDialect {
                         } else {
                             format!("$.{}", s)
                         };
-                        Expression::Literal(Literal::String(normalized))
+                        Expression::Literal(Box::new(Literal::String(normalized)))
                     }
                     _ => path,
                 };
@@ -890,7 +894,7 @@ impl TSQLDialect {
             // JSON_QUERY with 2 args: leave as-is (already processed or inside ISNULL)
             "JSON_QUERY" if f.args.len() == 1 => {
                 let this = f.args.into_iter().next().unwrap();
-                let path = Expression::Literal(Literal::String("$".to_string()));
+                let path = Expression::Literal(Box::new(Literal::String("$".to_string())));
                 let json_query = Expression::Function(Box::new(Function::new(
                     "JSON_QUERY".to_string(),
                     vec![this.clone(), path.clone()],
@@ -1142,7 +1146,7 @@ impl TSQLDialect {
     fn get_output_name(&self, expr: &Expression) -> Option<String> {
         match expr {
             // Literals - use the literal value as the name
-            Expression::Literal(lit) => match lit {
+            Expression::Literal(lit) => match lit.as_ref() {
                 Literal::Number(n) => Some(n.clone()),
                 Literal::String(s) => Some(s.clone()),
                 Literal::HexString(h) => Some(format!("0x{}", h)),

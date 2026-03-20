@@ -1505,15 +1505,15 @@ mod tests {
     use crate::{parse_one, DialectType, MappingSchema, Schema};
 
     fn make_int_literal(val: i64) -> Expression {
-        Expression::Literal(Literal::Number(val.to_string()))
+        Expression::Literal(Box::new(Literal::Number(val.to_string())))
     }
 
     fn make_float_literal(val: f64) -> Expression {
-        Expression::Literal(Literal::Number(val.to_string()))
+        Expression::Literal(Box::new(Literal::Number(val.to_string())))
     }
 
     fn make_string_literal(val: &str) -> Expression {
-        Expression::Literal(Literal::String(val.to_string()))
+        Expression::Literal(Box::new(Literal::String(val.to_string())))
     }
 
     fn make_bool_literal(val: bool) -> Expression {
@@ -1847,11 +1847,11 @@ mod tests {
         let mut annotator = TypeAnnotator::new(None, None);
 
         // DATE literal
-        let date_expr = Expression::Literal(Literal::Date("2024-01-15".to_string()));
+        let date_expr = Expression::Literal(Box::new(Literal::Date("2024-01-15".to_string())));
         assert_eq!(annotator.annotate(&date_expr), Some(DataType::Date));
 
         // TIME literal
-        let time_expr = Expression::Literal(Literal::Time("10:30:00".to_string()));
+        let time_expr = Expression::Literal(Box::new(Literal::Time("10:30:00".to_string())));
         assert_eq!(
             annotator.annotate(&time_expr),
             Some(DataType::Time {
@@ -1861,7 +1861,7 @@ mod tests {
         );
 
         // TIMESTAMP literal
-        let ts_expr = Expression::Literal(Literal::Timestamp("2024-01-15 10:30:00".to_string()));
+        let ts_expr = Expression::Literal(Box::new(Literal::Timestamp("2024-01-15 10:30:00".to_string())));
         assert_eq!(
             annotator.annotate(&ts_expr),
             Some(DataType::Timestamp {

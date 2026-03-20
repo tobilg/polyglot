@@ -149,10 +149,11 @@ impl DialectImpl for DatabricksDialect {
             Expression::DateSub(f) => {
                 // Convert string literals to numbers (interval values are often stored as strings)
                 let val = match f.interval {
-                    Expression::Literal(crate::expressions::Literal::String(s))
-                        if s.parse::<i64>().is_ok() =>
+                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(s) if s.parse::<i64>().is_ok())
+                        =>
                     {
-                        Expression::Literal(crate::expressions::Literal::Number(s))
+                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        Expression::Literal(Box::new(crate::expressions::Literal::Number(s.clone())))
                     }
                     other => other,
                 };
@@ -431,9 +432,8 @@ impl DatabricksDialect {
                 if f.args.len() == 2 {
                     let is_simple_number = matches!(
                         &f.args[1],
-                        Expression::Literal(crate::expressions::Literal::Number(_))
-                            | Expression::Neg(_)
-                    );
+                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(_))
+                    ) || matches!(&f.args[1], Expression::Neg(_));
                     if is_simple_number {
                         // Keep as DATE_ADD(date, num_days)
                         Ok(Expression::Function(Box::new(Function::new(
@@ -515,7 +515,8 @@ impl DatabricksDialect {
 
                 // Extract and strip the $. prefix from the path
                 let path_expr = match &path_arg {
-                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                         // Strip leading '$.' if present
                         let stripped = if s.starts_with("$.") {
                             &s[2..]
@@ -524,9 +525,9 @@ impl DatabricksDialect {
                         } else {
                             s.as_str()
                         };
-                        Expression::Literal(crate::expressions::Literal::String(
+                        Expression::Literal(Box::new(crate::expressions::Literal::String(
                             stripped.to_string(),
-                        ))
+                        )))
                     }
                     _ => path_arg,
                 };
@@ -817,10 +818,11 @@ impl DatabricksDialect {
         // Check if the inner expression is a typed literal
         match &c.this {
             // TIMESTAMP 'value'::TYPE -> CAST(CAST('value' AS TYPE) AS TIMESTAMP)
-            Expression::Literal(Literal::Timestamp(value)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => {
+                let Literal::Timestamp(value) = lit.as_ref() else { unreachable!() };
                 // Create inner cast: CAST('value' AS target_type)
                 let inner_cast = Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(value.clone())),
+                    this: Expression::Literal(Box::new(Literal::String(value.clone()))),
                     to: c.to,
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
@@ -843,9 +845,10 @@ impl DatabricksDialect {
                 })))
             }
             // DATE 'value'::TYPE -> CAST(CAST('value' AS TYPE) AS DATE)
-            Expression::Literal(Literal::Date(value)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => {
+                let Literal::Date(value) = lit.as_ref() else { unreachable!() };
                 let inner_cast = Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(value.clone())),
+                    this: Expression::Literal(Box::new(Literal::String(value.clone()))),
                     to: c.to,
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
@@ -864,9 +867,10 @@ impl DatabricksDialect {
                 })))
             }
             // TIME 'value'::TYPE -> CAST(CAST('value' AS TYPE) AS TIME)
-            Expression::Literal(Literal::Time(value)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)) => {
+                let Literal::Time(value) = lit.as_ref() else { unreachable!() };
                 let inner_cast = Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(value.clone())),
+                    this: Expression::Literal(Box::new(Literal::String(value.clone()))),
                     to: c.to,
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,

@@ -425,7 +425,7 @@ impl HiveDialect {
                 let pattern = f.args[1].clone();
                 let group = if f.args.len() >= 6 {
                     let g = &f.args[5];
-                    if matches!(g, Expression::Literal(crate::expressions::Literal::Number(n)) if n == "1")
+                    if matches!(g, Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n == "1"))
                     {
                         None
                     } else {
@@ -505,7 +505,7 @@ impl HiveDialect {
                 // Negate the interval: val * -1
                 let negated_interval = Expression::Mul(Box::new(BinaryOp {
                     left: effective_interval,
-                    right: Expression::Literal(Literal::Number("-1".to_string())),
+                    right: Expression::Literal(Box::new(Literal::Number("-1".to_string()))),
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),
@@ -602,7 +602,7 @@ impl HiveDialect {
 /// Convert an expression (string literal or identifier) to a DateTimeField for Hive
 fn hive_expr_to_datetime_field(expr: &Expression) -> Option<DateTimeField> {
     let name = match expr {
-        Expression::Literal(Literal::String(s)) => s.to_uppercase(),
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
         Expression::Identifier(id) => id.name.to_uppercase(),
         Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
         _ => return None,

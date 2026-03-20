@@ -12,7 +12,7 @@
         build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
         develop-python test-python build-python typecheck-python \
         python-docs-build python-docs-preview python-docs-deploy \
-        bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full bench-simple bench-simple-full \
+        bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full bench-simple bench-simple-full bench-transpile bench-transpile-quick \
         playground-dev playground-build playground-preview playground-deploy \
         fmt \
         bump-version
@@ -81,6 +81,8 @@ help:
 	@echo "  make bench-parse-full    - Parse benchmark (all available parsers)"
 	@echo "  make bench-simple        - Simple parse benchmark (core-only, median-of-5)"
 	@echo "  make bench-simple-full   - Simple parse benchmark (all available parsers)"
+	@echo "  make bench-transpile     - Transpile benchmark (polyglot vs sqlglot)"
+	@echo "  make bench-transpile-quick - Transpile benchmark fast mode"
 	@echo ""
 	@echo "Build:"
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
@@ -344,15 +346,29 @@ bench-parse-full:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet
 
+# Simple parse benchmark (core), w/o rebuilding the Python environment: polyglot-sql vs sqlglot, median-of-5
+bench-simple-quick:
+	@uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
+
 # Simple parse benchmark (core): polyglot-sql vs sqlglot, median-of-5
 bench-simple:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
-		uv run --python 3.13 --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
 
 # Simple parse benchmark (full): include optional third-party parsers
 bench-simple-full:
 	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
-		uv run --python 3.13 --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
+
+# Transpile benchmark: polyglot-sql (Rust/PyO3) vs sqlglot (C tokenizer) via pyperf
+bench-transpile:
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet
+
+# Transpile benchmark (quick): faster but less stable timings
+bench-transpile-quick:
+	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet --quick
 
 # =============================================================================
 # Build

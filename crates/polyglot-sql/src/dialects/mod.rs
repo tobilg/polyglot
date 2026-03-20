@@ -1587,7 +1587,7 @@ where
 /// Transform closures are cheap (unit-struct method calls) and created fresh each time.
 struct CachedDialectConfig {
     tokenizer_config: TokenizerConfig,
-    generator_config: GeneratorConfig,
+    generator_config: Arc<GeneratorConfig>,
 }
 
 /// Declare a per-dialect `LazyLock<CachedDialectConfig>` static.
@@ -1598,7 +1598,7 @@ macro_rules! cached_dialect {
             let d = $dialect_struct;
             CachedDialectConfig {
                 tokenizer_config: d.tokenizer_config(),
-                generator_config: d.generator_config(),
+                generator_config: Arc::new(d.generator_config()),
             }
         });
     };
@@ -1608,7 +1608,7 @@ static CACHED_GENERIC: LazyLock<CachedDialectConfig> = LazyLock::new(|| {
     let d = GenericDialect;
     CachedDialectConfig {
         tokenizer_config: d.tokenizer_config(),
-        generator_config: d.generator_config(),
+        generator_config: Arc::new(d.generator_config()),
     }
 });
 
@@ -1650,7 +1650,7 @@ fn configs_for_dialect_type(
     dt: DialectType,
 ) -> (
     TokenizerConfig,
-    GeneratorConfig,
+    Arc<GeneratorConfig>,
     Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
 ) {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -1869,8 +1869,9 @@ impl CustomDialectBuilder {
         }
 
         // Get base configs
-        let (mut tok_config, mut gen_config, _base_transform) =
+        let (mut tok_config, arc_gen_config, _base_transform) =
             configs_for_dialect_type(self.base_dialect);
+        let mut gen_config = (*arc_gen_config).clone();
 
         // Apply modifiers
         if let Some(tok_mod) = self.tokenizer_modifier {
@@ -1958,7 +1959,7 @@ fn get_custom_dialect_config(name: &str) -> Option<Arc<CustomDialectConfig>> {
 pub struct Dialect {
     dialect_type: DialectType,
     tokenizer: Tokenizer,
-    generator_config: GeneratorConfig,
+    generator_config: Arc<GeneratorConfig>,
     transformer: Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
     /// Optional function to get expression-specific generator config (for hybrid dialects like Athena).
     generator_config_for_expr: Option<Box<dyn Fn(&Expression) -> GeneratorConfig + Send + Sync>>,
@@ -2037,7 +2038,7 @@ impl Dialect {
         Self {
             dialect_type: config.base_dialect,
             tokenizer: Tokenizer::new(config.tokenizer_config.clone()),
-            generator_config: config.generator_config.clone(),
+            generator_config: Arc::new(config.generator_config.clone()),
             transformer,
             generator_config_for_expr: None,
             custom_preprocess,
@@ -2074,12 +2075,13 @@ impl Dialect {
         self.tokenizer.tokenize(sql)
     }
 
-    /// Get the generator config for a specific expression (supports hybrid dialects)
+    /// Get the generator config for a specific expression (supports hybrid dialects).
+    /// Returns an owned `GeneratorConfig` suitable for mutation before generation.
     fn get_config_for_expr(&self, expr: &Expression) -> GeneratorConfig {
         if let Some(ref config_fn) = self.generator_config_for_expr {
             config_fn(expr)
         } else {
-            self.generator_config.clone()
+            (*self.generator_config).clone()
         }
     }
 
@@ -2089,6 +2091,11 @@ impl Dialect {
     /// keyword casing, function name normalization, and syntax style. The result is
     /// a single-line (non-pretty) SQL string.
     pub fn generate(&self, expr: &Expression) -> Result<String> {
+        // Fast path: when no per-expression config override, share the Arc cheaply.
+        if self.generator_config_for_expr.is_none() {
+            let mut generator = Generator::with_arc_config(self.generator_config.clone());
+            return generator.generate(expr);
+        }
         let config = self.get_config_for_expr(expr);
         let mut generator = Generator::with_config(config);
         generator.generate(expr)
@@ -2133,7 +2140,7 @@ impl Dialect {
 
     /// Generate SQL from an expression with pretty printing and forced identifier quoting
     pub fn generate_pretty_with_identify(&self, expr: &Expression) -> Result<String> {
-        let mut config = self.generator_config.clone();
+        let mut config = (*self.generator_config).clone();
         config.pretty = true;
         config.always_quote_identifiers = true;
         let mut generator = Generator::with_config(config);
@@ -2541,10 +2548,11 @@ impl Dialect {
                         if let Expression::Function(ref f) = e {
                             if f.name.eq_ignore_ascii_case("REPEAT") && f.args.len() == 2 {
                                 // Check if first arg is space string literal
-                                if let Expression::Literal(crate::expressions::Literal::String(
-                                    ref s,
-                                )) = f.args[0]
+                                if let Expression::Literal(ref lit) = f.args[0]
                                 {
+                                    if let crate::expressions::Literal::String(
+                                    ref s,
+                                ) = lit.as_ref() {
                                     if s == " " {
                                         // Wrap second arg in CAST(... AS BIGINT) if not already
                                         if !matches!(f.args[1], Expression::Cast(_)) {
@@ -2578,6 +2586,7 @@ impl Dialect {
                                         }
                                     }
                                 }
+                                }
                             }
                         }
                         Ok(e)
@@ -2604,8 +2613,8 @@ impl Dialect {
                     && matches!(target, DialectType::DuckDB)
                 {
                     fn make_scaled_random() -> Expression {
-                        let lower = Expression::Literal(crate::expressions::Literal::Number("-9.223372036854776E+18".to_string()));
-                        let upper = Expression::Literal(crate::expressions::Literal::Number("9.223372036854776e+18".to_string()));
+                        let lower = Expression::Literal(Box::new(crate::expressions::Literal::Number("-9.223372036854776E+18".to_string())));
+                        let upper = Expression::Literal(Box::new(crate::expressions::Literal::Number("9.223372036854776e+18".to_string())));
                         let random_call = Expression::Random(crate::expressions::Random);
                         let range_size = Expression::Paren(Box::new(crate::expressions::Paren {
                             this: Expression::Sub(Box::new(crate::expressions::BinaryOp {
@@ -2694,10 +2703,12 @@ impl Dialect {
                                         if let Expression::Cast(ref cast) = arg {
                                             if matches!(cast.to, crate::expressions::DataType::BigInt { .. }) {
                                                 if let Expression::Add(ref add) = cast.this {
-                                                    if let Expression::Literal(crate::expressions::Literal::Number(ref num)) = add.left {
+                                                    if let Expression::Literal(ref lit) = add.left {
+                                                        if let crate::expressions::Literal::Number(ref num) = lit.as_ref() {
                                                         if num == "-9.223372036854776E+18" {
                                                             *arg = Expression::Random(crate::expressions::Random);
                                                         }
+                                                    }
                                                     }
                                                 }
                                             }
@@ -2984,10 +2995,12 @@ impl Dialect {
                 if let Expression::WindowFunction(ref wf) = sub.left {
                     if let Expression::Function(ref f) = wf.this {
                         if f.name.eq_ignore_ascii_case("ROW_NUMBER") {
-                            if let Expression::Literal(crate::expressions::Literal::Number(ref n)) = sub.right {
+                            if let Expression::Literal(ref lit) = sub.right {
+                                if let crate::expressions::Literal::Number(ref n) = lit.as_ref() {
                                 if n == "1" {
                                     return Expression::column("range");
                                 }
+                            }
                             }
                         }
                     }
@@ -3057,7 +3070,8 @@ impl Dialect {
                                     Some(format!("{:?}", unit).to_ascii_uppercase())
                                 } else if let Some(ref this) = iv.this {
                                     // The interval may be stored as a string like "1 MONTH"
-                                    if let Expression::Literal(Literal::String(ref s)) = this {
+                                    if let Expression::Literal(lit) = this {
+                                        if let Literal::String(ref s) = lit.as_ref() {
                                         let parts: Vec<&str> = s.split_whitespace().collect();
                                         if parts.len() == 2 {
                                             Some(parts[1].to_ascii_uppercase())
@@ -3082,6 +3096,7 @@ impl Dialect {
                                         } else {
                                             None
                                         }
+                                    } else { None }
                                     } else {
                                         None
                                     }
@@ -3132,7 +3147,7 @@ impl Dialect {
             )));
             let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
                 left: datediff,
-                right: Expression::Literal(Literal::Number("1".to_string())),
+                right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                 left_comments: vec![],
                 operator_comments: vec![],
                 trailing_comments: vec![],
@@ -3142,7 +3157,7 @@ impl Dialect {
             let array_gen_range = Expression::Function(Box::new(Function::new(
                 "ARRAY_GENERATE_RANGE".to_string(),
                 vec![
-                    Expression::Literal(Literal::Number("0".to_string())),
+                    Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                     datediff_plus_one,
                 ],
             )));
@@ -3435,7 +3450,7 @@ impl Dialect {
         // DATEDIFF(...) + 1
         let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
             left: datediff,
-            right: Expression::Literal(Literal::Number("1".to_string())),
+            right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
@@ -3445,7 +3460,7 @@ impl Dialect {
         let array_gen_range = Expression::Function(Box::new(Function::new(
             "ARRAY_GENERATE_RANGE".to_string(),
             vec![
-                Expression::Literal(Literal::Number("0".to_string())),
+                Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                 datediff_plus_one,
             ],
         )));
@@ -3607,7 +3622,7 @@ impl Dialect {
         // DATEDIFF(...) + 1
         let datediff_plus_one = Expression::Add(Box::new(BinaryOp {
             left: datediff,
-            right: Expression::Literal(Literal::Number("1".to_string())),
+            right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             left_comments: vec![],
             operator_comments: vec![],
             trailing_comments: vec![],
@@ -3617,7 +3632,7 @@ impl Dialect {
         let array_gen_range = Expression::Function(Box::new(Function::new(
             "ARRAY_GENERATE_RANGE".to_string(),
             vec![
-                Expression::Literal(Literal::Number("0".to_string())),
+                Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                 datediff_plus_one,
             ],
         )));
@@ -3774,7 +3789,8 @@ impl Dialect {
                 return Some(format!("{:?}", unit).to_ascii_uppercase());
             }
             if let Some(ref this) = iv.this {
-                if let Expression::Literal(Literal::String(ref s)) = this {
+                if let Expression::Literal(lit) = this {
+                    if let Literal::String(ref s) = lit.as_ref() {
                     let parts: Vec<&str> = s.split_whitespace().collect();
                     if parts.len() == 2 {
                         return Some(parts[1].to_ascii_uppercase());
@@ -3794,6 +3810,7 @@ impl Dialect {
                             return Some(upper);
                         }
                     }
+                }
                 }
             }
         }
@@ -4689,12 +4706,13 @@ impl Dialect {
                 if let Expression::Subscript(ref sub) = e {
                     let (new_index, is_safe) = match &sub.index {
                         // a[1] -> a[1+1] = a[2] (plain index is 0-based in BQ)
-                        Expression::Literal(Literal::Number(n)) => {
+                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                             if let Ok(val) = n.parse::<i64>() {
                                 (
-                                    Some(Expression::Literal(Literal::Number(
+                                    Some(Expression::Literal(Box::new(Literal::Number(
                                         (val + 1).to_string(),
-                                    ))),
+                                    )))),
                                     false,
                                 )
                             } else {
@@ -4705,12 +4723,13 @@ impl Dialect {
                         Expression::Function(ref f)
                             if f.name.eq_ignore_ascii_case("OFFSET") && f.args.len() == 1 =>
                         {
-                            if let Expression::Literal(Literal::Number(n)) = &f.args[0] {
+                            if let Expression::Literal(lit) = &f.args[0] {
+                                if let Literal::Number(n) = lit.as_ref() {
                                 if let Ok(val) = n.parse::<i64>() {
                                     (
-                                        Some(Expression::Literal(Literal::Number(
+                                        Some(Expression::Literal(Box::new(Literal::Number(
                                             (val + 1).to_string(),
-                                        ))),
+                                        )))),
                                         false,
                                     )
                                 } else {
@@ -4724,6 +4743,7 @@ impl Dialect {
                                         false,
                                     )
                                 }
+                            } else { (None, false) }
                             } else {
                                 (
                                     Some(Expression::Add(Box::new(
@@ -4746,12 +4766,13 @@ impl Dialect {
                         Expression::Function(ref f)
                             if f.name.eq_ignore_ascii_case("SAFE_OFFSET") && f.args.len() == 1 =>
                         {
-                            if let Expression::Literal(Literal::Number(n)) = &f.args[0] {
+                            if let Expression::Literal(lit) = &f.args[0] {
+                                if let Literal::Number(n) = lit.as_ref() {
                                 if let Ok(val) = n.parse::<i64>() {
                                     (
-                                        Some(Expression::Literal(Literal::Number(
+                                        Some(Expression::Literal(Box::new(Literal::Number(
                                             (val + 1).to_string(),
-                                        ))),
+                                        )))),
                                         true,
                                     )
                                 } else {
@@ -4765,6 +4786,7 @@ impl Dialect {
                                         true,
                                     )
                                 }
+                            } else { (None, false) }
                             } else {
                                 (
                                     Some(Expression::Add(Box::new(
@@ -4848,7 +4870,7 @@ impl Dialect {
                     return Ok(Expression::Case(Box::new(Case {
                         operand: Some(typeof_func),
                         whens: vec![(
-                            Expression::Literal(Literal::String("BLOB".to_string())),
+                            Expression::Literal(Box::new(Literal::String("BLOB".to_string()))),
                             octet_length,
                         )],
                         else_: Some(length_text),
@@ -5323,7 +5345,8 @@ impl Dialect {
             // BigQuery '\n' -> PostgreSQL literal newline in string
             if matches!(source, DialectType::BigQuery) && matches!(target, DialectType::PostgreSQL)
             {
-                if let Expression::Literal(Literal::String(ref s)) = e {
+                if let Expression::Literal(ref lit) = e {
+                    if let Literal::String(ref s) = lit.as_ref() {
                     if s.contains("\\n")
                         || s.contains("\\t")
                         || s.contains("\\r")
@@ -5334,15 +5357,17 @@ impl Dialect {
                             .replace("\\t", "\t")
                             .replace("\\r", "\r")
                             .replace("\\\\", "\\");
-                        return Ok(Expression::Literal(Literal::String(converted)));
+                        return Ok(Expression::Literal(Box::new(Literal::String(converted))));
                     }
+                }
                 }
             }
 
             // Cross-dialect: convert Literal::Timestamp to target-specific CAST form
             // when source != target (identity tests keep the Literal::Timestamp for native handling)
             if source != target {
-                if let Expression::Literal(Literal::Timestamp(ref s)) = e {
+                if let Expression::Literal(ref lit) = e {
+                    if let Literal::Timestamp(ref s) = lit.as_ref() {
                     let s = s.clone();
                     // MySQL: TIMESTAMP handling depends on source dialect
                     // BigQuery TIMESTAMP is timezone-aware -> TIMESTAMP() function in MySQL
@@ -5352,12 +5377,12 @@ impl Dialect {
                             // BigQuery TIMESTAMP is timezone-aware -> MySQL TIMESTAMP() function
                             return Ok(Expression::Function(Box::new(Function::new(
                                 "TIMESTAMP".to_string(),
-                                vec![Expression::Literal(Literal::String(s))],
+                                vec![Expression::Literal(Box::new(Literal::String(s)))],
                             ))));
                         } else {
                             // Non-timezone TIMESTAMP -> CAST('x' AS DATETIME) in MySQL
                             return Ok(Expression::Cast(Box::new(Cast {
-                                this: Expression::Literal(Literal::String(s)),
+                                this: Expression::Literal(Box::new(Literal::String(s))),
                                 to: DataType::Custom {
                                     name: "DATETIME".to_string(),
                                 },
@@ -5438,7 +5463,7 @@ impl Dialect {
                         },
                     };
                     return Ok(Expression::Cast(Box::new(Cast {
-                        this: Expression::Literal(Literal::String(s)),
+                        this: Expression::Literal(Box::new(Literal::String(s))),
                         to: dt,
                         trailing_comments: vec![],
                         double_colon_syntax: false,
@@ -5446,6 +5471,7 @@ impl Dialect {
                         default: None,
                         inferred_type: None,
                     })));
+                }
                 }
             }
 
@@ -5687,7 +5713,7 @@ impl Dialect {
                             && !matches!(source, DialectType::Snowflake)
                             && matches!(
                                 &f.args[0],
-                                Expression::Literal(crate::expressions::Literal::String(_))
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_))
                             )
                         {
                             Action::DatePartUnquote
@@ -5713,7 +5739,8 @@ impl Dialect {
                             // - TIMESTAMP + date-unit (YEAR, QUARTER, MONTH, WEEK, DAY) -> wrap
                             // - TIMESTAMPTZ/TIMESTAMPLTZ/TIME -> always wrap
                             let unit_str = match &f.args[0] {
-                                Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                    let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                     Some(s.to_ascii_uppercase())
                                 }
                                 _ => None,
@@ -5747,7 +5774,7 @@ impl Dialect {
                             && f.args.len() == 1
                             && !matches!(
                                 &f.args[0],
-                                Expression::Literal(crate::expressions::Literal::String(_))
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_))
                             )
                         {
                             Action::ToDateToCast
@@ -5767,7 +5794,7 @@ impl Dialect {
                             && f.args.len() == 4
                             && !matches!(
                                 &f.args[3],
-                                Expression::Literal(crate::expressions::Literal::String(_))
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_))
                             )
                         {
                             // Snowflake REGEXP_REPLACE with position arg -> DuckDB needs 'g' flag
@@ -6083,8 +6110,8 @@ impl Dialect {
                                     && f.args.len() == 1
                                     && matches!(&f.args[0], Expression::Select(s) if s.kind.as_deref() == Some("STRUCT")) => Action::BigQueryArraySelectAsStructToSnowflake,
                                 "ARRAY" if matches!(target, DialectType::Presto | DialectType::Trino | DialectType::Athena | DialectType::BigQuery | DialectType::DuckDB | DialectType::Snowflake | DialectType::ClickHouse | DialectType::StarRocks) => Action::ArraySyntaxConvert,
-                                "TRUNC" if f.args.len() == 2 && matches!(&f.args[1], Expression::Literal(Literal::String(_))) && matches!(target, DialectType::Presto | DialectType::Trino | DialectType::ClickHouse) => Action::TruncToDateTrunc,
-                                "TRUNC" | "TRUNCATE" if f.args.len() <= 2 && !matches!(f.args.get(1), Some(Expression::Literal(Literal::String(_)))) => Action::GenericFunctionNormalize,
+                                "TRUNC" if f.args.len() == 2 && matches!(&f.args[1], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) && matches!(target, DialectType::Presto | DialectType::Trino | DialectType::ClickHouse) => Action::TruncToDateTrunc,
+                                "TRUNC" | "TRUNCATE" if f.args.len() <= 2 && !f.args.get(1).map_or(false, |a| matches!(a, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))) => Action::GenericFunctionNormalize,
                                 // DATE_TRUNC('unit', x) from Generic source -> arg swap for BigQuery/Doris/Spark/MySQL
                                 "DATE_TRUNC" if f.args.len() == 2
                                     && matches!(source, DialectType::Generic)
@@ -6420,7 +6447,7 @@ impl Dialect {
                             // CAST(x AS TIMESTAMP WITH TIME ZONE) -> CAST(x AS TIMESTAMP) for Hive/Spark/BigQuery
                             Action::CastTimestampStripTz
                         } else if matches!(&c.to, DataType::Json)
-                            && matches!(&c.this, Expression::Literal(Literal::String(_)))
+                            && matches!(&c.this, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
                             && matches!(
                                 target,
                                 DialectType::Presto
@@ -6991,7 +7018,7 @@ impl Dialect {
                                     | DialectType::Redshift
                                     | DialectType::Materialize
                             )
-                            && matches!(&f.path, Expression::Literal(Literal::String(s)) if s.starts_with('$')) =>
+                            && matches!(&f.path, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.starts_with('$'))) =>
                     {
                         Action::JsonExtractToGetJsonObject
                     }
@@ -7135,7 +7162,7 @@ impl Dialect {
                         if matches!(
                             source,
                             DialectType::Spark | DialectType::Databricks | DialectType::Hive
-                        ) && matches!(&f.this, Expression::Literal(Literal::String(_)))
+                        ) && matches!(&f.this, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
                             && matches!(
                                 target,
                                 DialectType::DuckDB
@@ -7158,8 +7185,8 @@ impl Dialect {
                         Action::DollarParamConvert
                     }
                     // EscapeString literal: normalize literal newlines to \n
-                    Expression::Literal(Literal::EscapeString(ref s))
-                        if s.contains('\n') || s.contains('\r') || s.contains('\t') =>
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::EscapeString(ref s) if s.contains('\n') || s.contains('\r') || s.contains('\t'))
+                        =>
                     {
                         Action::EscapeStringNormalize
                     }
@@ -7181,10 +7208,7 @@ impl Dialect {
                                 | DialectType::PostgreSQL
                                 | DialectType::Redshift
                         ) && iv.unit.is_some()
-                            && matches!(
-                                &iv.this,
-                                Some(Expression::Literal(Literal::String(_)))
-                            ) =>
+                            && iv.this.as_ref().map_or(false, |t| matches!(t, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))) =>
                     {
                         Action::SnowflakeIntervalFormat
                     }
@@ -7259,7 +7283,7 @@ impl Dialect {
                                 | DialectType::Trino
                                 | DialectType::Redshift
                                 | DialectType::ClickHouse
-                        ) && matches!(&sub.index, Expression::Literal(Literal::Number(ref n)) if n.parse::<i64>().unwrap_or(0) > 0) =>
+                        ) && matches!(&sub.index, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(ref n) if n.parse::<i64>().unwrap_or(0) > 0)) =>
                     {
                         Action::ArrayIndexConvert
                     }
@@ -7910,16 +7934,19 @@ impl Dialect {
                     fn exclusive_to_inclusive_end(end: &Expression) -> Expression {
                         // Try to simplify literal numbers
                         match end {
-                            Expression::Literal(Literal::Number(n)) => {
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                                let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                                 if let Ok(val) = n.parse::<i64>() {
                                     return Expression::number(val - 1);
                                 }
                             }
                             Expression::Neg(u) => {
-                                if let Expression::Literal(Literal::Number(n)) = &u.this {
+                                if let Expression::Literal(lit) = &u.this {
+                                    if let Literal::Number(n) = lit.as_ref() {
                                     if let Ok(val) = n.parse::<i64>() {
                                         return Expression::number(-val - 1);
                                     }
+                                }
                                 }
                             }
                             _ => {}
@@ -8178,17 +8205,17 @@ impl Dialect {
                             for expr in &inner_select.expressions {
                                 match expr {
                                     Expression::Alias(a) => {
-                                        let key = Expression::Literal(Literal::String(
+                                        let key = Expression::Literal(Box::new(Literal::String(
                                             a.alias.name.clone(),
-                                        ));
+                                        )));
                                         let value = a.this.clone();
                                         oc_args.push(key);
                                         oc_args.push(value);
                                     }
                                     Expression::Column(c) => {
-                                        let key = Expression::Literal(Literal::String(
+                                        let key = Expression::Literal(Box::new(Literal::String(
                                             c.name.name.clone(),
-                                        ));
+                                        )));
                                         oc_args.push(key);
                                         oc_args.push(expr.clone());
                                     }
@@ -8387,11 +8414,9 @@ impl Dialect {
                                 let is_time = matches!(cast_type, DataType::Time { .. });
                                 if is_time {
                                     let date_expr = Expression::Cast(Box::new(Cast {
-                                        this: Expression::Literal(
-                                            crate::expressions::Literal::String(
+                                        this: Expression::Literal(Box::new(crate::expressions::Literal::String(
                                                 "1970-01-01".to_string(),
-                                            ),
-                                        ),
+                                            ),)),
                                         to: DataType::Date,
                                         double_colon_syntax: false,
                                         trailing_comments: vec![],
@@ -8440,11 +8465,9 @@ impl Dialect {
                                 let is_time = matches!(cast_type, DataType::Time { .. });
                                 if is_time {
                                     let date_expr = Expression::Cast(Box::new(Cast {
-                                        this: Expression::Literal(
-                                            crate::expressions::Literal::String(
+                                        this: Expression::Literal(Box::new(crate::expressions::Literal::String(
                                                 "1970-01-01".to_string(),
-                                            ),
-                                        ),
+                                            ),)),
                                         to: DataType::Date,
                                         double_colon_syntax: false,
                                         trailing_comments: vec![],
@@ -8504,9 +8527,9 @@ impl Dialect {
                                 subject,
                                 pattern,
                                 replacement,
-                                Expression::Literal(crate::expressions::Literal::String(
+                                Expression::Literal(Box::new(crate::expressions::Literal::String(
                                     "g".to_string(),
-                                )),
+                                ))),
                             ],
                         ))))
                     } else {
@@ -8528,9 +8551,9 @@ impl Dialect {
                         let position = args.remove(0);
                         let occurrence = args.remove(0);
 
-                        let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
-                        let is_occ_0 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "0");
-                        let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+                        let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
+                        let is_occ_0 = matches!(&occurrence, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "0"));
+                        let is_occ_1 = matches!(&occurrence, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
 
                         if is_pos_1 && is_occ_1 {
                             // REGEXP_REPLACE(s, p, r) - single replace, no flags
@@ -8546,13 +8569,14 @@ impl Dialect {
                                     subject,
                                     pattern,
                                     replacement,
-                                    Expression::Literal(Literal::String("g".to_string())),
+                                    Expression::Literal(Box::new(Literal::String("g".to_string()))),
                                 ],
                             ))))
                         } else {
                             // pos>1: SUBSTRING(s, 1, pos-1) || REGEXP_REPLACE(SUBSTRING(s, pos), p, r[, 'g'])
                             // Pre-compute pos-1 when position is a numeric literal
-                            let pos_minus_1 = if let Expression::Literal(Literal::Number(ref n)) = position {
+                            let pos_minus_1 = if let Expression::Literal(ref lit) = position {
+                                if let Literal::Number(ref n) = lit.as_ref() {
                                 if let Ok(val) = n.parse::<i64>() {
                                     Expression::number(val - 1)
                                 } else {
@@ -8561,6 +8585,7 @@ impl Dialect {
                                         Expression::number(1),
                                     )))
                                 }
+                            } else { position.clone() }
                             } else {
                                 Expression::Sub(Box::new(BinaryOp::new(
                                     position.clone(),
@@ -8577,9 +8602,9 @@ impl Dialect {
                             )));
                             let mut replace_args = vec![suffix_subject, pattern, replacement];
                             if is_occ_0 {
-                                replace_args.push(Expression::Literal(Literal::String(
+                                replace_args.push(Expression::Literal(Box::new(Literal::String(
                                     "g".to_string(),
-                                )));
+                                ))));
                             }
                             let replace_expr = Expression::Function(Box::new(Function::new(
                                 "REGEXP_REPLACE".to_string(),
@@ -8614,7 +8639,7 @@ impl Dialect {
                                 let subject = args.remove(0);
                                 let pattern = args.remove(0);
                                 let position = args.remove(0);
-                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
                                 if is_pos_1 {
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "REGEXP_EXTRACT".to_string(),
@@ -8632,9 +8657,9 @@ impl Dialect {
                                             "NULLIF".to_string(),
                                             vec![
                                                 substring_expr,
-                                                Expression::Literal(Literal::String(
+                                                Expression::Literal(Box::new(Literal::String(
                                                     String::new(),
-                                                )),
+                                                ))),
                                             ],
                                         ),
                                     ));
@@ -8650,8 +8675,8 @@ impl Dialect {
                                 let pattern = args.remove(0);
                                 let position = args.remove(0);
                                 let occurrence = args.remove(0);
-                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
-                                let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
+                                let is_occ_1 = matches!(&occurrence, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
 
                                 let effective_subject = if is_pos_1 {
                                     subject
@@ -8666,7 +8691,7 @@ impl Dialect {
                                         "NULLIF".to_string(),
                                         vec![
                                             substring_expr,
-                                            Expression::Literal(Literal::String(String::new())),
+                                            Expression::Literal(Box::new(Literal::String(String::new()))),
                                         ],
                                     )))
                                 };
@@ -8711,7 +8736,7 @@ impl Dialect {
                                 let _occurrence = args.remove(0);
                                 let _flags = args.remove(0);
                                 let group = args.remove(0);
-                                let is_group_0 = matches!(&group, Expression::Literal(Literal::Number(n)) if n == "0");
+                                let is_group_0 = matches!(&group, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "0"));
                                 if is_group_0 {
                                     // Strip group=0 (default)
                                     Ok(Expression::Function(Box::new(Function::new(
@@ -8738,7 +8763,7 @@ impl Dialect {
                         let func_name = f.name.clone();
                         let mut args = f.args;
                         if args.len() == 6 {
-                            let is_group_0 = matches!(&args[5], Expression::Literal(Literal::Number(n)) if n == "0");
+                            let is_group_0 = matches!(&args[5], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "0"));
                             if is_group_0 {
                                 args.truncate(5);
                             }
@@ -8770,7 +8795,7 @@ impl Dialect {
                                 let subject = args.remove(0);
                                 let pattern = args.remove(0);
                                 let position = args.remove(0);
-                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
                                 if is_pos_1 {
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "REGEXP_EXTRACT_ALL".to_string(),
@@ -8795,8 +8820,8 @@ impl Dialect {
                                 let pattern = args.remove(0);
                                 let position = args.remove(0);
                                 let occurrence = args.remove(0);
-                                let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
-                                let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+                                let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
+                                let is_occ_1 = matches!(&occurrence, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
 
                                 let effective_subject = if is_pos_1 {
                                     subject
@@ -8849,7 +8874,7 @@ impl Dialect {
                                 let _occurrence = args.remove(0);
                                 let _flags = args.remove(0);
                                 let group = args.remove(0);
-                                let is_group_0 = matches!(&group, Expression::Literal(Literal::Number(n)) if n == "0");
+                                let is_group_0 = matches!(&group, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "0"));
                                 if is_group_0 {
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "REGEXP_EXTRACT_ALL".to_string(),
@@ -8892,11 +8917,12 @@ impl Dialect {
                         let effective_pattern = if arg_count >= 4 {
                             let flags = args.remove(0);
                             match &flags {
-                                Expression::Literal(Literal::String(f_str)) if !f_str.is_empty() => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(f_str) if !f_str.is_empty()) => {
+                                    let Literal::String(f_str) = lit.as_ref() else { unreachable!() };
                                     // Always use concatenation: '(?flags)' || pattern
-                                    let prefix = Expression::Literal(Literal::String(
+                                    let prefix = Expression::Literal(Box::new(Literal::String(
                                         format!("(?{})", f_str),
-                                    ));
+                                    )));
                                     Expression::DPipe(Box::new(crate::expressions::DPipe {
                                         this: Box::new(prefix),
                                         expression: Box::new(pattern.clone()),
@@ -8923,7 +8949,7 @@ impl Dialect {
                         ));
                         let condition = Expression::Eq(Box::new(BinaryOp::new(
                             effective_pattern,
-                            Expression::Literal(Literal::String(String::new())),
+                            Expression::Literal(Box::new(Literal::String(String::new()))),
                         )));
                         Ok(Expression::Case(Box::new(Case {
                             operand: None,
@@ -8950,7 +8976,7 @@ impl Dialect {
                         let mut args = f.args;
                         let subject = args.remove(0);
                         let pattern = if !args.is_empty() { args.remove(0) } else {
-                            Expression::Literal(Literal::String(String::new()))
+                            Expression::Literal(Box::new(Literal::String(String::new())))
                         };
 
                         // Collect all original args for NULL checks
@@ -8960,7 +8986,7 @@ impl Dialect {
                         let flags = if !args.is_empty() { Some(args.remove(0)) } else { None };
                         let _group = if !args.is_empty() { Some(args.remove(0)) } else { None };
 
-                        let is_pos_1 = position.as_ref().map_or(true, |p| matches!(p, Expression::Literal(Literal::Number(n)) if n == "1"));
+                        let is_pos_1 = position.as_ref().map_or(true, |p| matches!(p, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1")));
                         let occurrence_expr = occurrence.clone().unwrap_or(Expression::number(1));
 
                         // Build NULL check: subject IS NULL OR pattern IS NULL [OR pos IS NULL ...]
@@ -9001,11 +9027,12 @@ impl Dialect {
 
                         // Effective pattern (apply flags if present)
                         let effective_pattern = if let Some(ref fl) = flags {
-                            if let Expression::Literal(Literal::String(f_str)) = fl {
+                            if let Expression::Literal(lit) = fl {
+                                if let Literal::String(f_str) = lit.as_ref() {
                                 if !f_str.is_empty() {
-                                    let prefix = Expression::Literal(Literal::String(
+                                    let prefix = Expression::Literal(Box::new(Literal::String(
                                         format!("(?{})", f_str),
-                                    ));
+                                    )));
                                     Expression::DPipe(Box::new(crate::expressions::DPipe {
                                         this: Box::new(prefix),
                                         expression: Box::new(pattern.clone()),
@@ -9014,6 +9041,7 @@ impl Dialect {
                                 } else {
                                     pattern.clone()
                                 }
+                            } else { fl.clone() }
                             } else {
                                 pattern.clone()
                             }
@@ -9024,7 +9052,7 @@ impl Dialect {
                         // WHEN pattern = '' THEN 0
                         let empty_pattern_check = Expression::Eq(Box::new(BinaryOp::new(
                             effective_pattern.clone(),
-                            Expression::Literal(Literal::String(String::new())),
+                            Expression::Literal(Box::new(Literal::String(String::new()))),
                         )));
 
                         // WHEN LENGTH(REGEXP_EXTRACT_ALL(eff_s, eff_p)) < occ THEN 0
@@ -9164,8 +9192,8 @@ impl Dialect {
                     };
 
                     // Build anchored pattern: '^(' || (pattern) || ')$'
-                    let prefix = Expression::Literal(Literal::String("^(".to_string()));
-                    let suffix = Expression::Literal(Literal::String(")$".to_string()));
+                    let prefix = Expression::Literal(Box::new(Literal::String("^(".to_string())));
+                    let suffix = Expression::Literal(Box::new(Literal::String(")$".to_string())));
                     let paren_pattern = Expression::Paren(Box::new(Paren {
                         this: pattern,
                         trailing_comments: vec![],
@@ -9205,7 +9233,8 @@ impl Dialect {
                             let pattern = args.remove(0);
 
                             let has_groups = match &pattern {
-                                Expression::Literal(Literal::String(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                    let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                     s.contains('(') && s.contains(')')
                                 }
                                 _ => false,
@@ -9219,7 +9248,7 @@ impl Dialect {
                                         pattern,
                                         Expression::number(1),
                                         Expression::number(1),
-                                        Expression::Literal(Literal::String("c".to_string())),
+                                        Expression::Literal(Box::new(Literal::String("c".to_string()))),
                                         Expression::number(1),
                                     ],
                                 ))))
@@ -9508,9 +9537,9 @@ impl Dialect {
                                 let date_trunc = Expression::Function(Box::new(Function::new(
                                     "DATE_TRUNC".to_string(),
                                     vec![
-                                        Expression::Literal(crate::expressions::Literal::String(
+                                        Expression::Literal(Box::new(crate::expressions::Literal::String(
                                             "MONTH".to_string(),
-                                        )),
+                                        ))),
                                         ld.this.clone(),
                                     ],
                                 )));
@@ -9519,11 +9548,9 @@ impl Dialect {
                                         date_trunc,
                                         Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(
-                                                    crate::expressions::Literal::String(
+                                                this: Some(Expression::Literal(Box::new(crate::expressions::Literal::String(
                                                         "1 MONTH".to_string(),
-                                                    ),
-                                                )),
+                                                    ),))),
                                                 unit: None,
                                             },
                                         )),
@@ -9533,11 +9560,9 @@ impl Dialect {
                                         plus_month,
                                         Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(
-                                                    crate::expressions::Literal::String(
+                                                this: Some(Expression::Literal(Box::new(crate::expressions::Literal::String(
                                                         "1 DAY".to_string(),
-                                                    ),
-                                                )),
+                                                    ),))),
                                                 unit: None,
                                             },
                                         )),
@@ -9772,7 +9797,8 @@ impl Dialect {
 
                             // Extract the numeric value from n_expr
                             let n = match n_expr {
-                                Expression::Literal(crate::expressions::Literal::Number(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(_)) => {
+                                    let crate::expressions::Literal::Number(s) = lit.as_ref() else { unreachable!() };
                                     s.parse::<usize>().unwrap_or(2)
                                 }
                                 _ => 2,
@@ -9788,9 +9814,7 @@ impl Dialect {
                                 } else if q == 1.0 {
                                     quantiles.push(Expression::number(1));
                                 } else {
-                                    quantiles.push(Expression::Literal(
-                                        crate::expressions::Literal::Number(format!("{}", q)),
-                                    ));
+                                    quantiles.push(Expression::Literal(Box::new(crate::expressions::Literal::Number(format!("{}", q)),)));
                                 }
                             }
 
@@ -9919,7 +9943,8 @@ impl Dialect {
                                 let field_expr = args.remove(0);
                                 // Extract string literal to get field name
                                 let field_name = match &field_expr {
-                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         s.clone()
                                     }
                                     Expression::Identifier(id) => id.name.clone(),
@@ -10015,7 +10040,7 @@ impl Dialect {
                                                             Expression::Identifier(crate::expressions::Identifier::new("a")),
                                                             Expression::Identifier(crate::expressions::Identifier::new("b")),
                                                         ))),
-                                                        Expression::Literal(Literal::Number("-1".to_string())),
+                                                        Expression::Literal(Box::new(Literal::Number("-1".to_string()))),
                                                     ),
                                                 ],
                                                 else_: Some(Expression::number(0)),
@@ -10771,7 +10796,8 @@ impl Dialect {
                                 }
                                 let algo_expr = &f.args[0];
                                 let algo = match algo_expr {
-                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         s.to_ascii_uppercase()
                                     }
                                     _ => return Ok(Expression::Function(f)),
@@ -10820,9 +10846,8 @@ impl Dialect {
                                 let mut json_path = "$".to_string();
                                 for a in &args {
                                     match a {
-                                        Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                            let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                             // Numeric string keys become array indices: [0]
                                             if s.chars().all(|c| c.is_ascii_digit()) {
                                                 json_path.push('[');
@@ -11869,7 +11894,8 @@ impl Dialect {
 
                                 // Only rewrite deterministic modes and NULL/no escape-char variant.
                                 let mode = match &args[1] {
-                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         s.to_ascii_lowercase()
                                     }
                                     _ => return Ok(Expression::Function(f)),
@@ -11927,10 +11953,9 @@ impl Dialect {
                                 // Build JSONPath from remaining arguments
                                 let mut path = String::from("$");
                                 for arg in &args {
-                                    if let Expression::Literal(
-                                        crate::expressions::Literal::String(s),
-                                    ) = arg
+                                    if let Expression::Literal(lit) = arg
                                     {
+                                        if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                         // Check if it's a numeric string (array index)
                                         if s.parse::<i64>().is_ok() {
                                             path.push('[');
@@ -11940,6 +11965,7 @@ impl Dialect {
                                             path.push('.');
                                             path.push_str(s);
                                         }
+                                    }
                                     }
                                 }
 
@@ -12252,22 +12278,20 @@ impl Dialect {
                                                             Expression::Lt(Box::new(
                                                                 BinaryOp::new(a.clone(), b.clone()),
                                                             )),
-                                                            Expression::Literal(Literal::Number(
+                                                            Expression::Literal(Box::new(Literal::Number(
                                                                 "1".to_string(),
-                                                            )),
+                                                            ))),
                                                         ),
                                                         (
                                                             Expression::Gt(Box::new(
                                                                 BinaryOp::new(a.clone(), b.clone()),
                                                             )),
-                                                            Expression::Literal(Literal::Number(
+                                                            Expression::Literal(Box::new(Literal::Number(
                                                                 "-1".to_string(),
-                                                            )),
+                                                            ))),
                                                         ),
                                                     ],
-                                                    else_: Some(Expression::Literal(
-                                                        Literal::Number("0".to_string()),
-                                                    )),
+                                                    else_: Some(Expression::Literal(Box::new(Literal::Number("0".to_string()),))),
                                                     comments: Vec::new(),
                                                     inferred_type: None,
                                                 },
@@ -12723,9 +12747,7 @@ impl Dialect {
                                         // Don't wrap string literals with CAST - they're already strings
                                         let is_string = matches!(
                                             &arg,
-                                            Expression::Literal(
-                                                crate::expressions::Literal::String(_)
-                                            )
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_))
                                         );
                                         let final_arg = if is_string {
                                             arg
@@ -12821,11 +12843,9 @@ impl Dialect {
                                         // s + (ms / 1000.0)
                                         let ms_frac = Expression::Div(Box::new(BinaryOp::new(
                                             ms,
-                                            Expression::Literal(
-                                                crate::expressions::Literal::Number(
+                                            Expression::Literal(Box::new(crate::expressions::Literal::Number(
                                                     "1000.0".to_string(),
-                                                ),
-                                            ),
+                                                ),)),
                                         )));
                                         let s_with_ms = Expression::Add(Box::new(BinaryOp::new(
                                             s,
@@ -13074,11 +13094,11 @@ impl Dialect {
                                             match fname.as_str() {
                                                 "VARCHAR" | "NVARCHAR" => {
                                                     let len = f.args.first().and_then(|a| {
-                                                        if let Expression::Literal(
-                                                            crate::expressions::Literal::Number(n),
-                                                        ) = a
+                                                        if let Expression::Literal(lit) = a
                                                         {
+                                                            if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                             n.parse::<u32>().ok()
+                                                        } else { None }
                                                         } else if let Expression::Identifier(id) = a
                                                         {
                                                             if id.name.eq_ignore_ascii_case("MAX") {
@@ -13106,11 +13126,11 @@ impl Dialect {
                                                 }
                                                 "NCHAR" | "CHAR" => {
                                                     let len = f.args.first().and_then(|a| {
-                                                        if let Expression::Literal(
-                                                            crate::expressions::Literal::Number(n),
-                                                        ) = a
+                                                        if let Expression::Literal(lit) = a
                                                         {
+                                                            if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                             n.parse::<u32>().ok()
+                                                        } else { None }
                                                         } else {
                                                             None
                                                         }
@@ -13119,21 +13139,21 @@ impl Dialect {
                                                 }
                                                 "NUMERIC" | "DECIMAL" => {
                                                     let precision = f.args.first().and_then(|a| {
-                                                        if let Expression::Literal(
-                                                            crate::expressions::Literal::Number(n),
-                                                        ) = a
+                                                        if let Expression::Literal(lit) = a
                                                         {
+                                                            if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                             n.parse::<u32>().ok()
+                                                        } else { None }
                                                         } else {
                                                             None
                                                         }
                                                     });
                                                     let scale = f.args.get(1).and_then(|a| {
-                                                        if let Expression::Literal(
-                                                            crate::expressions::Literal::Number(n),
-                                                        ) = a
+                                                        if let Expression::Literal(lit) = a
                                                         {
+                                                            if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                             n.parse::<u32>().ok()
+                                                        } else { None }
                                                         } else {
                                                             None
                                                         }
@@ -13187,11 +13207,11 @@ impl Dialect {
                                     // Check for date conversion with style
                                     if style.is_some() {
                                         let style_num = style.and_then(|s| {
-                                            if let Expression::Literal(
-                                                crate::expressions::Literal::Number(n),
-                                            ) = s
+                                            if let Expression::Literal(lit) = s
                                             {
+                                                if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                 n.parse::<u32>().ok()
+                                            } else { None }
                                             } else {
                                                 None
                                             }
@@ -13564,9 +13584,10 @@ impl Dialect {
                                     converter: &dyn Fn(&str) -> String,
                                 ) -> Expression {
                                     match expr {
-                                        Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) => Expression::string(&converter(s)),
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                            let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
+                                            Expression::string(&converter(s))
+                                        }
                                         Expression::Function(func)
                                             if func.name.eq_ignore_ascii_case("CONCAT") =>
                                         {
@@ -13632,15 +13653,19 @@ impl Dialect {
                                     | DialectType::Trino
                                     | DialectType::Athena => {
                                         // STRFTIME(val, fmt) -> DATE_FORMAT(val, presto_fmt) (convert DuckDB format to Presto)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
-                                        {
-                                            let presto_fmt = duckdb_to_presto_format(s);
-                                            Ok(Expression::Function(Box::new(Function::new(
-                                                "DATE_FORMAT".to_string(),
-                                                vec![val, Expression::string(&presto_fmt)],
-                                            ))))
+                                        if let Expression::Literal(lit) = fmt_expr {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
+                                                let presto_fmt = duckdb_to_presto_format(s);
+                                                Ok(Expression::Function(Box::new(Function::new(
+                                                    "DATE_FORMAT".to_string(),
+                                                    vec![val, Expression::string(&presto_fmt)],
+                                                ))))
+                                            } else {
+                                                Ok(Expression::Function(Box::new(Function::new(
+                                                    "DATE_FORMAT".to_string(),
+                                                    vec![val, fmt_expr.clone()],
+                                                ))))
+                                            }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_FORMAT".to_string(),
@@ -13650,10 +13675,9 @@ impl Dialect {
                                     }
                                     DialectType::BigQuery => {
                                         // STRFTIME(val, fmt) -> FORMAT_DATE(bq_fmt, val) - note reversed arg order
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let bq_fmt = duckdb_to_bigquery_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "FORMAT_DATE".to_string(),
@@ -13665,13 +13689,18 @@ impl Dialect {
                                                 vec![fmt_expr.clone(), val],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "FORMAT_DATE".to_string(),
+                                                vec![fmt_expr.clone(), val],
+                                            ))))
+                                        }
                                     }
                                     DialectType::PostgreSQL | DialectType::Redshift => {
                                         // STRFTIME(val, fmt) -> TO_CHAR(val, pg_fmt)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let pg_fmt = s
                                                 .replace("%Y", "YYYY")
                                                 .replace("%m", "MM")
@@ -13691,6 +13720,12 @@ impl Dialect {
                                                 "TO_CHAR".to_string(),
                                                 vec![val, Expression::string(&pg_fmt)],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "TO_CHAR".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "TO_CHAR".to_string(),
@@ -13729,10 +13764,9 @@ impl Dialect {
                                     DialectType::DuckDB => Ok(Expression::Function(f)),
                                     DialectType::Spark | DialectType::Databricks => {
                                         // STRPTIME(val, fmt) -> TO_TIMESTAMP(val, java_fmt)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let java_fmt = c_to_java_format_parse(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "TO_TIMESTAMP".to_string(),
@@ -13744,13 +13778,18 @@ impl Dialect {
                                                 vec![val, fmt_expr.clone()],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "TO_TIMESTAMP".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                     }
                                     DialectType::Hive => {
                                         // STRPTIME(val, fmt) -> CAST(FROM_UNIXTIME(UNIX_TIMESTAMP(val, java_fmt)) AS TIMESTAMP)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let java_fmt = c_to_java_format_parse(s);
                                             let unix_ts =
                                                 Expression::Function(Box::new(Function::new(
@@ -13779,15 +13818,17 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::Presto
                                     | DialectType::Trino
                                     | DialectType::Athena => {
                                         // STRPTIME(val, fmt) -> DATE_PARSE(val, presto_fmt) (convert DuckDB format to Presto)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let presto_fmt = duckdb_to_presto_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_PARSE".to_string(),
@@ -13799,18 +13840,29 @@ impl Dialect {
                                                 vec![val, fmt_expr.clone()],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "DATE_PARSE".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                     }
                                     DialectType::BigQuery => {
                                         // STRPTIME(val, fmt) -> PARSE_TIMESTAMP(bq_fmt, val) - note reversed arg order
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let bq_fmt = duckdb_to_bigquery_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "PARSE_TIMESTAMP".to_string(),
                                                 vec![Expression::string(&bq_fmt), val],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "PARSE_TIMESTAMP".to_string(),
+                                                vec![fmt_expr.clone(), val],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "PARSE_TIMESTAMP".to_string(),
@@ -13839,10 +13891,9 @@ impl Dialect {
                                     | DialectType::Trino
                                     | DialectType::Athena => {
                                         // Presto -> Presto: normalize format (e.g., %H:%i:%S -> %T)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let normalized = crate::dialects::presto::PrestoDialect::normalize_presto_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_FORMAT".to_string(),
@@ -13851,15 +13902,17 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::Hive
                                     | DialectType::Spark
                                     | DialectType::Databricks => {
                                         // Convert Presto C-style to Java-style format
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_FORMAT".to_string(),
@@ -13868,13 +13921,15 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::DuckDB => {
                                         // Convert to STRFTIME(val, duckdb_fmt)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let duckdb_fmt = crate::dialects::presto::PrestoDialect::presto_to_duckdb_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRFTIME".to_string(),
@@ -13886,18 +13941,29 @@ impl Dialect {
                                                 vec![val, fmt_expr.clone()],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "STRFTIME".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                     }
                                     DialectType::BigQuery => {
                                         // Convert to FORMAT_DATE(bq_fmt, val) - reversed args
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let bq_fmt = crate::dialects::presto::PrestoDialect::presto_to_bigquery_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "FORMAT_DATE".to_string(),
                                                 vec![Expression::string(&bq_fmt), val],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "FORMAT_DATE".to_string(),
+                                                vec![fmt_expr.clone(), val],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "FORMAT_DATE".to_string(),
@@ -13926,10 +13992,9 @@ impl Dialect {
                                     | DialectType::Trino
                                     | DialectType::Athena => {
                                         // Presto -> Presto: normalize format
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let normalized = crate::dialects::presto::PrestoDialect::normalize_presto_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_PARSE".to_string(),
@@ -13938,13 +14003,15 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::Hive => {
                                         // Presto -> Hive: if default format, just CAST(x AS TIMESTAMP)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             if crate::dialects::presto::PrestoDialect::is_default_timestamp_format(s)
                                                || crate::dialects::presto::PrestoDialect::is_default_date_format(s) {
                                                 Ok(Expression::Cast(Box::new(crate::expressions::Cast {
@@ -13966,13 +14033,15 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::Spark | DialectType::Databricks => {
                                         // Presto -> Spark: TO_TIMESTAMP(val, java_fmt)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "TO_TIMESTAMP".to_string(),
@@ -13981,18 +14050,26 @@ impl Dialect {
                                         } else {
                                             Ok(Expression::Function(f))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(f))
+                                        }
                                     }
                                     DialectType::DuckDB => {
                                         // Presto -> DuckDB: STRPTIME(val, duckdb_fmt)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let duckdb_fmt = crate::dialects::presto::PrestoDialect::presto_to_duckdb_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRPTIME".to_string(),
                                                 vec![val, Expression::string(&duckdb_fmt)],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "STRPTIME".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRPTIME".to_string(),
@@ -14128,9 +14205,7 @@ impl Dialect {
                                 // For Hive source, CAST string literals to appropriate type
                                 let cast_val = if is_hive_source {
                                     match &val {
-                                        Expression::Literal(
-                                            crate::expressions::Literal::String(_),
-                                        ) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
                                             match target {
                                                 DialectType::DuckDB
                                                 | DialectType::Presto
@@ -14180,9 +14255,7 @@ impl Dialect {
                                                 inferred_type: None,
                                             }))
                                         }
-                                        Expression::Literal(crate::expressions::Literal::Date(
-                                            _,
-                                        )) if matches!(
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Date(_)) && matches!(
                                             target,
                                             DialectType::Presto
                                                 | DialectType::Trino
@@ -14212,10 +14285,9 @@ impl Dialect {
 
                                 match target {
                                     DialectType::DuckDB => {
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let c_fmt = if is_hive_source {
                                                 java_to_c_format(s)
                                             } else {
@@ -14231,20 +14303,31 @@ impl Dialect {
                                                 vec![cast_val, fmt_expr.clone()],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "STRFTIME".to_string(),
+                                                vec![cast_val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                     }
                                     DialectType::Presto
                                     | DialectType::Trino
                                     | DialectType::Athena => {
                                         if is_hive_source {
-                                            if let Expression::Literal(
-                                                crate::expressions::Literal::String(s),
-                                            ) = fmt_expr
+                                            if let Expression::Literal(lit) = fmt_expr
                                             {
+                                                if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                                 let p_fmt = java_to_presto_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "DATE_FORMAT".to_string(),
                                                     vec![cast_val, Expression::string(&p_fmt)],
                                                 ))))
+                                            } else {
+                                                Ok(Expression::Function(Box::new(Function::new(
+                                                    "DATE_FORMAT".to_string(),
+                                                    vec![cast_val, fmt_expr.clone()],
+                                                ))))
+                                            }
                                             } else {
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "DATE_FORMAT".to_string(),
@@ -14260,10 +14343,9 @@ impl Dialect {
                                     }
                                     DialectType::BigQuery => {
                                         // DATE_FORMAT(val, fmt) -> FORMAT_DATE(fmt, val)
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let bq_fmt = if is_hive_source {
                                                 java_to_bq_format(s)
                                             } else {
@@ -14279,12 +14361,17 @@ impl Dialect {
                                                 vec![fmt_expr.clone(), cast_val],
                                             ))))
                                         }
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "FORMAT_DATE".to_string(),
+                                                vec![fmt_expr.clone(), cast_val],
+                                            ))))
+                                        }
                                     }
                                     DialectType::PostgreSQL | DialectType::Redshift => {
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = fmt_expr
+                                        if let Expression::Literal(lit) = fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let pg_fmt = s
                                                 .replace("yyyy", "YYYY")
                                                 .replace("MM", "MM")
@@ -14297,6 +14384,12 @@ impl Dialect {
                                                 "TO_CHAR".to_string(),
                                                 vec![val, Expression::string(&pg_fmt)],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "TO_CHAR".to_string(),
+                                                vec![val, fmt_expr.clone()],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "TO_CHAR".to_string(),
@@ -14343,41 +14436,41 @@ impl Dialect {
                                                 "HOUR" => Expression::Mul(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         paren_diff,
-                                                        Expression::Literal(Literal::Number(
+                                                        Expression::Literal(Box::new(Literal::Number(
                                                             "24.0".to_string(),
-                                                        )),
+                                                        ))),
                                                     ),
                                                 )),
                                                 "MINUTE" => Expression::Mul(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         paren_diff,
-                                                        Expression::Literal(Literal::Number(
+                                                        Expression::Literal(Box::new(Literal::Number(
                                                             "1440.0".to_string(),
-                                                        )),
+                                                        ))),
                                                     ),
                                                 )),
                                                 "SECOND" => Expression::Mul(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         paren_diff,
-                                                        Expression::Literal(Literal::Number(
+                                                        Expression::Literal(Box::new(Literal::Number(
                                                             "86400.0".to_string(),
-                                                        )),
+                                                        ))),
                                                     ),
                                                 )),
                                                 "MONTH" => Expression::Div(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         paren_diff,
-                                                        Expression::Literal(Literal::Number(
+                                                        Expression::Literal(Box::new(Literal::Number(
                                                             "30.0".to_string(),
-                                                        )),
+                                                        ))),
                                                     ),
                                                 )),
                                                 "YEAR" => Expression::Div(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         paren_diff,
-                                                        Expression::Literal(Literal::Number(
+                                                        Expression::Literal(Box::new(Literal::Number(
                                                             "365.0".to_string(),
-                                                        )),
+                                                        ))),
                                                     ),
                                                 )),
                                                 _ => paren_diff,
@@ -14905,7 +14998,7 @@ impl Dialect {
                                         // (Snowflake natively accepts string literals in DATEADD)
                                         let arg2 = if matches!(
                                             &arg2,
-                                            Expression::Literal(Literal::String(_))
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                         ) && !matches!(source, DialectType::Snowflake)
                                         {
                                             Expression::Cast(Box::new(Cast {
@@ -14934,7 +15027,7 @@ impl Dialect {
                                         // Cast string literal to DATETIME2, but not when source is Spark/Databricks family
                                         let arg2 = if matches!(
                                             &arg2,
-                                            Expression::Literal(Literal::String(_))
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                         ) && !matches!(
                                             source,
                                             DialectType::Spark
@@ -15028,7 +15121,7 @@ impl Dialect {
                                             // Cast string literal to TIMESTAMP
                                             let arg2 = if matches!(
                                                 &arg2,
-                                                Expression::Literal(Literal::String(_))
+                                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                             ) {
                                                 Expression::Cast(Box::new(Cast {
                                                     this: arg2,
@@ -15060,26 +15153,22 @@ impl Dialect {
                                                 factor: i64,
                                             ) -> Expression
                                             {
-                                                if let Expression::Literal(
-                                                    crate::expressions::Literal::Number(n),
-                                                ) = &expr
+                                                if let Expression::Literal(lit) = &expr
                                                 {
+                                                    if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                                                     if let Ok(val) = n.parse::<i64>() {
-                                                        return Expression::Literal(
-                                                            crate::expressions::Literal::Number(
+                                                        return Expression::Literal(Box::new(crate::expressions::Literal::Number(
                                                                 (val * factor).to_string(),
-                                                            ),
-                                                        );
+                                                            ),));
                                                     }
+                                                }
                                                 }
                                                 Expression::Mul(Box::new(
                                                     crate::expressions::BinaryOp::new(
                                                         expr,
-                                                        Expression::Literal(
-                                                            crate::expressions::Literal::Number(
+                                                        Expression::Literal(Box::new(crate::expressions::Literal::Number(
                                                                 factor.to_string(),
-                                                            ),
-                                                        ),
+                                                            ),)),
                                                     ),
                                                 ))
                                             }
@@ -15171,7 +15260,7 @@ impl Dialect {
                                         // Cast string literal date to TIMESTAMP
                                         let arg2 = if matches!(
                                             &arg2,
-                                            Expression::Literal(Literal::String(_))
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                         ) {
                                             Expression::Cast(Box::new(Cast {
                                                 this: arg2,
@@ -15207,7 +15296,7 @@ impl Dialect {
                                         // Cast string literal date to TIMESTAMP
                                         let arg2 = if matches!(
                                             &arg2,
-                                            Expression::Literal(Literal::String(_))
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                         ) {
                                             Expression::Cast(Box::new(Cast {
                                                 this: arg2,
@@ -15257,7 +15346,7 @@ impl Dialect {
                                             DialectType::TSQL | DialectType::Fabric
                                         ) && matches!(
                                             &arg2,
-                                            Expression::Literal(Literal::String(_))
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
                                         ) {
                                             Expression::Cast(Box::new(Cast {
                                                 this: arg2,
@@ -15298,7 +15387,8 @@ impl Dialect {
                                 // Detect Generic canonical form: DATE_ADD(date, amount, 'UNIT')
                                 // where arg2 is a string literal matching a unit name
                                 let arg2_unit = match &arg2 {
-                                    Expression::Literal(Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         let u = s.to_ascii_uppercase();
                                         if matches!(
                                             u.as_str(),
@@ -15411,7 +15501,7 @@ impl Dialect {
                                         // SQLite: DATE(x, '1 DAY')
                                         // Build the string '1 DAY' from amount and unit
                                         let amount_str = match &arg1 {
-                                            Expression::Literal(Literal::Number(n)) => n.clone(),
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.clone() },
                                             _ => "1".to_string(),
                                         };
                                         Ok(Expression::Function(Box::new(Function::new(
@@ -15548,7 +15638,7 @@ impl Dialect {
                                         ) {
                                             if matches!(
                                                 date,
-                                                Expression::Literal(Literal::String(_))
+                                                Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(_))
                                             ) {
                                                 Self::double_cast_timestamp_date(date)
                                             } else {
@@ -15585,7 +15675,7 @@ impl Dialect {
                                         ) {
                                             if matches!(
                                                 date,
-                                                Expression::Literal(Literal::String(_))
+                                                Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(_))
                                             ) {
                                                 Self::double_cast_datetime2_date(date)
                                             } else {
@@ -15615,7 +15705,7 @@ impl Dialect {
                                         ) {
                                             if matches!(
                                                 date,
-                                                Expression::Literal(Literal::String(_))
+                                                Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(_))
                                             ) {
                                                 Self::double_cast_timestamp_date(date)
                                             } else {
@@ -15738,11 +15828,11 @@ impl Dialect {
                                 let make_neg_days = |d: Expression| -> Expression {
                                     Expression::Mul(Box::new(crate::expressions::BinaryOp::new(
                                         d,
-                                        Expression::Literal(Literal::Number("-1".to_string())),
+                                        Expression::Literal(Box::new(Literal::Number("-1".to_string()))),
                                     )))
                                 };
                                 let is_string_literal =
-                                    matches!(date, Expression::Literal(Literal::String(_)));
+                                    matches!(date, Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(_)));
                                 match target {
                                     DialectType::Hive
                                     | DialectType::Spark
@@ -16181,12 +16271,11 @@ impl Dialect {
                                         ) {
                                             if let Some(Expression::ParseJson(pj)) = f.args.first()
                                             {
-                                                if let Expression::Literal(Literal::String(s)) =
+                                                if let Expression::Literal(lit) =
                                                     &pj.this
                                                 {
-                                                    let wrapped = Expression::Literal(
-                                                        Literal::String(format!("[{}]", s)),
-                                                    );
+                                                    if let Literal::String(s) = lit.as_ref() {
+                                                    let wrapped = Expression::Literal(Box::new(Literal::String(format!("[{}]", s)),));
                                                     let schema_of_json = Expression::Function(
                                                         Box::new(Function::new(
                                                             "SCHEMA_OF_JSON".to_string(),
@@ -16210,19 +16299,16 @@ impl Dialect {
                                                             "REGEXP_EXTRACT".to_string(),
                                                             vec![
                                                                 to_json,
-                                                                Expression::Literal(
-                                                                    Literal::String(
+                                                                Expression::Literal(Box::new(Literal::String(
                                                                         "^.(.*).$".to_string(),
-                                                                    ),
-                                                                ),
-                                                                Expression::Literal(
-                                                                    Literal::Number(
+                                                                    ),)),
+                                                                Expression::Literal(Box::new(Literal::Number(
                                                                         "1".to_string(),
-                                                                    ),
-                                                                ),
+                                                                    ),)),
                                                             ],
                                                         ),
                                                     )));
+                                                }
                                                 }
                                             }
                                         }
@@ -16292,9 +16378,9 @@ impl Dialect {
                                                         sysdate: false,
                                                     },
                                                 ),
-                                                zone: Expression::Literal(Literal::String(
+                                                zone: Expression::Literal(Box::new(Literal::String(
                                                     "UTC".to_string(),
-                                                )),
+                                                ))),
                                             },
                                         )))
                                     }
@@ -16495,7 +16581,7 @@ impl Dialect {
                                 let decimals_expr = args.remove(0);
                                 // Extract decimal count
                                 let dec_count = match &decimals_expr {
-                                    Expression::Literal(Literal::Number(n)) => n.clone(),
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.clone() },
                                     _ => "0".to_string(),
                                 };
                                 let fmt_str = format!("{{:,.{}f}}", dec_count);
@@ -16519,7 +16605,8 @@ impl Dialect {
                                 // Ambiguous: d, D, f, F, g, G (used for both dates and numbers)
                                 // Unambiguous date: m/M (Month day), t/T (Time), y/Y (Year month)
                                 let (expanded_fmt, is_shortcode) = match &fmt_expr {
-                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         match s.as_str() {
                                             "m" | "M" => (Expression::string("MMMM d"), true),
                                             "t" => (Expression::string("h:mm tt"), true),
@@ -16533,9 +16620,8 @@ impl Dialect {
                                 // Check if the format looks like a date format
                                 let is_date_format = is_shortcode
                                     || match &expanded_fmt {
-                                        Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                            let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                             // Date formats typically contain yyyy, MM, dd, MMMM, HH, etc.
                                             s.contains("yyyy")
                                                 || s.contains("YYYY")
@@ -16589,10 +16675,11 @@ impl Dialect {
                                     // DuckDB: replace %s with {} in format string
                                     DialectType::DuckDB => {
                                         let new_fmt = match &fmt_expr {
-                                            Expression::Literal(Literal::String(s)) => {
-                                                Expression::Literal(Literal::String(
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                                let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                                                Expression::Literal(Box::new(Literal::String(
                                                     s.replace("%s", "{}"),
-                                                ))
+                                                )))
                                             }
                                             _ => fmt_expr,
                                         };
@@ -16605,9 +16692,10 @@ impl Dialect {
                                     }
                                     // Snowflake: FORMAT('%s', x) -> TO_CHAR(x) when just %s
                                     DialectType::Snowflake => match &fmt_expr {
-                                        Expression::Literal(Literal::String(s))
-                                            if s == "%s" && value_args.len() == 1 =>
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s == "%s" && value_args.len() == 1)
+                                            =>
                                         {
+                                            let Literal::String(_) = lit.as_ref() else { unreachable!() };
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "TO_CHAR".to_string(),
                                                 value_args,
@@ -16833,14 +16921,17 @@ impl Dialect {
                                         // Check for constant args
                                         fn extract_i64(e: &Expression) -> Option<i64> {
                                             match e {
-                                                Expression::Literal(Literal::Number(n)) => {
+                                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                                                    let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                                                     n.parse::<i64>().ok()
                                                 }
                                                 Expression::Neg(u) => {
-                                                    if let Expression::Literal(Literal::Number(n)) =
+                                                    if let Expression::Literal(lit) =
                                                         &u.this
                                                     {
+                                                        if let Literal::Number(n) = lit.as_ref() {
                                                         n.parse::<i64>().ok().map(|v| -v)
+                                                    } else { None }
                                                     } else {
                                                         None
                                                     }
@@ -17058,9 +17149,9 @@ impl Dialect {
                                     DialectType::Redshift => {
                                         // Redshift: (TIMESTAMP 'epoch' + col * INTERVAL '1 SECOND')
                                         let arg = f.args.into_iter().next().unwrap();
-                                        let epoch_ts = Expression::Literal(Literal::Timestamp(
+                                        let epoch_ts = Expression::Literal(Box::new(Literal::Timestamp(
                                             "epoch".to_string(),
-                                        ));
+                                        )));
                                         let interval = Expression::Interval(Box::new(
                                             crate::expressions::Interval {
                                                 this: Some(Expression::string("1 SECOND")),
@@ -17099,15 +17190,20 @@ impl Dialect {
                                             "TO_TIMESTAMP".to_string(),
                                             vec![unix_ts],
                                         )));
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = &fmt_expr
+                                        if let Expression::Literal(lit) = &fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let c_fmt = Self::hive_format_to_c_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRFTIME".to_string(),
                                                 vec![to_ts, Expression::string(&c_fmt)],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "STRFTIME".to_string(),
+                                                vec![to_ts, fmt_expr],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "STRFTIME".to_string(),
@@ -17124,15 +17220,20 @@ impl Dialect {
                                                 "FROM_UNIXTIME".to_string(),
                                                 vec![unix_ts],
                                             )));
-                                        if let Expression::Literal(
-                                            crate::expressions::Literal::String(s),
-                                        ) = &fmt_expr
+                                        if let Expression::Literal(lit) = &fmt_expr
                                         {
+                                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                                             let p_fmt = Self::hive_format_to_presto_format(s);
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_FORMAT".to_string(),
                                                 vec![from_unix, Expression::string(&p_fmt)],
                                             ))))
+                                        } else {
+                                            Ok(Expression::Function(Box::new(Function::new(
+                                                "DATE_FORMAT".to_string(),
+                                                vec![from_unix, fmt_expr],
+                                            ))))
+                                        }
                                         } else {
                                             Ok(Expression::Function(Box::new(Function::new(
                                                 "DATE_FORMAT".to_string(),
@@ -17155,7 +17256,8 @@ impl Dialect {
                                 // Get the raw unit text preserving original case
                                 let raw_unit = match &f.args[0] {
                                     Expression::Identifier(id) => id.name.clone(),
-                                    Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                        let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                         s.clone()
                                     }
                                     Expression::Column(col) => col.name.name.clone(),
@@ -17383,7 +17485,8 @@ impl Dialect {
                                 let mut args = f.args;
                                 let val = args.remove(0);
                                 let fmt_expr = args.remove(0);
-                                if let Expression::Literal(Literal::String(ref s)) = fmt_expr {
+                                if let Expression::Literal(ref lit) = fmt_expr {
+                                    if let Literal::String(ref s) = lit.as_ref() {
                                     // Convert Java/Spark format to C strptime format
                                     fn java_to_c_fmt(fmt: &str) -> String {
                                         let result = fmt
@@ -17422,6 +17525,12 @@ impl Dialect {
                                         "STRPTIME".to_string(),
                                         vec![val, Expression::string(&c_fmt)],
                                     ))))
+                                } else {
+                                    Ok(Expression::Function(Box::new(Function::new(
+                                        "STRPTIME".to_string(),
+                                        vec![val, fmt_expr],
+                                    ))))
+                                }
                                 } else {
                                     Ok(Expression::Function(Box::new(Function::new(
                                         "STRPTIME".to_string(),
@@ -17529,7 +17638,7 @@ impl Dialect {
                                 let mut args = f.args;
                                 let val = args.remove(0);
                                 let fmt_expr = args.remove(0);
-                                let is_default_format = matches!(&fmt_expr, Expression::Literal(Literal::String(s)) if s == "yyyy-MM-dd");
+                                let is_default_format = matches!(&fmt_expr, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s == "yyyy-MM-dd"));
 
                                 if is_default_format {
                                     // Default format: same as 1-arg form
@@ -17568,7 +17677,8 @@ impl Dialect {
                                     }
                                 } else {
                                     // Non-default format: use format-based parsing
-                                    if let Expression::Literal(Literal::String(ref s)) = fmt_expr {
+                                    if let Expression::Literal(ref lit) = fmt_expr {
+                                        if let Literal::String(ref s) = lit.as_ref() {
                                         match target {
                                             DialectType::DuckDB => {
                                                 // CAST(CAST(TRY_STRPTIME(x, c_fmt) AS TIMESTAMP) AS DATE)
@@ -17679,6 +17789,12 @@ impl Dialect {
                                             vec![val, fmt_expr],
                                         ))))
                                     }
+                                    } else {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "TO_DATE".to_string(),
+                                            vec![val, fmt_expr],
+                                        ))))
+                                    }
                                 }
                             }
                             // TO_TIMESTAMP(x) 1-arg: epoch conversion
@@ -17769,7 +17885,7 @@ impl Dialect {
                             {
                                 // If group_index is 0, drop it
                                 let drop_group = match &f.args[2] {
-                                    Expression::Literal(Literal::Number(n)) => n == "0",
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n == "0" },
                                     _ => false,
                                 };
                                 if drop_group {
@@ -17915,15 +18031,17 @@ impl Dialect {
                                 let format_expr = args.remove(0);
                                 // Check if the format contains time components
                                 let has_time =
-                                    if let Expression::Literal(Literal::String(ref fmt)) =
+                                    if let Expression::Literal(ref lit) =
                                         format_expr
                                     {
+                                        if let Literal::String(ref fmt) = lit.as_ref() {
                                         fmt.contains("%H")
                                             || fmt.contains("%T")
                                             || fmt.contains("%M")
                                             || fmt.contains("%S")
                                             || fmt.contains("%I")
                                             || fmt.contains("%p")
+                                    } else { false }
                                     } else {
                                         false
                                     };
@@ -17958,14 +18076,14 @@ impl Dialect {
                                 let x = args.remove(0);
                                 let fmt = args.remove(0);
                                 let pg_fmt = match fmt {
-                                    Expression::Literal(Literal::String(s)) => Expression::string(
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Expression::string(
                                         &s.replace("%Y", "YYYY")
                                             .replace("%m", "MM")
                                             .replace("%d", "DD")
                                             .replace("%H", "HH24")
                                             .replace("%M", "MI")
                                             .replace("%S", "SS"),
-                                    ),
+                                    ) },
                                     other => other,
                                 };
                                 let to_date = Expression::Function(Box::new(Function::new(
@@ -18042,7 +18160,7 @@ impl Dialect {
                                 let tz_arg = args.remove(0);
                                 // Cast string literal to TIMESTAMP for all targets
                                 let ts_cast =
-                                    if matches!(&ts_arg, Expression::Literal(Literal::String(_))) {
+                                    if matches!(&ts_arg, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                                         Expression::Cast(Box::new(Cast {
                                             this: ts_arg,
                                             to: DataType::Timestamp {
@@ -18138,7 +18256,7 @@ impl Dialect {
                                 let tz_arg = args.remove(0);
                                 // Cast string literal to TIMESTAMP
                                 let ts_cast =
-                                    if matches!(&ts_arg, Expression::Literal(Literal::String(_))) {
+                                    if matches!(&ts_arg, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                                         Expression::Cast(Box::new(Cast {
                                             this: ts_arg,
                                             to: DataType::Timestamp {
@@ -18215,8 +18333,10 @@ impl Dialect {
                                 let this = args.remove(0);
                                 let fmt_expr = args.remove(0);
                                 let format =
-                                    if let Expression::Literal(Literal::String(s)) = fmt_expr {
-                                        s
+                                    if let Expression::Literal(lit) = fmt_expr {
+                                        if let Literal::String(s) = lit.as_ref() {
+                                        s.clone()
+                                    } else { String::new() }
                                     } else {
                                         "%Y-%m-%d %H:%M:%S".to_string()
                                     };
@@ -18235,8 +18355,10 @@ impl Dialect {
                                 let this = args.remove(0);
                                 let fmt_expr = args.remove(0);
                                 let format =
-                                    if let Expression::Literal(Literal::String(s)) = fmt_expr {
-                                        s
+                                    if let Expression::Literal(lit) = fmt_expr {
+                                        if let Literal::String(s) = lit.as_ref() {
+                                        s.clone()
+                                    } else { String::new() }
                                     } else {
                                         "%Y-%m-%d %H:%M:%S".to_string()
                                     };
@@ -18255,9 +18377,11 @@ impl Dialect {
                                 let mut args = f.args;
                                 let this = args.remove(0);
                                 let format = if !args.is_empty() {
-                                    if let Expression::Literal(Literal::String(s)) = args.remove(0)
+                                    if let Expression::Literal(lit) = args.remove(0)
                                     {
-                                        Some(s)
+                                        if let Literal::String(s) = lit.as_ref() {
+                                        Some(s.clone())
+                                    } else { None }
                                     } else {
                                         None
                                     }
@@ -18288,9 +18412,11 @@ impl Dialect {
                                 let mut args = f.args;
                                 let this = args.remove(0);
                                 let format = if !args.is_empty() {
-                                    if let Expression::Literal(Literal::String(s)) = args.remove(0)
+                                    if let Expression::Literal(lit) = args.remove(0)
                                     {
-                                        Some(s)
+                                        if let Literal::String(s) = lit.as_ref() {
+                                        Some(s.clone())
+                                    } else { None }
                                     } else {
                                         None
                                     }
@@ -18408,9 +18534,9 @@ impl Dialect {
                                         ));
                                         let frac = Expression::Div(Box::new(BinaryOp::new(
                                             day_diff_paren,
-                                            Expression::Literal(Literal::Number(
+                                            Expression::Literal(Box::new(Literal::Number(
                                                 "31.0".to_string(),
-                                            )),
+                                            ))),
                                         )));
                                         let case_expr = Expression::Case(Box::new(Case {
                                             operand: None,
@@ -18636,7 +18762,7 @@ impl Dialect {
                                         Function::new("SCHEMA_NAME".to_string(), vec![]),
                                     ))),
                                     DialectType::SQLite => {
-                                        Ok(Expression::Literal(Literal::String("main".to_string())))
+                                        Ok(Expression::Literal(Box::new(Literal::String("main".to_string()))))
                                     }
                                     _ => Ok(Expression::Function(f)),
                                 }
@@ -19269,13 +19395,13 @@ impl Dialect {
                                             args.remove(0)
                                         };
                                         let decimals = if args.is_empty() {
-                                            Expression::Literal(Literal::Number("0".to_string()))
+                                            Expression::Literal(Box::new(Literal::Number("0".to_string())))
                                         } else {
                                             args.remove(0)
                                         };
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "ROUND".to_string(),
-                                            vec![this, decimals, Expression::Literal(Literal::Number("1".to_string()))],
+                                            vec![this, decimals, Expression::Literal(Box::new(Literal::Number("1".to_string())))],
                                         ))))
                                     }
                                     DialectType::Presto | DialectType::Trino | DialectType::Athena => {
@@ -19293,7 +19419,7 @@ impl Dialect {
                                     DialectType::DuckDB => {
                                         // TRUNC(x) - drop decimals
                                         let this = f.args.into_iter().next().unwrap_or(
-                                            Expression::Literal(Literal::Number("0".to_string()))
+                                            Expression::Literal(Box::new(Literal::Number("0".to_string())))
                                         );
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "TRUNC".to_string(),
@@ -19309,7 +19435,7 @@ impl Dialect {
                                     DialectType::Spark | DialectType::Databricks => {
                                         // Spark: TRUNC is date-only; numeric TRUNC → CAST(x AS BIGINT)
                                         let this = f.args.into_iter().next().unwrap_or(
-                                            Expression::Literal(Literal::Number("0".to_string()))
+                                            Expression::Literal(Box::new(Literal::Number("0".to_string())))
                                         );
                                         Ok(Expression::Cast(Box::new(crate::expressions::Cast {
                                             this,
@@ -19364,9 +19490,9 @@ impl Dialect {
                                     if args.len() == 2 {
                                         let default_interval = Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -19388,9 +19514,9 @@ impl Dialect {
                                     let step = args.get(2).cloned().or_else(|| {
                                         Some(Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -19430,9 +19556,9 @@ impl Dialect {
                                     let step = args.get(2).cloned().or_else(|| {
                                         Some(Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -19461,9 +19587,9 @@ impl Dialect {
                                     let step = args.get(2).cloned().or_else(|| {
                                         Some(Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -19487,9 +19613,9 @@ impl Dialect {
                                     if args.len() == 2 {
                                         let default_interval = Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -19524,9 +19650,9 @@ impl Dialect {
                                     let step = args.get(2).cloned().or_else(|| {
                                         Some(Expression::Interval(Box::new(
                                             crate::expressions::Interval {
-                                                this: Some(Expression::Literal(Literal::String(
+                                                this: Some(Expression::Literal(Box::new(Literal::String(
                                                     "1".to_string(),
-                                                ))),
+                                                )))),
                                                 unit: Some(
                                                     crate::expressions::IntervalUnitSpec::Simple {
                                                         unit: crate::expressions::IntervalUnit::Day,
@@ -20956,9 +21082,10 @@ impl Dialect {
                     // DATE_PART('month', x) -> DATE_PART(month, x) for Snowflake target
                     // Convert the quoted string first arg to a bare Column/Identifier
                     if let Expression::Function(mut f) = e {
-                        if let Some(Expression::Literal(crate::expressions::Literal::String(s))) =
+                        if let Some(Expression::Literal(lit)) =
                             f.args.first()
                         {
+                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
                             let bare_name = s.to_ascii_lowercase();
                             f.args[0] = Expression::Column(Box::new(crate::expressions::Column {
                                 name: Identifier::new(bare_name),
@@ -20968,6 +21095,7 @@ impl Dialect {
                                 span: None,
                                 inferred_type: None,
                             }));
+                        }
                         }
                         Ok(Expression::Function(f))
                     } else {
@@ -21020,7 +21148,8 @@ impl Dialect {
                         f.arrow_syntax = true;
                         // Transform path: convert bracket notation to dot notation
                         // SQLite strips wildcards, DuckDB preserves them
-                        if let Expression::Literal(Literal::String(ref s)) = f.path {
+                        if let Expression::Literal(ref lit) = f.path {
+                            if let Literal::String(ref s) = lit.as_ref() {
                             let mut transformed = s.clone();
                             if matches!(target, DialectType::SQLite) {
                                 transformed = Self::strip_json_wildcards(&transformed);
@@ -21029,6 +21158,7 @@ impl Dialect {
                             if transformed != *s {
                                 f.path = Expression::string(&transformed);
                             }
+                        }
                         }
                         Ok(Expression::JsonExtract(f))
                     } else {
@@ -21042,9 +21172,11 @@ impl Dialect {
                             // JSON_EXTRACT(x, '$.key') -> JSON_EXTRACT_PATH(x, 'key') for PostgreSQL
                             // Use proper decomposition that handles brackets
                             let keys: Vec<Expression> =
-                                if let Expression::Literal(Literal::String(ref s)) = f.path {
+                                if let Expression::Literal(lit) = f.path {
+                                    if let Literal::String(ref s) = lit.as_ref() {
                                     let parts = Self::decompose_json_path(s);
                                     parts.into_iter().map(|k| Expression::string(&k)).collect()
+                                } else { vec![] }
                                 } else {
                                     vec![f.path]
                                 };
@@ -21062,15 +21194,17 @@ impl Dialect {
                         } else {
                             // GET_JSON_OBJECT(x, '$.path') for Hive/Spark
                             // Convert bracket double quotes to single quotes
-                            let path = if let Expression::Literal(Literal::String(ref s)) = f.path {
+                            let path = if let Expression::Literal(ref lit) = f.path {
+                                if let Literal::String(ref s) = lit.as_ref() {
                                 let normalized = Self::bracket_to_single_quotes(s);
                                 if normalized != *s {
                                     Expression::string(&normalized)
                                 } else {
-                                    f.path
+                                    f.path.clone()
                                 }
+                            } else { f.path.clone() }
                             } else {
-                                f.path
+                                f.path.clone()
                             };
                             Ok(Expression::Function(Box::new(Function::new(
                                 "GET_JSON_OBJECT".to_string(),
@@ -21102,11 +21236,13 @@ impl Dialect {
                         _ => return Ok(e),
                     };
                     // Transform path: strip wildcards, convert bracket notation to dot notation
-                    let transformed_path = if let Expression::Literal(Literal::String(ref s)) = path
+                    let transformed_path = if let Expression::Literal(ref lit) = path
                     {
-                        let stripped = Self::strip_json_wildcards(s);
-                        let dotted = Self::bracket_to_dot_notation(&stripped);
-                        Expression::string(&dotted)
+                        if let Literal::String(ref s) = lit.as_ref() {
+                            let stripped = Self::strip_json_wildcards(s);
+                            let dotted = Self::bracket_to_dot_notation(&stripped);
+                            Expression::string(&dotted)
+                        } else { path.clone() }
                     } else {
                         path
                     };
@@ -21132,7 +21268,8 @@ impl Dialect {
                         _ => return Ok(e),
                     };
                     let args: Vec<Expression> =
-                        if let Expression::Literal(Literal::String(ref s)) = path {
+                        if let Expression::Literal(lit) = path {
+                            if let Literal::String(ref s) = lit.as_ref() {
                             let parts = Self::decompose_json_path(s);
                             let mut result = vec![this];
                             for part in parts {
@@ -21144,6 +21281,7 @@ impl Dialect {
                                 }
                             }
                             result
+                        } else { vec![] }
                         } else {
                             vec![this, path]
                         };
@@ -21160,9 +21298,11 @@ impl Dialect {
                             DialectType::PostgreSQL | DialectType::Redshift => {
                                 // JSON_EXTRACT_SCALAR(x, '$.path') -> JSON_EXTRACT_PATH_TEXT(x, 'key1', 'key2')
                                 let keys: Vec<Expression> =
-                                    if let Expression::Literal(Literal::String(ref s)) = f.path {
+                                    if let Expression::Literal(lit) = f.path {
+                                        if let Literal::String(ref s) = lit.as_ref() {
                                         let parts = Self::decompose_json_path(s);
                                         parts.into_iter().map(|k| Expression::string(&k)).collect()
+                                    } else { vec![] }
                                     } else {
                                         vec![f.path]
                                     };
@@ -21176,9 +21316,11 @@ impl Dialect {
                             DialectType::Snowflake => {
                                 // JSON_EXTRACT_SCALAR(x, '$.path') -> JSON_EXTRACT_PATH_TEXT(x, 'stripped_path')
                                 let stripped_path =
-                                    if let Expression::Literal(Literal::String(ref s)) = f.path {
-                                        let stripped = Self::strip_json_dollar_prefix(s);
-                                        Expression::string(&stripped)
+                                    if let Expression::Literal(ref lit) = f.path {
+                                        if let Literal::String(ref s) = lit.as_ref() {
+                                            let stripped = Self::strip_json_dollar_prefix(s);
+                                            Expression::string(&stripped)
+                                        } else { f.path.clone() }
                                     } else {
                                         f.path
                                     };
@@ -21213,7 +21355,8 @@ impl Dialect {
                 Action::JsonPathNormalize => {
                     // Normalize JSON path format for BigQuery, MySQL, etc.
                     if let Expression::JsonExtract(mut f) = e {
-                        if let Expression::Literal(Literal::String(ref s)) = f.path {
+                        if let Expression::Literal(ref lit) = f.path {
+                            if let Literal::String(ref s) = lit.as_ref() {
                             let mut normalized = s.clone();
                             // Convert bracket notation and handle wildcards per dialect
                             match target {
@@ -21231,6 +21374,7 @@ impl Dialect {
                             if normalized != *s {
                                 f.path = Expression::string(&normalized);
                             }
+                        }
                         }
                         Ok(Expression::JsonExtract(f))
                     } else {
@@ -21309,9 +21453,10 @@ impl Dialect {
                                 ))),
                             };
                             let path_str = match &f.path {
-                                Expression::Literal(Literal::String(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                    let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                     let stripped = s.strip_prefix("$.").unwrap_or(s);
-                                    Expression::Literal(Literal::String(stripped.to_string()))
+                                    Expression::Literal(Box::new(Literal::String(stripped.to_string())))
                                 }
                                 other => other.clone(),
                             };
@@ -21655,7 +21800,7 @@ impl Dialect {
                         let type_str = Self::data_type_to_spark_string(&c.to);
                         Ok(Expression::Function(Box::new(Function::new(
                             "FROM_JSON".to_string(),
-                            vec![literal_expr, Expression::Literal(Literal::String(type_str))],
+                            vec![literal_expr, Expression::Literal(Box::new(Literal::String(type_str)))],
                         ))))
                     } else {
                         Ok(e)
@@ -21774,12 +21919,13 @@ impl Dialect {
                 }
 
                 Action::EscapeStringNormalize => {
-                    if let Expression::Literal(Literal::EscapeString(s)) = e {
+                    if let Expression::Literal(ref lit) = e {
+                        if let Literal::EscapeString(s) = lit.as_ref() {
                         // Strip prefix (e.g., "e:" or "E:") if present from tokenizer
                         let stripped = if s.starts_with("e:") || s.starts_with("E:") {
                             s[2..].to_string()
                         } else {
-                            s
+                            s.clone()
                         };
                         let normalized = stripped
                             .replace('\n', "\\n")
@@ -21792,8 +21938,11 @@ impl Dialect {
                                 let raw_sql = format!("CAST(b'{}' AS STRING)", normalized);
                                 Ok(Expression::Raw(crate::expressions::Raw { sql: raw_sql }))
                             }
-                            _ => Ok(Expression::Literal(Literal::EscapeString(normalized))),
+                            _ => Ok(Expression::Literal(Box::new(Literal::EscapeString(normalized)))),
                         }
+                    } else {
+                        Ok(e)
+                    }
                     } else {
                         Ok(e)
                     }
@@ -21868,11 +22017,13 @@ impl Dialect {
                 Action::ArrayIndexConvert => {
                     // Subscript index: 1-based to 0-based for BigQuery
                     if let Expression::Subscript(mut sub) = e {
-                        if let Expression::Literal(Literal::Number(ref n)) = sub.index {
+                        if let Expression::Literal(ref lit) = sub.index {
+                            if let Literal::Number(ref n) = lit.as_ref() {
                             if let Ok(val) = n.parse::<i64>() {
                                 sub.index =
-                                    Expression::Literal(Literal::Number((val - 1).to_string()));
+                                    Expression::Literal(Box::new(Literal::Number((val - 1).to_string())));
                             }
+                        }
                         }
                         Ok(Expression::Subscript(sub))
                     } else {
@@ -21988,11 +22139,11 @@ impl Dialect {
                                             not: false,
                                             postfix_form: false,
                                         })),
-                                        Expression::Literal(Literal::Number("1".to_string())),
+                                        Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                                     )],
-                                    else_: Some(Expression::Literal(Literal::Number(
+                                    else_: Some(Expression::Literal(Box::new(Literal::Number(
                                         "0".to_string(),
-                                    ))),
+                                    )))),
                                     comments: Vec::new(),
                                     inferred_type: None,
                                 }));
@@ -22133,10 +22284,11 @@ impl Dialect {
                     // INTERVAL '2' HOUR -> INTERVAL '2 HOUR' for Snowflake
                     if let Expression::Interval(mut iv) = e {
                         if let (
-                            Some(Expression::Literal(Literal::String(ref val))),
+                            Some(Expression::Literal(lit)),
                             Some(ref unit_spec),
                         ) = (&iv.this, &iv.unit)
                         {
+                                if let Literal::String(ref val) = lit.as_ref() {
                             let unit_str = match unit_spec {
                                 crate::expressions::IntervalUnitSpec::Simple { unit, .. } => {
                                     match unit {
@@ -22163,10 +22315,11 @@ impl Dialect {
                             };
                             if !unit_str.is_empty() {
                                 let combined = format!("{} {}", val, unit_str);
-                                iv.this = Some(Expression::Literal(Literal::String(combined)));
+                                iv.this = Some(Expression::Literal(Box::new(Literal::String(combined))));
                                 iv.unit = None;
                             }
                         }
+                            }
                         Ok(Expression::Interval(iv))
                     } else {
                         Ok(e)
@@ -22527,28 +22680,32 @@ impl Dialect {
                                     match expr {
                                         Expression::JSONPathRoot(_) => {} // skip root
                                         Expression::JSONPathKey(k) => {
-                                            if let Expression::Literal(Literal::String(s)) =
+                                            if let Expression::Literal(lit) =
                                                 &*k.this
                                             {
+                                                if let Literal::String(s) = lit.as_ref() {
                                                 key_parts.push(s.clone());
+                                            }
                                             }
                                         }
                                         _ => {}
                                     }
                                 }
                                 if !key_parts.is_empty() {
-                                    Expression::Literal(Literal::String(key_parts.join(".")))
+                                    Expression::Literal(Box::new(Literal::String(key_parts.join("."))))
                                 } else {
                                     je.path.clone()
                                 }
                             }
-                            Expression::Literal(Literal::String(s)) if s.starts_with("$.") => {
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.starts_with("$.")) => {
+                                let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                 let stripped = Self::strip_json_wildcards(&s[2..].to_string());
-                                Expression::Literal(Literal::String(stripped))
+                                Expression::Literal(Box::new(Literal::String(stripped)))
                             }
-                            Expression::Literal(Literal::String(s)) if s.starts_with('$') => {
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.starts_with('$')) => {
+                                let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                 let stripped = Self::strip_json_wildcards(&s[1..].to_string());
-                                Expression::Literal(Literal::String(stripped))
+                                Expression::Literal(Box::new(Literal::String(stripped)))
                             }
                             _ => je.path.clone(),
                         };
@@ -22587,7 +22744,7 @@ impl Dialect {
                                 .zip(m.values.iter())
                                 .map(|(key, value)| {
                                     let key_name = match key {
-                                        Expression::Literal(Literal::String(s)) => s.clone(),
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                                         Expression::Identifier(id) => id.name.clone(),
                                         _ => String::new(),
                                     };
@@ -22650,7 +22807,8 @@ impl Dialect {
                                         .zip(m.values.iter())
                                         .map(|(key, value)| {
                                             let key_name = match key {
-                                                Expression::Literal(Literal::String(s)) => {
+                                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                                    let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                                     s.clone()
                                                 }
                                                 Expression::Identifier(id) => id.name.clone(),
@@ -22669,7 +22827,8 @@ impl Dialect {
                                 let mut fields = Vec::new();
                                 for (name, value) in &pairs {
                                     let inferred_type = match value {
-                                        Expression::Literal(Literal::Number(n)) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                                            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                                             if n.contains('.') {
                                                 Some(DataType::Double {
                                                     precision: None,
@@ -22682,7 +22841,7 @@ impl Dialect {
                                                 })
                                             }
                                         }
-                                        Expression::Literal(Literal::String(_)) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
                                             Some(DataType::VarChar {
                                                 length: None,
                                                 parenthesized_length: false,
@@ -22756,7 +22915,7 @@ impl Dialect {
                                 let mut keys = Vec::new();
                                 let mut values = Vec::new();
                                 for (name, value) in &pairs {
-                                    keys.push(Expression::Literal(Literal::String(name.clone())));
+                                    keys.push(Expression::Literal(Box::new(Literal::String(name.clone()))));
                                     values.push(value.clone());
                                 }
                                 Ok(Expression::MapFunc(Box::new(
@@ -22782,7 +22941,8 @@ impl Dialect {
                                 let mut fields = Vec::new();
                                 for (name, value) in &pairs {
                                     let inferred_type = match value {
-                                        Expression::Literal(Literal::Number(n)) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                                            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                                             if n.contains('.') {
                                                 Some(DataType::Double {
                                                     precision: None,
@@ -22795,7 +22955,7 @@ impl Dialect {
                                                 })
                                             }
                                         }
-                                        Expression::Literal(Literal::String(_)) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
                                             Some(DataType::VarChar {
                                                 length: None,
                                                 parenthesized_length: false,
@@ -23372,25 +23532,26 @@ impl Dialect {
                     // dialects does partial match, so we need to anchor with .* on both sides
                     if let Expression::RegexpLike(mut f) = e {
                         match &f.pattern {
-                            Expression::Literal(Literal::String(s)) => {
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                 // String literal: wrap with .*...*
-                                f.pattern = Expression::Literal(Literal::String(
+                                f.pattern = Expression::Literal(Box::new(Literal::String(
                                     format!(".*{}.*", s),
-                                ));
+                                )));
                             }
                             _ => {
                                 // Non-literal: wrap with CONCAT('.*', pattern, '.*')
                                 f.pattern = Expression::Paren(Box::new(crate::expressions::Paren {
                                     this: Expression::Concat(Box::new(crate::expressions::BinaryOp {
                                         left: Expression::Concat(Box::new(crate::expressions::BinaryOp {
-                                            left: Expression::Literal(Literal::String(".*".to_string())),
+                                            left: Expression::Literal(Box::new(Literal::String(".*".to_string()))),
                                             right: f.pattern,
                                             left_comments: vec![],
                                             operator_comments: vec![],
                                             trailing_comments: vec![],
                                             inferred_type: None,
                                         })),
-                                        right: Expression::Literal(Literal::String(".*".to_string())),
+                                        right: Expression::Literal(Box::new(Literal::String(".*".to_string()))),
                                         left_comments: vec![],
                                         operator_comments: vec![],
                                         trailing_comments: vec![],
@@ -23746,7 +23907,7 @@ impl Dialect {
                                     }));
                                 let frac = Expression::Div(Box::new(BinaryOp::new(
                                     day_diff_paren,
-                                    Expression::Literal(Literal::Number("31.0".to_string())),
+                                    Expression::Literal(Box::new(Literal::Number("31.0".to_string()))),
                                 )));
                                 let case_expr = Expression::Case(Box::new(Case {
                                     operand: None,
@@ -23806,7 +23967,7 @@ impl Dialect {
 
                                 // Determine the cast type from the date expression
                                 let (cast_date, return_type) = match &date {
-                                    Expression::Literal(Literal::String(_)) => {
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
                                         // String literal: CAST(str AS TIMESTAMP), no outer CAST
                                         (
                                             Expression::Cast(Box::new(Cast {
@@ -23842,11 +24003,13 @@ impl Dialect {
                                 // For non-integer values (float, decimal, cast), use TO_MONTHS(CAST(ROUND(val) AS INT))
                                 // For integer values, use INTERVAL val MONTH
                                 let is_non_integer_val = match &val {
-                                    Expression::Literal(Literal::Number(n)) => n.contains('.'),
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
                                     Expression::Cast(_) => true, // e.g., 3.2::DECIMAL(10,2)
                                     Expression::Neg(n) => {
-                                        if let Expression::Literal(Literal::Number(s)) = &n.this {
+                                        if let Expression::Literal(lit) = &n.this {
+                                            if let Literal::Number(s) = lit.as_ref() {
                                             s.contains('.')
+                                        } else { false }
                                         } else {
                                             false
                                         }
@@ -23880,9 +24043,10 @@ impl Dialect {
                                     // INTERVAL val MONTH
                                     // For negative numbers, wrap in parens
                                     let interval_val = match &val {
-                                        Expression::Literal(Literal::Number(n))
-                                            if n.starts_with('-') =>
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.starts_with('-'))
+                                            =>
                                         {
+                                            let Literal::Number(_) = lit.as_ref() else { unreachable!() };
                                             Expression::Paren(Box::new(Paren {
                                                 this: val.clone(),
                                                 trailing_comments: Vec::new(),
@@ -23959,7 +24123,7 @@ impl Dialect {
                             DialectType::DuckDB => {
                                 // Non-Snowflake source: simple date + INTERVAL
                                 let cast_date =
-                                    if matches!(&date, Expression::Literal(Literal::String(_))) {
+                                    if matches!(&date, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                                         Expression::Cast(Box::new(Cast {
                                             this: date,
                                             to: DataType::Timestamp {
@@ -24017,7 +24181,7 @@ impl Dialect {
                             }
                             DialectType::Presto | DialectType::Trino | DialectType::Athena => {
                                 let cast_date =
-                                    if matches!(&date, Expression::Literal(Literal::String(_))) {
+                                    if matches!(&date, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                                         Expression::Cast(Box::new(Cast {
                                             this: date,
                                             to: DataType::Timestamp {
@@ -24048,7 +24212,7 @@ impl Dialect {
                                         }),
                                     }));
                                 let cast_date =
-                                    if matches!(&date, Expression::Literal(Literal::String(_))) {
+                                    if matches!(&date, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                                         Expression::Cast(Box::new(Cast {
                                             this: date,
                                             to: DataType::Custom {
@@ -24100,16 +24264,12 @@ impl Dialect {
                         let (percentile, _is_disc) = match &wg.this {
                             Expression::Function(f) => {
                                 let is_disc = f.name.eq_ignore_ascii_case("PERCENTILE_DISC");
-                                let pct = f.args.first().cloned().unwrap_or(Expression::Literal(
-                                    Literal::Number("0.5".to_string()),
-                                ));
+                                let pct = f.args.first().cloned().unwrap_or(Expression::Literal(Box::new(Literal::Number("0.5".to_string()),)));
                                 (pct, is_disc)
                             }
                             Expression::AggregateFunction(af) => {
                                 let is_disc = af.name.eq_ignore_ascii_case("PERCENTILE_DISC");
-                                let pct = af.args.first().cloned().unwrap_or(Expression::Literal(
-                                    Literal::Number("0.5".to_string()),
-                                ));
+                                let pct = af.args.first().cloned().unwrap_or(Expression::Literal(Box::new(Literal::Number("0.5".to_string()),)));
                                 (pct, is_disc)
                             }
                             Expression::PercentileCont(pc) => (pc.percentile.clone(), false),
@@ -24119,7 +24279,7 @@ impl Dialect {
                             .order_by
                             .first()
                             .map(|o| o.this.clone())
-                            .unwrap_or(Expression::Literal(Literal::Number("1".to_string())));
+                            .unwrap_or(Expression::Literal(Box::new(Literal::Number("1".to_string()))));
 
                         let func_name = match target {
                             DialectType::Presto | DialectType::Trino | DialectType::Athena => {
@@ -24561,7 +24721,8 @@ impl Dialect {
                         if f.args.len() == 2 {
                             let json_expr = f.args[0].clone();
                             let key = match &f.args[1] {
-                                Expression::Literal(crate::expressions::Literal::String(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => {
+                                    let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                     format!("$.{}", s)
                                 }
                                 _ => return Ok(Expression::Function(f)),
@@ -24779,9 +24940,9 @@ impl Dialect {
                                     "REGEXP_LIKE".to_string(),
                                     vec![
                                         arg,
-                                        Expression::Literal(Literal::String(
+                                        Expression::Literal(Box::new(Literal::String(
                                             "^[[:ascii:]]*$".to_string(),
-                                        )),
+                                        ))),
                                     ],
                                 ))))
                             }
@@ -24794,9 +24955,9 @@ impl Dialect {
                                     this: Expression::RegexpLike(Box::new(
                                         crate::expressions::RegexpFunc {
                                             this: arg,
-                                            pattern: Expression::Literal(Literal::String(
+                                            pattern: Expression::Literal(Box::new(Literal::String(
                                                 "^[[:ascii:]]*$".to_string(),
-                                            )),
+                                            ))),
                                             flags: Option::None,
                                         },
                                     )),
@@ -24805,9 +24966,9 @@ impl Dialect {
                             }
                             DialectType::SQLite => {
                                 // (NOT x GLOB CAST(x'2a5b5e012d7f5d2a' AS TEXT))
-                                let hex_lit = Expression::Literal(Literal::HexString(
+                                let hex_lit = Expression::Literal(Box::new(Literal::HexString(
                                     "2a5b5e012d7f5d2a".to_string(),
-                                ));
+                                )));
                                 let cast_expr = Expression::Cast(Box::new(Cast {
                                     this: hex_lit,
                                     to: DataType::Text,
@@ -24835,9 +24996,9 @@ impl Dialect {
                             }
                             DialectType::TSQL | DialectType::Fabric => {
                                 // (PATINDEX(CONVERT(VARCHAR(MAX), 0x255b5e002d7f5d25) COLLATE Latin1_General_BIN, x) = 0)
-                                let hex_lit = Expression::Literal(Literal::HexNumber(
+                                let hex_lit = Expression::Literal(Box::new(Literal::HexNumber(
                                     "255b5e002d7f5d25".to_string(),
-                                ));
+                                )));
                                 let convert_expr = Expression::Convert(Box::new(
                                     crate::expressions::ConvertFunc {
                                         this: hex_lit,
@@ -24857,7 +25018,7 @@ impl Dialect {
                                     "PATINDEX".to_string(),
                                     vec![collated, arg],
                                 )));
-                                let zero = Expression::Literal(Literal::Number("0".to_string()));
+                                let zero = Expression::Literal(Box::new(Literal::Number("0".to_string())));
                                 let eq_zero = Expression::Eq(Box::new(BinaryOp {
                                     left: patindex,
                                     right: zero,
@@ -24874,17 +25035,17 @@ impl Dialect {
                             DialectType::Oracle => {
                                 // NVL(REGEXP_LIKE(x, '^[' || CHR(1) || '-' || CHR(127) || ']*$'), TRUE)
                                 // Build the pattern: '^[' || CHR(1) || '-' || CHR(127) || ']*$'
-                                let s1 = Expression::Literal(Literal::String("^[".to_string()));
+                                let s1 = Expression::Literal(Box::new(Literal::String("^[".to_string())));
                                 let chr1 = Expression::Function(Box::new(Function::new(
                                     "CHR".to_string(),
-                                    vec![Expression::Literal(Literal::Number("1".to_string()))],
+                                    vec![Expression::Literal(Box::new(Literal::Number("1".to_string())))],
                                 )));
-                                let dash = Expression::Literal(Literal::String("-".to_string()));
+                                let dash = Expression::Literal(Box::new(Literal::String("-".to_string())));
                                 let chr127 = Expression::Function(Box::new(Function::new(
                                     "CHR".to_string(),
-                                    vec![Expression::Literal(Literal::Number("127".to_string()))],
+                                    vec![Expression::Literal(Box::new(Literal::Number("127".to_string())))],
                                 )));
-                                let s2 = Expression::Literal(Literal::String("]*$".to_string()));
+                                let s2 = Expression::Literal(Box::new(Literal::String("]*$".to_string())));
                                 // Build: '^[' || CHR(1) || '-' || CHR(127) || ']*$'
                                 let concat1 =
                                     Expression::DPipe(Box::new(crate::expressions::DPipe {
@@ -24987,8 +25148,8 @@ impl Dialect {
                                 inner_func.to_string(),
                                 inner_args,
                             )));
-                            let zero = Expression::Literal(Literal::Number("0".to_string()));
-                            let one = Expression::Literal(Literal::Number("1".to_string()));
+                            let zero = Expression::Literal(Box::new(Literal::Number("0".to_string())));
+                            let one = Expression::Literal(Box::new(Literal::Number("1".to_string())));
                             let eq_zero = Expression::Eq(Box::new(BinaryOp {
                                 left: inner_call.clone(),
                                 right: zero.clone(),
@@ -25130,8 +25291,8 @@ impl Dialect {
                                         },
                                     ));
                                     let zero =
-                                        Expression::Literal(Literal::Number("0".to_string()));
-                                    let one = Expression::Literal(Literal::Number("1".to_string()));
+                                        Expression::Literal(Box::new(Literal::Number("0".to_string())));
+                                    let one = Expression::Literal(Box::new(Literal::Number("1".to_string())));
                                     let eq_zero = Expression::Eq(Box::new(BinaryOp {
                                         left: pos_in.clone(),
                                         right: zero.clone(),
@@ -25233,7 +25394,7 @@ impl Dialect {
                             DialectType::Spark | DialectType::Databricks => {
                                 // AGGREGATE(arr, 0, (acc, x) -> acc + x, acc -> acc)
                                 let arr = args.into_iter().next().unwrap();
-                                let zero = Expression::Literal(Literal::Number("0".to_string()));
+                                let zero = Expression::Literal(Box::new(Literal::Number("0".to_string())));
                                 let acc_id = Identifier::new("acc");
                                 let x_id = Identifier::new("x");
                                 let acc = Expression::Identifier(acc_id.clone());
@@ -25277,7 +25438,7 @@ impl Dialect {
                                 if args.len() == 1 {
                                     let arr = args.into_iter().next().unwrap();
                                     let zero =
-                                        Expression::Literal(Literal::Number("0".to_string()));
+                                        Expression::Literal(Box::new(Literal::Number("0".to_string())));
                                     let acc_id = Identifier::new("acc");
                                     let x_id = Identifier::new("x");
                                     let acc = Expression::Identifier(acc_id.clone());
@@ -25699,7 +25860,7 @@ impl Dialect {
                                     expressions: vec![Expression::Table(Box::new(source_table))],
                                 }),
                                 limit: Some(crate::expressions::Limit {
-                                    this: Expression::Literal(Literal::Number("0".to_string())),
+                                    this: Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                                     percent: false,
                                     comments: Vec::new(),
                                 }),
@@ -25749,7 +25910,7 @@ impl Dialect {
                                     expressions: Vec::new(),
                                 }),
                                 top: Some(crate::expressions::Top {
-                                    this: Expression::Literal(Literal::Number("0".to_string())),
+                                    this: Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                                     percent: false,
                                     with_ties: false,
                                     parenthesized: false,
@@ -25796,7 +25957,7 @@ impl Dialect {
                         let this = args.remove(0);
                         let fmt = if !args.is_empty() {
                             match &args[0] {
-                                Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
                                 _ => None,
                             }
                         } else {
@@ -25941,7 +26102,7 @@ impl Dialect {
                         let this = args.remove(0);
                         let zone = if !args.is_empty() {
                             match &args[0] {
-                                Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
                                 _ => None,
                             }
                         } else {
@@ -25966,7 +26127,8 @@ impl Dialect {
                                     // Use DataType::Custom to avoid MySQL's transform_cast converting
                                     // CAST(x AS TIMESTAMP) -> TIMESTAMP(x)
                                     let precision =
-                                        if let Expression::Literal(Literal::String(ref s)) = this {
+                                        if let Expression::Literal(ref lit) = this {
+                                            if let Literal::String(ref s) = lit.as_ref() {
                                             if let Some(dot_pos) = s.rfind('.') {
                                                 let frac = &s[dot_pos + 1..];
                                                 let digit_count = frac
@@ -25981,6 +26143,7 @@ impl Dialect {
                                             } else {
                                                 None
                                             }
+                                        } else { None }
                                         } else {
                                             None
                                         };
@@ -26004,20 +26167,22 @@ impl Dialect {
                                     // ClickHouse with zone: CAST(x AS DateTime64(6, 'zone'))
                                     // We need to strip the timezone offset from the literal if present
                                     let clean_this =
-                                        if let Expression::Literal(Literal::String(ref s)) = this {
+                                        if let Expression::Literal(ref lit) = this {
+                                            if let Literal::String(ref s) = lit.as_ref() {
                                             // Strip timezone offset like "-08:00" or "+00:00"
                                             let re_offset = s.rfind(|c: char| c == '+' || c == '-');
                                             if let Some(offset_pos) = re_offset {
                                                 if offset_pos > 10 {
                                                     // After the date part
                                                     let trimmed = s[..offset_pos].to_string();
-                                                    Expression::Literal(Literal::String(trimmed))
+                                                    Expression::Literal(Box::new(Literal::String(trimmed)))
                                                 } else {
                                                     this.clone()
                                                 }
                                             } else {
                                                 this.clone()
                                             }
+                                        } else { this.clone() }
                                         } else {
                                             this.clone()
                                         };
@@ -26108,9 +26273,9 @@ impl Dialect {
                                     Ok(Expression::AtTimeZone(Box::new(
                                         crate::expressions::AtTimeZone {
                                             this: cast_expr,
-                                            zone: Expression::Literal(Literal::String(
+                                            zone: Expression::Literal(Box::new(Literal::String(
                                                 "UTC".to_string(),
-                                            )),
+                                            ))),
                                         },
                                     )))
                                 } else {
@@ -26228,7 +26393,8 @@ impl Dialect {
                                     // Presto/Trino with zone: CAST(x AS TIMESTAMP WITH TIME ZONE)
                                     // Check for precision from sub-second digits
                                     let precision =
-                                        if let Expression::Literal(Literal::String(ref s)) = this {
+                                        if let Expression::Literal(ref lit) = this {
+                                            if let Literal::String(ref s) = lit.as_ref() {
                                             if let Some(dot_pos) = s.rfind('.') {
                                                 let frac = &s[dot_pos + 1..];
                                                 let digit_count = frac
@@ -26245,6 +26411,7 @@ impl Dialect {
                                             } else {
                                                 None
                                             }
+                                        } else { None }
                                         } else {
                                             None
                                         };
@@ -26271,7 +26438,8 @@ impl Dialect {
                                 } else {
                                     // Check for sub-second precision for Trino
                                     let precision =
-                                        if let Expression::Literal(Literal::String(ref s)) = this {
+                                        if let Expression::Literal(ref lit) = this {
+                                            if let Literal::String(ref s) = lit.as_ref() {
                                             if let Some(dot_pos) = s.rfind('.') {
                                                 let frac = &s[dot_pos + 1..];
                                                 let digit_count = frac
@@ -26288,6 +26456,7 @@ impl Dialect {
                                             } else {
                                                 None
                                             }
+                                        } else { None }
                                         } else {
                                             None
                                         };
@@ -26660,8 +26829,10 @@ impl Dialect {
 
                         // Check if format is a string literal
                         let fmt_str = fmt_expr.as_ref().and_then(|f| {
-                            if let Expression::Literal(Literal::String(s)) = f {
+                            if let Expression::Literal(lit) = f {
+                                if let Literal::String(s) = lit.as_ref() {
                                 Some(s.clone())
+                            } else { None }
                             } else {
                                 None
                             }
@@ -26831,7 +27002,7 @@ impl Dialect {
                         let mut args = f.args;
                         let this = args.remove(0);
                         let fmt = match args.remove(0) {
-                            Expression::Literal(Literal::String(s)) => s,
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                             other => {
                                 return Ok(Expression::Function(Box::new(Function::new(
                                     "TIME_TO_STR".to_string(),
@@ -26858,7 +27029,7 @@ impl Dialect {
                         let mut args = f.args;
                         let this = args.remove(0);
                         let fmt = match args.remove(0) {
-                            Expression::Literal(Literal::String(s)) => s,
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                             other => {
                                 return Ok(Expression::Function(Box::new(Function::new(
                                     "STR_TO_UNIX".to_string(),
@@ -26975,7 +27146,7 @@ impl Dialect {
                             let expr_arg = f.args[1].clone();
                             // Extract unit string from the first arg
                             let unit_str = match &unit_arg {
-                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_ascii_uppercase() },
                                 _ => return Ok(Expression::Function(f)),
                             };
                             match target {
@@ -27043,7 +27214,7 @@ impl Dialect {
                             };
                             // Extract unit string
                             let unit_str = match &unit_arg {
-                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_ascii_uppercase() },
                                 Expression::Column(c) => c.name.name.to_ascii_uppercase(),
                                 _ => {
                                     return Ok(Expression::Function(f));
@@ -27088,7 +27259,7 @@ impl Dialect {
                                     // DuckDB with timezone: DATE_TRUNC('UNIT', x AT TIME ZONE 'tz') AT TIME ZONE 'tz'
                                     if let Some(tz) = tz_arg {
                                         let tz_str = match &tz {
-                                            Expression::Literal(Literal::String(s)) => s.clone(),
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                                             _ => "UTC".to_string(),
                                         };
                                         // x AT TIME ZONE 'tz'
@@ -27155,7 +27326,7 @@ impl Dialect {
                             let this = args.remove(0);
                             let fmt_expr = args.remove(0);
                             let fmt_str = match &fmt_expr {
-                                Expression::Literal(Literal::String(s)) => Some(s.clone()),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
                                 _ => None,
                             };
                             let default_date = "%Y-%m-%d";
@@ -27312,7 +27483,7 @@ impl Dialect {
                             let n = args.remove(0);
                             let unit_expr = args.remove(0);
                             let unit_str = match &unit_expr {
-                                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_ascii_uppercase() },
                                 _ => "DAY".to_string(),
                             };
 
@@ -27577,7 +27748,7 @@ impl Dialect {
                             | DialectType::RisingWave => {
                                 // CAST('1970-01-01' AS DATE) + INTERVAL 'n DAY'
                                 let n_str = match &n {
-                                    Expression::Literal(Literal::Number(s)) => s.clone(),
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                                     _ => Self::expr_to_string_static(&n),
                                 };
                                 let interval =
@@ -27949,7 +28120,8 @@ impl Dialect {
 
     /// Normalize an interval string like '1day' or '  2   days  ' to proper INTERVAL expression
     fn normalize_interval_string(expr: Expression, target: DialectType) -> Expression {
-        if let Expression::Literal(crate::expressions::Literal::String(ref s)) = expr {
+        if let Expression::Literal(ref lit) = expr {
+            if let crate::expressions::Literal::String(ref s) = lit.as_ref() {
             // Try to parse patterns like '1day', '1 day', '2 days', '  2   days  '
             let trimmed = s.trim();
 
@@ -28039,6 +28211,7 @@ impl Dialect {
                     }));
                 }
             }
+        }
         }
         // If it's already an INTERVAL expression, pass through
         expr
@@ -28243,7 +28416,7 @@ impl Dialect {
         let series_end = if index_offset == 0 {
             Expression::Sub(Box::new(BinaryOp::new(
                 greatest,
-                Expression::Literal(Literal::Number("1".to_string())),
+                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             )))
         } else {
             greatest
@@ -28255,7 +28428,7 @@ impl Dialect {
                 let gen_array = Expression::Function(Box::new(Function::new(
                     "GENERATE_ARRAY".to_string(),
                     vec![
-                        Expression::Literal(Literal::Number("0".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                         series_end,
                     ],
                 )));
@@ -28271,7 +28444,7 @@ impl Dialect {
                 let sequence = Expression::Function(Box::new(Function::new(
                     "SEQUENCE".to_string(),
                     vec![
-                        Expression::Literal(Literal::Number("1".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                         series_end,
                     ],
                 )));
@@ -28289,12 +28462,12 @@ impl Dialect {
                         this: series_end,
                         trailing_comments: Vec::new(),
                     })),
-                    Expression::Literal(Literal::Number("1".to_string())),
+                    Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                 )));
                 let gen_range = Expression::Function(Box::new(Function::new(
                     "ARRAY_GENERATE_RANGE".to_string(),
                     vec![
-                        Expression::Literal(Literal::Number("0".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("0".to_string()))),
                         range_end,
                     ],
                 )));
@@ -28436,7 +28609,7 @@ impl Dialect {
                 Expression::Paren(Box::new(crate::expressions::Paren {
                     this: Expression::Sub(Box::new(BinaryOp::new(
                         arr_size,
-                        Expression::Literal(Literal::Number("1".to_string())),
+                        Expression::Literal(Box::new(Literal::Number("1".to_string()))),
                     ))),
                     trailing_comments: Vec::new(),
                 }))
@@ -28828,11 +29001,11 @@ impl Dialect {
             let trimmed = v.trim();
             // Check if it's a quoted string (starts and ends with ')
             if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-                Expression::Literal(Literal::String(trimmed[1..trimmed.len() - 1].to_string()))
+                Expression::Literal(Box::new(Literal::String(trimmed[1..trimmed.len() - 1].to_string())))
             }
             // Check if it's a number
             else if trimmed.parse::<i64>().is_ok() || trimmed.parse::<f64>().is_ok() {
-                Expression::Literal(Literal::Number(trimmed.to_string()))
+                Expression::Literal(Box::new(Literal::Number(trimmed.to_string())))
             }
             // Check if it's ARRAY[...] or ARRAY(...)
             else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ARRAY") {
@@ -28847,7 +29020,7 @@ impl Dialect {
                     .split(',')
                     .map(|e| {
                         let elem = e.trim().trim_matches('\'');
-                        Expression::Literal(Literal::String(elem.to_string()))
+                        Expression::Literal(Box::new(Literal::String(elem.to_string())))
                     })
                     .collect();
                 Expression::Function(Box::new(crate::expressions::Function::new(
@@ -28940,7 +29113,7 @@ impl Dialect {
                             .into_iter()
                             .map(|(k, v)| {
                                 Expression::Eq(Box::new(BinaryOp::new(
-                                    Expression::Literal(Literal::String(k)),
+                                    Expression::Literal(Box::new(Literal::String(k))),
                                     value_to_expr(&v),
                                 )))
                             })
@@ -28970,7 +29143,7 @@ impl Dialect {
                             .into_iter()
                             .map(|(k, v)| {
                                 Expression::Eq(Box::new(BinaryOp::new(
-                                    Expression::Literal(Literal::String(k)),
+                                    Expression::Literal(Box::new(Literal::String(k))),
                                     value_to_expr(&v),
                                 )))
                             })
@@ -29019,7 +29192,7 @@ impl Dialect {
                                 if let Some(ref fmt_expr) = ffp.this {
                                     let fmt_str = match fmt_expr.as_ref() {
                                         Expression::Identifier(id) => id.name.clone(),
-                                        Expression::Literal(Literal::String(s)) => s.clone(),
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                                         _ => {
                                             new_properties.push(prop);
                                             continue;
@@ -29037,15 +29210,16 @@ impl Dialect {
                                 if let Expression::Eq(eq) = expr {
                                     // Extract key and value from the Eq expression
                                     let key = match &eq.left {
-                                        Expression::Literal(Literal::String(s)) => s.clone(),
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
                                         Expression::Identifier(id) => id.name.clone(),
                                         _ => continue,
                                     };
                                     let value = match &eq.right {
-                                        Expression::Literal(Literal::String(s)) => {
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                            let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                             format!("'{}'", s)
                                         }
-                                        Expression::Literal(Literal::Number(n)) => n.clone(),
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.clone() },
                                         Expression::Identifier(id) => id.name.clone(),
                                         _ => continue,
                                     };
@@ -29112,11 +29286,13 @@ impl Dialect {
                 for prop in &mut ct.properties {
                     if let Expression::FileFormatProperty(ref mut ffp) = prop {
                         if let Some(ref mut fmt_expr) = ffp.this {
-                            if let Expression::Literal(Literal::String(s)) = fmt_expr.as_ref() {
+                            if let Expression::Literal(lit) = fmt_expr.as_ref() {
+                                if let Literal::String(s) = lit.as_ref() {
                                 // Convert STORED AS 'PARQUET' to STORED AS PARQUET (unquote)
                                 let unquoted = s.clone();
                                 *fmt_expr =
                                     Box::new(Expression::Identifier(Identifier::new(unquoted)));
+                            }
                             }
                         }
                     }
@@ -29289,7 +29465,8 @@ impl Dialect {
                 Some(IntervalUnitSpec::Simple { unit, .. }) => *unit,
                 None => {
                     // Unit might be embedded in the string value (Snowflake format: '5 DAY')
-                    if let Expression::Literal(crate::expressions::Literal::String(s)) = &val {
+                    if let Expression::Literal(lit) = &val {
+                        if let crate::expressions::Literal::String(s) = lit.as_ref() {
                         let parts: Vec<&str> = s.trim().splitn(2, ' ').collect();
                         if parts.len() == 2 {
                             let unit_str = parts[1].trim().to_ascii_uppercase();
@@ -29308,13 +29485,14 @@ impl Dialect {
                             };
                             // Return just the numeric part as value and parsed unit
                             return (
-                                Expression::Literal(crate::expressions::Literal::String(
+                                Expression::Literal(Box::new(crate::expressions::Literal::String(
                                     parts[0].to_string(),
-                                )),
+                                ))),
                                 parsed_unit,
                             );
                         }
                         IntervalUnit::Day
+                    } else { IntervalUnit::Day }
                     } else {
                         IntervalUnit::Day
                     }
@@ -29348,7 +29526,7 @@ impl Dialect {
         fn get_unit_str(expr: &Expression) -> String {
             match expr {
                 Expression::Identifier(id) => id.name.to_ascii_uppercase(),
-                Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_ascii_uppercase() },
                 Expression::Column(col) => col.name.name.to_ascii_uppercase(),
                 // Handle WEEK(MONDAY), WEEK(SUNDAY) etc. which are parsed as Function("WEEK", [Column("MONDAY")])
                 Expression::Function(f) => {
@@ -29419,9 +29597,10 @@ impl Dialect {
                         // CAST to TIME
                         let cast_fn = |e: Expression| -> Expression {
                             match e {
-                                Expression::Literal(Literal::String(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                                    let Literal::String(s) = lit.as_ref() else { unreachable!() };
                                     Expression::Cast(Box::new(Cast {
-                                        this: Expression::Literal(Literal::String(s)),
+                                        this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                                         to: DataType::Custom {
                                             name: "TIME".to_string(),
                                         },
@@ -29452,7 +29631,7 @@ impl Dialect {
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_DIFF".to_string(),
                         vec![
-                            Expression::Literal(Literal::String(unit_str)),
+                            Expression::Literal(Box::new(Literal::String(unit_str))),
                             cast_d2,
                             cast_d1,
                         ],
@@ -29495,7 +29674,7 @@ impl Dialect {
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_DIFF".to_string(),
                         vec![
-                            Expression::Literal(Literal::String(unit_str)),
+                            Expression::Literal(Box::new(Literal::String(unit_str))),
                             cast_d1,
                             cast_d2,
                         ],
@@ -29541,7 +29720,7 @@ impl Dialect {
                                         "DATEDIFF".to_string(),
                                         vec![arg2, arg1],
                                     ))),
-                                    Expression::Literal(Literal::Number("7".to_string())),
+                                    Expression::Literal(Box::new(Literal::Number("7".to_string()))),
                                 ))),
                                 to: DataType::Int {
                                     length: None,
@@ -29571,7 +29750,7 @@ impl Dialect {
                     // Presto/Trino: DATE_DIFF('UNIT', start, end)
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_DIFF".to_string(),
-                        vec![Expression::Literal(Literal::String(unit_str)), arg1, arg2],
+                        vec![Expression::Literal(Box::new(Literal::String(unit_str))), arg1, arg2],
                     ))));
                 }
 
@@ -29643,7 +29822,7 @@ impl Dialect {
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_DIFF".to_string(),
                         vec![
-                            Expression::Literal(Literal::String(unit_str)),
+                            Expression::Literal(Box::new(Literal::String(unit_str))),
                             norm_d1,
                             norm_d2,
                         ],
@@ -29686,9 +29865,9 @@ impl Dialect {
                             let shifted = if let Some(off) = offset {
                                 let interval =
                                     Expression::Interval(Box::new(crate::expressions::Interval {
-                                        this: Some(Expression::Literal(Literal::String(
+                                        this: Some(Expression::Literal(Box::new(Literal::String(
                                             off.to_string(),
-                                        ))),
+                                        )))),
                                         unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                                             unit: crate::expressions::IntervalUnit::Day,
                                             use_plural: false,
@@ -29703,7 +29882,7 @@ impl Dialect {
                             Expression::Function(Box::new(Function::new(
                                 "DATE_TRUNC".to_string(),
                                 vec![
-                                    Expression::Literal(Literal::String("WEEK".to_string())),
+                                    Expression::Literal(Box::new(Literal::String("WEEK".to_string()))),
                                     shifted,
                                 ],
                             )))
@@ -29714,7 +29893,7 @@ impl Dialect {
                         return Ok(Expression::Function(Box::new(Function::new(
                             "DATE_DIFF".to_string(),
                             vec![
-                                Expression::Literal(Literal::String("WEEK".to_string())),
+                                Expression::Literal(Box::new(Literal::String("WEEK".to_string()))),
                                 trunc_d2,
                                 trunc_d1,
                             ],
@@ -29724,7 +29903,7 @@ impl Dialect {
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_DIFF".to_string(),
                         vec![
-                            Expression::Literal(Literal::String(unit_str)),
+                            Expression::Literal(Box::new(Literal::String(unit_str))),
                             norm_d2,
                             norm_d1,
                         ],
@@ -29816,8 +29995,9 @@ impl Dialect {
                                 _ => {
                                     // Unwrap typed literals: TIMESTAMP '...' -> '...' for TIMESTAMP() wrapper
                                     let unwrapped = match ts {
-                                        Expression::Literal(Literal::Timestamp(s)) => {
-                                            Expression::Literal(Literal::String(s))
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => {
+                                            let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() };
+                                            Expression::Literal(Box::new(Literal::String(s.clone())))
                                         }
                                         other => other,
                                     };
@@ -29942,8 +30122,9 @@ impl Dialect {
                                 }
                                 _ => {
                                     let unwrapped = match ts {
-                                        Expression::Literal(Literal::Timestamp(s)) => {
-                                            Expression::Literal(Literal::String(s))
+                                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => {
+                                            let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() };
+                                            Expression::Literal(Box::new(Literal::String(s.clone())))
                                         }
                                         other => other,
                                     };
@@ -30040,11 +30221,11 @@ impl Dialect {
                         let unit_str = Self::interval_unit_to_string(&unit);
                         let interval =
                             Expression::Interval(Box::new(crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String(format!(
+                                this: Some(Expression::Literal(Box::new(Literal::String(format!(
                                     "{} {}",
                                     Self::expr_to_string(&val),
                                     unit_str
-                                )))),
+                                ))))),
                                 unit: None,
                             }));
                         Ok(Expression::Sub(Box::new(
@@ -30132,18 +30313,20 @@ impl Dialect {
                 if matches!(target, DialectType::Spark) {
                     // Spark: convert month-based units to ADD_MONTHS, rest to DATE_ADD
                     fn multiply_expr_dateadd(expr: Expression, factor: i64) -> Expression {
-                        if let Expression::Literal(crate::expressions::Literal::Number(n)) = &expr {
+                        if let Expression::Literal(lit) = &expr {
+                            if let crate::expressions::Literal::Number(n) = lit.as_ref() {
                             if let Ok(val) = n.parse::<i64>() {
-                                return Expression::Literal(crate::expressions::Literal::Number(
+                                return Expression::Literal(Box::new(crate::expressions::Literal::Number(
                                     (val * factor).to_string(),
-                                ));
+                                )));
                             }
+                        }
                         }
                         Expression::Mul(Box::new(crate::expressions::BinaryOp::new(
                             expr,
-                            Expression::Literal(crate::expressions::Literal::Number(
+                            Expression::Literal(Box::new(crate::expressions::Literal::Number(
                                 factor.to_string(),
-                            )),
+                            ))),
                         )))
                     }
                     match unit_str.as_str() {
@@ -30225,11 +30408,11 @@ impl Dialect {
                 if matches!(target, DialectType::PostgreSQL) {
                     // PostgreSQL: date + INTERVAL 'val UNIT'
                     let interval = Expression::Interval(Box::new(crate::expressions::Interval {
-                        this: Some(Expression::Literal(Literal::String(format!(
+                        this: Some(Expression::Literal(Box::new(Literal::String(format!(
                             "{} {}",
                             Self::expr_to_string(&arg1),
                             unit_str
-                        )))),
+                        ))))),
                         unit: None,
                     }));
                     return Ok(Expression::Add(Box::new(
@@ -30244,7 +30427,7 @@ impl Dialect {
                     // Presto/Trino: DATE_ADD('UNIT', val, date)
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_ADD".to_string(),
-                        vec![Expression::Literal(Literal::String(unit_str)), arg1, arg2],
+                        vec![Expression::Literal(Box::new(Literal::String(unit_str))), arg1, arg2],
                     ))));
                 }
 
@@ -30279,7 +30462,7 @@ impl Dialect {
                     // Presto/Trino: DATE_ADD('UNIT', val, date)
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_ADD".to_string(),
-                        vec![Expression::Literal(Literal::String(unit_str)), arg1, arg2],
+                        vec![Expression::Literal(Box::new(Literal::String(unit_str))), arg1, arg2],
                     ))));
                 }
 
@@ -30360,11 +30543,11 @@ impl Dialect {
                         // PostgreSQL: date + INTERVAL 'val UNIT'
                         let interval =
                             Expression::Interval(Box::new(crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String(format!(
+                                this: Some(Expression::Literal(Box::new(Literal::String(format!(
                                     "{} {}",
                                     Self::expr_to_string(&val),
                                     unit_str
-                                )))),
+                                ))))),
                                 unit: None,
                             }));
                         Ok(Expression::Add(Box::new(
@@ -30377,9 +30560,9 @@ impl Dialect {
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATE_ADD".to_string(),
                             vec![
-                                Expression::Literal(Literal::String(unit_str.to_string())),
+                                Expression::Literal(Box::new(Literal::String(unit_str.to_string()))),
                                 Expression::Cast(Box::new(Cast {
-                                    this: Expression::Literal(Literal::String(val_str)),
+                                    this: Expression::Literal(Box::new(Literal::String(val_str))),
                                     to: DataType::BigInt { length: None },
                                     trailing_comments: vec![],
                                     double_colon_syntax: false,
@@ -30427,7 +30610,7 @@ impl Dialect {
                             "DATEADD".to_string(),
                             vec![
                                 Expression::Identifier(Identifier::new(unit_str)),
-                                Expression::Literal(Literal::String(val_str)),
+                                Expression::Literal(Box::new(Literal::String(val_str))),
                                 cast_date,
                             ],
                         ))))
@@ -30567,7 +30750,7 @@ impl Dialect {
                     return Ok(Expression::Function(Box::new(Function::new(
                         "DATE_ADD".to_string(),
                         vec![
-                            Expression::Literal(Literal::String("MONTH".to_string())),
+                            Expression::Literal(Box::new(Literal::String("MONTH".to_string()))),
                             val,
                             date,
                         ],
@@ -31005,7 +31188,7 @@ impl Dialect {
                     // DuckDB: GENERATE_SERIES(CAST(start AS TIMESTAMP), CAST(end AS TIMESTAMP), step)
                     // Only cast string literals - leave columns/expressions as-is
                     let maybe_cast_ts = |expr: Expression| -> Expression {
-                        if matches!(&expr, Expression::Literal(Literal::String(_))) {
+                        if matches!(&expr, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                             Expression::Cast(Box::new(Cast {
                                 this: expr,
                                 to: DataType::Timestamp {
@@ -31280,7 +31463,7 @@ impl Dialect {
                         // Standard: DATE_TRUNC('UNIT', expr)
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATE_TRUNC".to_string(),
-                            vec![Expression::Literal(Literal::String(unit_str)), expr],
+                            vec![Expression::Literal(Box::new(Literal::String(unit_str))), expr],
                         ))))
                     }
                     _ => {
@@ -31317,7 +31500,7 @@ impl Dialect {
                         // For DATETIME_TRUNC, cast string args to TIMESTAMP
                         let cast_ts = if name == "DATETIME_TRUNC" {
                             match ts {
-                                Expression::Literal(Literal::String(ref _s)) => {
+                                Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => {
                                     Expression::Cast(Box::new(Cast {
                                         this: ts,
                                         to: DataType::Timestamp {
@@ -31348,7 +31531,7 @@ impl Dialect {
                                 ));
                                 let date_trunc = Expression::Function(Box::new(Function::new(
                                     "DATE_TRUNC".to_string(),
-                                    vec![Expression::Literal(Literal::String(unit_str)), at_tz],
+                                    vec![Expression::Literal(Box::new(Literal::String(unit_str))), at_tz],
                                 )));
                                 Ok(Expression::AtTimeZone(Box::new(
                                     crate::expressions::AtTimeZone {
@@ -31360,14 +31543,14 @@ impl Dialect {
                                 // For MINUTE/HOUR: no AT TIME ZONE wrapper, just DATE_TRUNC('UNIT', ts)
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "DATE_TRUNC".to_string(),
-                                    vec![Expression::Literal(Literal::String(unit_str)), cast_ts],
+                                    vec![Expression::Literal(Box::new(Literal::String(unit_str))), cast_ts],
                                 ))))
                             }
                         } else {
                             // No timezone: DATE_TRUNC('UNIT', CAST(ts AS TIMESTAMPTZ))
                             Ok(Expression::Function(Box::new(Function::new(
                                 "DATE_TRUNC".to_string(),
-                                vec![Expression::Literal(Literal::String(unit_str)), cast_ts],
+                                vec![Expression::Literal(Box::new(Literal::String(unit_str))), cast_ts],
                             ))))
                         }
                     }
@@ -31375,12 +31558,12 @@ impl Dialect {
                         // Databricks/Spark: DATE_TRUNC('UNIT', ts)
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATE_TRUNC".to_string(),
-                            vec![Expression::Literal(Literal::String(unit_str)), ts],
+                            vec![Expression::Literal(Box::new(Literal::String(unit_str))), ts],
                         ))))
                     }
                     _ => {
                         // Default: keep as TIMESTAMP_TRUNC('UNIT', ts, [tz])
-                        let unit = Expression::Literal(Literal::String(unit_str));
+                        let unit = Expression::Literal(Box::new(Literal::String(unit_str)));
                         let mut date_trunc_args = vec![unit, ts];
                         if let Some(tz_arg) = tz {
                             date_trunc_args.push(tz_arg);
@@ -31499,14 +31682,15 @@ impl Dialect {
                 if matches!(target, DialectType::BigQuery) {
                     if args.len() == 2 {
                         let has_time_literal =
-                            matches!(&args[1], Expression::Literal(Literal::Time(_)));
+                            matches!(&args[1], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)));
                         if has_time_literal {
                             let first = args.remove(0);
                             let second = args.remove(0);
                             let time_as_cast = match second {
-                                Expression::Literal(Literal::Time(s)) => {
+                                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)) => {
+                                    let Literal::Time(s) = lit.as_ref() else { unreachable!() };
                                     Expression::Cast(Box::new(Cast {
-                                        this: Expression::Literal(Literal::String(s)),
+                                        this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                                         to: DataType::Time {
                                             precision: None,
                                             timezone: false,
@@ -31550,7 +31734,7 @@ impl Dialect {
                     let first = args.remove(0);
                     let second = args.remove(0);
                     // Check if second arg is a TIME literal
-                    let is_time_literal = matches!(&second, Expression::Literal(Literal::Time(_)));
+                    let is_time_literal = matches!(&second, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)));
                     if is_time_literal {
                         // DATETIME('date', TIME 'time') -> CAST(CAST(date AS DATE) + CAST('time' AS TIME) AS TIMESTAMP)
                         let cast_date = Expression::Cast(Box::new(Cast {
@@ -31564,8 +31748,9 @@ impl Dialect {
                         }));
                         // Convert TIME 'x' literal to string 'x' so CAST produces CAST('x' AS TIME) not CAST(TIME 'x' AS TIME)
                         let time_as_string = match second {
-                            Expression::Literal(Literal::Time(s)) => {
-                                Expression::Literal(Literal::String(s))
+                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)) => {
+                                let Literal::Time(s) = lit.as_ref() else { unreachable!() };
+                                Expression::Literal(Box::new(Literal::String(s.clone())))
                             }
                             other => other,
                         };
@@ -31739,7 +31924,7 @@ impl Dialect {
                         let convert_tz = Expression::Function(Box::new(Function::new(
                             "CONVERT_TIMEZONE".to_string(),
                             vec![
-                                Expression::Literal(Literal::String("UTC".to_string())),
+                                Expression::Literal(Box::new(Literal::String("UTC".to_string()))),
                                 tz,
                                 arg,
                             ],
@@ -31770,7 +31955,7 @@ impl Dialect {
                         let at_utc =
                             Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
                                 this: cast_ts,
-                                zone: Expression::Literal(Literal::String("UTC".to_string())),
+                                zone: Expression::Literal(Box::new(Literal::String("UTC".to_string()))),
                             }));
                         let at_tz =
                             Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
@@ -31819,9 +32004,9 @@ impl Dialect {
                     DialectType::Snowflake => {
                         // TIMESTAMPDIFF(SECONDS, CAST('1970-01-01 00:00:00+00' AS TIMESTAMPTZ), ts)
                         let epoch = Expression::Cast(Box::new(Cast {
-                            this: Expression::Literal(Literal::String(
+                            this: Expression::Literal(Box::new(Literal::String(
                                 "1970-01-01 00:00:00+00".to_string(),
-                            )),
+                            ))),
                             to: DataType::Timestamp {
                                 timezone: true,
                                 precision: None,
@@ -32131,7 +32316,7 @@ impl Dialect {
 
                 // Check if pattern contains capturing groups (parentheses)
                 let has_groups = match &pattern {
-                    Expression::Literal(Literal::String(s)) => s.contains('(') && s.contains(')'),
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.contains('(') && s.contains(')') },
                     _ => false,
                 };
 
@@ -32184,7 +32369,7 @@ impl Dialect {
                                     pattern,
                                     Expression::number(1),
                                     Expression::number(1),
-                                    Expression::Literal(Literal::String("c".to_string())),
+                                    Expression::Literal(Box::new(Literal::String("c".to_string()))),
                                     Expression::number(1),
                                 ],
                             ))))
@@ -32352,7 +32537,7 @@ impl Dialect {
                         let end = args.remove(0);
                         let default_interval =
                             Expression::Interval(Box::new(crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                this: Some(Expression::Literal(Box::new(Literal::String("1".to_string())))),
                                 unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                                     unit: crate::expressions::IntervalUnit::Day,
                                     use_plural: false,
@@ -32375,7 +32560,7 @@ impl Dialect {
                     let step = args.get(2).cloned().or_else(|| {
                         Some(Expression::Interval(Box::new(
                             crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                this: Some(Expression::Literal(Box::new(Literal::String("1".to_string())))),
                                 unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                                     unit: crate::expressions::IntervalUnit::Day,
                                     use_plural: false,
@@ -32386,7 +32571,7 @@ impl Dialect {
 
                     // Wrap start/end in CAST(... AS DATE) only for string literals
                     let maybe_cast_date = |expr: Expression| -> Expression {
-                        if matches!(&expr, Expression::Literal(Literal::String(_))) {
+                        if matches!(&expr, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))) {
                             Expression::Cast(Box::new(Cast {
                                 this: expr,
                                 to: DataType::Date,
@@ -32432,7 +32617,7 @@ impl Dialect {
                         let end = args.remove(0);
                         let default_interval =
                             Expression::Interval(Box::new(crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                this: Some(Expression::Literal(Box::new(Literal::String("1".to_string())))),
                                 unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                                     unit: crate::expressions::IntervalUnit::Day,
                                     use_plural: false,
@@ -32455,7 +32640,7 @@ impl Dialect {
                     let step = args.get(2).cloned().or_else(|| {
                         Some(Expression::Interval(Box::new(
                             crate::expressions::Interval {
-                                this: Some(Expression::Literal(Literal::String("1".to_string()))),
+                                this: Some(Expression::Literal(Box::new(Literal::String("1".to_string())))),
                                 unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                                     unit: crate::expressions::IntervalUnit::Day,
                                     use_plural: false,
@@ -32581,9 +32766,10 @@ impl Dialect {
                     let norm_format = Self::bq_format_normalize_bq(&format);
                     // Also strip DATETIME keyword from typed literals
                     let norm_dt = match dt_expr {
-                        Expression::Literal(Literal::Timestamp(s)) => {
+                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => {
+                            let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() };
                             Expression::Cast(Box::new(Cast {
-                                this: Expression::Literal(Literal::String(s)),
+                                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                                 to: DataType::Custom {
                                     name: "DATETIME".to_string(),
                                 },
@@ -32678,7 +32864,7 @@ impl Dialect {
                 match target {
                     DialectType::DuckDB => {
                         let epoch = Expression::Cast(Box::new(Cast {
-                            this: Expression::Literal(Literal::String("1970-01-01".to_string())),
+                            this: Expression::Literal(Box::new(Literal::String("1970-01-01".to_string()))),
                             to: DataType::Date,
                             trailing_comments: vec![],
                             double_colon_syntax: false,
@@ -32692,7 +32878,7 @@ impl Dialect {
                         Ok(Expression::Function(Box::new(Function::new(
                             "DATE_DIFF".to_string(),
                             vec![
-                                Expression::Literal(Literal::String("DAY".to_string())),
+                                Expression::Literal(Box::new(Literal::String("DAY".to_string()))),
                                 epoch,
                                 norm_date,
                             ],
@@ -32729,9 +32915,9 @@ impl Dialect {
                     DialectType::Snowflake => {
                         // TIMESTAMPDIFF(SECONDS, CAST('1970-01-01 00:00:00+00' AS TIMESTAMPTZ), ts)
                         let epoch = Expression::Cast(Box::new(Cast {
-                            this: Expression::Literal(Literal::String(
+                            this: Expression::Literal(Box::new(Literal::String(
                                 "1970-01-01 00:00:00+00".to_string(),
-                            )),
+                            ))),
                             to: DataType::Timestamp {
                                 timezone: true,
                                 precision: None,
@@ -32990,10 +33176,12 @@ impl Dialect {
                         let json_expr = args.remove(0);
                         let path_expr = args.remove(0);
                         // Convert JSON path from $.path to just path
-                        let sf_path = if let Expression::Literal(Literal::String(ref s)) = path_expr
+                        let sf_path = if let Expression::Literal(ref lit) = path_expr
                         {
-                            let trimmed = s.trim_start_matches('$').trim_start_matches('.');
-                            Expression::Literal(Literal::String(trimmed.to_string()))
+                            if let Literal::String(ref s) = lit.as_ref() {
+                                let trimmed = s.trim_start_matches('$').trim_start_matches('.');
+                                Expression::Literal(Box::new(Literal::String(trimmed.to_string())))
+                            } else { path_expr.clone() }
                         } else {
                             path_expr
                         };
@@ -33056,7 +33244,7 @@ impl Dialect {
                             let val = args.remove(0);
                             let regex = args.remove(0);
                             let position = args.remove(0);
-                            let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
+                            let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
                             if is_pos_1 {
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "REGEXP_EXTRACT".to_string(),
@@ -33071,7 +33259,7 @@ impl Dialect {
                                     "NULLIF".to_string(),
                                     vec![
                                         substring_expr,
-                                        Expression::Literal(Literal::String(String::new())),
+                                        Expression::Literal(Box::new(Literal::String(String::new()))),
                                     ],
                                 )));
                                 Ok(Expression::Function(Box::new(Function::new(
@@ -33084,8 +33272,8 @@ impl Dialect {
                             let regex = args.remove(0);
                             let position = args.remove(0);
                             let occurrence = args.remove(0);
-                            let is_pos_1 = matches!(&position, Expression::Literal(Literal::Number(n)) if n == "1");
-                            let is_occ_1 = matches!(&occurrence, Expression::Literal(Literal::Number(n)) if n == "1");
+                            let is_pos_1 = matches!(&position, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
+                            let is_occ_1 = matches!(&occurrence, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1"));
                             if is_pos_1 && is_occ_1 {
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "REGEXP_EXTRACT".to_string(),
@@ -33102,7 +33290,7 @@ impl Dialect {
                                         "NULLIF".to_string(),
                                         vec![
                                             substring_expr,
-                                            Expression::Literal(Literal::String(String::new())),
+                                            Expression::Literal(Box::new(Literal::String(String::new()))),
                                         ],
                                     )))
                                 };
@@ -33189,7 +33377,7 @@ impl Dialect {
                         let mut oc_args = Vec::new();
                         for (name, val) in &fields {
                             if let Some(n) = name {
-                                oc_args.push(Expression::Literal(Literal::String(n.clone())));
+                                oc_args.push(Expression::Literal(Box::new(Literal::String(n.clone()))));
                                 oc_args.push(val.clone());
                             } else {
                                 oc_args.push(val.clone());
@@ -33289,7 +33477,7 @@ impl Dialect {
                 let n = args.remove(0);
                 let mode = args.remove(0);
                 // Check if mode is 'ROUND_HALF_EVEN'
-                let is_half_even = matches!(&mode, Expression::Literal(Literal::String(s)) if s.eq_ignore_ascii_case("ROUND_HALF_EVEN"));
+                let is_half_even = matches!(&mode, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(s) if s.eq_ignore_ascii_case("ROUND_HALF_EVEN")));
                 if is_half_even && matches!(target, DialectType::DuckDB) {
                     Ok(Expression::Function(Box::new(Function::new(
                         "ROUND_EVEN".to_string(),
@@ -33320,12 +33508,16 @@ impl Dialect {
                         if let Expression::NamedArgument(na) = arg {
                             // Named arg like minute => 5
                             let unit = na.name.name.clone();
-                            if let Expression::Literal(Literal::Number(n)) = &na.value {
+                            if let Expression::Literal(lit) = &na.value {
+                                if let Literal::Number(n) = lit.as_ref() {
                                 parts.push((unit, n.clone()));
                             }
+                            }
                         } else if pos_idx < pos_units.len() {
-                            if let Expression::Literal(Literal::Number(n)) = arg {
+                            if let Expression::Literal(lit) = arg {
+                                if let Literal::Number(n) = lit.as_ref() {
                                 parts.push((pos_units[pos_idx].to_string(), n.clone()));
+                            }
                             }
                             pos_idx += 1;
                         }
@@ -33343,7 +33535,7 @@ impl Dialect {
                         .join(separator);
                     Ok(Expression::Interval(Box::new(
                         crate::expressions::Interval {
-                            this: Some(Expression::Literal(Literal::String(interval_str))),
+                            this: Some(Expression::Literal(Box::new(Literal::String(interval_str)))),
                             unit: None,
                         },
                     )))
@@ -33480,7 +33672,7 @@ impl Dialect {
                         Ok(Expression::Case(Box::new(crate::expressions::Case {
                             operand: Some(typeof_func),
                             whens: vec![(
-                                Expression::Literal(Literal::String("BLOB".to_string())),
+                                Expression::Literal(Box::new(Literal::String("BLOB".to_string()))),
                                 octet_length,
                             )],
                             else_: Some(length_text),
@@ -33558,8 +33750,9 @@ impl Dialect {
     fn infer_sql_type_for_presto(expr: &Expression) -> String {
         use crate::expressions::Literal;
         match expr {
-            Expression::Literal(Literal::String(_)) => "VARCHAR".to_string(),
-            Expression::Literal(Literal::Number(n)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => "VARCHAR".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                let Literal::Number(n) = lit.as_ref() else { unreachable!() };
                 if n.contains('.') {
                     "DOUBLE".to_string()
                 } else {
@@ -33567,9 +33760,9 @@ impl Dialect {
                 }
             }
             Expression::Boolean(_) => "BOOLEAN".to_string(),
-            Expression::Literal(Literal::Date(_)) => "DATE".to_string(),
-            Expression::Literal(Literal::Timestamp(_)) => "TIMESTAMP".to_string(),
-            Expression::Literal(Literal::Datetime(_)) => "TIMESTAMP".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => "DATE".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => "TIMESTAMP".to_string(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Datetime(_)) => "TIMESTAMP".to_string(),
             Expression::Array(_) | Expression::ArrayFunc(_) => "ARRAY(VARCHAR)".to_string(),
             Expression::Struct(_) | Expression::StructFunc(_) => "ROW".to_string(),
             Expression::Function(f) => {
@@ -33652,7 +33845,7 @@ impl Dialect {
         use crate::expressions::Literal;
         match expr {
             Expression::Identifier(id) => id.name.to_ascii_uppercase(),
-            Expression::Literal(Literal::String(s)) => s.to_ascii_uppercase(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_ascii_uppercase() },
             Expression::Column(col) => col.name.name.to_ascii_uppercase(),
             Expression::Function(f) => {
                 let base = f.name.to_ascii_uppercase();
@@ -33689,8 +33882,8 @@ impl Dialect {
     fn expr_to_string_static(expr: &Expression) -> String {
         use crate::expressions::Literal;
         match expr {
-            Expression::Literal(Literal::Number(s)) => s.clone(),
-            Expression::Literal(Literal::String(s)) => s.clone(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(s) = lit.as_ref() else { unreachable!() }; s.clone() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
             Expression::Identifier(id) => id.name.clone(),
             Expression::Neg(f) => format!("-{}", Self::expr_to_string_static(&f.this)),
             _ => "1".to_string(),
@@ -33701,8 +33894,8 @@ impl Dialect {
     fn expr_to_string(expr: &Expression) -> String {
         use crate::expressions::Literal;
         match expr {
-            Expression::Literal(Literal::Number(s)) => s.clone(),
-            Expression::Literal(Literal::String(s)) => s.clone(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(s) = lit.as_ref() else { unreachable!() }; s.clone() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
             Expression::Neg(f) => format!("-{}", Self::expr_to_string(&f.this)),
             Expression::Identifier(id) => id.name.clone(),
             _ => "1".to_string(),
@@ -33713,13 +33906,16 @@ impl Dialect {
     fn quote_interval_val(expr: &Expression) -> Expression {
         use crate::expressions::Literal;
         match expr {
-            Expression::Literal(Literal::Number(n)) => {
-                Expression::Literal(Literal::String(n.clone()))
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                Expression::Literal(Box::new(Literal::String(n.clone())))
             }
-            Expression::Literal(Literal::String(_)) => expr.clone(),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => expr.clone(),
             Expression::Neg(inner) => {
-                if let Expression::Literal(Literal::Number(n)) = &inner.this {
-                    Expression::Literal(Literal::String(format!("-{}", n)))
+                if let Expression::Literal(lit) = &inner.this {
+                    if let Literal::Number(n) = lit.as_ref() {
+                    Expression::Literal(Box::new(Literal::String(format!("-{}", n))))
+                } else { inner.this.clone() }
                 } else {
                     expr.clone()
                 }
@@ -33756,10 +33952,11 @@ impl Dialect {
     fn maybe_cast_ts_to_tz(expr: Expression, func_name: &str) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Timestamp(s)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => {
+                let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() };
                 let tz = func_name.starts_with("TIMESTAMP");
                 Expression::Cast(Box::new(Cast {
-                    this: Expression::Literal(Literal::String(s)),
+                    this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                     to: if tz {
                         DataType::Timestamp {
                             timezone: true,
@@ -33786,8 +33983,8 @@ impl Dialect {
     fn maybe_cast_ts(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Timestamp(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => { let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: false,
                     precision: None,
@@ -33797,7 +33994,7 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
+            })) },
             other => other,
         }
     }
@@ -33806,15 +34003,15 @@ impl Dialect {
     fn date_literal_to_cast(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Date(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => { let Literal::Date(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Date,
                 trailing_comments: vec![],
                 double_colon_syntax: false,
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
+            })) },
             other => other,
         }
     }
@@ -33824,16 +34021,16 @@ impl Dialect {
     fn ensure_cast_date(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Date(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => { let Literal::Date(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Date,
                 trailing_comments: vec![],
                 double_colon_syntax: false,
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
-            Expression::Literal(Literal::String(ref _s)) => {
+            })) },
+            Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => {
                 // String literal that should be a date -> CAST('s' AS DATE)
                 Expression::Cast(Box::new(Cast {
                     this: expr,
@@ -33878,7 +34075,7 @@ impl Dialect {
 
     fn ensure_to_date_preserved(expr: Expression) -> Expression {
         use crate::expressions::{Function, Literal};
-        if matches!(expr, Expression::Literal(Literal::String(_))) {
+        if matches!(expr, Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(_))) {
             Expression::Function(Box::new(Function::new(
                 Self::PRESERVED_TO_DATE.to_string(),
                 vec![expr],
@@ -34113,8 +34310,8 @@ impl Dialect {
     fn ensure_cast_timestamp(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Timestamp(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => { let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: false,
                     precision: None,
@@ -34124,8 +34321,8 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
-            Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
+            })) },
+            Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
                 to: DataType::Timestamp {
                     timezone: false,
@@ -34137,8 +34334,8 @@ impl Dialect {
                 default: None,
                 inferred_type: None,
             })),
-            Expression::Literal(Literal::Datetime(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Datetime(_)) => { let Literal::Datetime(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: false,
                     precision: None,
@@ -34148,7 +34345,7 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
+            })) },
             other => other,
         }
     }
@@ -34181,8 +34378,8 @@ impl Dialect {
     fn ensure_cast_timestamptz(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Timestamp(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => { let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: true,
                     precision: None,
@@ -34192,8 +34389,8 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
-            Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
+            })) },
+            Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
                 to: DataType::Timestamp {
                     timezone: true,
@@ -34205,8 +34402,8 @@ impl Dialect {
                 default: None,
                 inferred_type: None,
             })),
-            Expression::Literal(Literal::Datetime(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Datetime(_)) => { let Literal::Datetime(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: true,
                     precision: None,
@@ -34216,7 +34413,7 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
+            })) },
             other => other,
         }
     }
@@ -34225,7 +34422,7 @@ impl Dialect {
     fn ensure_cast_datetime(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
+            Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
                 to: DataType::Custom {
                     name: "DATETIME".to_string(),
@@ -34267,7 +34464,7 @@ impl Dialect {
     fn ensure_cast_datetime2(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
+            Expression::Literal(ref lit) if matches!(lit.as_ref(), Literal::String(ref _s)) => Expression::Cast(Box::new(Cast {
                 this: expr,
                 to: DataType::Custom {
                     name: "DATETIME2".to_string(),
@@ -34286,8 +34483,8 @@ impl Dialect {
     fn ts_literal_to_cast_tz(expr: Expression) -> Expression {
         use crate::expressions::{Cast, DataType, Literal};
         match expr {
-            Expression::Literal(Literal::Timestamp(s)) => Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Literal::String(s)),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Timestamp(_)) => { let Literal::Timestamp(s) = lit.as_ref() else { unreachable!() }; Expression::Cast(Box::new(Cast {
+                this: Expression::Literal(Box::new(Literal::String(s.clone()))),
                 to: DataType::Timestamp {
                     timezone: true,
                     precision: None,
@@ -34297,7 +34494,7 @@ impl Dialect {
                 format: None,
                 default: None,
                 inferred_type: None,
-            })),
+            })) },
             other => other,
         }
     }
@@ -34305,7 +34502,8 @@ impl Dialect {
     /// Convert BigQuery format string to Snowflake format string
     fn bq_format_to_snowflake(format_expr: &Expression) -> Expression {
         use crate::expressions::Literal;
-        if let Expression::Literal(Literal::String(s)) = format_expr {
+        if let Expression::Literal(lit) = format_expr {
+            if let Literal::String(s) = lit.as_ref() {
             let sf = s
                 .replace("%Y", "yyyy")
                 .replace("%m", "mm")
@@ -34316,7 +34514,8 @@ impl Dialect {
                 .replace("%b", "mon")
                 .replace("%B", "Month")
                 .replace("%e", "FMDD");
-            Expression::Literal(Literal::String(sf))
+            Expression::Literal(Box::new(Literal::String(sf)))
+        } else { format_expr.clone() }
         } else {
             format_expr.clone()
         }
@@ -34325,7 +34524,8 @@ impl Dialect {
     /// Convert BigQuery format string to DuckDB format string
     fn bq_format_to_duckdb(format_expr: &Expression) -> Expression {
         use crate::expressions::Literal;
-        if let Expression::Literal(Literal::String(s)) = format_expr {
+        if let Expression::Literal(lit) = format_expr {
+            if let Literal::String(s) = lit.as_ref() {
             let duck = s
                 .replace("%T", "%H:%M:%S")
                 .replace("%F", "%Y-%m-%d")
@@ -34334,7 +34534,8 @@ impl Dialect {
                 .replace("%c", "%a %b %-d %H:%M:%S %Y")
                 .replace("%e", "%-d")
                 .replace("%E6S", "%S.%f");
-            Expression::Literal(Literal::String(duck))
+            Expression::Literal(Box::new(Literal::String(duck)))
+        } else { format_expr.clone() }
         } else {
             format_expr.clone()
         }
@@ -34343,7 +34544,8 @@ impl Dialect {
     /// Convert BigQuery CAST FORMAT elements (like YYYY, MM, DD) to strftime (like %Y, %m, %d)
     fn bq_cast_format_to_strftime(format_expr: &Expression) -> Expression {
         use crate::expressions::Literal;
-        if let Expression::Literal(Literal::String(s)) = format_expr {
+        if let Expression::Literal(lit) = format_expr {
+            if let Literal::String(s) = lit.as_ref() {
             // Replace format elements from longest to shortest to avoid partial matches
             let result = s
                 .replace("YYYYMMDD", "%Y%m%d")
@@ -34360,7 +34562,8 @@ impl Dialect {
                 .replace("SSTZH", "%S%z")
                 .replace("SS", "%S")
                 .replace("TZH", "%z");
-            Expression::Literal(Literal::String(result))
+            Expression::Literal(Box::new(Literal::String(result)))
+        } else { format_expr.clone() }
         } else {
             format_expr.clone()
         }
@@ -34369,9 +34572,11 @@ impl Dialect {
     /// Normalize BigQuery format strings for BQ->BQ output
     fn bq_format_normalize_bq(format_expr: &Expression) -> Expression {
         use crate::expressions::Literal;
-        if let Expression::Literal(Literal::String(s)) = format_expr {
+        if let Expression::Literal(lit) = format_expr {
+            if let Literal::String(s) = lit.as_ref() {
             let norm = s.replace("%H:%M:%S", "%T").replace("%x", "%D");
-            Expression::Literal(Literal::String(norm))
+            Expression::Literal(Box::new(Literal::String(norm)))
+        } else { format_expr.clone() }
         } else {
             format_expr.clone()
         }

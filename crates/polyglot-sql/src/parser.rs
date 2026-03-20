@@ -5847,7 +5847,7 @@ impl Parser {
                             // Parse the argument: either a string literal, a variable ($foo), or identifier
             let arg = if self.check(TokenType::String) {
                 let s = self.advance().text.clone();
-                Expression::Literal(Literal::String(s))
+                Expression::Literal(Box::new(Literal::String(s)))
             } else if self.check(TokenType::Parameter) {
                 // ?-style parameter
                 let var = self.advance().text.clone();
@@ -6120,7 +6120,7 @@ impl Parser {
     /// - `a JOIN b JOIN c ON cond1 ON cond2` means `a JOIN (b JOIN c ON cond1) ON cond2`
     /// - The rightmost ON applies to the rightmost unconditioned JOIN
     fn parse_joins(&mut self) -> Result<Vec<Join>> {
-        let mut joins = Vec::new();
+        let mut joins = Vec::with_capacity(2);
         let mut nesting_group: usize = 0;
 
         // Loop: Phase 1 (parse JOINs) + Phase 2 (assign deferred conditions)
@@ -12120,7 +12120,7 @@ impl Parser {
         if let Some(comment_text) = pre_with_comment {
             table_properties.push(Expression::SchemaCommentProperty(Box::new(
                 SchemaCommentProperty {
-                    this: Box::new(Expression::Literal(Literal::String(comment_text))),
+                    this: Box::new(Expression::Literal(Box::new(Literal::String(comment_text)))),
                 },
             )));
         }
@@ -14781,7 +14781,7 @@ impl Parser {
                     } else {
                         // STORED AS format_name (e.g., STORED AS TEXTFILE, STORED AS ORC)
                         let format = if self.check(TokenType::String) {
-                            Expression::Literal(Literal::String(self.advance().text.clone()))
+                            Expression::Literal(Box::new(Literal::String(self.advance().text.clone())))
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
                             Expression::Identifier(Identifier::new(self.advance().text.clone()))
@@ -14807,7 +14807,7 @@ impl Parser {
             if self.match_token(TokenType::Using) {
                 // Parse the format name (e.g., DELTA, PARQUET, ICEBERG, etc.)
                 let format = if self.check(TokenType::String) {
-                    Expression::Literal(Literal::String(self.advance().text.clone()))
+                    Expression::Literal(Box::new(Literal::String(self.advance().text.clone())))
                 } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                     Expression::Identifier(Identifier::new(self.advance().text.clone()))
                 } else {
@@ -16647,7 +16647,7 @@ impl Parser {
                     col.name.to_string()
                 }
             }
-            Expression::Literal(lit) => match lit {
+            Expression::Literal(lit) => match lit.as_ref() {
                 Literal::String(s) => format!("'{}'", s),
                 Literal::Number(n) => n.clone(),
                 _ => "?".to_string(),
@@ -18126,7 +18126,7 @@ impl Parser {
                     let id_val = self.parse_expression()?;
                     // Store as Raw to preserve "ID <value>" format
                     let id_str = match &id_val {
-                        Expression::Literal(Literal::String(s)) => format!("ID '{}'", s),
+                        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; format!("ID '{}'", s) },
                         _ => format!("ID {}", "?"),
                     };
                     Expression::Raw(Raw { sql: id_str })
@@ -18760,10 +18760,10 @@ impl Parser {
                 // Parse key = value pairs (key can be string literal or identifier)
                 let key = if self.check(TokenType::NationalString) {
                     let token = self.advance();
-                    Expression::Literal(Literal::NationalString(token.text))
+                    Expression::Literal(Box::new(Literal::NationalString(token.text)))
                 } else if self.check(TokenType::String) {
                     let token = self.advance();
-                    Expression::Literal(Literal::String(token.text))
+                    Expression::Literal(Box::new(Literal::String(token.text)))
                 } else {
                     Expression::Identifier(Identifier::new(self.expect_identifier()?))
                 };
@@ -19173,11 +19173,11 @@ impl Parser {
         let mark = if self.match_token(TokenType::With) && self.match_identifier("MARK") {
             if self.check(TokenType::String) {
                 let desc = self.advance().text;
-                Some(Box::new(Expression::Literal(Literal::String(desc))))
+                Some(Box::new(Expression::Literal(Box::new(Literal::String(desc)))))
             } else {
-                Some(Box::new(Expression::Literal(Literal::String(
+                Some(Box::new(Expression::Literal(Box::new(Literal::String(
                     "".to_string(),
-                ))))
+                )))))
             }
         } else if has_transaction_keyword {
             // Store "TRANSACTION" marker to preserve round-trip
@@ -19611,7 +19611,7 @@ impl Parser {
             let joined_check = this_parts.join(" ");
             if joined_check == "PLAN" && current.token_type == TokenType::Number {
                 let id = self.advance().text;
-                target = Some(Expression::Literal(Literal::Number(id)));
+                target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                 break;
             }
             // Accept identifiers and keywords as part of the object type
@@ -19666,7 +19666,7 @@ impl Parser {
                         // Parse the filename
                         if !self.is_at_end() && self.check(TokenType::String) {
                             let filename = self.advance().text;
-                            target = Some(Expression::Literal(Literal::String(filename)));
+                            target = Some(Expression::Literal(Box::new(Literal::String(filename))));
                         }
                     }
                     break;
@@ -19681,14 +19681,14 @@ impl Parser {
                         // Now check for number
                         if !self.is_at_end() && self.check(TokenType::Number) {
                             let id = self.advance().text;
-                            target = Some(Expression::Literal(Literal::Number(id)));
+                            target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                         }
                         break;
                     }
                     // Check if current is a number (plan ID)
                     if current.token_type == TokenType::Number {
                         let id = self.advance().text;
-                        target = Some(Expression::Literal(Literal::Number(id)));
+                        target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                         break;
                     }
                 }
@@ -20327,7 +20327,8 @@ impl Parser {
                 if param.name.eq_ignore_ascii_case("CREDENTIALS") {
                     // For Redshift-style CREDENTIALS 'string' (single string value)
                     // vs Snowflake-style CREDENTIALS = (KEY='value', KEY2='value')
-                    if let Some(Expression::Literal(Literal::String(s))) = &param.value {
+                    if let Some(Expression::Literal(lit)) = &param.value {
+                        if let Literal::String(s) = lit.as_ref() {
                         // Redshift style: store as a simple credentials string
                         let creds = Credentials {
                             credentials: vec![("".to_string(), s.clone())],
@@ -20335,6 +20336,7 @@ impl Parser {
                             encryption: None,
                         };
                         credentials = Some(Box::new(creds));
+                    }
                     } else {
                         // Snowflake style: key=value pairs
                         let creds = Credentials {
@@ -20348,10 +20350,12 @@ impl Parser {
                                         } else {
                                             return None;
                                         };
-                                        let val = if let Expression::Literal(Literal::String(s)) =
+                                        let val = if let Expression::Literal(lit) =
                                             &eq.right
                                         {
+                                            if let Literal::String(s) = lit.as_ref() {
                                             s.clone()
+                                        } else { String::new() }
                                         } else {
                                             return None;
                                         };
@@ -20478,7 +20482,7 @@ impl Parser {
                             if self.match_token(TokenType::Eq) {
                                 let val = self.parse_copy_param_value()?;
                                 values.push(Expression::Eq(Box::new(BinaryOp {
-                                    left: Expression::Literal(Literal::String(key)),
+                                    left: Expression::Literal(Box::new(Literal::String(key))),
                                     right: val,
                                     left_comments: Vec::new(),
                                     operator_comments: Vec::new(),
@@ -20487,7 +20491,7 @@ impl Parser {
                                 })));
                             } else {
                                 // Just a string without =
-                                values.push(Expression::Literal(Literal::String(key)));
+                                values.push(Expression::Literal(Box::new(Literal::String(key))));
                             }
                         } else if self.check(TokenType::Var)
                             || self.check_keyword()
@@ -20609,7 +20613,7 @@ impl Parser {
         // Handle string, number, boolean, identifier
         if self.check(TokenType::String) {
             let token = self.advance();
-            return Ok(Expression::Literal(Literal::String(token.text.clone())));
+            return Ok(Expression::Literal(Box::new(Literal::String(token.text.clone()))));
         }
         // Handle quoted identifier (e.g., STORAGE_INTEGRATION = "storage")
         if self.check(TokenType::QuotedIdentifier) {
@@ -20625,7 +20629,7 @@ impl Parser {
         }
         if self.check(TokenType::Number) {
             let token = self.advance();
-            return Ok(Expression::Literal(Literal::Number(token.text.clone())));
+            return Ok(Expression::Literal(Box::new(Literal::Number(token.text.clone()))));
         }
         if self.match_token(TokenType::True) {
             return Ok(Expression::Boolean(BooleanLiteral { value: true }));
@@ -20702,8 +20706,10 @@ impl Parser {
                 } else if self.match_identifier("PATTERN") || self.match_token(TokenType::Pattern) {
                     // PATTERN can be tokenized as keyword or identifier
                     self.expect(TokenType::FArrow)?; // =>
-                    if let Expression::Literal(Literal::String(s)) = self.parse_primary()? {
-                        pat = Some(s);
+                    if let Expression::Literal(lit) = self.parse_primary()? {
+                        if let Literal::String(s) = lit.as_ref() {
+                        pat = Some(s.clone());
+                    }
                     }
                 } else {
                     break;
@@ -20793,8 +20799,10 @@ impl Parser {
                 } else if self.match_identifier("PATTERN") || self.match_token(TokenType::Pattern) {
                     // PATTERN can be tokenized as keyword or identifier
                     self.expect(TokenType::FArrow)?; // =>
-                    if let Expression::Literal(Literal::String(s)) = self.parse_primary()? {
-                        pat = Some(s);
+                    if let Expression::Literal(lit) = self.parse_primary()? {
+                        if let Literal::String(s) = lit.as_ref() {
+                        pat = Some(s.clone());
+                    }
                     }
                 } else {
                     break;
@@ -20926,8 +20934,10 @@ impl Parser {
                 } else if self.match_identifier("PATTERN") || self.match_token(TokenType::Pattern) {
                     // PATTERN can be tokenized as keyword or identifier
                     self.expect(TokenType::FArrow)?; // =>
-                    if let Expression::Literal(Literal::String(s)) = self.parse_primary()? {
-                        pat = Some(s);
+                    if let Expression::Literal(lit) = self.parse_primary()? {
+                        if let Literal::String(s) = lit.as_ref() {
+                        pat = Some(s.clone());
+                    }
                     }
                 } else {
                     break;
@@ -20999,7 +21009,7 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            return Ok(Expression::Literal(Literal::String(stage_path)));
+            return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
         }
 
         // Stage reference tokenized as a Var starting with @ (e.g., @random_stage)
@@ -21029,13 +21039,13 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            return Ok(Expression::Literal(Literal::String(stage_path)));
+            return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
         }
 
         // String literal (file path or URL)
         if self.check(TokenType::String) {
             let token = self.advance();
-            return Ok(Expression::Literal(Literal::String(token.text.clone())));
+            return Ok(Expression::Literal(Box::new(Literal::String(token.text.clone()))));
         }
 
         // Backtick-quoted identifier (Databricks style: `s3://link`)
@@ -21092,7 +21102,7 @@ impl Parser {
                         stage_path.push_str(&self.advance().text);
                     }
                 }
-                return Ok(Expression::Literal(Literal::String(stage_path)));
+                return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
             }
 
             // Get stage name (could be quoted identifier)
@@ -21142,7 +21152,7 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            return Ok(Expression::Literal(Literal::String(stage_path)));
+            return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
         }
 
         // Stage reference tokenized as a Var starting with @ (e.g., @s1)
@@ -21179,7 +21189,7 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            return Ok(Expression::Literal(Literal::String(stage_path)));
+            return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
         }
 
         Err(self.parse_error("Expected stage reference starting with @"))
@@ -22319,7 +22329,7 @@ impl Parser {
                 this: "NONE".to_string(),
             }))
         } else if self.check(TokenType::String) {
-            Expression::Literal(Literal::String(self.expect_string()?))
+            Expression::Literal(Box::new(Literal::String(self.expect_string()?)))
         } else {
             self.parse_primary()?
         };
@@ -22525,7 +22535,7 @@ impl Parser {
             loop {
                 // Parse property name (identifier or string)
                 let prop_name = if self.check(TokenType::String) {
-                    Expression::Literal(Literal::String(self.expect_string()?))
+                    Expression::Literal(Box::new(Literal::String(self.expect_string()?)))
                 } else {
                     Expression::Identifier(Identifier::new(self.expect_identifier_or_keyword()?))
                 };
@@ -26325,7 +26335,7 @@ impl Parser {
         }
 
         let string_token = self.advance();
-        let value = Expression::Literal(Literal::String(string_token.text.clone()));
+        let value = Expression::Literal(Box::new(Literal::String(string_token.text.clone())));
 
         // JSON literal: JSON '"foo"' -> ParseJson expression (matches Python sqlglot)
         if matches!(data_type, DataType::Json | DataType::JsonB)
@@ -26433,10 +26443,10 @@ impl Parser {
         // Parse the literal value
         let value = if self.check(TokenType::String) {
             let tok = self.advance();
-            Expression::Literal(Literal::String(tok.text.clone()))
+            Expression::Literal(Box::new(Literal::String(tok.text.clone())))
         } else if self.check(TokenType::Number) {
             let tok = self.advance();
-            Expression::Literal(Literal::Number(tok.text.clone()))
+            Expression::Literal(Box::new(Literal::Number(tok.text.clone())))
         } else {
             self.current = start_pos;
             return Ok(None);
@@ -26947,7 +26957,7 @@ impl Parser {
                             self.expect(TokenType::RBracket)?;
 
                             // Build JSONExtract for the path accumulated so far
-                            let path_expr = Expression::Literal(Literal::String(path_string.clone()));
+                            let path_expr = Expression::Literal(Box::new(Literal::String(path_string)));
                             let json_extract = Expression::JSONExtract(Box::new(JSONExtract {
                                 this: Box::new(this),
                                 expression: Box::new(path_expr),
@@ -27005,7 +27015,7 @@ impl Parser {
                                 // Create another JSONExtract for the suffix path
                                 Expression::JSONExtract(Box::new(JSONExtract {
                                     this: Box::new(subscript),
-                                    expression: Box::new(Expression::Literal(Literal::String(suffix_path))),
+                                    expression: Box::new(Expression::Literal(Box::new(Literal::String(suffix_path)))),
                                     only_json_types: None,
                                     expressions: Vec::new(),
                                     variant_extract: Some(Box::new(Expression::Boolean(BooleanLiteral {
@@ -27077,7 +27087,7 @@ impl Parser {
         }
 
         // Create the JSONExtract expression with variant_extract marker
-        let path_expr = Expression::Literal(Literal::String(path_string));
+        let path_expr = Expression::Literal(Box::new(Literal::String(path_string)));
         let json_extract = Expression::JSONExtract(Box::new(JSONExtract {
             this: Box::new(this),
             expression: Box::new(path_expr),
@@ -27440,20 +27450,14 @@ impl Parser {
                     // Return appropriate expression based on type
                     return match type_text.as_str() {
                         "d" => Ok(Expression::Date(Box::new(
-                            crate::expressions::UnaryFunc::new(Expression::Literal(
-                                crate::expressions::Literal::String(value),
-                            )),
+                            crate::expressions::UnaryFunc::new(Expression::Literal(Box::new(crate::expressions::Literal::String(value),))),
                         ))),
                         "t" => Ok(Expression::Time(Box::new(
-                            crate::expressions::UnaryFunc::new(Expression::Literal(
-                                crate::expressions::Literal::String(value),
-                            )),
+                            crate::expressions::UnaryFunc::new(Expression::Literal(Box::new(crate::expressions::Literal::String(value),))),
                         ))),
                         "ts" => Ok(Expression::Timestamp(Box::new(
                             crate::expressions::TimestampFunc {
-                                this: Some(Box::new(Expression::Literal(
-                                    crate::expressions::Literal::String(value),
-                                ))),
+                                this: Some(Box::new(Expression::Literal(Box::new(crate::expressions::Literal::String(value),)))),
                                 zone: None,
                                 with_tz: None,
                                 safe: None,
@@ -28193,7 +28197,7 @@ impl Parser {
                 if self.config.dialect.is_none() {
                     // Generic (no dialect): DATE 'literal' -> CAST('literal' AS DATE)
                     return Ok(Expression::Cast(Box::new(Cast {
-                        this: Expression::Literal(Literal::String(str_token.text)),
+                        this: Expression::Literal(Box::new(Literal::String(str_token.text))),
                         to: DataType::Date,
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
@@ -28202,7 +28206,7 @@ impl Parser {
                         inferred_type: None,
                     })));
                 }
-                return Ok(Expression::Literal(Literal::Date(str_token.text)));
+                return Ok(Expression::Literal(Box::new(Literal::Date(str_token.text))));
             }
             // Check for DATE() function call
             if self.match_token(TokenType::LParen) {
@@ -28219,7 +28223,7 @@ impl Parser {
             let original_text = token.text.clone();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
-                return Ok(Expression::Literal(Literal::Time(str_token.text)));
+                return Ok(Expression::Literal(Box::new(Literal::Time(str_token.text))));
             }
             // Check for TIME() function call
             if self.match_token(TokenType::LParen) {
@@ -28241,7 +28245,7 @@ impl Parser {
                 if self.config.dialect.is_none() {
                     // Generic (no dialect): TIMESTAMP 'literal' -> CAST('literal' AS TIMESTAMP)
                     return Ok(Expression::Cast(Box::new(Cast {
-                        this: Expression::Literal(Literal::String(str_token.text)),
+                        this: Expression::Literal(Box::new(Literal::String(str_token.text))),
                         to: DataType::Timestamp {
                             precision: None,
                             timezone: false,
@@ -28254,7 +28258,7 @@ impl Parser {
                     })));
                 }
                 // Dialect-specific: keep as Literal::Timestamp for dialect transforms
-                return Ok(Expression::Literal(Literal::Timestamp(str_token.text)));
+                return Ok(Expression::Literal(Box::new(Literal::Timestamp(str_token.text))));
             }
             // Check for TIMESTAMP(n) WITH/WITHOUT TIME ZONE or TIMESTAMP(n) 'literal' as data type
             // This is a data type, not a function call
@@ -28318,7 +28322,7 @@ impl Parser {
                     if self.check(TokenType::String) {
                         let str_token = self.advance();
                         return Ok(Expression::Cast(Box::new(Cast {
-                            this: Expression::Literal(Literal::String(str_token.text)),
+                            this: Expression::Literal(Box::new(Literal::String(str_token.text))),
                             to: data_type,
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
@@ -28378,7 +28382,7 @@ impl Parser {
                 if self.check(TokenType::String) {
                     let str_token = self.advance();
                     return Ok(Expression::Cast(Box::new(Cast {
-                        this: Expression::Literal(Literal::String(str_token.text)),
+                        this: Expression::Literal(Box::new(Literal::String(str_token.text))),
                         to: data_type,
                         trailing_comments: Vec::new(),
                         double_colon_syntax: false,
@@ -28400,7 +28404,7 @@ impl Parser {
             let original_text = token.text.clone();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
-                return Ok(Expression::Literal(Literal::Datetime(str_token.text)));
+                return Ok(Expression::Literal(Box::new(Literal::Datetime(str_token.text))));
             }
             // Check for DATETIME() function call
             if self.match_token(TokenType::LParen) {
@@ -28475,7 +28479,7 @@ impl Parser {
                         // Consume the hex suffix token and emit a HexString literal
                         let hex_token = self.advance();
                         let hex = hex_token.text[1..].to_string();
-                        let literal = Expression::Literal(Literal::HexString(hex));
+                        let literal = Expression::Literal(Box::new(Literal::HexString(hex)));
                         return self.maybe_parse_subscript(literal);
                     }
                 }
@@ -28493,7 +28497,7 @@ impl Parser {
                         let suffix = next.text.clone();
                         self.skip(); // consume suffix token
                         let combined = format!("{}{}", token.text, suffix);
-                        let literal = Expression::Literal(Literal::Number(combined));
+                        let literal = Expression::Literal(Box::new(Literal::Number(combined)));
                         return self.maybe_parse_subscript(literal);
                     }
                 }
@@ -28502,7 +28506,7 @@ impl Parser {
             let literal = if let Some(sep_pos) = token.text.find("::") {
                 let num_part = &token.text[..sep_pos];
                 let type_name = &token.text[sep_pos + 2..];
-                let num_expr = Expression::Literal(Literal::Number(num_part.to_string()));
+                let num_expr = Expression::Literal(Box::new(Literal::Number(num_part.to_string())));
                 let data_type = match type_name {
                     "BIGINT" => crate::expressions::DataType::BigInt { length: None },
                     "SMALLINT" => crate::expressions::DataType::SmallInt { length: None },
@@ -28534,7 +28538,7 @@ impl Parser {
                     inferred_type: None,
                 }))
             } else {
-                Expression::Literal(Literal::Number(token.text))
+                Expression::Literal(Box::new(Literal::Number(token.text)))
             };
             return self.maybe_parse_subscript(literal);
         }
@@ -28543,7 +28547,7 @@ impl Parser {
         // Also handle adjacent string literals (SQL standard) which concatenate: 'x' 'y' 'z' -> CONCAT('x', 'y', 'z')
         if self.check(TokenType::String) {
             let token = self.advance();
-            let first_literal = Expression::Literal(Literal::String(token.text));
+            let first_literal = Expression::Literal(Box::new(Literal::String(token.text)));
 
             // Check for adjacent string literals (PostgreSQL and SQL standard feature)
             // 'x' 'y' 'z' should be treated as string concatenation
@@ -28551,7 +28555,7 @@ impl Parser {
                 let mut expressions = vec![first_literal];
                 while self.check(TokenType::String) {
                     let next_token = self.advance();
-                    expressions.push(Expression::Literal(Literal::String(next_token.text)));
+                    expressions.push(Expression::Literal(Box::new(Literal::String(next_token.text))));
                 }
                 // Create CONCAT function call with all adjacent strings
                 let concat_func =
@@ -28566,35 +28570,35 @@ impl Parser {
         // so the generator can handle dialect-specific conversion
         if self.check(TokenType::DollarString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::DollarString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::DollarString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
         // Triple-quoted string with double quotes: """..."""
         if self.check(TokenType::TripleDoubleQuotedString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::TripleQuotedString(token.text, '"'));
+            let literal = Expression::Literal(Box::new(Literal::TripleQuotedString(token.text, '"')));
             return self.maybe_parse_subscript(literal);
         }
 
         // Triple-quoted string with single quotes: '''...'''
         if self.check(TokenType::TripleSingleQuotedString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::TripleQuotedString(token.text, '\''));
+            let literal = Expression::Literal(Box::new(Literal::TripleQuotedString(token.text, '\'')));
             return self.maybe_parse_subscript(literal);
         }
 
         // National String (N'...')
         if self.check(TokenType::NationalString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::NationalString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::NationalString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
         // Hex String (X'...')
         if self.check(TokenType::HexString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::HexString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::HexString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
@@ -28619,21 +28623,21 @@ impl Parser {
                     return self.maybe_parse_subscript(ident);
                 }
             }
-            let literal = Expression::Literal(Literal::HexNumber(token.text));
+            let literal = Expression::Literal(Box::new(Literal::HexNumber(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
         // Bit String (B'...')
         if self.check(TokenType::BitString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::BitString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::BitString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
         // Byte String (b"..." - BigQuery style)
         if self.check(TokenType::ByteString) {
             let token = self.advance();
-            let literal = Expression::Literal(Literal::ByteString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::ByteString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
@@ -28642,7 +28646,7 @@ impl Parser {
             let token = self.advance();
             // Raw strings preserve backslashes as literal characters.
             // The generator will handle escaping when converting to a regular string.
-            let literal = Expression::Literal(Literal::RawString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::RawString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
@@ -28650,7 +28654,7 @@ impl Parser {
         if self.check(TokenType::EscapeString) {
             let token = self.advance();
             // EscapeString is stored as "E'content'" - extract just the content
-            let literal = Expression::Literal(Literal::EscapeString(token.text));
+            let literal = Expression::Literal(Box::new(Literal::EscapeString(token.text)));
             return self.maybe_parse_subscript(literal);
         }
 
@@ -29082,7 +29086,7 @@ impl Parser {
                     _ => unreachable!("type keyword already matched in outer if-condition"),
                 };
                 return Ok(Expression::Cast(Box::new(crate::expressions::Cast {
-                    this: Expression::Literal(Literal::String(str_token.text)),
+                    this: Expression::Literal(Box::new(Literal::String(str_token.text))),
                     to: data_type,
                     trailing_comments: Vec::new(),
                     double_colon_syntax: false,
@@ -30615,7 +30619,7 @@ impl Parser {
                         self.try_clickhouse_func_arg_alias(s)
                     } else {
                         // No FROM, use 1 as default start position
-                        Expression::Literal(Literal::Number("1".to_string()))
+                        Expression::Literal(Box::new(Literal::Number("1".to_string())))
                     };
                     self.expect(TokenType::RParen)?;
                     Ok(Some(Expression::Substring(Box::new(SubstringFunc {
@@ -33206,7 +33210,7 @@ impl Parser {
                     self.parse_expression()?
                 } else {
                     // Default path is '$' when not provided
-                    Expression::Literal(Literal::String("$".to_string()))
+                    Expression::Literal(Box::new(Literal::String("$".to_string())))
                 };
 
                 // SQLite JSON_EXTRACT supports multiple paths - check for additional paths
@@ -34584,7 +34588,7 @@ impl Parser {
             if self.check(TokenType::Number) {
                 let token = self.advance();
                 return Ok(Expression::Neg(Box::new(UnaryOp {
-                    this: Expression::Literal(Literal::Number(token.text)),
+                    this: Expression::Literal(Box::new(Literal::Number(token.text))),
                     inferred_type: None,
                 })));
             }
@@ -34599,7 +34603,7 @@ impl Parser {
             if let Some(sep_pos) = token.text.find("::") {
                 let num_part = &token.text[..sep_pos];
                 let type_name = &token.text[sep_pos + 2..];
-                let num_expr = Expression::Literal(Literal::Number(num_part.to_string()));
+                let num_expr = Expression::Literal(Box::new(Literal::Number(num_part.to_string())));
                 let data_type = match type_name {
                     "BIGINT" => crate::expressions::DataType::BigInt { length: None },
                     "SMALLINT" => crate::expressions::DataType::SmallInt { length: None },
@@ -34631,13 +34635,13 @@ impl Parser {
                     inferred_type: None,
                 })));
             }
-            return Ok(Expression::Literal(Literal::Number(token.text)));
+            return Ok(Expression::Literal(Box::new(Literal::Number(token.text))));
         }
 
         // String literal
         if self.check(TokenType::String) {
             let token = self.advance();
-            return Ok(Expression::Literal(Literal::String(token.text)));
+            return Ok(Expression::Literal(Box::new(Literal::String(token.text))));
         }
 
         // Parenthesized expression (for complex paths)
@@ -35829,7 +35833,7 @@ impl Parser {
         // This matches Python sqlglot's _parse_term() behavior which handles +, -, *, /, %
         let value = if self.check(TokenType::String) {
             let token = self.advance();
-            Some(Expression::Literal(Literal::String(token.text)))
+            Some(Expression::Literal(Box::new(Literal::String(token.text))))
         } else if !self.is_at_end() && !self.is_statement_terminator() {
             Some(self.parse_addition()?)
         } else {
@@ -35886,7 +35890,8 @@ impl Parser {
                 Some(crate::dialects::DialectType::Generic)
             );
         let value = if unit.is_none() && is_generic {
-            if let Some(Expression::Literal(Literal::String(ref s))) = value {
+            if let Some(Expression::Literal(ref lit)) = value {
+                if let Literal::String(ref s) = lit.as_ref() {
                 let trimmed = s.trim();
                 // Match pattern: optional negative sign, digits (optional decimal), space(s), alpha unit
                 let mut split_pos = None;
@@ -35939,7 +35944,7 @@ impl Parser {
                                     unit: parsed_unit,
                                     use_plural: is_plural,
                                 });
-                                Some(Expression::Literal(Literal::String(num_part)))
+                                Some(Expression::Literal(Box::new(Literal::String(num_part))))
                             } else {
                                 value
                             }
@@ -35952,6 +35957,7 @@ impl Parser {
                 } else {
                     value
                 }
+            } else { None }
             } else {
                 value
             }
@@ -35964,8 +35970,9 @@ impl Parser {
         // for easier transpilation. This matches Python sqlglot's behavior in
         // _parse_interval_span: "if this and this.is_number: this = exp.Literal.string(this.to_py())"
         let value = match value {
-            Some(Expression::Literal(Literal::Number(n))) if unit.is_some() => {
-                Some(Expression::Literal(Literal::String(n)))
+            Some(Expression::Literal(lit)) if unit.is_some() && matches!(lit.as_ref(), Literal::Number(_)) => {
+                let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                Some(Expression::Literal(Box::new(Literal::String(n.clone()))))
             }
             other => other,
         };
@@ -41717,8 +41724,10 @@ impl Parser {
                 if let Some(num) = self.parse_number()? {
                     options.push(Expression::Identifier(Identifier::new(format!(
                         "BUFFER_USAGE_LIMIT {}",
-                        if let Expression::Literal(Literal::Number(n)) = &num {
+                        if let Expression::Literal(lit) = &num {
+                            if let Literal::Number(n) = lit.as_ref() {
                             n.clone()
+                        } else { String::new() }
                         } else {
                             String::new()
                         }
@@ -41880,7 +41889,7 @@ impl Parser {
                     let key = if self.check(TokenType::String) {
                         self.skip();
                         let key_str = self.previous().text.clone();
-                        Expression::Literal(Literal::String(key_str))
+                        Expression::Literal(Box::new(Literal::String(key_str)))
                     } else {
                         self.parse_id_var()?
                             .unwrap_or(Expression::Identifier(Identifier::new(String::new())))
@@ -42010,8 +42019,10 @@ impl Parser {
                 if self.match_token(TokenType::With) {
                     if let Some(num) = self.parse_number()? {
                         if self.match_text_seq(&["BUCKETS"]) {
-                            let num_str = if let Expression::Literal(Literal::Number(n)) = &num {
+                            let num_str = if let Expression::Literal(lit) = &num {
+                                if let Literal::Number(n) = lit.as_ref() {
                                 n.clone()
+                            } else { String::new() }
                             } else {
                                 String::new()
                             };
@@ -42021,8 +42032,10 @@ impl Parser {
                 }
             } else if let Some(num) = self.parse_number()? {
                 if self.match_text_seq(&["BUCKETS"]) {
-                    let num_str = if let Expression::Literal(Literal::Number(n)) = &num {
+                    let num_str = if let Expression::Literal(lit) = &num {
+                        if let Literal::Number(n) = lit.as_ref() {
                         n.clone()
+                    } else { String::new() }
                     } else {
                         String::new()
                     };
@@ -42242,7 +42255,7 @@ impl Parser {
                         // The value can be an identifier, string, boolean, etc.
                         let val_token = self.advance();
                         let val_expr = if val_token.token_type == TokenType::String {
-                            Expression::Literal(Literal::String(val_token.text.clone()))
+                            Expression::Literal(Box::new(Literal::String(val_token.text.clone())))
                         } else if val_token.token_type == TokenType::True {
                             Expression::Boolean(BooleanLiteral { value: true })
                         } else if val_token.token_type == TokenType::False {
@@ -42811,7 +42824,8 @@ impl Parser {
                         // Extract the name from the key (identifier or string literal)
                         let name = match &key {
                             Expression::Identifier(id) => id.clone(),
-                            Expression::Literal(crate::expressions::Literal::String(s)) => {
+                            Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(s)) => {
+                                let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() };
                                 Identifier::new(s.clone())
                             }
                             _ => Identifier::new("".to_string()),
@@ -43063,7 +43077,7 @@ impl Parser {
 
         Ok(Some(Expression::JSONExtract(Box::new(JSONExtract {
             this: Box::new(this),
-            expression: Box::new(Expression::Literal(Literal::String(path_str))),
+            expression: Box::new(Expression::Literal(Box::new(Literal::String(path_str)))),
             only_json_types: None,
             expressions: Vec::new(),
             variant_extract: Some(Box::new(Expression::Boolean(BooleanLiteral {
@@ -44698,7 +44712,7 @@ impl Parser {
 
         Ok(Some(Expression::DefinerProperty(Box::new(
             DefinerProperty {
-                this: Box::new(Expression::Literal(Literal::String(definer_str))),
+                this: Box::new(Expression::Literal(Box::new(Literal::String(definer_str)))),
             },
         ))))
     }
@@ -44848,10 +44862,10 @@ impl Parser {
             {
                 parser.advance(); // consume -
                 let num = parser.advance().text.clone();
-                return Ok(Some(Expression::Literal(Literal::Number(format!(
+                return Ok(Some(Expression::Literal(Box::new(Literal::Number(format!(
                     "-{}",
                     num
-                )))));
+                ))))));
             }
             if let Some(id) = parser.parse_id_var()? {
                 return Ok(Some(id));
@@ -44869,7 +44883,7 @@ impl Parser {
             (min, max)
         } else {
             let max = parse_bound(self)?;
-            let min = Some(Expression::Literal(Literal::Number("0".to_string())));
+            let min = Some(Expression::Literal(Box::new(Literal::Number("0".to_string()))));
             (min, max)
         };
 
@@ -46157,7 +46171,7 @@ impl Parser {
         if self.match_token(TokenType::HeredocString) {
             let text = self.previous().text.clone();
             return Ok(Some(Expression::Heredoc(Box::new(Heredoc {
-                this: Box::new(Expression::Literal(Literal::String(text))),
+                this: Box::new(Expression::Literal(Box::new(Literal::String(text)))),
                 tag: None,
             }))));
         }
@@ -46219,8 +46233,8 @@ impl Parser {
                     // Found the closing tag
                     let content = content_parts.join(" ");
                     return Ok(Some(Expression::Heredoc(Box::new(Heredoc {
-                        this: Box::new(Expression::Literal(Literal::String(content))),
-                        tag: tag_text.map(|t| Box::new(Expression::Literal(Literal::String(t)))),
+                        this: Box::new(Expression::Literal(Box::new(Literal::String(content)))),
+                        tag: tag_text.map(|t| Box::new(Expression::Literal(Box::new(Literal::String(t))))),
                     }))));
                 }
                 // Not the closing tag, backtrack and add to content
@@ -48955,7 +48969,7 @@ impl Parser {
                 let num_part = &text[..sep_pos];
                 let type_name = &text[sep_pos + 2..];
                 // Create a TryCast expression: TRY_CAST(number AS TYPE)
-                let num_expr = Expression::Literal(Literal::Number(num_part.to_string()));
+                let num_expr = Expression::Literal(Box::new(Literal::Number(num_part.to_string())));
                 let data_type = match type_name {
                     "BIGINT" => crate::expressions::DataType::BigInt { length: None },
                     "SMALLINT" => crate::expressions::DataType::SmallInt { length: None },
@@ -48989,7 +49003,7 @@ impl Parser {
                     },
                 ))));
             }
-            return Ok(Some(Expression::Literal(Literal::Number(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::Number(text)))));
         }
         Ok(None)
     }
@@ -50712,7 +50726,7 @@ impl Parser {
 
         Ok(Some(Expression::StrPosition(Box::new(StrPosition {
             this: Box::new(
-                haystack.unwrap_or_else(|| Expression::Literal(Literal::String("".to_string()))),
+                haystack.unwrap_or_else(|| Expression::Literal(Box::new(Literal::String("".to_string())))),
             ),
             substr: needle.map(Box::new),
             position: position.map(Box::new),
@@ -51012,7 +51026,7 @@ impl Parser {
 
         let this = if self.check(TokenType::String) {
             let value = self.expect_string()?;
-            Expression::Literal(Literal::String(value))
+            Expression::Literal(Box::new(Literal::String(value)))
         } else if let Some(id_expr) = self.parse_id_var()? {
             id_expr
         } else if self.is_safe_keyword_as_identifier() {
@@ -51170,7 +51184,7 @@ impl Parser {
 
             if self.match_token(TokenType::Comment) {
                 let comment_expr = if self.check(TokenType::String) {
-                    Expression::Literal(Literal::String(self.expect_string()?))
+                    Expression::Literal(Box::new(Literal::String(self.expect_string()?)))
                 } else {
                     self.parse_expression()?
                 };
@@ -51404,7 +51418,7 @@ impl Parser {
 
     fn date_part_expr_name<'a>(&self, expr: &'a Expression) -> Option<&'a str> {
         self.date_part_identifier_expr_name(expr).or(match expr {
-            Expression::Literal(Literal::String(s)) => Some(s.as_str()),
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.as_str()) },
             _ => None,
         })
     }
@@ -52138,7 +52152,7 @@ impl Parser {
         let (every, unit, starts) = if kind_text == "SCHEDULE" {
             // EVERY n UNIT
             let every = if self.match_identifier("EVERY") {
-                // parse_number returns Option<Expression> with Expression::Literal(Literal::Number(...))
+                // parse_number returns Option<Expression> with Expression::Literal(Box::new(Literal::Number(...)))
                 self.parse_number()?.map(Box::new)
             } else {
                 None
@@ -52154,7 +52168,7 @@ impl Parser {
             // STARTS 'datetime'
             let starts = if self.match_identifier("STARTS") {
                 let s = self.expect_string()?;
-                Some(Box::new(Expression::Literal(Literal::String(s))))
+                Some(Box::new(Expression::Literal(Box::new(Literal::String(s)))))
             } else {
                 None
             };
@@ -52205,7 +52219,7 @@ impl Parser {
         let number = self.parse_number()?;
         let number_str = number
             .map(|n| match n {
-                Expression::Literal(Literal::Number(s)) => format!("{} ", s),
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(s) = lit.as_ref() else { unreachable!() }; format!("{} ", s) },
                 _ => String::new(),
             })
             .unwrap_or_default();
@@ -52684,7 +52698,7 @@ impl Parser {
         // First try string literals (preserve quoting), then booleans/numbers, then identifiers
         let right_val = if self.check(TokenType::String) {
             let text = self.advance().text.clone();
-            Expression::Literal(Literal::String(text))
+            Expression::Literal(Box::new(Literal::String(text)))
         } else if self.check(TokenType::False) {
             self.skip();
             Expression::Boolean(BooleanLiteral { value: false })
@@ -53092,7 +53106,7 @@ impl Parser {
             // -: pattern means -1 (from end)
             self.skip(); // consume dash
             Some(Expression::Neg(Box::new(UnaryOp::new(
-                Expression::Literal(Literal::Number("1".to_string())),
+                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             ))))
         } else if self.check(TokenType::Colon) || self.check(TokenType::RBracket) {
             // Empty end like [start::step] or [start:]
@@ -53133,7 +53147,7 @@ impl Parser {
             self.skip(); // consume dash
                             // Don't consume the colon - let the caller handle it
             return Ok(Some(Expression::Neg(Box::new(UnaryOp::new(
-                Expression::Literal(Literal::Number("1".to_string())),
+                Expression::Literal(Box::new(Literal::Number("1".to_string()))),
             )))));
         }
         // Parse full expression (including binary ops like y - 1) but stop at : or ]
@@ -53537,37 +53551,37 @@ impl Parser {
         // Regular string literal
         if self.match_token(TokenType::String) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::String(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
         // National string (N'...')
         if self.match_token(TokenType::NationalString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::NationalString(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::NationalString(text)))));
         }
         // Raw string (r"..." or r'...')
         if self.match_token(TokenType::RawString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::RawString(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::RawString(text)))));
         }
         // Heredoc string
         if self.match_token(TokenType::HeredocString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::String(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
         // Hex string (X'...' or 0x...)
         if self.match_token(TokenType::HexString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::HexString(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::HexString(text)))));
         }
         // Bit string (B'...')
         if self.match_token(TokenType::BitString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::BitString(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::BitString(text)))));
         }
         // Byte string (b"..." - BigQuery style)
         if self.match_token(TokenType::ByteString) {
             let text = self.previous().text.clone();
-            return Ok(Some(Expression::Literal(Literal::ByteString(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::ByteString(text)))));
         }
         Ok(None)
     }
@@ -53803,7 +53817,7 @@ impl Parser {
                 from_for_syntax = true;
                 // If no start specified yet, default to 1
                 if start.is_none() {
-                    start = Some(Expression::Literal(Literal::Number("1".to_string())));
+                    start = Some(Expression::Literal(Box::new(Literal::Number("1".to_string()))));
                 }
                 match self.parse_bitwise() {
                     Ok(Some(expr)) => {
@@ -53831,7 +53845,7 @@ impl Parser {
         } else if !args.is_empty() {
             args.remove(0)
         } else {
-            Expression::Literal(Literal::Number("1".to_string()))
+            Expression::Literal(Box::new(Literal::Number("1".to_string())))
         };
 
         let final_length = if length.is_some() {
@@ -55377,7 +55391,7 @@ impl Parser {
             // Function stability - return StabilityProperty with "VOLATILE" literal
             Ok(Some(Expression::StabilityProperty(Box::new(
                 StabilityProperty {
-                    this: Box::new(Expression::Literal(Literal::String("VOLATILE".to_string()))),
+                    this: Box::new(Expression::Literal(Box::new(Literal::String("VOLATILE".to_string())))),
                 },
             ))))
         }
@@ -55854,14 +55868,14 @@ impl Parser {
         if self.check(TokenType::String) {
             let text = self.peek().text.clone();
             self.skip();
-            return Ok(Some(Expression::Literal(Literal::String(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
 
         // Number
         if self.check(TokenType::Number) {
             let text = self.peek().text.clone();
             self.skip();
-            return Ok(Some(Expression::Literal(Literal::Number(text))));
+            return Ok(Some(Expression::Literal(Box::new(Literal::Number(text)))));
         }
 
         // TRUE/FALSE
@@ -57218,7 +57232,7 @@ mod tests {
         match &select.expressions[0] {
             Expression::Cast(cast) => {
                 match &cast.this {
-                    Expression::Literal(Literal::String(s)) => assert_eq!(s, "2024-01-15"),
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; assert_eq!(s, "2024-01-15") },
                     other => panic!("Expected String literal in Cast, got {:?}", other),
                 }
                 assert!(matches!(cast.to, DataType::Date));
@@ -57230,7 +57244,8 @@ mod tests {
         let result = Parser::parse_sql("SELECT TIME '10:30:00'").unwrap();
         let select = result[0].as_select().unwrap();
         match &select.expressions[0] {
-            Expression::Literal(Literal::Time(t)) => {
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Time(_)) => {
+                let Literal::Time(t) = lit.as_ref() else { unreachable!() };
                 assert_eq!(t, "10:30:00");
             }
             _ => panic!("Expected Time literal"),
@@ -57242,7 +57257,7 @@ mod tests {
         match &select.expressions[0] {
             Expression::Cast(cast) => {
                 match &cast.this {
-                    Expression::Literal(Literal::String(s)) => assert_eq!(s, "2024-01-15 10:30:00"),
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; assert_eq!(s, "2024-01-15 10:30:00") },
                     other => panic!("Expected String literal inside Cast, got {:?}", other),
                 }
                 assert!(matches!(
