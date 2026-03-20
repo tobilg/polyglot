@@ -197,6 +197,19 @@ fn lineage_from_expression(
 // CTE star expansion
 // ---------------------------------------------------------------------------
 
+/// Normalize an identifier for CTE name matching.
+///
+/// Follows SQL semantics: unquoted identifiers are case-insensitive (lowercased),
+/// quoted identifiers preserve their original case. This matches sqlglot's
+/// `normalize_identifiers` behavior.
+fn normalize_cte_name(ident: &Identifier) -> String {
+    if ident.quoted {
+        ident.name.clone()
+    } else {
+        ident.name.to_lowercase()
+    }
+}
+
 /// Expand SELECT * in CTEs by walking CTE definitions in order and propagating
 /// resolved column lists. This handles nested CTEs (e.g., cte2 AS (SELECT * FROM cte1))
 /// which qualify_columns cannot resolve because it processes each SELECT independently.
@@ -205,9 +218,9 @@ fn lineage_from_expression(
 /// by looking up column names in the schema. This enables correct expansion of patterns
 /// like `WITH cte AS (SELECT * FROM external_table) SELECT * FROM cte`.
 ///
-/// **Known limitation:** CTE name lookups use case-insensitive matching (`.to_lowercase()`).
-/// This is correct for most SQL dialects but may be surprising for case-sensitive dialects
-/// (e.g., Postgres or DuckDB with quoted identifiers).
+/// CTE name matching follows SQL identifier semantics: unquoted names are compared
+/// case-insensitively (lowercased), while quoted names preserve their original case.
+/// This matches sqlglot's `normalize_identifiers` behavior.
 pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
     let select = match expr {
         Expression::Select(s) => s,
@@ -227,7 +240,7 @@ pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
     let mut resolved_cte_columns: HashMap<String, Vec<String>> = HashMap::new();
 
     for cte in &mut with.ctes {
-        let cte_name = cte.alias.name.to_lowercase();
+        let cte_name = normalize_cte_name(&cte.alias);
 
         // If CTE has explicit column list (e.g., cte(a, b) AS (...)), use that
         if !cte.columns.is_empty() {
@@ -303,7 +316,7 @@ fn rewrite_stars_in_select(
     for expr in &select.expressions {
         match expr {
             Expression::Star(star) => {
-                let qual = star.table.as_ref().map(|t| t.name.as_str());
+                let qual = star.table.as_ref();
                 if let Some(expanded) = expand_star_from_sources(
                     qual,
                     &source_names,
@@ -322,7 +335,7 @@ fn rewrite_stars_in_select(
                 }
             }
             Expression::Column(c) if c.name.name == "*" => {
-                let qual = c.table.as_ref().map(|t| t.name.as_str());
+                let qual = c.table.as_ref();
                 if let Some(expanded) = expand_star_from_sources(
                     qual,
                     &source_names,
@@ -356,11 +369,11 @@ fn rewrite_stars_in_select(
 /// Try to expand a star expression by looking up source columns from resolved CTEs,
 /// falling back to the schema for external tables.
 /// Returns (source_alias, column_name) pairs so the caller can set table qualifiers.
-/// `qualifier`: Optional table qualifier name (for `table.*`). If None, expand all sources.
+/// `qualifier`: Optional table qualifier (for `table.*`). If None, expand all sources.
 /// `source_fq_names`: Fully-qualified table names for schema lookup, parallel to `source_names`.
 fn expand_star_from_sources(
-    qualifier: Option<&str>,
-    source_names: &[(String, String)],
+    qualifier: Option<&Identifier>,
+    source_names: &[SourceName],
     resolved_ctes: &HashMap<String, Vec<String>>,
     schema: Option<&dyn Schema>,
     source_fq_names: &[String],
@@ -369,17 +382,17 @@ fn expand_star_from_sources(
 
     if let Some(qual) = qualifier {
         // Qualified star: table.*
-        let qual_lower = qual.to_lowercase();
-        for (i, (alias, original)) in source_names.iter().enumerate() {
-            if alias.to_lowercase() == qual_lower || original.to_lowercase() == qual_lower {
+        let qual_normalized = normalize_cte_name(qual);
+        for (i, src) in source_names.iter().enumerate() {
+            if src.normalized == qual_normalized || src.alias.to_lowercase() == qual_normalized {
                 // Try CTE first
-                if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
-                    expanded.extend(cols.iter().map(|c| (alias.clone(), c.clone())));
+                if let Some(cols) = resolved_ctes.get(&src.normalized) {
+                    expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
                     return Some(expanded);
                 }
                 // Fall back to schema
                 if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
-                    expanded.extend(cols.into_iter().map(|c| (alias.clone(), c)));
+                    expanded.extend(cols.into_iter().map(|c| (src.alias.clone(), c)));
                     return Some(expanded);
                 }
             }
@@ -388,18 +401,20 @@ fn expand_star_from_sources(
     } else {
         // Unqualified star: expand all sources
         let mut any_expanded = false;
-        for (i, (alias, original)) in source_names.iter().enumerate() {
-            if let Some(cols) = resolved_ctes.get(&original.to_lowercase()) {
-                expanded.extend(cols.iter().map(|c| (alias.clone(), c.clone())));
+        for (i, src) in source_names.iter().enumerate() {
+            if let Some(cols) = resolved_ctes.get(&src.normalized) {
+                expanded.extend(cols.iter().map(|c| (src.alias.clone(), c.clone())));
                 any_expanded = true;
             } else if let Some(cols) = lookup_schema_columns(schema, source_fq_names.get(i)) {
-                expanded.extend(cols.into_iter().map(|c| (alias.clone(), c)));
+                expanded.extend(cols.into_iter().map(|c| (src.alias.clone(), c)));
                 any_expanded = true;
             } else {
                 // Source is not a resolved CTE and not in schema — can't fully expand.
                 // Intentionally conservative: partial expansion is not attempted because
                 // an incomplete column list would cause downstream lineage resolution to
                 // produce incorrect results (missing columns silently omitted).
+                // This matches sqlglot's behavior: it also requires all sources to be
+                // resolvable and raises SqlglotError when schema is missing.
                 return None;
             }
         }
@@ -443,23 +458,31 @@ fn get_expression_output_name(expr: &Expression) -> Option<String> {
 
 /// Extract source names from a SELECT's FROM and JOIN clauses.
 /// Returns (alias_or_name, original_name) pairs.
-fn get_select_source_names(select: &Select) -> Vec<(String, String)> {
+/// Source name info with normalized name for CTE lookup (respects quoted vs unquoted).
+struct SourceName {
+    alias: String,
+    /// The normalized name for CTE lookup: unquoted → lowercased, quoted → as-is.
+    normalized: String,
+}
+
+fn get_select_source_names(select: &Select) -> Vec<SourceName> {
     let mut names = Vec::new();
 
-    fn extract_source(expr: &Expression) -> Option<(String, String)> {
+    fn extract_source(expr: &Expression) -> Option<SourceName> {
         match expr {
             Expression::Table(t) => {
-                let original = t.name.name.clone();
+                let normalized = normalize_cte_name(&t.name);
                 let alias = t
                     .alias
                     .as_ref()
                     .map(|a| a.name.clone())
-                    .unwrap_or_else(|| original.clone());
-                Some((alias, original))
+                    .unwrap_or_else(|| t.name.name.clone());
+                Some(SourceName { alias, normalized })
             }
             Expression::Subquery(s) => {
                 let alias = s.alias.as_ref()?.name.clone();
-                Some((alias.clone(), alias))
+                let normalized = alias.to_lowercase();
+                Some(SourceName { alias: alias.clone(), normalized })
             }
             Expression::Paren(p) => extract_source(&p.this),
             _ => None,
@@ -3508,6 +3531,71 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
             all_names.iter().any(|n| n == "orders.amount"),
             "Expected leaf 'orders.amount', got: {:?}",
             all_names
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Quoted CTE name tests — verifying SQL identifier case semantics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_lineage_unquoted_cte_case_insensitive() {
+        // Unquoted CTE names are case-insensitive (both normalized to lowercase).
+        // MyCte and MYCTE should match.
+        let expr = parse(
+            "WITH MyCte AS (SELECT id AS col FROM source) SELECT * FROM MYCTE",
+        );
+        let node = lineage("col", &expr, None, false).unwrap();
+        assert_eq!(node.name, "col");
+        assert!(
+            !node.downstream.is_empty(),
+            "Unquoted CTE should resolve case-insensitively"
+        );
+    }
+
+    #[test]
+    fn test_lineage_quoted_cte_case_preserved() {
+        // Quoted CTE name preserves case. "MyCte" referenced as "MyCte" should match.
+        let expr = parse(
+            r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "MyCte""#,
+        );
+        let node = lineage("col", &expr, None, false).unwrap();
+        assert_eq!(node.name, "col");
+        assert!(
+            !node.downstream.is_empty(),
+            "Quoted CTE with matching case should resolve"
+        );
+    }
+
+    #[test]
+    fn test_lineage_quoted_cte_case_mismatch_no_expansion() {
+        // Quoted CTE "MyCte" referenced as "mycte" — case mismatch.
+        // sqlglot treats this as a table reference, not a CTE match.
+        // Star expansion should NOT resolve through the CTE.
+        let expr = parse(
+            r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "mycte""#,
+        );
+        // lineage("col", ...) should fail because "mycte" is treated as an external
+        // table (not matching CTE "MyCte"), and SELECT * cannot be expanded.
+        let result = lineage("col", &expr, None, false);
+        assert!(
+            result.is_err(),
+            "Quoted CTE with case mismatch should not expand star: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_lineage_mixed_quoted_unquoted_cte() {
+        // Mix of unquoted and quoted CTEs in a nested chain.
+        let expr = parse(
+            r#"WITH unquoted AS (SELECT 1 AS a FROM t), "Quoted" AS (SELECT a FROM unquoted) SELECT * FROM "Quoted""#,
+        );
+        let node = lineage("a", &expr, None, false).unwrap();
+        assert_eq!(node.name, "a");
+        assert!(
+            !node.downstream.is_empty(),
+            "Mixed quoted/unquoted CTE chain should resolve"
         );
     }
 }
