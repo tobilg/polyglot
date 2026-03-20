@@ -119,6 +119,11 @@ pub fn lineage(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
+    // Fast path: skip clone when there are no CTEs to expand
+    let has_with = matches!(sql, Expression::Select(s) if s.with.is_some());
+    if !has_with {
+        return lineage_from_expression(column, sql, dialect, trim_selects);
+    }
     let mut owned = sql.clone();
     expand_cte_stars(&mut owned, None);
     lineage_from_expression(column, &owned, dialect, trim_selects)
@@ -199,6 +204,10 @@ fn lineage_from_expression(
 /// When `schema` is provided, stars from external tables (not CTEs) are also resolved
 /// by looking up column names in the schema. This enables correct expansion of patterns
 /// like `WITH cte AS (SELECT * FROM external_table) SELECT * FROM cte`.
+///
+/// **Known limitation:** CTE name lookups use case-insensitive matching (`.to_lowercase()`).
+/// This is correct for most SQL dialects but may be surprising for case-sensitive dialects
+/// (e.g., Postgres or DuckDB with quoted identifiers).
 pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
     let select = match expr {
         Expression::Select(s) => s,
@@ -242,6 +251,9 @@ pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
 }
 
 /// Get the leftmost SELECT from an expression, drilling through UNION/INTERSECT/EXCEPT.
+///
+/// Per the SQL standard, the column names of a set operation (UNION, INTERSECT, EXCEPT)
+/// are determined by the left branch. This matches sqlglot's behavior.
 fn get_leftmost_select_mut(expr: &mut Expression) -> Option<&mut Select> {
     match expr {
         Expression::Select(s) => Some(s),
@@ -261,6 +273,10 @@ fn rewrite_stars_in_select(
     resolved_ctes: &HashMap<String, Vec<String>>,
     schema: Option<&dyn Schema>,
 ) -> Vec<String> {
+    // The AST represents star expressions in two forms depending on syntax:
+    //   - `SELECT *`      → Expression::Star (unqualified star)
+    //   - `SELECT table.*` → Expression::Column { name: "*", table: Some(...) } (qualified star)
+    // Both must be checked to handle all star patterns.
     let has_star = select
         .expressions
         .iter()
@@ -380,7 +396,10 @@ fn expand_star_from_sources(
                 expanded.extend(cols.into_iter().map(|c| (alias.clone(), c)));
                 any_expanded = true;
             } else {
-                // Source is not a resolved CTE and not in schema — can't fully expand
+                // Source is not a resolved CTE and not in schema — can't fully expand.
+                // Intentionally conservative: partial expansion is not attempted because
+                // an incomplete column list would cause downstream lineage resolution to
+                // produce incorrect results (missing columns silently omitted).
                 return None;
             }
         }
