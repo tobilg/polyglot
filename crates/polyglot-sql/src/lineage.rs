@@ -268,14 +268,18 @@ pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
 /// Per the SQL standard, the column names of a set operation (UNION, INTERSECT, EXCEPT)
 /// are determined by the left branch. This matches sqlglot's behavior.
 fn get_leftmost_select_mut(expr: &mut Expression) -> Option<&mut Select> {
-    match expr {
-        Expression::Select(s) => Some(s),
-        Expression::Union(u) => get_leftmost_select_mut(&mut u.left),
-        Expression::Intersect(i) => get_leftmost_select_mut(&mut i.left),
-        Expression::Except(e) => get_leftmost_select_mut(&mut e.left),
-        Expression::Paren(p) => get_leftmost_select_mut(&mut p.this),
-        _ => None,
+    let mut current = expr;
+    for _ in 0..MAX_LINEAGE_DEPTH {
+        match current {
+            Expression::Select(s) => return Some(s),
+            Expression::Union(u) => current = &mut u.left,
+            Expression::Intersect(i) => current = &mut i.left,
+            Expression::Except(e) => current = &mut e.left,
+            Expression::Paren(p) => current = &mut p.this,
+            _ => return None,
+        }
     }
+    None
 }
 
 /// Rewrite star expressions in a SELECT using resolved CTE column lists.
@@ -456,8 +460,6 @@ fn get_expression_output_name(expr: &Expression) -> Option<String> {
     }
 }
 
-/// Extract source names from a SELECT's FROM and JOIN clauses.
-/// Returns (alias_or_name, original_name) pairs.
 /// Source name info with normalized name for CTE lookup (respects quoted vs unquoted).
 struct SourceName {
     alias: String,
@@ -465,6 +467,7 @@ struct SourceName {
     normalized: String,
 }
 
+/// Extract source names from a SELECT's FROM and JOIN clauses.
 fn get_select_source_names(select: &Select) -> Vec<SourceName> {
     let mut names = Vec::new();
 
