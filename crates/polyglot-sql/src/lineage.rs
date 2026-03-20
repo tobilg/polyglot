@@ -3598,4 +3598,67 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
             "Mixed quoted/unquoted CTE chain should resolve"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Known bugs: quoted CTE case sensitivity in scope/lineage tracing paths
+    // -----------------------------------------------------------------------
+    //
+    // expand_cte_stars correctly handles quoted vs unquoted CTE names via
+    // normalize_cte_name(). However, the scope system (scope.rs add_table_to_scope)
+    // and the lineage tracing path (to_node_inner) use eq_ignore_ascii_case or
+    // direct string comparison for CTE name matching, ignoring the quoted status.
+    //
+    // sqlglot's normalize_identifiers treats quoted identifiers as case-sensitive
+    // and unquoted as case-insensitive. The scope system should do the same.
+    //
+    // Fixing these requires changes across scope.rs and lineage.rs CTE resolution,
+    // which is broader than the star expansion scope of this PR.
+
+    #[test]
+    fn test_lineage_quoted_cte_case_mismatch_non_star_known_bug() {
+        // Known bug: scope.rs add_table_to_scope uses eq_ignore_ascii_case for
+        // all identifiers including quoted ones, so quoted CTE "MyCte" referenced
+        // as "mycte" incorrectly resolves to the CTE.
+        //
+        // Per SQL semantics (and sqlglot behavior), quoted identifiers are
+        // case-sensitive: "mycte" should NOT match CTE "MyCte".
+        //
+        // This test asserts the CURRENT BUGGY behavior. When the bug is fixed,
+        // this test should fail — update the assertion to match correct behavior:
+        //   child.source_name should be "" (table ref), not "MyCte" (CTE ref).
+        let expr = parse(
+            r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT col FROM "mycte""#,
+        );
+        let node = lineage("col", &expr, None, false).unwrap();
+        assert!(!node.downstream.is_empty());
+        let child = &node.downstream[0];
+        // BUG: "mycte" incorrectly resolves to CTE "MyCte"
+        assert_eq!(
+            child.source_name, "MyCte",
+            "Known bug: quoted CTE case mismatch should NOT resolve, but currently does. \
+             If this fails, the bug may be fixed — update to assert source_name != \"MyCte\""
+        );
+    }
+
+    #[test]
+    fn test_lineage_quoted_cte_case_mismatch_qualified_col_known_bug() {
+        // Known bug: same as above but with qualified column reference ("mycte".col).
+        // scope.rs resolves "mycte" to CTE "MyCte" case-insensitively even for
+        // quoted identifiers, so "mycte".col incorrectly traces through CTE "MyCte".
+        //
+        // This test asserts the CURRENT BUGGY behavior. When the bug is fixed,
+        // this test should fail — update to assert source_name != "MyCte".
+        let expr = parse(
+            r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT "mycte".col FROM "mycte""#,
+        );
+        let node = lineage("col", &expr, None, false).unwrap();
+        assert!(!node.downstream.is_empty());
+        let child = &node.downstream[0];
+        // BUG: "mycte".col incorrectly resolves through CTE "MyCte"
+        assert_eq!(
+            child.source_name, "MyCte",
+            "Known bug: quoted CTE case mismatch should NOT resolve, but currently does. \
+             If this fails, the bug may be fixed — update to assert source_name != \"MyCte\""
+        );
+    }
 }
