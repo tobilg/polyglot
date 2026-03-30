@@ -77,6 +77,7 @@ pub use traversal::{
     get_columns,
     get_merge_source,
     get_merge_target,
+    get_all_tables,
     get_tables,
     is_add,
     is_aggregate,

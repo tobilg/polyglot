@@ -68,6 +68,10 @@ pub trait Schema {
 
     /// Get the nesting depth of the schema
     fn depth(&self) -> usize;
+
+    /// Find which table(s) contain the given column name.
+    /// Returns table names that have the column. Used for correlated subquery resolution.
+    fn find_tables_for_column(&self, column: &str) -> Vec<String>;
 }
 
 /// A column with its type and visibility
@@ -403,6 +407,17 @@ impl Schema for MappingSchema {
 
     fn depth(&self) -> usize {
         self.cached_depth
+    }
+
+    fn find_tables_for_column(&self, column: &str) -> Vec<String> {
+        let normalized = normalize_name(column, self.dialect, false, self.normalize);
+        let mut result = Vec::new();
+        for table_name in self.mapping.keys() {
+            if self.has_column(table_name, &normalized) {
+                result.push(table_name.clone());
+            }
+        }
+        result
     }
 }
 

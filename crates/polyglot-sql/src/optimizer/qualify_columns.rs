@@ -847,6 +847,13 @@ fn qualify_single_column(
         return Ok(());
     }
 
+    // Check for correlated reference: column might belong to an outer scope table.
+    // Search all schema tables not in the current scope for this column.
+    if let Some(outer_table) = resolver.find_column_in_outer_schema_tables(&col.name.name) {
+        col.table = Some(Identifier::new(outer_table));
+        return Ok(());
+    }
+
     if !allow_partial {
         return Err(QualifyColumnsError::UnknownColumn(col.name.name.clone()));
     }
@@ -3182,6 +3189,76 @@ mod tests {
             sql.contains("t2.id"),
             "inner column should be qualified: {sql}"
         );
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_scalar_subquery_unqualified() {
+        let expr = parse(
+            "SELECT t1_id, (SELECT AVG(val) FROM t2 WHERE t2_id = t1_id) AS avg_val FROM t1",
+        );
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[("t1_id".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "t2",
+                &[
+                    ("t2_id".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(sql.contains("t1.t1_id"), "outer column should be qualified: {sql}");
+        assert!(sql.contains("t2.t2_id"), "inner column should be qualified: {sql}");
+        // Correlated reference t1_id in inner scope should be qualified as t1.t1_id
+        assert!(sql.contains("= t1.t1_id"), "correlated column should be qualified: {sql}");
+    }
+
+    #[test]
+    fn test_qualify_columns_correlated_exists_subquery() {
+        let expr = parse(
+            "SELECT o_orderpriority FROM orders \
+             WHERE EXISTS (SELECT * FROM lineitem WHERE l_orderkey = o_orderkey)",
+        );
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "orders",
+                &[
+                    ("o_orderpriority".to_string(), DataType::Text),
+                    ("o_orderkey".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "lineitem",
+                &[("l_orderkey".to_string(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(sql.contains("orders.o_orderpriority"), "outer column should be qualified: {sql}");
+        assert!(sql.contains("lineitem.l_orderkey"), "inner column should be qualified: {sql}");
+        assert!(sql.contains("orders.o_orderkey"), "correlated outer column should be qualified: {sql}");
     }
 
     #[test]

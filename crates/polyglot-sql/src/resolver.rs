@@ -111,6 +111,25 @@ impl<'a> Resolver<'a> {
         self.schema.column_names(table_name).is_ok()
     }
 
+    /// Find the table for a column by searching all schema tables not in the current scope.
+    /// Used for correlated subquery resolution: if an unqualified column can't be resolved
+    /// in the current scope, check if it uniquely belongs to an outer-scope table.
+    /// Returns Some(table_name) if the column is found in exactly one non-local table.
+    pub fn find_column_in_outer_schema_tables(&self, column_name: &str) -> Option<String> {
+        let tables = self.schema.find_tables_for_column(column_name);
+        // Filter to tables NOT in the current scope
+        let outer_tables: Vec<String> = tables
+            .into_iter()
+            .filter(|t| !self.scope.sources.contains_key(t))
+            .collect();
+        // Only return if unambiguous (exactly one outer table has this column)
+        if outer_tables.len() == 1 {
+            Some(outer_tables.into_iter().next().unwrap())
+        } else {
+            None
+        }
+    }
+
     /// Get all available columns across all sources in this scope
     pub fn all_columns(&mut self) -> &HashSet<String> {
         if self.all_columns_cache.is_none() {

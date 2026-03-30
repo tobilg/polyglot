@@ -3339,6 +3339,14 @@ impl Generator {
                         self.write(" = ");
                         self.generate_expression(&param.value)?;
                     }
+                    if param.output {
+                        self.write_space();
+                        self.write_keyword("OUTPUT");
+                    }
+                }
+                if let Some(ref suffix) = exec.suffix {
+                    self.write_space();
+                    self.write(suffix);
                 }
                 Ok(())
             }
@@ -3374,6 +3382,16 @@ impl Generator {
             Expression::CreateProcedure(cp) => self.generate_create_procedure(cp),
             Expression::DropProcedure(dp) => self.generate_drop_procedure(dp),
             Expression::CreateSequence(cs) => self.generate_create_sequence(cs),
+            Expression::CreateSynonym(cs) => {
+                self.write_keyword("CREATE SYNONYM");
+                self.write_space();
+                self.generate_table(&cs.name)?;
+                self.write_space();
+                self.write_keyword("FOR");
+                self.write_space();
+                self.generate_table(&cs.target)?;
+                Ok(())
+            }
             Expression::DropSequence(ds) => self.generate_drop_sequence(ds),
             Expression::AlterSequence(als) => self.generate_alter_sequence(als),
             Expression::CreateTrigger(ct) => self.generate_create_trigger(ct),
@@ -3521,6 +3539,18 @@ impl Generator {
             Expression::DecompressString(e) => self.generate_decompress_string(e),
             Expression::Decrypt(e) => self.generate_decrypt(e),
             Expression::DecryptRaw(e) => self.generate_decrypt_raw(e),
+            Expression::DefaultColumnConstraint(e) => {
+                self.write_keyword("DEFAULT");
+                self.write_space();
+                self.generate_expression(&e.this)?;
+                if let Some(ref col) = e.for_column {
+                    self.write_space();
+                    self.write_keyword("FOR");
+                    self.write_space();
+                    self.generate_identifier(col)?;
+                }
+                Ok(())
+            }
             Expression::DefinerProperty(e) => self.generate_definer_property(e),
             Expression::Detach(e) => self.generate_detach(e),
             Expression::DictProperty(e) => self.generate_dict_property(e),
@@ -10756,7 +10786,10 @@ impl Generator {
             }
         }
 
-        if cv.or_replace {
+        if cv.or_alter {
+            self.write_space();
+            self.write_keyword("OR ALTER");
+        } else if cv.or_replace {
             self.write_space();
             self.write_keyword("OR REPLACE");
         }
@@ -12012,7 +12045,10 @@ impl Generator {
     fn generate_create_function(&mut self, cf: &CreateFunction) -> Result<()> {
         self.write_keyword("CREATE");
 
-        if cf.or_replace {
+        if cf.or_alter {
+            self.write_space();
+            self.write_keyword("OR ALTER");
+        } else if cf.or_replace {
             self.write_space();
             self.write_keyword("OR REPLACE");
         }
@@ -12669,7 +12705,10 @@ impl Generator {
     fn generate_create_procedure(&mut self, cp: &CreateProcedure) -> Result<()> {
         self.write_keyword("CREATE");
 
-        if cp.or_replace {
+        if cp.or_alter {
+            self.write_space();
+            self.write_keyword("OR ALTER");
+        } else if cp.or_replace {
             self.write_space();
             self.write_keyword("OR REPLACE");
         }
@@ -13240,7 +13279,10 @@ impl Generator {
     fn generate_create_trigger(&mut self, ct: &CreateTrigger) -> Result<()> {
         self.write_keyword("CREATE");
 
-        if ct.or_replace {
+        if ct.or_alter {
+            self.write_space();
+            self.write_keyword("OR ALTER");
+        } else if ct.or_replace {
             self.write_space();
             self.write_keyword("OR REPLACE");
         }
@@ -15597,9 +15639,22 @@ impl Generator {
             self.write_space();
         }
 
-        // Check for Snowflake IDENTIFIER() function
+        // Check for IDENTIFIER() (Snowflake) or OPENDATASOURCE(...).db.schema.table (TSQL)
         if let Some(ref identifier_func) = table.identifier_func {
             self.generate_expression(identifier_func)?;
+            // If table name parts are present, emit .catalog.schema.name after the function
+            if !table.name.name.is_empty() {
+                if let Some(catalog) = &table.catalog {
+                    self.write(".");
+                    self.generate_identifier(catalog)?;
+                }
+                if let Some(schema) = &table.schema {
+                    self.write(".");
+                    self.generate_identifier(schema)?;
+                }
+                self.write(".");
+                self.generate_identifier(&table.name)?;
+            }
         } else {
             if let Some(catalog) = &table.catalog {
                 self.generate_identifier(catalog)?;
@@ -17728,6 +17783,7 @@ impl Generator {
             DateTimeField::DayOfWeek => {
                 let name = match self.config.dialect {
                     Some(DialectType::DuckDB) | Some(DialectType::Snowflake) => "DAYOFWEEK",
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric) => "WEEKDAY",
                     _ => "DOW",
                 };
                 self.write_keyword(name);

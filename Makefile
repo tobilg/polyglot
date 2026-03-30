@@ -367,8 +367,7 @@ bench-transpile:
 
 # Transpile benchmark (quick): faster but less stable timings
 bench-transpile-quick:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
-		uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet --quick
+	@uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet --quick
 
 # =============================================================================
 # Build

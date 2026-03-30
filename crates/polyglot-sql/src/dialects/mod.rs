@@ -1134,21 +1134,49 @@ where
             e.this = transform_recursive(e.this, transform_fn)?;
             Expression::Exists(e)
         }
+        Expression::Describe(mut d) => {
+            d.target = transform_recursive(d.target, transform_fn)?;
+            Expression::Describe(d)
+        }
 
         // ===== Set operations =====
         Expression::Union(mut u) => {
             u.left = transform_recursive(u.left, transform_fn)?;
             u.right = transform_recursive(u.right, transform_fn)?;
+            if let Some(mut with) = u.with.take() {
+                with.ctes = with.ctes.into_iter().map(|mut cte| {
+                    let original = cte.this.clone();
+                    cte.this = transform_recursive(cte.this, transform_fn).unwrap_or(original);
+                    cte
+                }).collect();
+                u.with = Some(with);
+            }
             Expression::Union(u)
         }
         Expression::Intersect(mut i) => {
             i.left = transform_recursive(i.left, transform_fn)?;
             i.right = transform_recursive(i.right, transform_fn)?;
+            if let Some(mut with) = i.with.take() {
+                with.ctes = with.ctes.into_iter().map(|mut cte| {
+                    let original = cte.this.clone();
+                    cte.this = transform_recursive(cte.this, transform_fn).unwrap_or(original);
+                    cte
+                }).collect();
+                i.with = Some(with);
+            }
             Expression::Intersect(i)
         }
         Expression::Except(mut e) => {
             e.left = transform_recursive(e.left, transform_fn)?;
             e.right = transform_recursive(e.right, transform_fn)?;
+            if let Some(mut with) = e.with.take() {
+                with.ctes = with.ctes.into_iter().map(|mut cte| {
+                    let original = cte.this.clone();
+                    cte.this = transform_recursive(cte.this, transform_fn).unwrap_or(original);
+                    cte
+                }).collect();
+                e.with = Some(with);
+            }
             Expression::Except(e)
         }
 

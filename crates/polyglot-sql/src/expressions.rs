@@ -572,6 +572,7 @@ pub enum Expression {
     CreateProcedure(Box<CreateProcedure>),
     DropProcedure(Box<DropProcedure>),
     CreateSequence(Box<CreateSequence>),
+    CreateSynonym(Box<CreateSynonym>),
     DropSequence(Box<DropSequence>),
     AlterSequence(Box<AlterSequence>),
     CreateTrigger(Box<CreateTrigger>),
@@ -2210,6 +2211,7 @@ impl Expression {
             Expression::CreateProcedure(_) => "create_procedure",
             Expression::DropProcedure(_) => "drop_procedure",
             Expression::CreateSequence(_) => "create_sequence",
+            Expression::CreateSynonym(_) => "create_synonym",
             Expression::DropSequence(_) => "drop_sequence",
             Expression::AlterSequence(_) => "alter_sequence",
             Expression::CreateTrigger(_) => "create_trigger",
@@ -5760,6 +5762,9 @@ pub struct ExecuteStatement {
     /// Named parameters: @param=value pairs
     #[serde(default)]
     pub parameters: Vec<ExecuteParameter>,
+    /// Trailing clause text (e.g. WITH RESULT SETS ((...)))
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suffix: Option<String>,
 }
 
 /// Named parameter in EXEC statement: @name=value
@@ -5773,6 +5778,9 @@ pub struct ExecuteParameter {
     /// Whether this is a positional parameter (no = sign)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub positional: bool,
+    /// TSQL OUTPUT modifier on parameter
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub output: bool,
 }
 
 /// KILL statement (MySQL/MariaDB)
@@ -8055,6 +8063,9 @@ pub struct CreateView {
     pub columns: Vec<ViewColumn>,
     pub query: Expression,
     pub or_replace: bool,
+    /// TSQL: CREATE OR ALTER
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub or_alter: bool,
     pub if_not_exists: bool,
     pub materialized: bool,
     pub temporary: bool,
@@ -8134,6 +8145,7 @@ impl CreateView {
             columns: Vec::new(),
             query,
             or_replace: false,
+            or_alter: false,
             if_not_exists: false,
             materialized: false,
             temporary: false,
@@ -8688,6 +8700,9 @@ pub struct CreateFunction {
     pub return_type: Option<DataType>,
     pub body: Option<FunctionBody>,
     pub or_replace: bool,
+    /// TSQL: CREATE OR ALTER
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub or_alter: bool,
     pub if_not_exists: bool,
     pub temporary: bool,
     pub language: Option<String>,
@@ -8857,6 +8872,7 @@ impl CreateFunction {
             return_type: None,
             body: None,
             or_replace: false,
+            or_alter: false,
             if_not_exists: false,
             temporary: false,
             language: None,
@@ -8908,6 +8924,9 @@ pub struct CreateProcedure {
     pub parameters: Vec<FunctionParameter>,
     pub body: Option<FunctionBody>,
     pub or_replace: bool,
+    /// TSQL: CREATE OR ALTER
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub or_alter: bool,
     pub if_not_exists: bool,
     pub language: Option<String>,
     pub security: Option<FunctionSecurity>,
@@ -8935,6 +8954,7 @@ impl CreateProcedure {
             parameters: Vec::new(),
             body: None,
             or_replace: false,
+            or_alter: false,
             if_not_exists: false,
             language: None,
             security: None,
@@ -9010,6 +9030,16 @@ pub enum SeqPropKind {
     NoMinvalueWord,
     /// NOMAXVALUE (single word, Oracle)
     NoMaxvalueWord,
+}
+
+/// CREATE SYNONYM statement (TSQL)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct CreateSynonym {
+    /// The synonym name (can be qualified: schema.synonym_name)
+    pub name: TableRef,
+    /// The target object the synonym refers to
+    pub target: TableRef,
 }
 
 /// CREATE SEQUENCE statement
@@ -9156,6 +9186,9 @@ pub struct CreateTrigger {
     pub when_paren: bool,
     pub body: TriggerBody,
     pub or_replace: bool,
+    /// TSQL: CREATE OR ALTER
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub or_alter: bool,
     pub constraint: bool,
     pub deferrable: Option<bool>,
     pub initially_deferred: Option<bool>,
@@ -9227,6 +9260,7 @@ impl CreateTrigger {
                 args: Vec::new(),
             },
             or_replace: false,
+            or_alter: false,
             constraint: false,
             deferrable: None,
             initially_deferred: None,
@@ -10010,6 +10044,9 @@ pub struct NotNullColumnConstraint {
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DefaultColumnConstraint {
     pub this: Box<Expression>,
+    /// TSQL: DEFAULT value FOR column (table-level default constraint)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_column: Option<Identifier>,
 }
 
 /// PrimaryKeyColumnConstraint

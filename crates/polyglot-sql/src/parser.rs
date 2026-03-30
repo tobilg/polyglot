@@ -930,6 +930,18 @@ impl Parser {
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse PRINT statement"))
             }
+            // TSQL: WAITFOR DELAY '00:00:05' / WAITFOR TIME '23:00:00'
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("WAITFOR") => {
+                self.skip(); // consume WAITFOR
+                self.parse_command()?
+                    .ok_or_else(|| self.parse_error("Failed to parse WAITFOR statement"))
+            }
+            // TSQL: BULK INSERT table FROM 'file' WITH (options)
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("BULK") => {
+                self.skip(); // consume BULK
+                self.parse_command()?
+                    .ok_or_else(|| self.parse_error("Failed to parse BULK INSERT statement"))
+            }
             // ClickHouse: CHECK TABLE t [PARTITION p] [SETTINGS ...]
             TokenType::Check
                 if matches!(
@@ -976,11 +988,16 @@ impl Parser {
                     .ok_or_else(|| self.parse_error("Failed to parse RENAME statement"))
             }
             // ClickHouse: OPTIMIZE TABLE t [FINAL] [DEDUPLICATE [BY ...]]
+            // MySQL: OPTIMIZE [LOCAL|NO_WRITE_TO_BINLOG] TABLE t1 [, t2, ...]
             TokenType::Var
                 if self.peek().text.eq_ignore_ascii_case("OPTIMIZE")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
+                            | Some(crate::dialects::DialectType::MySQL)
+                            | Some(crate::dialects::DialectType::SingleStore)
+                            | Some(crate::dialects::DialectType::Doris)
+                            | Some(crate::dialects::DialectType::StarRocks)
                     ) =>
             {
                 self.skip(); // consume OPTIMIZE
@@ -4267,7 +4284,91 @@ impl Parser {
                             span: None,
                             inferred_type: None,
                         };
-                        Expression::Function(Box::new(func))
+                        let func_expr = Expression::Function(Box::new(func));
+
+                        // TSQL: OPENDATASOURCE(...).Catalog.schema.table
+                        // After a table-valued function, dot-chained access produces
+                        // a TableRef whose identifier_func holds the function call.
+                        if self.check(TokenType::Dot) {
+                            self.skip(); // consume first dot
+                            let part1 = self.parse_bigquery_table_part()?;
+                            if self.match_token(TokenType::Dot) {
+                                let part2 = self.parse_bigquery_table_part()?;
+                                if self.match_token(TokenType::Dot) {
+                                    // func().a.b.c  → catalog=a, schema=b, name=c
+                                    let part3 = self.parse_bigquery_table_part()?;
+                                    let tc = self.previous_trailing_comments().to_vec();
+                                    Expression::boxed_table(TableRef {
+                                        catalog: Some(part1),
+                                        schema: Some(part2),
+                                        name: part3,
+                                        alias: None,
+                                        alias_explicit_as: false,
+                                        column_aliases: Vec::new(),
+                                        trailing_comments: tc,
+                                        when: None,
+                                        only: false,
+                                        final_: false,
+                                        table_sample: None,
+                                        hints: Vec::new(),
+                                        system_time: None,
+                                        partitions: Vec::new(),
+                                        identifier_func: Some(Box::new(func_expr)),
+                                        changes: None,
+                                        version: None,
+                                        span: None,
+                                    })
+                                } else {
+                                    // func().a.b  → schema=a, name=b
+                                    let tc = self.previous_trailing_comments().to_vec();
+                                    Expression::boxed_table(TableRef {
+                                        catalog: None,
+                                        schema: Some(part1),
+                                        name: part2,
+                                        alias: None,
+                                        alias_explicit_as: false,
+                                        column_aliases: Vec::new(),
+                                        trailing_comments: tc,
+                                        when: None,
+                                        only: false,
+                                        final_: false,
+                                        table_sample: None,
+                                        hints: Vec::new(),
+                                        system_time: None,
+                                        partitions: Vec::new(),
+                                        identifier_func: Some(Box::new(func_expr)),
+                                        changes: None,
+                                        version: None,
+                                        span: None,
+                                    })
+                                }
+                            } else {
+                                // func().a  → name=a
+                                let tc = self.previous_trailing_comments().to_vec();
+                                Expression::boxed_table(TableRef {
+                                    catalog: None,
+                                    schema: None,
+                                    name: part1,
+                                    alias: None,
+                                    alias_explicit_as: false,
+                                    column_aliases: Vec::new(),
+                                    trailing_comments: tc,
+                                    when: None,
+                                    only: false,
+                                    final_: false,
+                                    table_sample: None,
+                                    hints: Vec::new(),
+                                    system_time: None,
+                                    partitions: Vec::new(),
+                                    identifier_func: Some(Box::new(func_expr)),
+                                    changes: None,
+                                    version: None,
+                                    span: None,
+                                })
+                            }
+                        } else {
+                            func_expr
+                        }
                     }
                 }
             } else {
@@ -5148,6 +5249,32 @@ impl Parser {
                     trailing_comments: Vec::new(),
                     span: None,
                 }));
+            }
+        }
+
+        // Check for MySQL index hints after alias: t e USE INDEX (idx), t AS a IGNORE INDEX (idx)
+        if self.check_keyword_text("USE")
+            || self.check(TokenType::Ignore)
+            || self.check_keyword_text("FORCE")
+        {
+            let next_idx = self.current + 1;
+            let is_index_hint = next_idx < self.tokens.len() && {
+                let next_text = &self.tokens[next_idx].text;
+                next_text.eq_ignore_ascii_case("INDEX") || next_text.eq_ignore_ascii_case("KEY")
+            };
+            if is_index_hint {
+                if let Expression::Table(ref mut table) = expr {
+                    if let Some(hint_expr) = self.parse_table_hints()? {
+                        match hint_expr {
+                            Expression::Tuple(tuple) => {
+                                table.hints = tuple.expressions;
+                            }
+                            other => {
+                                table.hints = vec![other];
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -9851,7 +9978,7 @@ impl Parser {
             Some(crate::dialects::DialectType::Teradata)
         ) && self.check(TokenType::View)
         {
-            return self.parse_create_view(true, false, false, None, None, None, false);
+            return self.parse_create_view(true, false, false, false, None, None, None, false);
         }
 
         // ClickHouse: REPLACE TABLE -> treat like CREATE OR REPLACE TABLE
@@ -10011,6 +10138,9 @@ impl Parser {
             })));
         }
 
+        // PostgreSQL ONLY modifier: UPDATE ONLY t SET ...
+        let has_only = self.match_token(TokenType::Only);
+
         // Parse table name (can be qualified: db.table_name)
         let first_name = self.expect_identifier_with_quoted()?;
         let mut table = if self.match_token(TokenType::Dot) {
@@ -10064,6 +10194,9 @@ impl Parser {
             TableRef::from_identifier(first_name)
         };
         table.trailing_comments = self.previous_trailing_comments().to_vec();
+        if has_only {
+            table.only = true;
+        }
 
         // Optional alias (with or without AS)
         if self.match_token(TokenType::As) {
@@ -10152,68 +10285,8 @@ impl Parser {
             if self.check(TokenType::Join) {
                 self.skip(); // consume JOIN
             }
-            // Parse joined table
-            let first_name = self.expect_identifier_with_quoted()?;
-            let mut join_table = if self.match_token(TokenType::Dot) {
-                let second_name = self.expect_identifier_with_quoted()?;
-                if self.match_token(TokenType::Dot) {
-                    let table_name = self.expect_identifier_with_quoted()?;
-                    TableRef {
-                        name: table_name,
-                        schema: Some(second_name),
-                        catalog: Some(first_name),
-                        alias: None,
-                        alias_explicit_as: false,
-                        column_aliases: Vec::new(),
-                        trailing_comments: Vec::new(),
-                        when: None,
-                        only: false,
-                        final_: false,
-                        table_sample: None,
-                        hints: Vec::new(),
-                        system_time: None,
-                        partitions: Vec::new(),
-                        identifier_func: None,
-                        changes: None,
-                        version: None,
-                        span: None,
-                    }
-                } else {
-                    TableRef {
-                        name: second_name,
-                        schema: Some(first_name),
-                        catalog: None,
-                        alias: None,
-                        alias_explicit_as: false,
-                        column_aliases: Vec::new(),
-                        trailing_comments: Vec::new(),
-                        when: None,
-                        only: false,
-                        final_: false,
-                        table_sample: None,
-                        hints: Vec::new(),
-                        system_time: None,
-                        partitions: Vec::new(),
-                        changes: None,
-                        version: None,
-                        identifier_func: None,
-                        span: None,
-                    }
-                }
-            } else {
-                TableRef::from_identifier(first_name)
-            };
-            // Optional alias
-            if self.match_token(TokenType::As) {
-                join_table.alias = Some(self.expect_identifier_with_quoted()?);
-                join_table.alias_explicit_as = true;
-            } else if self.is_identifier_token()
-                && !self.check(TokenType::On)
-                && !self.check(TokenType::Set)
-            {
-                join_table.alias = Some(self.expect_identifier_with_quoted()?);
-                join_table.alias_explicit_as = false;
-            }
+            // Parse joined table (supports subqueries, LATERAL, functions, etc.)
+            let join_expr = self.parse_table_expression()?;
             // ON clause
             let on_condition = if self.match_token(TokenType::On) {
                 Some(self.parse_expression()?)
@@ -10221,7 +10294,7 @@ impl Parser {
                 None
             };
             table_joins.push(Join {
-                this: Expression::Table(Box::new(join_table)),
+                this: join_expr,
                 on: on_condition,
                 using: Vec::new(),
                 kind,
@@ -10385,7 +10458,8 @@ impl Parser {
         };
 
         // Now parse the main table after FROM (or use from no-FROM path)
-        let table = if _has_from {
+        let has_only = self.match_token(TokenType::Only);
+        let mut table = if _has_from {
             // Parse the main table(s) after FROM
             // Use parse_table_ref() to handle dotted names like db.table
             self.parse_table_ref()?
@@ -10398,6 +10472,9 @@ impl Parser {
                 return Err(self.parse_error("Expected table name in DELETE statement"));
             }
         };
+        if has_only {
+            table.only = true;
+        }
 
         // ClickHouse: ON CLUSTER clause
         let on_cluster = self.parse_on_cluster_clause()?;
@@ -10622,8 +10699,9 @@ impl Parser {
         let create_token = self.expect(TokenType::Create)?;
         let leading_comments = create_token.comments;
 
-        // Handle OR REPLACE
+        // Handle OR REPLACE / OR ALTER (TSQL)
         let or_replace = self.match_keywords(&[TokenType::Or, TokenType::Replace]);
+        let or_alter = !or_replace && self.match_text_seq(&["OR", "ALTER"]);
 
         // Handle TEMPORARY
         let temporary = self.match_token(TokenType::Temporary);
@@ -10744,7 +10822,7 @@ impl Parser {
                     && self.tokens[self.current + 1].token_type == TokenType::Function
                 {
                     self.skip(); // consume TABLE
-                    return self.parse_create_function(or_replace, temporary, true);
+                    return self.parse_create_function(or_replace, or_alter, temporary, true);
                 }
                 let modifier = if materialized {
                     Some("MATERIALIZED")
@@ -10758,6 +10836,7 @@ impl Parser {
             }
             TokenType::View => self.parse_create_view(
                 or_replace,
+                or_alter,
                 materialized,
                 temporary,
                 algorithm,
@@ -10792,13 +10871,13 @@ impl Parser {
             TokenType::Index => self.parse_create_index_with_clustered(false, None),
             TokenType::Schema => self.parse_create_schema(leading_comments),
             TokenType::Database => self.parse_create_database(),
-            TokenType::Function => self.parse_create_function(or_replace, temporary, false),
-            TokenType::Procedure => self.parse_create_procedure(or_replace),
+            TokenType::Function => self.parse_create_function(or_replace, or_alter, temporary, false),
+            TokenType::Procedure => self.parse_create_procedure(or_replace, or_alter),
             TokenType::Sequence => self.parse_create_sequence(temporary, or_replace),
-            TokenType::Trigger => self.parse_create_trigger(or_replace, false, create_pos),
+            TokenType::Trigger => self.parse_create_trigger(or_replace, or_alter, false, create_pos),
             TokenType::Constraint => {
                 self.skip(); // consume CONSTRAINT
-                self.parse_create_trigger(or_replace, true, create_pos)
+                self.parse_create_trigger(or_replace, or_alter, true, create_pos)
             }
             TokenType::Type => self.parse_create_type(),
             TokenType::Domain => self.parse_create_domain(),
@@ -10845,6 +10924,16 @@ impl Parser {
                         && (self.tokens[next].text.eq_ignore_ascii_case("FORMAT"))
                 } {
                     return self.parse_create_file_format(or_replace, temporary);
+                }
+                // TSQL: CREATE SYNONYM name FOR target
+                if self.check_identifier("SYNONYM") {
+                    self.skip(); // consume SYNONYM
+                    let name = self.parse_table_ref()?;
+                    self.expect(TokenType::For)?;
+                    let target = self.parse_table_ref()?;
+                    return Ok(Expression::CreateSynonym(Box::new(
+                        crate::expressions::CreateSynonym { name, target },
+                    )));
                 }
                 // Fall back to Raw for unrecognized CREATE targets
                 // (e.g., CREATE WAREHOUSE, CREATE STREAMLIT, CREATE STORAGE INTEGRATION, etc.)
@@ -15968,6 +16057,7 @@ impl Parser {
     fn parse_create_view(
         &mut self,
         or_replace: bool,
+        or_alter: bool,
         materialized: bool,
         temporary: bool,
         algorithm: Option<String>,
@@ -16243,6 +16333,7 @@ impl Parser {
                 columns,
                 query: Expression::Null(Null), // Placeholder for incomplete VIEW
                 or_replace,
+                or_alter,
                 if_not_exists,
                 materialized,
                 temporary,
@@ -16321,6 +16412,7 @@ impl Parser {
             columns,
             query,
             or_replace,
+            or_alter,
             if_not_exists,
             materialized,
             temporary,
@@ -18184,6 +18276,47 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 })
             }
+        } else if self.check_identifier("REORGANIZE")
+            || self.check_identifier("COALESCE")
+            || self.check_identifier("EXCHANGE")
+            || self.check_identifier("ANALYZE")
+            || self.check_identifier("OPTIMIZE")
+            || self.check_identifier("REBUILD")
+            || self.check_identifier("REPAIR")
+            || self.check_identifier("DISCARD")
+            || self.check_identifier("IMPORT")
+        {
+            // MySQL partition operations: REORGANIZE PARTITION, COALESCE PARTITION, etc.
+            // Consume as Raw, respecting parenthesis depth
+            let keyword = self.advance().text.clone();
+            let mut tokens: Vec<(String, TokenType)> = vec![(keyword, TokenType::Var)];
+            let mut paren_depth = 0i32;
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                if self.check(TokenType::Comma) && paren_depth == 0 {
+                    break;
+                }
+                let token = self.advance();
+                if token.token_type == TokenType::LParen {
+                    paren_depth += 1;
+                }
+                if token.token_type == TokenType::RParen {
+                    paren_depth -= 1;
+                    if paren_depth < 0 {
+                        break;
+                    }
+                }
+                let text = if token.token_type == TokenType::QuotedIdentifier {
+                    format!("\"{}\"", token.text)
+                } else if token.token_type == TokenType::String {
+                    format!("'{}'", token.text)
+                } else {
+                    token.text.clone()
+                };
+                tokens.push((text, token.token_type));
+            }
+            Ok(AlterTableAction::Raw {
+                sql: self.join_command_tokens(tokens),
+            })
         } else {
             Err(self.parse_error(format!(
                 "Expected ADD, DROP, RENAME, ALTER, SET, UNSET, SWAP, CLUSTER, or REPLACE in ALTER TABLE, got {:?}",
@@ -19126,6 +19259,69 @@ impl Parser {
             || self.check_identifier("EXCLUSIVE");
 
         if !is_transaction {
+            // TSQL: BEGIN TRY ... END TRY [BEGIN CATCH ... END CATCH]
+            // These are block-structured constructs that may contain semicolons,
+            // so we can't use parse_command() which stops at the first semicolon.
+            let is_try = self.check_identifier("TRY");
+            let is_catch = self.check_identifier("CATCH");
+            if is_try || is_catch {
+                let block_kind = if is_try { "TRY" } else { "CATCH" };
+                self.skip(); // consume TRY or CATCH
+                let mut tokens: Vec<(String, TokenType)> = vec![
+                    ("BEGIN".to_string(), TokenType::Begin),
+                    (block_kind.to_string(), TokenType::Var),
+                ];
+                // Collect tokens until matching END TRY / END CATCH
+                while !self.is_at_end() {
+                    if self.check(TokenType::End)
+                        && self.current + 1 < self.tokens.len()
+                        && self.tokens[self.current + 1]
+                            .text
+                            .eq_ignore_ascii_case(block_kind)
+                    {
+                        tokens.push(("END".to_string(), TokenType::End));
+                        self.skip(); // consume END
+                        tokens.push((block_kind.to_string(), TokenType::Var));
+                        self.skip(); // consume TRY/CATCH
+                        break;
+                    }
+                    let token = self.advance();
+                    let text = if token.token_type == TokenType::String {
+                        format!("'{}'", token.text)
+                    } else if token.token_type == TokenType::QuotedIdentifier {
+                        format!("\"{}\"", token.text)
+                    } else {
+                        token.text.clone()
+                    };
+                    tokens.push((text, token.token_type));
+                }
+                let mut result = Expression::Command(Box::new(Command {
+                    this: self.join_command_tokens(tokens),
+                }));
+
+                // If this was a TRY block, check for a following BEGIN CATCH block
+                if is_try
+                    && self.check(TokenType::Begin)
+                    && self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1]
+                        .text
+                        .eq_ignore_ascii_case("CATCH")
+                {
+                    // Recursively parse the BEGIN CATCH block
+                    let catch_block = self.parse_transaction()?;
+                    // Combine TRY and CATCH into a single command
+                    if let (Expression::Command(try_cmd), Expression::Command(catch_cmd)) =
+                        (&result, &catch_block)
+                    {
+                        result = Expression::Command(Box::new(Command {
+                            this: format!("{} {}", try_cmd.this, catch_cmd.this),
+                        }));
+                    }
+                }
+
+                return Ok(result);
+            }
+
             // This is a procedural BEGIN block - parse as Command
             // Collect remaining tokens until end of statement
             return self
@@ -21485,11 +21681,21 @@ impl Parser {
     fn parse_execute(&mut self) -> Result<Expression> {
         self.expect(TokenType::Execute)?;
 
-        // Parse procedure name (can be qualified: schema.proc_name)
-        let proc_name = self.parse_table_ref()?;
-        let this = Expression::Table(Box::new(proc_name));
+        // Dynamic SQL: EXEC(@sql) or EXEC (@sql)
+        let this = if self.check(TokenType::LParen) {
+            self.skip(); // consume (
+            let expr = self
+                .parse_disjunction()?
+                .unwrap_or(Expression::Null(crate::expressions::Null));
+            self.expect(TokenType::RParen)?;
+            Expression::Paren(Box::new(crate::expressions::Paren { this: expr, trailing_comments: Vec::new() }))
+        } else {
+            // Parse procedure name (can be qualified: schema.proc_name)
+            let proc_name = self.parse_table_ref()?;
+            Expression::Table(Box::new(proc_name))
+        };
 
-        // Parse optional parameters: @param=value, ...
+        // Parse optional parameters: @param=value [OUTPUT], ...
         let mut parameters = Vec::new();
 
         // Check if there are parameters (starts with @ or identifier)
@@ -21506,14 +21712,16 @@ impl Parser {
             if self.match_token(TokenType::Eq) {
                 // Named parameter: @param = value
                 let value = self.parse_primary()?;
+                let output = self.match_token(TokenType::Output);
                 parameters.push(ExecuteParameter {
                     name: param_name,
                     value,
                     positional: false,
+                    output,
                 });
             } else {
                 // Positional parameter: @var (no = sign)
-                // Positional parameter: @var (no = sign)
+                let output = self.match_token(TokenType::Output);
                 parameters.push(ExecuteParameter {
                     name: param_name.clone(),
                     value: Expression::boxed_column(Column {
@@ -21525,6 +21733,7 @@ impl Parser {
                         inferred_type: None,
                     }),
                     positional: true,
+                    output,
                 });
             }
 
@@ -21534,9 +21743,22 @@ impl Parser {
             }
         }
 
+        // TSQL: WITH RESULT SETS ((...), ...) or WITH RECOMPILE etc.
+        let suffix = if self.check(TokenType::With) {
+            let start = self.current;
+            // Collect remaining tokens until semicolon or end
+            while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                self.skip();
+            }
+            Some(self.tokens_to_sql(start, self.current))
+        } else {
+            None
+        };
+
         Ok(Expression::Execute(Box::new(ExecuteStatement {
             this,
             parameters,
+            suffix,
         })))
     }
 
@@ -22776,6 +22998,7 @@ impl Parser {
     fn parse_create_function(
         &mut self,
         or_replace: bool,
+        or_alter: bool,
         temporary: bool,
         is_table_function: bool,
     ) -> Result<Expression> {
@@ -23196,6 +23419,7 @@ impl Parser {
             return_type,
             body,
             or_replace,
+            or_alter,
             if_not_exists,
             temporary,
             language,
@@ -23487,7 +23711,7 @@ impl Parser {
     }
 
     /// Parse CREATE PROCEDURE statement
-    fn parse_create_procedure(&mut self, or_replace: bool) -> Result<Expression> {
+    fn parse_create_procedure(&mut self, or_replace: bool, or_alter: bool) -> Result<Expression> {
         // Check if PROC shorthand was used before consuming the token
         let use_proc_keyword = self.peek().text.eq_ignore_ascii_case("PROC");
         self.expect(TokenType::Procedure)?;
@@ -23601,6 +23825,7 @@ impl Parser {
             parameters,
             body,
             or_replace,
+            or_alter,
             if_not_exists,
             language,
             security,
@@ -23922,6 +24147,7 @@ impl Parser {
     fn parse_create_trigger(
         &mut self,
         or_replace: bool,
+        or_alter: bool,
         constraint: bool,
         create_pos: usize,
     ) -> Result<Expression> {
@@ -24131,6 +24357,7 @@ impl Parser {
             when_paren,
             body,
             or_replace,
+            or_alter,
             constraint,
             deferrable,
             initially_deferred,
@@ -29360,13 +29587,12 @@ impl Parser {
             }
 
             // Check for Oracle pseudocolumns (ROWNUM, ROWID, LEVEL, SYSDATE, etc.)
-            // Note: SQLite treats rowid as a regular column name, not a pseudocolumn
-            // ClickHouse: skip pseudocolumn parsing as these are regular identifiers
+            // Oracle pseudocolumns (LEVEL, ROWNUM, ROWID, SYSDATE, etc.)
+            // Only recognize in Oracle and generic dialect — other dialects treat these as regular identifiers
             if !quoted
-                && !matches!(
+                && matches!(
                     self.config.dialect,
-                    Some(crate::dialects::DialectType::SQLite)
-                        | Some(crate::dialects::DialectType::ClickHouse)
+                    Some(crate::dialects::DialectType::Oracle) | None
                 )
             {
                 if let Some(pseudocolumn_type) = PseudocolumnType::from_str(&name) {
@@ -33642,8 +33868,8 @@ impl Parser {
                 // Parse key: use column parsing to avoid colon being interpreted as JSON path
                 let key = self.parse_column()?.unwrap_or(Expression::Null(Null));
 
-                // Support colon or VALUE keyword (VALUE is an identifier, not a keyword)
-                let _ = self.match_token(TokenType::Colon) || self.match_identifier("VALUE");
+                // Support colon, comma (MySQL), or VALUE keyword
+                let _ = self.match_token(TokenType::Colon) || self.match_token(TokenType::Comma) || self.match_identifier("VALUE");
 
                 let value = self.parse_bitwise()?.unwrap_or(Expression::Null(Null));
                 // Check for FORMAT JSON after value
@@ -39806,13 +40032,28 @@ impl Parser {
         ) {
             return true;
         }
-        // Spark/Hive allow LIMIT and OFFSET as aliases (without quoting)
+        // Spark/Hive allow LIMIT and OFFSET as aliases (without quoting),
+        // but only when NOT followed by a number/expression (which means it's the actual clause)
         if matches!(
             self.config.dialect,
-            Some(crate::dialects::DialectType::Spark) | Some(crate::dialects::DialectType::Hive)
+            Some(crate::dialects::DialectType::Spark)
+                | Some(crate::dialects::DialectType::Hive)
+                | Some(crate::dialects::DialectType::Databricks)
         ) && matches!(token_type, TokenType::Limit | TokenType::Offset)
         {
-            return true;
+            let next = self.current + 1;
+            let next_is_value = next < self.tokens.len()
+                && matches!(
+                    self.tokens[next].token_type,
+                    TokenType::Number
+                        | TokenType::LParen
+                        | TokenType::Var
+                        | TokenType::Parameter
+                        | TokenType::All
+                );
+            if !next_is_value {
+                return true;
+            }
         }
         false
     }
@@ -43191,6 +43432,7 @@ impl Parser {
                 return Ok(Some(Expression::DefaultColumnConstraint(Box::new(
                     DefaultColumnConstraint {
                         this: Box::new(val),
+                        for_column: None,
                     },
                 ))));
             }
@@ -43329,6 +43571,7 @@ impl Parser {
                 return Ok(Some(Expression::DefaultColumnConstraint(Box::new(
                     DefaultColumnConstraint {
                         this: Box::new(expr),
+                        for_column: None,
                     },
                 ))));
             }
@@ -43876,9 +44119,16 @@ impl Parser {
         if self.match_token(TokenType::Default) {
             let default_value = self.parse_bitwise()?;
             if let Some(val) = default_value {
+                // TSQL: DEFAULT value FOR column (table-level default constraint)
+                let for_column = if self.match_token(TokenType::For) {
+                    Some(self.expect_identifier_with_quoted()?)
+                } else {
+                    None
+                };
                 return Ok(Some(Expression::DefaultColumnConstraint(Box::new(
                     DefaultColumnConstraint {
                         this: Box::new(val),
+                        for_column,
                     },
                 ))));
             }
@@ -49887,13 +50137,22 @@ impl Parser {
             self.match_text_seq(&["VALUES"]);
 
             let part_range = if self.match_text_seq(&["LESS", "THAN"]) {
-                // VALUES LESS THAN (val) or VALUES LESS THAN (MAXVALUE)
-                let values = self.parse_wrapped_csv_expressions()?;
-                Expression::PartitionRange(Box::new(PartitionRange {
-                    this: Box::new(name),
-                    expression: None,
-                    expressions: values,
-                }))
+                if self.match_token(TokenType::Maxvalue) {
+                    // VALUES LESS THAN MAXVALUE (without parens)
+                    Expression::PartitionRange(Box::new(PartitionRange {
+                        this: Box::new(name),
+                        expression: None,
+                        expressions: vec![Expression::Identifier(Identifier::new("MAXVALUE"))],
+                    }))
+                } else {
+                    // VALUES LESS THAN (val) or VALUES LESS THAN (MAXVALUE)
+                    let values = self.parse_wrapped_csv_expressions()?;
+                    Expression::PartitionRange(Box::new(PartitionRange {
+                        this: Box::new(name),
+                        expression: None,
+                        expressions: values,
+                    }))
+                }
             } else if self.check(TokenType::LBracket) {
                 // VALUES [(val1), (val2)) - note asymmetric brackets
                 self.skip(); // consume [
@@ -54169,12 +54428,23 @@ impl Parser {
                     None
                 };
 
-                // Parse wrapped identifiers (index names)
+                // Parse wrapped identifiers (index names — can include keywords like PRIMARY)
                 let expressions = if self.match_token(TokenType::LParen) {
                     let mut ids = Vec::new();
                     loop {
+                        if self.check(TokenType::RParen) {
+                            break;
+                        }
                         if let Some(id) = self.parse_id_var()? {
                             ids.push(id);
+                        } else if self.is_safe_keyword_as_identifier()
+                            || self.check(TokenType::PrimaryKey)
+                        {
+                            // Accept keywords as index names (e.g., PRIMARY)
+                            let name = self.advance().text.clone();
+                            ids.push(Expression::Identifier(Identifier::new(name)));
+                        } else {
+                            break;
                         }
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -54979,8 +55249,31 @@ impl Parser {
         // Expect closing parenthesis
         self.expect(TokenType::RParen)?;
 
-        // Check for WITH ORDINALITY
-        let with_ordinality = self.match_text_seq(&["WITH", "ORDINALITY"]);
+        // Check for WITH ORDINALITY (Presto) or WITH OFFSET (BigQuery)
+        let mut with_ordinality = self.match_text_seq(&["WITH", "ORDINALITY"]);
+        let mut offset_alias = None;
+        if !with_ordinality && self.match_text_seq(&["WITH", "OFFSET"]) {
+            with_ordinality = true;
+            // Parse optional offset alias: WITH OFFSET AS y or WITH OFFSET y
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::BigQuery)
+            ) {
+                let has_as = self.match_token(TokenType::As);
+                if has_as
+                    || self.check(TokenType::Identifier)
+                    || self.check(TokenType::Var)
+                {
+                    let alias_name = self.advance().text;
+                    offset_alias = Some(crate::expressions::Identifier {
+                        name: alias_name,
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    });
+                }
+            }
+        }
 
         // Parse optional alias
         let alias = if self.match_token(TokenType::As)
@@ -55007,7 +55300,7 @@ impl Parser {
             expressions: extra_expressions,
             with_ordinality,
             alias,
-            offset_alias: None,
+            offset_alias,
         }))))
     }
 
@@ -57963,6 +58256,54 @@ mod tests {
             panic!("Should have GROUP BY clause");
         }
     }
+
+    #[test]
+    fn test_opendatasource_dot_access() {
+        use crate::dialects::DialectType;
+        use crate::transpile;
+
+        // OPENDATASOURCE(...).Catalog.dbo.Products — 3-part dot access
+        let sql = "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=remote;').Catalog.dbo.Products";
+        let result = transpile(sql, DialectType::TSQL, DialectType::TSQL).unwrap();
+        assert_eq!(result[0], sql);
+
+        // 2-part dot access
+        let sql2 = "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'x').schema1.table1";
+        let result2 = transpile(sql2, DialectType::TSQL, DialectType::TSQL).unwrap();
+        assert_eq!(result2[0], sql2);
+
+        // 1-part dot access
+        let sql3 = "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'x').table1";
+        let result3 = transpile(sql3, DialectType::TSQL, DialectType::TSQL).unwrap();
+        assert_eq!(result3[0], sql3);
+
+        // No dot access (should still work as plain function)
+        let sql4 = "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'x')";
+        let result4 = transpile(sql4, DialectType::TSQL, DialectType::TSQL).unwrap();
+        assert_eq!(result4[0], sql4);
+    }
+
+    #[test]
+    fn test_exec_output_param() {
+        use crate::dialects::DialectType;
+        use crate::transpile;
+
+        // OUTPUT parameter
+        let sql = "EXECUTE sp_CountOrders @region = 'US', @total = @count OUTPUT";
+        let result = transpile(sql, DialectType::TSQL, DialectType::TSQL);
+        assert!(result.is_ok(), "OUTPUT param should parse: {:?}", result.err());
+        assert_eq!(result.unwrap()[0], sql);
+
+        // WITH RESULT SETS (opaque — stored as Command)
+        let sql2 = "EXEC sp_GetReport WITH RESULT SETS ((id INT, name NVARCHAR(100)))";
+        let result2 = Parser::parse_sql(sql2);
+        assert!(result2.is_ok(), "RESULT SETS should parse: {:?}", result2.err());
+
+        // Dynamic SQL: EXECUTE (@sql)
+        let sql3 = "EXECUTE (@sql)";
+        let result3 = transpile(sql3, DialectType::TSQL, DialectType::TSQL);
+        assert!(result3.is_ok(), "Dynamic SQL should parse: {:?}", result3.err());
+    }
 }
 
 #[cfg(test)]
@@ -57995,6 +58336,43 @@ mod join_marker_tests {
     }
 
     #[test]
+    fn test_optimize_table_mysql() {
+        use crate::dialects::DialectType;
+        use crate::transpile;
+
+        // Multi-statement: TRUNCATE + OPTIMIZE
+        let sql1 = "TRUNCATE TABLE session_logs";
+        let r1 = transpile(sql1, DialectType::MySQL, DialectType::MySQL);
+        assert!(r1.is_ok(), "TRUNCATE should parse: {:?}", r1.err());
+
+        let sql2 = "OPTIMIZE TABLE temp_exports";
+        let r2 = transpile(sql2, DialectType::MySQL, DialectType::MySQL);
+        assert!(r2.is_ok(), "OPTIMIZE should parse: {:?}", r2.err());
+        assert_eq!(r2.unwrap()[0], sql2);
+    }
+
+    #[test]
+    fn test_mysql_index_hints() {
+        use crate::dialects::DialectType;
+        use crate::transpile;
+
+        // USE INDEX with alias
+        let sql1 = "SELECT * FROM t e USE INDEX (idx1) WHERE a = 1";
+        let r1 = transpile(sql1, DialectType::MySQL, DialectType::MySQL);
+        assert!(r1.is_ok(), "USE INDEX with alias: {:?}", r1.err());
+
+        // IGNORE INDEX in JOIN with PRIMARY keyword
+        let sql2 = "SELECT * FROM t1 JOIN t2 IGNORE INDEX (PRIMARY) ON t1.id = t2.id";
+        let r2 = transpile(sql2, DialectType::MySQL, DialectType::MySQL);
+        assert!(r2.is_ok(), "IGNORE INDEX PRIMARY: {:?}", r2.err());
+
+        // Full example from issue
+        let sql3 = "SELECT e.name, d.department_name FROM employees e USE INDEX (idx_dept, idx_salary) JOIN departments d IGNORE INDEX (PRIMARY) ON e.department_id = d.department_id WHERE e.salary > 60000";
+        let r3 = transpile(sql3, DialectType::MySQL, DialectType::MySQL);
+        assert!(r3.is_ok(), "Full example: {:?}", r3.err());
+    }
+
+    #[test]
     fn test_oracle_quoted_dot_projection() {
         let sql = "SELECT warehouse2.\"Water\", warehouse2.\"Rail\" FROM warehouses warehouse2";
         let result = crate::dialects::Dialect::get(DialectType::Oracle).parse(sql);
@@ -58008,6 +58386,22 @@ mod join_marker_tests {
         let result = crate::dialects::Dialect::get(DialectType::Oracle).parse(sql);
         println!("Result: {:?}", result);
         assert!(result.is_ok(), "Parse error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_spark_limit() {
+        use crate::dialects::DialectType;
+        use crate::transpile;
+
+        // Spark LIMIT should work
+        let sql = "SELECT * FROM something LIMIT 100";
+        let r = transpile(sql, DialectType::Spark, DialectType::Spark);
+        assert!(r.is_ok(), "Spark LIMIT: {:?}", r.err());
+        assert_eq!(r.unwrap()[0], sql);
+
+        // Hive LIMIT should work
+        let r2 = transpile(sql, DialectType::Hive, DialectType::Hive);
+        assert!(r2.is_ok(), "Hive LIMIT: {:?}", r2.err());
     }
 
     #[test]

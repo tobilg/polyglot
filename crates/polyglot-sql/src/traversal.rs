@@ -34,7 +34,7 @@
 //!
 //! Based on traversal patterns from `sqlglot/expressions.py`.
 
-use crate::expressions::Expression;
+use crate::expressions::{Expression, TableRef};
 use std::collections::{HashMap, VecDeque};
 
 /// Unique identifier for expression nodes during traversal
@@ -683,6 +683,10 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
                 children.push(("returning", returning));
             }
         }
+        Expression::Any(q) | Expression::All(q) => {
+            children.push(("this", &q.this));
+            children.push(("subquery", &q.subquery));
+        }
         Expression::Ordered(o) => {
             children.push(("this", &o.this));
         }
@@ -690,6 +694,9 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
             if let Some(ref this) = i.this {
                 children.push(("this", this));
             }
+        }
+        Expression::Describe(d) => {
+            children.push(("target", &d.target));
         }
         _ => {}
     }
@@ -1082,8 +1089,78 @@ pub fn get_columns(expr: &Expression) -> Vec<&Expression> {
 /// Collects all table references ([`Expression::Table`]) from the expression tree.
 ///
 /// Performs a depth-first search and returns references to every table node found.
+///
+/// Note: DML target tables (`Insert.table`, `Update.table`, `Delete.table`) are
+/// stored as `TableRef` struct fields, not as `Expression::Table` nodes, so they
+/// are not reachable via tree traversal. Use [`get_all_tables`] to include those.
 pub fn get_tables(expr: &Expression) -> Vec<&Expression> {
     expr.find_all(|e| matches!(e, Expression::Table(_)))
+}
+
+/// Collects **all** referenced tables from the expression tree, including DML
+/// target tables that are stored as `TableRef` struct fields and are therefore
+/// not reachable through normal tree traversal.
+///
+/// Returns owned `Expression::Table` values. This is the comprehensive version
+/// of [`get_tables`] — use it when you need to discover every table referenced
+/// in a statement, including inside CTE bodies containing INSERT/UPDATE/DELETE.
+pub fn get_all_tables(expr: &Expression) -> Vec<Expression> {
+    use std::collections::HashSet;
+
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    // First: collect all Expression::Table nodes found via DFS.
+    for node in expr.dfs() {
+        if let Expression::Table(t) = node {
+            let qname = table_ref_qualified_name(t);
+            if seen.insert(qname) {
+                result.push(node.clone());
+            }
+        }
+
+        // Also extract DML target TableRef fields not reachable via iter_children.
+        let refs: Vec<&TableRef> = match node {
+            Expression::Insert(ins) => vec![&ins.table],
+            Expression::Update(upd) => {
+                let mut v = vec![&upd.table];
+                v.extend(upd.extra_tables.iter());
+                v
+            }
+            Expression::Delete(del) => {
+                let mut v = vec![&del.table];
+                v.extend(del.using.iter());
+                v
+            }
+            _ => continue,
+        };
+        for tref in refs {
+            if tref.name.name.is_empty() {
+                continue;
+            }
+            let qname = table_ref_qualified_name(tref);
+            if seen.insert(qname) {
+                result.push(Expression::Table(Box::new(tref.clone())));
+            }
+        }
+    }
+
+    result
+}
+
+/// Build a qualified name string from a TableRef for deduplication purposes.
+fn table_ref_qualified_name(t: &TableRef) -> String {
+    let mut name = String::new();
+    if let Some(ref cat) = t.catalog {
+        name.push_str(&cat.name);
+        name.push('.');
+    }
+    if let Some(ref schema) = t.schema {
+        name.push_str(&schema.name);
+        name.push('.');
+    }
+    name.push_str(&t.name.name);
+    name
 }
 
 /// Extracts the underlying [`Expression::Table`] from a MERGE field that may
