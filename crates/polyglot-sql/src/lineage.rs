@@ -2691,6 +2691,7 @@ mod tests {
 
     /// A line comment between SELECT and the first column wraps the column
     /// in an Annotated node. Lineage must unwrap it to find the column name.
+    /// Verify that commented and uncommented queries produce identical lineage.
     #[test]
     fn test_comment_before_first_column_in_cte() {
         let sql_with_comment = "with t as (select 1 as a) select\n  -- comment\n  a from t";
@@ -2698,16 +2699,19 @@ mod tests {
 
         // Without comment — baseline
         let expr_ok = parse(sql_without_comment);
-        let result_ok = lineage("a", &expr_ok, None, false);
-        assert!(result_ok.is_ok(), "without comment: {:?}", result_ok.err());
+        let node_ok = lineage("a", &expr_ok, None, false)
+            .expect("without comment should succeed");
 
-        // With comment — should also succeed
+        // With comment — should produce identical lineage
         let expr_comment = parse(sql_with_comment);
-        let result_comment = lineage("a", &expr_comment, None, false);
-        assert!(
-            result_comment.is_ok(),
-            "with comment before first column: {:?}",
-            result_comment.err()
+        let node_comment = lineage("a", &expr_comment, None, false)
+            .expect("with comment before first column should succeed");
+
+        assert_eq!(node_ok.name, node_comment.name, "node names should match");
+        assert_eq!(
+            node_ok.downstream_names(),
+            node_comment.downstream_names(),
+            "downstream lineage should be identical with or without comment"
         );
     }
 
@@ -2716,8 +2720,10 @@ mod tests {
     fn test_block_comment_before_first_column() {
         let sql = "with t as (select 1 as a) select /* section */ a from t";
         let expr = parse(sql);
-        let result = lineage("a", &expr, None, false);
-        assert!(result.is_ok(), "block comment before first column: {:?}", result.err());
+        let node = lineage("a", &expr, None, false)
+            .expect("block comment before first column should succeed");
+        assert_eq!(node.name, "a");
+        assert!(!node.downstream.is_empty(), "should have downstream lineage");
     }
 
     /// Comment before first column should not affect second column resolution.
@@ -2726,11 +2732,13 @@ mod tests {
         let sql = "with t as (select 1 as a, 2 as b) select\n  -- comment\n  a, b from t";
         let expr = parse(sql);
 
-        let result_a = lineage("a", &expr, None, false);
-        assert!(result_a.is_ok(), "column a with comment: {:?}", result_a.err());
+        let node_a = lineage("a", &expr, None, false)
+            .expect("column a with comment should succeed");
+        assert_eq!(node_a.name, "a");
 
-        let result_b = lineage("b", &expr, None, false);
-        assert!(result_b.is_ok(), "column b with comment: {:?}", result_b.err());
+        let node_b = lineage("b", &expr, None, false)
+            .expect("column b with comment should succeed");
+        assert_eq!(node_b.name, "b");
     }
 
     /// Aliased column with preceding comment.
@@ -2738,7 +2746,9 @@ mod tests {
     fn test_comment_before_aliased_column() {
         let sql = "with t as (select 1 as x) select\n  -- renamed\n  x as y from t";
         let expr = parse(sql);
-        let result = lineage("y", &expr, None, false);
-        assert!(result.is_ok(), "aliased column with comment: {:?}", result.err());
+        let node = lineage("y", &expr, None, false)
+            .expect("aliased column with comment should succeed");
+        assert_eq!(node.name, "y");
+        assert!(!node.downstream.is_empty(), "aliased column should have downstream lineage");
     }
 }
