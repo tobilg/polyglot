@@ -3666,6 +3666,8 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
             "Known bug: quoted CTE case mismatch should NOT resolve, but currently does. \
              If this fails, the bug may be fixed — update to assert source_name != \"MyCte\""
         );
+    }
+
     // --- Comment handling tests (ported from sqlglot test_lineage.py) ---
 
     /// sqlglot: test_node_name_doesnt_contain_comment
