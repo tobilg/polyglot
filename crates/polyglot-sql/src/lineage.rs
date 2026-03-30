@@ -609,6 +609,9 @@ fn get_alias_or_name(expr: &Expression) -> Option<String> {
         Expression::Column(col) => Some(col.name.name.clone()),
         Expression::Identifier(id) => Some(id.name.clone()),
         Expression::Star(_) => Some("*".to_string()),
+        // Annotated wraps an expression with trailing comments (e.g. `SELECT\n-- comment\na`).
+        // Unwrap to get the actual column/alias name from the inner expression.
+        Expression::Annotated(a) => get_alias_or_name(&a.this),
         _ => None,
     }
 }
@@ -2668,5 +2671,74 @@ mod tests {
             "Expected t.name in downstream, got: {:?}",
             names
         );
+    }
+
+    // --- Comment handling tests (ported from sqlglot test_lineage.py) ---
+
+    /// sqlglot: test_node_name_doesnt_contain_comment
+    /// Comments in column expressions should not affect lineage resolution.
+    /// NOTE: This test uses SELECT * from a derived table, which is a separate
+    /// known limitation in polyglot-sql (star expansion in subqueries).
+    #[test]
+    #[ignore = "requires derived table star expansion (separate issue)"]
+    fn test_node_name_doesnt_contain_comment() {
+        let expr = parse("SELECT * FROM (SELECT x /* c */ FROM t1) AS t2");
+        let node = lineage("x", &expr, None, false).unwrap();
+
+        assert_eq!(node.name, "x");
+        assert!(!node.downstream.is_empty());
+    }
+
+    /// A line comment between SELECT and the first column wraps the column
+    /// in an Annotated node. Lineage must unwrap it to find the column name.
+    #[test]
+    fn test_comment_before_first_column_in_cte() {
+        let sql_with_comment = "with t as (select 1 as a) select\n  -- comment\n  a from t";
+        let sql_without_comment = "with t as (select 1 as a) select a from t";
+
+        // Without comment — baseline
+        let expr_ok = parse(sql_without_comment);
+        let result_ok = lineage("a", &expr_ok, None, false);
+        assert!(result_ok.is_ok(), "without comment: {:?}", result_ok.err());
+
+        // With comment — should also succeed
+        let expr_comment = parse(sql_with_comment);
+        let result_comment = lineage("a", &expr_comment, None, false);
+        assert!(
+            result_comment.is_ok(),
+            "with comment before first column: {:?}",
+            result_comment.err()
+        );
+    }
+
+    /// Block comment between SELECT and first column.
+    #[test]
+    fn test_block_comment_before_first_column() {
+        let sql = "with t as (select 1 as a) select /* section */ a from t";
+        let expr = parse(sql);
+        let result = lineage("a", &expr, None, false);
+        assert!(result.is_ok(), "block comment before first column: {:?}", result.err());
+    }
+
+    /// Comment before first column should not affect second column resolution.
+    #[test]
+    fn test_comment_before_first_column_second_col_ok() {
+        let sql = "with t as (select 1 as a, 2 as b) select\n  -- comment\n  a, b from t";
+        let expr = parse(sql);
+
+        let result_a = lineage("a", &expr, None, false);
+        assert!(result_a.is_ok(), "column a with comment: {:?}", result_a.err());
+
+        let result_b = lineage("b", &expr, None, false);
+        assert!(result_b.is_ok(), "column b with comment: {:?}", result_b.err());
+    }
+
+    /// Aliased column with preceding comment.
+    #[test]
+    fn test_comment_before_aliased_column() {
+        let sql = "with t as (select 1 as x) select\n  -- renamed\n  x as y from t";
+        let expr = parse(sql);
+        let result = lineage("y", &expr, None, false);
+        assert!(result.is_ok(), "aliased column with comment: {:?}", result.err());
     }
 }
