@@ -2026,7 +2026,10 @@ mod tests {
             })
             .collect();
         assert!(names.contains(&"customers"), "should find outer table");
-        assert!(names.contains(&"orders"), "should find EXISTS subquery table");
+        assert!(
+            names.contains(&"orders"),
+            "should find EXISTS subquery table"
+        );
     }
 
     #[test]
@@ -2045,7 +2048,13 @@ mod tests {
                 }
             })
             .collect();
-        assert!(names.contains(&"customers"), "TSQL: should find outer table");
-        assert!(names.contains(&"orders"), "TSQL: should find subquery table");
+        assert!(
+            names.contains(&"customers"),
+            "TSQL: should find outer table"
+        );
+        assert!(
+            names.contains(&"orders"),
+            "TSQL: should find subquery table"
+        );
     }
 }

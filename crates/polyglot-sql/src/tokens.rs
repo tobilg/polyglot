@@ -2594,7 +2594,9 @@ impl<'a> TokenizerState<'a> {
                     if is_hex_float {
                         // Hex float literal — emit as regular Number token with full text
                         let raw_text = self.text_from_range(self.start, self.current);
-                        let full_text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
+                        let full_text = if self.config.numbers_can_be_underscore_separated
+                            && raw_text.contains('_')
+                        {
                             raw_text.replace('_', "")
                         } else {
                             raw_text
@@ -2603,7 +2605,9 @@ impl<'a> TokenizerState<'a> {
                     } else if self.config.hex_string_is_integer_type {
                         // BigQuery/ClickHouse: 0xA represents an integer in hex notation
                         let raw_value = self.text_from_range(hex_start, self.current);
-                        let hex_value = if self.config.numbers_can_be_underscore_separated && raw_value.contains('_') {
+                        let hex_value = if self.config.numbers_can_be_underscore_separated
+                            && raw_value.contains('_')
+                        {
                             raw_value.replace('_', "")
                         } else {
                             raw_value
@@ -2612,7 +2616,9 @@ impl<'a> TokenizerState<'a> {
                     } else {
                         // SQLite/Teradata: 0xCC represents a binary/blob hex string
                         let raw_value = self.text_from_range(hex_start, self.current);
-                        let hex_value = if self.config.numbers_can_be_underscore_separated && raw_value.contains('_') {
+                        let hex_value = if self.config.numbers_can_be_underscore_separated
+                            && raw_value.contains('_')
+                        {
                             raw_value.replace('_', "")
                         } else {
                             raw_value

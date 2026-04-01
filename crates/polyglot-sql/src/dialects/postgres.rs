@@ -341,9 +341,9 @@ impl DialectImpl for PostgresDialect {
                         IntervalUnit::Nanosecond => "NANOSECOND",
                     };
                     let interval_one = Expression::Interval(Box::new(Interval {
-                        this: Some(Expression::Literal(Box::new(Literal::String(
-                            format!("1 {unit_str}"),
-                        )))),
+                        this: Some(Expression::Literal(Box::new(Literal::String(format!(
+                            "1 {unit_str}"
+                        ))))),
                         unit: None,
                     }));
                     Expression::Mul(Box::new(BinaryOp {
@@ -445,8 +445,9 @@ impl DialectImpl for PostgresDialect {
                 };
 
                 // Helper: number literal
-                let num =
-                    |n: i64| -> Expression { Expression::Literal(Box::new(Literal::Number(n.to_string()))) };
+                let num = |n: i64| -> Expression {
+                    Expression::Literal(Box::new(Literal::Number(n.to_string())))
+                };
 
                 let epoch_field = DateTimeField::Custom("epoch".to_string());
 
@@ -712,7 +713,9 @@ impl DialectImpl for PostgresDialect {
             )))),
 
             // JSONPathRoot -> empty string ($ is implicit in PostgreSQL)
-            Expression::JSONPathRoot(_) => Ok(Expression::Literal(Box::new(Literal::String(String::new())))),
+            Expression::JSONPathRoot(_) => Ok(Expression::Literal(Box::new(Literal::String(
+                String::new(),
+            )))),
 
             // ============================================
             // MISC FUNCTIONS
@@ -933,7 +936,9 @@ impl DialectImpl for PostgresDialect {
                 // e.g., '["fr''uit"]' -> 'fr''uit'
                 let path = match *je.expression {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         // Strip bracketed JSON path format: ["key"] -> key
                         let cleaned = if s.starts_with("[\"") && s.ends_with("\"]") {
                             s[2..s.len() - 2].to_string()
@@ -962,15 +967,20 @@ impl DialectImpl for PostgresDialect {
             }
 
             // b'a' -> CAST(e'a' AS BYTEA) for PostgreSQL
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::ByteString(_)) => { let Literal::ByteString(s) = lit.as_ref() else { unreachable!() }; Ok(Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Box::new(Literal::EscapeString(s.clone()))),
-                to: DataType::VarBinary { length: None },
-                trailing_comments: Vec::new(),
-                double_colon_syntax: false,
-                format: None,
-                default: None,
-                inferred_type: None,
-            }))) },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::ByteString(_)) => {
+                let Literal::ByteString(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                Ok(Expression::Cast(Box::new(Cast {
+                    this: Expression::Literal(Box::new(Literal::EscapeString(s.clone()))),
+                    to: DataType::VarBinary { length: None },
+                    trailing_comments: Vec::new(),
+                    double_colon_syntax: false,
+                    format: None,
+                    default: None,
+                    inferred_type: None,
+                })))
+            }
 
             // Pass through everything else
             _ => Ok(expr),
@@ -988,7 +998,9 @@ impl PostgresDialect {
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => true,
             // Non-negative integer literals are simple
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-                let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                let Literal::Number(n) = lit.as_ref() else {
+                    unreachable!()
+                };
                 // Check if it's non-negative
                 !n.starts_with('-')
             }
@@ -1482,7 +1494,14 @@ impl PostgresDialect {
             // If occurrence is 0 (global), append 'g' to flags
             "REGEXP_REPLACE" if f.args.len() == 6 => {
                 let is_global = match &f.args[4] {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(_)) => { let crate::expressions::Literal::Number(n) = lit.as_ref() else { unreachable!() }; n == "0" },
+                    Expression::Literal(lit)
+                        if matches!(lit.as_ref(), crate::expressions::Literal::Number(_)) =>
+                    {
+                        let crate::expressions::Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n == "0"
+                    }
                     _ => false,
                 };
                 if is_global {
@@ -1492,15 +1511,15 @@ impl PostgresDialect {
                     let position = f.args[3].clone();
                     let occurrence = f.args[4].clone();
                     let params = &f.args[5];
-                    let mut flags =
-                        if let Expression::Literal(lit) = params
-                        {
-                            if let crate::expressions::Literal::String(s) = lit.as_ref() {
+                    let mut flags = if let Expression::Literal(lit) = params {
+                        if let crate::expressions::Literal::String(s) = lit.as_ref() {
                             s.clone()
-                        } else { String::new() }
                         } else {
                             String::new()
-                        };
+                        }
+                    } else {
+                        String::new()
+                    };
                     if !flags.contains('g') {
                         flags.push('g');
                     }
@@ -1512,7 +1531,9 @@ impl PostgresDialect {
                             replacement,
                             position,
                             occurrence,
-                            Expression::Literal(Box::new(crate::expressions::Literal::String(flags))),
+                            Expression::Literal(Box::new(crate::expressions::Literal::String(
+                                flags,
+                            ))),
                         ],
                     ))))
                 } else {

@@ -113,9 +113,9 @@ impl DataFusionDialect {
             // SQUARE(x) → POWER(x, 2)
             "SQUARE" => {
                 let mut args = f.args;
-                args.push(Expression::Literal(Box::new(crate::expressions::Literal::Number(
-                    "2".to_string(),
-                ))));
+                args.push(Expression::Literal(Box::new(
+                    crate::expressions::Literal::Number("2".to_string()),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "power".to_string(),
                     args,

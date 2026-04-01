@@ -407,23 +407,23 @@ fn remove_redundant_casts(expression: Expression) -> Expression {
         // If casting a literal to its natural type, we might be able to simplify
         if let Expression::Literal(lit) = &cast.this {
             if let Literal::String(_) = lit.as_ref() {
-            if matches!(&cast.to, DataType::VarChar { .. } | DataType::Text) {
-                return cast.this.clone();
+                if matches!(&cast.to, DataType::VarChar { .. } | DataType::Text) {
+                    return cast.this.clone();
+                }
             }
-        }
         }
         if let Expression::Literal(lit) = &cast.this {
             if let Literal::Number(_) = lit.as_ref() {
-            if matches!(
-                &cast.to,
-                DataType::Int { .. }
-                    | DataType::BigInt { .. }
-                    | DataType::Decimal { .. }
-                    | DataType::Float { .. }
-            ) {
-                // Could potentially remove cast, but be conservative
+                if matches!(
+                    &cast.to,
+                    DataType::Int { .. }
+                        | DataType::BigInt { .. }
+                        | DataType::Decimal { .. }
+                        | DataType::Float { .. }
+                ) {
+                    // Could potentially remove cast, but be conservative
+                }
             }
-        }
         }
     }
     expression
@@ -514,15 +514,15 @@ fn coerce_date_operands(left: Expression, right: Expression) -> (Expression, Exp
 fn coerce_date_string(expr: Expression, _other: &Expression) -> Expression {
     if let Expression::Literal(ref lit) = expr {
         if let Literal::String(ref s) = lit.as_ref() {
-        // Check if the string is an ISO date or datetime
-        if is_iso_date(s) {
-            // In a full implementation, we would add CAST to DATE
-            // For now, return unchanged
-        } else if is_iso_datetime(s) {
-            // In a full implementation, we would add CAST to DATETIME/TIMESTAMP
-            // For now, return unchanged
+            // Check if the string is an ISO date or datetime
+            if is_iso_date(s) {
+                // In a full implementation, we would add CAST to DATE
+                // For now, return unchanged
+            } else if is_iso_datetime(s) {
+                // In a full implementation, we would add CAST to DATETIME/TIMESTAMP
+                // For now, return unchanged
+            }
         }
-    }
     }
     expr
 }

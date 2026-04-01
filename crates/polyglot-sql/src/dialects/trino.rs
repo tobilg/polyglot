@@ -132,7 +132,9 @@ impl DialectImpl for TrinoDialect {
             // LISTAGG: Add default separator ',' if none is specified (Trino style)
             Expression::ListAgg(mut f) => {
                 if f.separator.is_none() {
-                    f.separator = Some(Expression::Literal(Box::new(Literal::String(",".to_string()))));
+                    f.separator = Some(Expression::Literal(Box::new(Literal::String(
+                        ",".to_string(),
+                    ))));
                 }
                 Ok(Expression::ListAgg(f))
             }
@@ -142,11 +144,12 @@ impl DialectImpl for TrinoDialect {
                 if interval.unit.is_none() {
                     if let Some(Expression::Literal(ref lit)) = interval.this {
                         if let Literal::String(ref s) = lit.as_ref() {
-                        if let Some((value, unit)) = Self::parse_compound_interval(s) {
-                            interval.this = Some(Expression::Literal(Box::new(Literal::String(value))));
-                            interval.unit = Some(unit);
+                            if let Some((value, unit)) = Self::parse_compound_interval(s) {
+                                interval.this =
+                                    Some(Expression::Literal(Box::new(Literal::String(value))));
+                                interval.unit = Some(unit);
+                            }
                         }
-                    }
                     }
                 }
                 Ok(Expression::Interval(interval))

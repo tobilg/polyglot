@@ -2699,8 +2699,7 @@ mod tests {
 
         // Without comment — baseline
         let expr_ok = parse(sql_without_comment);
-        let node_ok = lineage("a", &expr_ok, None, false)
-            .expect("without comment should succeed");
+        let node_ok = lineage("a", &expr_ok, None, false).expect("without comment should succeed");
 
         // With comment — should produce identical lineage
         let expr_comment = parse(sql_with_comment);
@@ -2723,7 +2722,10 @@ mod tests {
         let node = lineage("a", &expr, None, false)
             .expect("block comment before first column should succeed");
         assert_eq!(node.name, "a");
-        assert!(!node.downstream.is_empty(), "should have downstream lineage");
+        assert!(
+            !node.downstream.is_empty(),
+            "should have downstream lineage"
+        );
     }
 
     /// Comment before first column should not affect second column resolution.
@@ -2732,12 +2734,12 @@ mod tests {
         let sql = "with t as (select 1 as a, 2 as b) select\n  -- comment\n  a, b from t";
         let expr = parse(sql);
 
-        let node_a = lineage("a", &expr, None, false)
-            .expect("column a with comment should succeed");
+        let node_a =
+            lineage("a", &expr, None, false).expect("column a with comment should succeed");
         assert_eq!(node_a.name, "a");
 
-        let node_b = lineage("b", &expr, None, false)
-            .expect("column b with comment should succeed");
+        let node_b =
+            lineage("b", &expr, None, false).expect("column b with comment should succeed");
         assert_eq!(node_b.name, "b");
     }
 
@@ -2746,9 +2748,12 @@ mod tests {
     fn test_comment_before_aliased_column() {
         let sql = "with t as (select 1 as x) select\n  -- renamed\n  x as y from t";
         let expr = parse(sql);
-        let node = lineage("y", &expr, None, false)
-            .expect("aliased column with comment should succeed");
+        let node =
+            lineage("y", &expr, None, false).expect("aliased column with comment should succeed");
         assert_eq!(node.name, "y");
-        assert!(!node.downstream.is_empty(), "aliased column should have downstream lineage");
+        assert!(
+            !node.downstream.is_empty(),
+            "aliased column should have downstream lineage"
+        );
     }
 }

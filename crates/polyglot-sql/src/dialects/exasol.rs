@@ -133,7 +133,9 @@ impl DialectImpl for ExasolDialect {
             Expression::Column(col)
                 if col.table.is_none() && col.name.name.eq_ignore_ascii_case("USER") =>
             {
-                Ok(Expression::CurrentUser(Box::new(crate::expressions::CurrentUser { this: None })))
+                Ok(Expression::CurrentUser(Box::new(
+                    crate::expressions::CurrentUser { this: None },
+                )))
             }
 
             // Generic function transformations
@@ -262,9 +264,9 @@ impl ExasolDialect {
                     // Convert format codes from C-style (%Y, %m, etc.) to Exasol format
                     if let Expression::Literal(lit) = &args[1] {
                         if let Literal::String(fmt) = lit.as_ref() {
-                        let exasol_fmt = Self::convert_c_format_to_exasol(fmt);
-                        args[1] = Expression::Literal(Box::new(Literal::String(exasol_fmt)));
-                    }
+                            let exasol_fmt = Self::convert_c_format_to_exasol(fmt);
+                            args[1] = Expression::Literal(Box::new(Literal::String(exasol_fmt)));
+                        }
                     }
                     // CAST string literal values to TIMESTAMP for date formatting functions
                     if matches!(&args[0], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
@@ -285,9 +287,10 @@ impl ExasolDialect {
                         }));
                     }
                 }
-                Ok(Expression::Function(Box::new(
-                    Function::new("TO_CHAR".to_string(), args),
-                )))
+                Ok(Expression::Function(Box::new(Function::new(
+                    "TO_CHAR".to_string(),
+                    args,
+                ))))
             }
 
             // TO_DATE is native but format specifiers need uppercasing
@@ -297,10 +300,10 @@ impl ExasolDialect {
                     let mut new_args = f.args.clone();
                     if let Expression::Literal(lit) = &f.args[1] {
                         if let Literal::String(fmt) = lit.as_ref() {
-                        new_args[1] = Expression::Literal(Box::new(Literal::String(
-                            Self::uppercase_exasol_format(fmt),
-                        )));
-                    }
+                            new_args[1] = Expression::Literal(Box::new(Literal::String(
+                                Self::uppercase_exasol_format(fmt),
+                            )));
+                        }
                     }
                     Ok(Expression::Function(Box::new(Function::new(
                         "TO_DATE".to_string(),
@@ -317,10 +320,10 @@ impl ExasolDialect {
                     let mut new_args = vec![f.args[0].clone()];
                     if let Expression::Literal(lit) = &f.args[1] {
                         if let Literal::String(fmt) = lit.as_ref() {
-                        new_args.push(Expression::Literal(Box::new(Literal::String(
-                            Self::convert_strptime_to_exasol_format(fmt),
-                        ))));
-                    }
+                            new_args.push(Expression::Literal(Box::new(Literal::String(
+                                Self::convert_strptime_to_exasol_format(fmt),
+                            ))));
+                        }
                     } else {
                         new_args.push(f.args[1].clone());
                     }
@@ -342,10 +345,10 @@ impl ExasolDialect {
                     let mut new_args = vec![f.args[0].clone()];
                     if let Expression::Literal(lit) = &f.args[1] {
                         if let Literal::String(fmt) = lit.as_ref() {
-                        new_args.push(Expression::Literal(Box::new(Literal::String(
-                            Self::convert_strptime_to_exasol_format(fmt),
-                        ))));
-                    }
+                            new_args.push(Expression::Literal(Box::new(Literal::String(
+                                Self::convert_strptime_to_exasol_format(fmt),
+                            ))));
+                        }
                     } else {
                         new_args.push(f.args[1].clone());
                     }
@@ -391,7 +394,9 @@ impl ExasolDialect {
             "CURDATE" => Ok(Expression::CurrentDate(crate::expressions::CurrentDate)),
 
             // USER / USER() -> CURRENT_USER
-            "USER" if f.args.is_empty() => Ok(Expression::CurrentUser(Box::new(crate::expressions::CurrentUser { this: None }))),
+            "USER" if f.args.is_empty() => Ok(Expression::CurrentUser(Box::new(
+                crate::expressions::CurrentUser { this: None },
+            ))),
 
             // NOW -> CURRENT_TIMESTAMP
             "NOW" => Ok(Expression::CurrentTimestamp(
@@ -499,21 +504,21 @@ impl ExasolDialect {
                     'm' => "MM",
                     'd' => "DD",
                     'H' => "HH",
-                    'M' => "MI",     // strptime minutes
-                    'i' => "MI",     // MySQL minutes
+                    'M' => "MI", // strptime minutes
+                    'i' => "MI", // MySQL minutes
                     'S' | 's' => "SS",
                     'T' => "HH:MI:SS", // MySQL %T = time (HH:MM:SS)
-                    'a' => "DY",     // abbreviated weekday name
-                    'A' => "DAY",    // full weekday name
-                    'b' => "MON",    // abbreviated month name
-                    'B' => "MONTH",  // full month name
-                    'I' => "H12",    // 12-hour format
-                    'u' => "ID",     // ISO weekday (1-7)
-                    'V' => "IW",     // ISO week number
-                    'G' => "IYYY",   // ISO year
-                    'W' => "UW",     // Week number
-                    'U' => "UW",     // Week number
-                    'z' => "Z",      // timezone offset
+                    'a' => "DY",       // abbreviated weekday name
+                    'A' => "DAY",      // full weekday name
+                    'b' => "MON",      // abbreviated month name
+                    'B' => "MONTH",    // full month name
+                    'I' => "H12",      // 12-hour format
+                    'u' => "ID",       // ISO weekday (1-7)
+                    'V' => "IW",       // ISO week number
+                    'G' => "IYYY",     // ISO year
+                    'W' => "UW",       // Week number
+                    'U' => "UW",       // Week number
+                    'z' => "Z",        // timezone offset
                     _ => {
                         // Unknown specifier, keep as-is
                         result.push('%');

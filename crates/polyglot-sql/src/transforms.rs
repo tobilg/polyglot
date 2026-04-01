@@ -289,7 +289,9 @@ pub fn replace_bool_with_int(expr: Expression) -> Result<Expression> {
     match expr {
         Expression::Boolean(b) => {
             let value = if b.value { "1" } else { "0" };
-            Ok(Expression::Literal(Box::new(Literal::Number(value.to_string()))))
+            Ok(Expression::Literal(Box::new(Literal::Number(
+                value.to_string(),
+            ))))
         }
         _ => Ok(expr),
     }
@@ -300,8 +302,11 @@ pub fn replace_bool_with_int(expr: Expression) -> Result<Expression> {
 /// Converts 1/0 to TRUE/FALSE
 pub fn replace_int_with_bool(expr: Expression) -> Result<Expression> {
     match expr {
-        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1" || n == "0") => {
-            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n == "1" || n == "0") =>
+        {
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
             Ok(Expression::Boolean(BooleanLiteral { value: n == "1" }))
         }
         _ => Ok(expr),
@@ -866,9 +871,9 @@ pub fn eliminate_distinct_on_for_dialect(
                                                     "1".to_string(),
                                                 ))),
                                             )],
-                                            else_: Some(Expression::Literal(Box::new(Literal::Number(
-                                                "0".to_string(),
-                                            )))),
+                                            else_: Some(Expression::Literal(Box::new(
+                                                Literal::Number("0".to_string()),
+                                            ))),
                                             comments: Vec::new(),
                                             inferred_type: None,
                                         }));
@@ -925,16 +930,16 @@ pub fn eliminate_distinct_on_for_dialect(
                             Expression::Alias(alias) => {
                                 // Already aliased - keep as-is in inner, reference alias in outer
                                 inner_aliased_exprs.push(orig_expr.clone());
-                                outer_select_exprs.push(Expression::Column(
-                                    Box::new(crate::expressions::Column {
+                                outer_select_exprs.push(Expression::Column(Box::new(
+                                    crate::expressions::Column {
                                         name: alias.alias.clone(),
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
                                         inferred_type: None,
-                                    }),
-                                ));
+                                    },
+                                )));
                             }
                             Expression::Column(col) => {
                                 // Wrap in alias: a AS a in inner, just a in outer
@@ -948,16 +953,16 @@ pub fn eliminate_distinct_on_for_dialect(
                                         inferred_type: None,
                                     },
                                 )));
-                                outer_select_exprs.push(Expression::Column(
-                                    Box::new(crate::expressions::Column {
+                                outer_select_exprs.push(Expression::Column(Box::new(
+                                    crate::expressions::Column {
                                         name: col.name.clone(),
                                         table: None,
                                         join_mark: false,
                                         trailing_comments: vec![],
                                         span: None,
                                         inferred_type: None,
-                                    }),
-                                ));
+                                    },
+                                )));
                             }
                             _ => {
                                 // Complex expression without alias - include as-is in both
@@ -1023,7 +1028,9 @@ pub fn eliminate_distinct_on_for_dialect(
                                     span: None,
                                     inferred_type: None,
                                 })),
-                                right: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
+                                right: Expression::Literal(Box::new(Literal::Number(
+                                    "1".to_string(),
+                                ))),
                                 left_comments: vec![],
                                 operator_comments: vec![],
                                 trailing_comments: vec![],
@@ -1900,26 +1907,28 @@ pub fn epoch_cast_to_ts(expr: Expression) -> Result<Expression> {
         Expression::Cast(mut cast) => {
             if let Expression::Literal(ref lit) = cast.this {
                 if let Literal::String(ref s) = lit.as_ref() {
-                if s.to_lowercase() == "epoch" {
-                    if is_temporal_type(&cast.to) {
-                        cast.this =
-                            Expression::Literal(Box::new(Literal::String("1970-01-01 00:00:00".to_string())));
+                    if s.to_lowercase() == "epoch" {
+                        if is_temporal_type(&cast.to) {
+                            cast.this = Expression::Literal(Box::new(Literal::String(
+                                "1970-01-01 00:00:00".to_string(),
+                            )));
+                        }
                     }
                 }
-            }
             }
             Ok(Expression::Cast(cast))
         }
         Expression::TryCast(mut try_cast) => {
             if let Expression::Literal(ref lit) = try_cast.this {
                 if let Literal::String(ref s) = lit.as_ref() {
-                if s.to_lowercase() == "epoch" {
-                    if is_temporal_type(&try_cast.to) {
-                        try_cast.this =
-                            Expression::Literal(Box::new(Literal::String("1970-01-01 00:00:00".to_string())));
+                    if s.to_lowercase() == "epoch" {
+                        if is_temporal_type(&try_cast.to) {
+                            try_cast.this = Expression::Literal(Box::new(Literal::String(
+                                "1970-01-01 00:00:00".to_string(),
+                            )));
+                        }
                     }
                 }
-            }
             }
             Ok(Expression::TryCast(try_cast))
         }
@@ -2448,16 +2457,18 @@ fn try_convert_generate_date_array_with_name(
                         // DATE '...' -> convert to CAST('...' AS DATE) to match expected output
                         if let Expression::Literal(lit) = expr {
                             if let Literal::Date(d) = lit.as_ref() {
-                            Expression::Cast(Box::new(Cast {
-                                this: Expression::Literal(Box::new(Literal::String(d.clone()))),
-                                to: DataType::Date,
-                                trailing_comments: vec![],
-                                double_colon_syntax: false,
-                                format: None,
-                                default: None,
-                                inferred_type: None,
-                            }))
-                        } else { expr.clone() }
+                                Expression::Cast(Box::new(Cast {
+                                    this: Expression::Literal(Box::new(Literal::String(d.clone()))),
+                                    to: DataType::Date,
+                                    trailing_comments: vec![],
+                                    double_colon_syntax: false,
+                                    format: None,
+                                    default: None,
+                                    inferred_type: None,
+                                }))
+                            } else {
+                                expr.clone()
+                            }
                         } else {
                             unreachable!()
                         }
@@ -2494,11 +2505,12 @@ fn try_convert_generate_date_array_with_name(
                     let mut iv_clone = iv.as_ref().clone();
                     if let Some(Expression::Literal(ref lit)) = iv_clone.this {
                         if let Literal::String(ref s) = lit.as_ref() {
-                        // Convert numeric strings to Number literals for unquoted output
-                        if s.parse::<f64>().is_ok() {
-                            iv_clone.this = Some(Expression::Literal(Box::new(Literal::Number(s.clone()))));
+                            // Convert numeric strings to Number literals for unquoted output
+                            if s.parse::<f64>().is_ok() {
+                                iv_clone.this =
+                                    Some(Expression::Literal(Box::new(Literal::Number(s.clone()))));
+                            }
                         }
-                    }
                     }
                     Expression::Interval(Box::new(iv_clone))
                 } else {
@@ -2510,7 +2522,9 @@ fn try_convert_generate_date_array_with_name(
             // Extract interval unit and count from step expression
             let normalized_step = step.map(|s| normalize_interval(s)).unwrap_or_else(|| {
                 Expression::Interval(Box::new(crate::expressions::Interval {
-                    this: Some(Expression::Literal(Box::new(Literal::Number("1".to_string())))),
+                    this: Some(Expression::Literal(Box::new(Literal::Number(
+                        "1".to_string(),
+                    )))),
                     unit: Some(crate::expressions::IntervalUnitSpec::Simple {
                         unit: crate::expressions::IntervalUnit::Day,
                         use_plural: false,
@@ -2547,9 +2561,9 @@ fn try_convert_generate_date_array_with_name(
             let recursive_select = Select {
                 expressions: vec![cast_date_add.clone()],
                 from: Some(From {
-                    expressions: vec![Expression::Table(Box::new(crate::expressions::TableRef::new(
-                        &cte_name,
-                    )))],
+                    expressions: vec![Expression::Table(Box::new(
+                        crate::expressions::TableRef::new(&cte_name),
+                    ))],
                 }),
                 where_clause: Some(Where {
                     this: Expression::Lte(Box::new(BinaryOp {
@@ -2607,9 +2621,9 @@ fn try_convert_generate_date_array_with_name(
                     inferred_type: None,
                 }))],
                 from: Some(From {
-                    expressions: vec![Expression::Table(Box::new(crate::expressions::TableRef::new(
-                        &cte_name,
-                    )))],
+                    expressions: vec![Expression::Table(Box::new(
+                        crate::expressions::TableRef::new(&cte_name),
+                    ))],
                 }),
                 ..Select::new()
             };
@@ -2685,7 +2699,9 @@ fn extract_interval_unit_and_count(
         // Second try: parse from string value like "1 WEEK" or "1"
         if let Some(ref val_expr) = iv.this {
             match val_expr {
-                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_) | Literal::Number(_)) => {
+                Expression::Literal(lit)
+                    if matches!(lit.as_ref(), Literal::String(_) | Literal::Number(_)) =>
+                {
                     let s = match lit.as_ref() {
                         Literal::String(s) | Literal::Number(s) => s,
                         _ => unreachable!(),
@@ -5070,7 +5086,13 @@ pub fn expand_like_any(expr: Expression) -> Result<Expression> {
                     if values.is_empty() {
                         return Ok(e);
                     }
-                    Ok(expand_like_quantifier(op, values, false, or_combiner, false))
+                    Ok(expand_like_quantifier(
+                        op,
+                        values,
+                        false,
+                        or_combiner,
+                        false,
+                    ))
                 } else {
                     Ok(e)
                 }
@@ -5081,7 +5103,13 @@ pub fn expand_like_any(expr: Expression) -> Result<Expression> {
                     if values.is_empty() {
                         return Ok(e);
                     }
-                    Ok(expand_like_quantifier(op, values, false, and_combiner, true))
+                    Ok(expand_like_quantifier(
+                        op,
+                        values,
+                        false,
+                        and_combiner,
+                        true,
+                    ))
                 } else {
                     Ok(e)
                 }
@@ -5304,7 +5332,9 @@ mod tests {
     fn test_preprocess() {
         let expr = Expression::Boolean(BooleanLiteral { value: true });
         let result = preprocess(expr, &[replace_bool_with_int]).unwrap();
-        assert!(matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_))));
+        assert!(
+            matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)))
+        );
     }
 
     #[test]
@@ -5370,8 +5400,8 @@ mod tests {
         let result = replace_bool_with_int(true_expr).unwrap();
         if let Expression::Literal(lit) = result {
             if let Literal::Number(n) = lit.as_ref() {
-            assert_eq!(n, "1");
-        }
+                assert_eq!(n, "1");
+            }
         } else {
             panic!("Expected number literal");
         }
@@ -5380,8 +5410,8 @@ mod tests {
         let result = replace_bool_with_int(false_expr).unwrap();
         if let Expression::Literal(lit) = result {
             if let Literal::Number(n) = lit.as_ref() {
-            assert_eq!(n, "0");
-        }
+                assert_eq!(n, "0");
+            }
         } else {
             panic!("Expected number literal");
         }
@@ -5408,7 +5438,9 @@ mod tests {
         // Test that other numbers are not converted
         let two_expr = Expression::Literal(Box::new(Literal::Number("2".to_string())));
         let result = replace_int_with_bool(two_expr).unwrap();
-        assert!(matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_))));
+        assert!(
+            matches!(result, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)))
+        );
     }
 
     #[test]
@@ -5592,8 +5624,8 @@ mod tests {
         if let Expression::Cast(cast) = result {
             if let Expression::Literal(lit) = cast.this {
                 if let Literal::String(s) = lit.as_ref() {
-                assert_eq!(s, "1970-01-01 00:00:00");
-            }
+                    assert_eq!(s, "1970-01-01 00:00:00");
+                }
             } else {
                 panic!("Expected string literal");
             }
@@ -5622,8 +5654,8 @@ mod tests {
         if let Expression::Cast(cast) = result {
             if let Expression::Literal(lit) = cast.this {
                 if let Literal::String(s) = lit.as_ref() {
-                assert_eq!(s, "2024-01-15");
-            }
+                    assert_eq!(s, "2024-01-15");
+                }
             } else {
                 panic!("Expected string literal");
             }

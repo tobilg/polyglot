@@ -27,7 +27,9 @@ pub fn always_true(expr: &Expression) -> bool {
     match expr {
         Expression::Boolean(b) => b.value,
         Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
             // Non-zero numbers are truthy
             if let Ok(num) = n.parse::<f64>() {
                 num != 0.0
@@ -68,7 +70,9 @@ pub fn is_null(expr: &Expression) -> bool {
 pub fn is_zero(expr: &Expression) -> bool {
     match expr {
         Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
             if let Ok(num) = n.parse::<f64>() {
                 num == 0.0
             } else {
@@ -420,8 +424,8 @@ impl Simplifier {
         if expressions_equal(&left, &right) {
             if let Expression::Literal(lit) = &left {
                 if let Literal::Number(_) = lit.as_ref() {
-                return Expression::Literal(Box::new(Literal::Number("0".to_string())));
-            }
+                    return Expression::Literal(Box::new(Literal::Number("0".to_string())));
+                }
             }
         }
 
@@ -760,8 +764,9 @@ impl Simplifier {
                 // x * c = r -> x = r / c (only for non-zero c and when divisible)
                 if let Some(c) = get_number(&op.right) {
                     if c != 0.0 && right_val % c == 0.0 {
-                        let new_right =
-                            Expression::Literal(Box::new(Literal::Number((right_val / c).to_string())));
+                        let new_right = Expression::Literal(Box::new(Literal::Number(
+                            (right_val / c).to_string(),
+                        )));
                         return Some(Expression::Eq(Box::new(BinaryOp::new(
                             op.left.clone(),
                             new_right,
@@ -771,8 +776,9 @@ impl Simplifier {
                 // c * x = r -> x = r / c
                 if let Some(c) = get_number(&op.left) {
                     if c != 0.0 && right_val % c == 0.0 {
-                        let new_right =
-                            Expression::Literal(Box::new(Literal::Number((right_val / c).to_string())));
+                        let new_right = Expression::Literal(Box::new(Literal::Number(
+                            (right_val / c).to_string(),
+                        )));
                         return Some(Expression::Eq(Box::new(BinaryOp::new(
                             op.right.clone(),
                             new_right,
@@ -828,7 +834,9 @@ impl Simplifier {
 fn is_one(expr: &Expression) -> bool {
     match expr {
         Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
             if let Ok(num) = n.parse::<f64>() {
                 num == 1.0
             } else {
@@ -842,7 +850,12 @@ fn is_one(expr: &Expression) -> bool {
 /// Get numeric value from expression if it's a number literal
 fn get_number(expr: &Expression) -> Option<f64> {
     match expr {
-        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.parse().ok() },
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
+            n.parse().ok()
+        }
         _ => None,
     }
 }
@@ -850,7 +863,12 @@ fn get_number(expr: &Expression) -> Option<f64> {
 /// Get string value from expression if it's a string literal
 fn get_string(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+            let Literal::String(s) = lit.as_ref() else {
+                unreachable!()
+            };
+            Some(s.clone())
+        }
         _ => None,
     }
 }

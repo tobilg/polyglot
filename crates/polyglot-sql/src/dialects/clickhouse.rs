@@ -355,8 +355,7 @@ impl DialectImpl for ClickHouseDialect {
     }
 }
 
-impl ClickHouseDialect {
-}
+impl ClickHouseDialect {}
 
 impl ClickHouseDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {

@@ -348,7 +348,14 @@ impl TeradataDialect {
             if is_date || is_timestamp {
                 // Extract the format string from the expression
                 let fmt_str = match format_expr.as_ref() {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => { let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
+                    Expression::Literal(lit)
+                        if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) =>
+                    {
+                        let crate::expressions::Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        Some(s.clone())
+                    }
                     _ => None,
                 };
 

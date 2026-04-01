@@ -602,7 +602,12 @@ impl HiveDialect {
 /// Convert an expression (string literal or identifier) to a DateTimeField for Hive
 fn hive_expr_to_datetime_field(expr: &Expression) -> Option<DateTimeField> {
     let name = match expr {
-        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+            let Literal::String(s) = lit.as_ref() else {
+                unreachable!()
+            };
+            s.to_uppercase()
+        }
         Expression::Identifier(id) => id.name.to_uppercase(),
         Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
         _ => return None,

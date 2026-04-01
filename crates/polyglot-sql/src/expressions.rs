@@ -2273,7 +2273,9 @@ impl Expression {
             Expression::DateFormatColumnConstraint(_) => "date_format_column_constraint",
             Expression::EphemeralColumnConstraint(_) => "ephemeral_column_constraint",
             Expression::WithOperator(_) => "with_operator",
-            Expression::GeneratedAsIdentityColumnConstraint(_) => "generated_as_identity_column_constraint",
+            Expression::GeneratedAsIdentityColumnConstraint(_) => {
+                "generated_as_identity_column_constraint"
+            }
             Expression::AutoIncrementColumnConstraint(_) => "auto_increment_column_constraint",
             Expression::CommentColumnConstraint(_) => "comment_column_constraint",
             Expression::GeneratedAsRowColumnConstraint(_) => "generated_as_row_column_constraint",
@@ -2383,7 +2385,9 @@ impl Expression {
             Expression::RollupProperty(_) => "rollup_property",
             Expression::PartitionBoundSpec(_) => "partition_bound_spec",
             Expression::PartitionedOfProperty(_) => "partitioned_of_property",
-            Expression::RemoteWithConnectionModelProperty(_) => "remote_with_connection_model_property",
+            Expression::RemoteWithConnectionModelProperty(_) => {
+                "remote_with_connection_model_property"
+            }
             Expression::ReturnsProperty(_) => "returns_property",
             Expression::RowFormatProperty(_) => "row_format_property",
             Expression::RowFormatDelimitedProperty(_) => "row_format_delimited_property",
@@ -2743,86 +2747,191 @@ impl Expression {
             // Unary ops
             Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => Some(&u.this),
             // UnaryFunc variants
-            Expression::Upper(f) | Expression::Lower(f) | Expression::Length(f)
-            | Expression::LTrim(f) | Expression::RTrim(f) | Expression::Reverse(f)
-            | Expression::Abs(f) | Expression::Sqrt(f) | Expression::Cbrt(f)
-            | Expression::Ln(f) | Expression::Exp(f) | Expression::Sign(f)
-            | Expression::Date(f) | Expression::Time(f) | Expression::Initcap(f)
-            | Expression::Ascii(f) | Expression::Chr(f) | Expression::Soundex(f)
-            | Expression::ByteLength(f) | Expression::Hex(f) | Expression::LowerHex(f)
-            | Expression::Unicode(f) | Expression::Typeof(f)
-            | Expression::Explode(f) | Expression::ExplodeOuter(f)
-            | Expression::MapFromEntries(f) | Expression::MapKeys(f) | Expression::MapValues(f)
-            | Expression::ArrayLength(f) | Expression::ArraySize(f) | Expression::Cardinality(f)
-            | Expression::ArrayReverse(f) | Expression::ArrayDistinct(f)
-            | Expression::ArrayFlatten(f) | Expression::ArrayCompact(f) | Expression::ToArray(f)
-            | Expression::JsonArrayLength(f) | Expression::JsonKeys(f) | Expression::JsonType(f)
-            | Expression::ParseJson(f) | Expression::ToJson(f)
-            | Expression::Radians(f) | Expression::Degrees(f)
-            | Expression::Sin(f) | Expression::Cos(f) | Expression::Tan(f)
-            | Expression::Asin(f) | Expression::Acos(f) | Expression::Atan(f)
-            | Expression::IsNan(f) | Expression::IsInf(f)
-            | Expression::Year(f) | Expression::Month(f) | Expression::Day(f)
-            | Expression::Hour(f) | Expression::Minute(f) | Expression::Second(f)
-            | Expression::DayOfWeek(f) | Expression::DayOfWeekIso(f)
-            | Expression::DayOfMonth(f) | Expression::DayOfYear(f)
-            | Expression::WeekOfYear(f) | Expression::Quarter(f)
-            | Expression::Epoch(f) | Expression::EpochMs(f)
+            Expression::Upper(f)
+            | Expression::Lower(f)
+            | Expression::Length(f)
+            | Expression::LTrim(f)
+            | Expression::RTrim(f)
+            | Expression::Reverse(f)
+            | Expression::Abs(f)
+            | Expression::Sqrt(f)
+            | Expression::Cbrt(f)
+            | Expression::Ln(f)
+            | Expression::Exp(f)
+            | Expression::Sign(f)
+            | Expression::Date(f)
+            | Expression::Time(f)
+            | Expression::Initcap(f)
+            | Expression::Ascii(f)
+            | Expression::Chr(f)
+            | Expression::Soundex(f)
+            | Expression::ByteLength(f)
+            | Expression::Hex(f)
+            | Expression::LowerHex(f)
+            | Expression::Unicode(f)
+            | Expression::Typeof(f)
+            | Expression::Explode(f)
+            | Expression::ExplodeOuter(f)
+            | Expression::MapFromEntries(f)
+            | Expression::MapKeys(f)
+            | Expression::MapValues(f)
+            | Expression::ArrayLength(f)
+            | Expression::ArraySize(f)
+            | Expression::Cardinality(f)
+            | Expression::ArrayReverse(f)
+            | Expression::ArrayDistinct(f)
+            | Expression::ArrayFlatten(f)
+            | Expression::ArrayCompact(f)
+            | Expression::ToArray(f)
+            | Expression::JsonArrayLength(f)
+            | Expression::JsonKeys(f)
+            | Expression::JsonType(f)
+            | Expression::ParseJson(f)
+            | Expression::ToJson(f)
+            | Expression::Radians(f)
+            | Expression::Degrees(f)
+            | Expression::Sin(f)
+            | Expression::Cos(f)
+            | Expression::Tan(f)
+            | Expression::Asin(f)
+            | Expression::Acos(f)
+            | Expression::Atan(f)
+            | Expression::IsNan(f)
+            | Expression::IsInf(f)
+            | Expression::Year(f)
+            | Expression::Month(f)
+            | Expression::Day(f)
+            | Expression::Hour(f)
+            | Expression::Minute(f)
+            | Expression::Second(f)
+            | Expression::DayOfWeek(f)
+            | Expression::DayOfWeekIso(f)
+            | Expression::DayOfMonth(f)
+            | Expression::DayOfYear(f)
+            | Expression::WeekOfYear(f)
+            | Expression::Quarter(f)
+            | Expression::Epoch(f)
+            | Expression::EpochMs(f)
             | Expression::BitwiseCount(f)
-            | Expression::DateFromUnixDate(f) | Expression::UnixDate(f)
-            | Expression::UnixSeconds(f) | Expression::UnixMillis(f) | Expression::UnixMicros(f)
-            | Expression::TimeStrToDate(f) | Expression::DateToDi(f) | Expression::DiToDate(f)
-            | Expression::TsOrDiToDi(f) | Expression::TsOrDsToDatetime(f) | Expression::TsOrDsToTimestamp(f)
-            | Expression::YearOfWeek(f) | Expression::YearOfWeekIso(f)
-            | Expression::SHA(f) | Expression::SHA1Digest(f)
-            | Expression::TimeToUnix(f) | Expression::TimeStrToUnix(f)
-            | Expression::Int64(f) | Expression::JSONBool(f)
-            | Expression::MD5NumberLower64(f) | Expression::MD5NumberUpper64(f)
-            | Expression::DateStrToDate(f) | Expression::DateToDateStr(f)
-            => Some(&f.this),
+            | Expression::DateFromUnixDate(f)
+            | Expression::UnixDate(f)
+            | Expression::UnixSeconds(f)
+            | Expression::UnixMillis(f)
+            | Expression::UnixMicros(f)
+            | Expression::TimeStrToDate(f)
+            | Expression::DateToDi(f)
+            | Expression::DiToDate(f)
+            | Expression::TsOrDiToDi(f)
+            | Expression::TsOrDsToDatetime(f)
+            | Expression::TsOrDsToTimestamp(f)
+            | Expression::YearOfWeek(f)
+            | Expression::YearOfWeekIso(f)
+            | Expression::SHA(f)
+            | Expression::SHA1Digest(f)
+            | Expression::TimeToUnix(f)
+            | Expression::TimeStrToUnix(f)
+            | Expression::Int64(f)
+            | Expression::JSONBool(f)
+            | Expression::MD5NumberLower64(f)
+            | Expression::MD5NumberUpper64(f)
+            | Expression::DateStrToDate(f)
+            | Expression::DateToDateStr(f) => Some(&f.this),
             // BinaryFunc - this is the primary child
-            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
-            | Expression::Nvl(f) | Expression::Contains(f)
-            | Expression::StartsWith(f) | Expression::EndsWith(f)
-            | Expression::Levenshtein(f) | Expression::ModFunc(f) | Expression::IntDiv(f)
-            | Expression::Atan2(f) | Expression::AddMonths(f) | Expression::MonthsBetween(f)
-            | Expression::NextDay(f) | Expression::UnixToTimeStr(f)
-            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
-            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
-            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
-            | Expression::ArrayRemove(f) | Expression::StarMap(f)
-            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
-            | Expression::ElementAt(f) | Expression::JsonMergePatch(f)
-            | Expression::JSONBContains(f) | Expression::JSONBExtract(f)
-            => Some(&f.this),
+            Expression::Power(f)
+            | Expression::NullIf(f)
+            | Expression::IfNull(f)
+            | Expression::Nvl(f)
+            | Expression::Contains(f)
+            | Expression::StartsWith(f)
+            | Expression::EndsWith(f)
+            | Expression::Levenshtein(f)
+            | Expression::ModFunc(f)
+            | Expression::IntDiv(f)
+            | Expression::Atan2(f)
+            | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f)
+            | Expression::NextDay(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::ArrayContains(f)
+            | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f)
+            | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f)
+            | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f)
+            | Expression::StarMap(f)
+            | Expression::MapFromArrays(f)
+            | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f)
+            | Expression::JsonMergePatch(f)
+            | Expression::JSONBContains(f)
+            | Expression::JSONBExtract(f) => Some(&f.this),
             // AggFunc - this is the primary child
-            Expression::Sum(af) | Expression::Avg(af) | Expression::Min(af) | Expression::Max(af)
-            | Expression::ArrayAgg(af) | Expression::CountIf(af)
-            | Expression::Stddev(af) | Expression::StddevPop(af) | Expression::StddevSamp(af)
-            | Expression::Variance(af) | Expression::VarPop(af) | Expression::VarSamp(af)
-            | Expression::Median(af) | Expression::Mode(af)
-            | Expression::First(af) | Expression::Last(af) | Expression::AnyValue(af)
-            | Expression::ApproxDistinct(af) | Expression::ApproxCountDistinct(af)
-            | Expression::LogicalAnd(af) | Expression::LogicalOr(af) | Expression::Skewness(af)
-            | Expression::ArrayConcatAgg(af) | Expression::ArrayUniqueAgg(af) | Expression::BoolXorAgg(af)
-            | Expression::BitwiseAndAgg(af) | Expression::BitwiseOrAgg(af) | Expression::BitwiseXorAgg(af)
-            => Some(&af.this),
+            Expression::Sum(af)
+            | Expression::Avg(af)
+            | Expression::Min(af)
+            | Expression::Max(af)
+            | Expression::ArrayAgg(af)
+            | Expression::CountIf(af)
+            | Expression::Stddev(af)
+            | Expression::StddevPop(af)
+            | Expression::StddevSamp(af)
+            | Expression::Variance(af)
+            | Expression::VarPop(af)
+            | Expression::VarSamp(af)
+            | Expression::Median(af)
+            | Expression::Mode(af)
+            | Expression::First(af)
+            | Expression::Last(af)
+            | Expression::AnyValue(af)
+            | Expression::ApproxDistinct(af)
+            | Expression::ApproxCountDistinct(af)
+            | Expression::LogicalAnd(af)
+            | Expression::LogicalOr(af)
+            | Expression::Skewness(af)
+            | Expression::ArrayConcatAgg(af)
+            | Expression::ArrayUniqueAgg(af)
+            | Expression::BoolXorAgg(af)
+            | Expression::BitwiseAndAgg(af)
+            | Expression::BitwiseOrAgg(af)
+            | Expression::BitwiseXorAgg(af) => Some(&af.this),
             // Binary operations - left is "this" in sqlglot
-            Expression::And(op) | Expression::Or(op) | Expression::Add(op)
-            | Expression::Sub(op) | Expression::Mul(op) | Expression::Div(op)
-            | Expression::Mod(op) | Expression::Eq(op) | Expression::Neq(op)
-            | Expression::Lt(op) | Expression::Lte(op) | Expression::Gt(op)
-            | Expression::Gte(op) | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op)
-            | Expression::BitwiseXor(op) | Expression::Concat(op)
-            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
-            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
-            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
-            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
-            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
-            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
-            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
-            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op)
-            => Some(&op.left),
+            Expression::And(op)
+            | Expression::Or(op)
+            | Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op)
+            | Expression::Eq(op)
+            | Expression::Neq(op)
+            | Expression::Lt(op)
+            | Expression::Lte(op)
+            | Expression::Gt(op)
+            | Expression::Gte(op)
+            | Expression::BitwiseAnd(op)
+            | Expression::BitwiseOr(op)
+            | Expression::BitwiseXor(op)
+            | Expression::Concat(op)
+            | Expression::Adjacent(op)
+            | Expression::TsMatch(op)
+            | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op)
+            | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op)
+            | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op)
+            | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op)
+            | Expression::ExtendsRight(op)
+            | Expression::Is(op)
+            | Expression::MemberOf(op)
+            | Expression::Match(op)
+            | Expression::NullSafeEq(op)
+            | Expression::NullSafeNeq(op)
+            | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op)
+            | Expression::BitwiseRightShift(op) => Some(&op.left),
             // Like operations - left is "this"
             Expression::Like(op) | Expression::ILike(op) => Some(&op.left),
             // Structural types with .this
@@ -2850,38 +2959,74 @@ impl Expression {
     pub fn get_expression(&self) -> Option<&Expression> {
         match self {
             // Binary operations - right is "expression"
-            Expression::And(op) | Expression::Or(op) | Expression::Add(op)
-            | Expression::Sub(op) | Expression::Mul(op) | Expression::Div(op)
-            | Expression::Mod(op) | Expression::Eq(op) | Expression::Neq(op)
-            | Expression::Lt(op) | Expression::Lte(op) | Expression::Gt(op)
-            | Expression::Gte(op) | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op)
-            | Expression::BitwiseXor(op) | Expression::Concat(op)
-            | Expression::Adjacent(op) | Expression::TsMatch(op) | Expression::PropertyEQ(op)
-            | Expression::ArrayContainsAll(op) | Expression::ArrayContainedBy(op)
-            | Expression::ArrayOverlaps(op) | Expression::JSONBContainsAllTopKeys(op)
-            | Expression::JSONBContainsAnyTopKeys(op) | Expression::JSONBDeleteAtPath(op)
-            | Expression::ExtendsLeft(op) | Expression::ExtendsRight(op)
-            | Expression::Is(op) | Expression::MemberOf(op) | Expression::Match(op)
-            | Expression::NullSafeEq(op) | Expression::NullSafeNeq(op) | Expression::Glob(op)
-            | Expression::BitwiseLeftShift(op) | Expression::BitwiseRightShift(op)
-            => Some(&op.right),
+            Expression::And(op)
+            | Expression::Or(op)
+            | Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op)
+            | Expression::Eq(op)
+            | Expression::Neq(op)
+            | Expression::Lt(op)
+            | Expression::Lte(op)
+            | Expression::Gt(op)
+            | Expression::Gte(op)
+            | Expression::BitwiseAnd(op)
+            | Expression::BitwiseOr(op)
+            | Expression::BitwiseXor(op)
+            | Expression::Concat(op)
+            | Expression::Adjacent(op)
+            | Expression::TsMatch(op)
+            | Expression::PropertyEQ(op)
+            | Expression::ArrayContainsAll(op)
+            | Expression::ArrayContainedBy(op)
+            | Expression::ArrayOverlaps(op)
+            | Expression::JSONBContainsAllTopKeys(op)
+            | Expression::JSONBContainsAnyTopKeys(op)
+            | Expression::JSONBDeleteAtPath(op)
+            | Expression::ExtendsLeft(op)
+            | Expression::ExtendsRight(op)
+            | Expression::Is(op)
+            | Expression::MemberOf(op)
+            | Expression::Match(op)
+            | Expression::NullSafeEq(op)
+            | Expression::NullSafeNeq(op)
+            | Expression::Glob(op)
+            | Expression::BitwiseLeftShift(op)
+            | Expression::BitwiseRightShift(op) => Some(&op.right),
             // Like operations - right is "expression"
             Expression::Like(op) | Expression::ILike(op) => Some(&op.right),
             // BinaryFunc - expression is the secondary
-            Expression::Power(f) | Expression::NullIf(f) | Expression::IfNull(f)
-            | Expression::Nvl(f) | Expression::Contains(f)
-            | Expression::StartsWith(f) | Expression::EndsWith(f)
-            | Expression::Levenshtein(f) | Expression::ModFunc(f) | Expression::IntDiv(f)
-            | Expression::Atan2(f) | Expression::AddMonths(f) | Expression::MonthsBetween(f)
-            | Expression::NextDay(f) | Expression::UnixToTimeStr(f)
-            | Expression::ArrayContains(f) | Expression::ArrayPosition(f)
-            | Expression::ArrayAppend(f) | Expression::ArrayPrepend(f)
-            | Expression::ArrayUnion(f) | Expression::ArrayExcept(f)
-            | Expression::ArrayRemove(f) | Expression::StarMap(f)
-            | Expression::MapFromArrays(f) | Expression::MapContainsKey(f)
-            | Expression::ElementAt(f) | Expression::JsonMergePatch(f)
-            | Expression::JSONBContains(f) | Expression::JSONBExtract(f)
-            => Some(&f.expression),
+            Expression::Power(f)
+            | Expression::NullIf(f)
+            | Expression::IfNull(f)
+            | Expression::Nvl(f)
+            | Expression::Contains(f)
+            | Expression::StartsWith(f)
+            | Expression::EndsWith(f)
+            | Expression::Levenshtein(f)
+            | Expression::ModFunc(f)
+            | Expression::IntDiv(f)
+            | Expression::Atan2(f)
+            | Expression::AddMonths(f)
+            | Expression::MonthsBetween(f)
+            | Expression::NextDay(f)
+            | Expression::UnixToTimeStr(f)
+            | Expression::ArrayContains(f)
+            | Expression::ArrayPosition(f)
+            | Expression::ArrayAppend(f)
+            | Expression::ArrayPrepend(f)
+            | Expression::ArrayUnion(f)
+            | Expression::ArrayExcept(f)
+            | Expression::ArrayRemove(f)
+            | Expression::StarMap(f)
+            | Expression::MapFromArrays(f)
+            | Expression::MapContainsKey(f)
+            | Expression::ElementAt(f)
+            | Expression::JsonMergePatch(f)
+            | Expression::JSONBContains(f)
+            | Expression::JSONBExtract(f) => Some(&f.expression),
             _ => None,
         }
     }
@@ -2897,9 +3042,13 @@ impl Expression {
             Expression::In(i) => &i.expressions,
             Expression::Array(a) => &a.expressions,
             Expression::Tuple(t) => &t.expressions,
-            Expression::Coalesce(f) | Expression::Greatest(f) | Expression::Least(f)
-            | Expression::ArrayConcat(f) | Expression::ArrayIntersect(f)
-            | Expression::ArrayZip(f) | Expression::MapConcat(f)
+            Expression::Coalesce(f)
+            | Expression::Greatest(f)
+            | Expression::Least(f)
+            | Expression::ArrayConcat(f)
+            | Expression::ArrayIntersect(f)
+            | Expression::ArrayZip(f)
+            | Expression::MapConcat(f)
             | Expression::JsonArray(f) => &f.expressions,
             _ => &[],
         }
@@ -2916,7 +3065,13 @@ impl Expression {
             Expression::Function(f) => &f.name,
             Expression::AggregateFunction(f) => &f.name,
             Expression::Alias(a) => a.this.get_name(),
-            Expression::Boolean(b) => if b.value { "TRUE" } else { "FALSE" },
+            Expression::Boolean(b) => {
+                if b.value {
+                    "TRUE"
+                } else {
+                    "FALSE"
+                }
+            }
             Expression::Null(_) => "NULL",
             _ => "",
         }
@@ -2954,14 +3109,28 @@ impl Expression {
             Expression::Paren(p) => p.trailing_comments.iter().map(|s| s.as_str()).collect(),
             Expression::Annotated(a) => a.trailing_comments.iter().map(|s| s.as_str()).collect(),
             Expression::Alias(a) => a.trailing_comments.iter().map(|s| s.as_str()).collect(),
-            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => c.trailing_comments.iter().map(|s| s.as_str()).collect(),
-            Expression::And(op) | Expression::Or(op) | Expression::Add(op)
-            | Expression::Sub(op) | Expression::Mul(op) | Expression::Div(op)
-            | Expression::Mod(op) | Expression::Eq(op) | Expression::Neq(op)
-            | Expression::Lt(op) | Expression::Lte(op) | Expression::Gt(op)
-            | Expression::Gte(op) | Expression::Concat(op)
-            | Expression::BitwiseAnd(op) | Expression::BitwiseOr(op) | Expression::BitwiseXor(op)
-            => op.trailing_comments.iter().map(|s| s.as_str()).collect(),
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => {
+                c.trailing_comments.iter().map(|s| s.as_str()).collect()
+            }
+            Expression::And(op)
+            | Expression::Or(op)
+            | Expression::Add(op)
+            | Expression::Sub(op)
+            | Expression::Mul(op)
+            | Expression::Div(op)
+            | Expression::Mod(op)
+            | Expression::Eq(op)
+            | Expression::Neq(op)
+            | Expression::Lt(op)
+            | Expression::Lte(op)
+            | Expression::Gt(op)
+            | Expression::Gte(op)
+            | Expression::Concat(op)
+            | Expression::BitwiseAnd(op)
+            | Expression::BitwiseOr(op)
+            | Expression::BitwiseXor(op) => {
+                op.trailing_comments.iter().map(|s| s.as_str()).collect()
+            }
             Expression::Function(f) => f.trailing_comments.iter().map(|s| s.as_str()).collect(),
             Expression::Subquery(s) => s.trailing_comments.iter().map(|s| s.as_str()).collect(),
             _ => Vec::new(),
@@ -3237,7 +3406,7 @@ pub struct TableRef {
     /// Column aliases for table alias: AS t(c1, c2)
     #[serde(default)]
     pub column_aliases: Vec<Identifier>,
-    /// Leading comments that appeared before this table reference (e.g., FROM \n/* comment */\n tbl)
+    /// Leading comments that appeared before this table reference in a FROM clause
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub leading_comments: Vec<String>,
     /// Trailing comments that appeared after this table reference
@@ -14655,12 +14824,22 @@ mod tests {
         let str = Expression::string("hello");
 
         match num {
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; assert_eq!(n, "42") },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                let Literal::Number(n) = lit.as_ref() else {
+                    unreachable!()
+                };
+                assert_eq!(n, "42")
+            }
             _ => panic!("Expected Number"),
         }
 
         match str {
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; assert_eq!(s, "hello") },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                assert_eq!(s, "hello")
+            }
             _ => panic!("Expected String"),
         }
     }

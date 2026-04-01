@@ -345,7 +345,14 @@ impl SQLiteDialect {
 
                 // Extract unit string
                 let unit_str = match &unit_expr {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) => { let crate::expressions::Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_lowercase() },
+                    Expression::Literal(lit)
+                        if matches!(lit.as_ref(), crate::expressions::Literal::String(_)) =>
+                    {
+                        let crate::expressions::Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        s.to_lowercase()
+                    }
                     Expression::Identifier(id) => id.name.to_lowercase(),
                     _ => "day".to_string(),
                 };

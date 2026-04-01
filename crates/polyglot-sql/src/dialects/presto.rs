@@ -158,7 +158,9 @@ impl DialectImpl for PrestoDialect {
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -718,9 +720,9 @@ impl PrestoDialect {
                 // Convert Oracle-style format string to Presto C-style
                 if let Expression::Literal(ref lit) = args[1] {
                     if let Literal::String(ref s) = lit.as_ref() {
-                    let converted = Self::oracle_to_presto_format(s);
-                    args[1] = Expression::Literal(Box::new(Literal::String(converted)));
-                }
+                        let converted = Self::oracle_to_presto_format(s);
+                        args[1] = Expression::Literal(Box::new(Literal::String(converted)));
+                    }
                 }
                 Ok(Expression::Function(Box::new(Function::new(
                     "DATE_FORMAT".to_string(),
@@ -787,7 +789,9 @@ impl PrestoDialect {
                 let path = args.remove(0);
                 let json_path = match &path {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -885,7 +889,9 @@ impl PrestoDialect {
                         )));
                         Ok(Expression::Mul(Box::new(BinaryOp {
                             left: unixtime,
-                            right: Expression::Literal(Box::new(Literal::Number("1000".to_string()))),
+                            right: Expression::Literal(Box::new(Literal::Number(
+                                "1000".to_string(),
+                            ))),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),

@@ -163,7 +163,6 @@ fn maybe_wrap_table(expression: Expression, schema: Option<&dyn Schema>) -> Expr
             };
 
             wrap_table_in_subquery(*table.clone(), &alias_name)
-
         }
         _ => expression,
     }

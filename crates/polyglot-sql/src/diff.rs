@@ -1101,8 +1101,12 @@ mod tests {
     #[test]
     fn test_same_type_special_cases() {
         // Same type — both Literal
-        let a = Expression::Literal(Box::new(crate::expressions::Literal::Number("1".to_string())));
-        let b = Expression::Literal(Box::new(crate::expressions::Literal::String("abc".to_string())));
+        let a = Expression::Literal(Box::new(crate::expressions::Literal::Number(
+            "1".to_string(),
+        )));
+        let b = Expression::Literal(Box::new(crate::expressions::Literal::String(
+            "abc".to_string(),
+        )));
         assert!(is_same_type(&a, &b));
 
         // Different type — Literal vs Null

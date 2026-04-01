@@ -157,7 +157,9 @@ impl DialectImpl for TSQLDialect {
             // ===== Boolean IS TRUE/FALSE -> = 1/0 for TSQL =====
             // TSQL doesn't have IS TRUE/IS FALSE syntax
             Expression::IsTrue(it) => {
-                let one = Expression::Literal(Box::new(crate::expressions::Literal::Number("1".to_string())));
+                let one = Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                    "1".to_string(),
+                )));
                 if it.not {
                     // a IS NOT TRUE -> NOT a = 1
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
@@ -184,8 +186,9 @@ impl DialectImpl for TSQLDialect {
                 }
             }
             Expression::IsFalse(it) => {
-                let zero =
-                    Expression::Literal(Box::new(crate::expressions::Literal::Number("0".to_string())));
+                let zero = Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                    "0".to_string(),
+                )));
                 if it.not {
                     // a IS NOT FALSE -> NOT a = 0
                     Ok(Expression::Not(Box::new(crate::expressions::UnaryOp {
@@ -361,9 +364,9 @@ impl DialectImpl for TSQLDialect {
             // Boolean literals TRUE/FALSE -> 1/0 in SQL Server
             Expression::Boolean(b) => {
                 let value = if b.value { 1 } else { 0 };
-                Ok(Expression::Literal(Box::new(crate::expressions::Literal::Number(
-                    value.to_string(),
-                ))))
+                Ok(Expression::Literal(Box::new(
+                    crate::expressions::Literal::Number(value.to_string()),
+                )))
             }
 
             // LN -> LOG in SQL Server
@@ -563,7 +566,9 @@ impl DialectImpl for TSQLDialect {
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {
@@ -777,18 +782,18 @@ impl TSQLDialect {
                 if args.len() >= 2 {
                     if let Expression::Literal(lit) = &args[1] {
                         if let Literal::String(_) = lit.as_ref() {
-                        args[1] = Expression::Cast(Box::new(Cast {
-                            this: args[1].clone(),
-                            to: DataType::Custom {
-                                name: "DATETIME2".to_string(),
-                            },
-                            trailing_comments: Vec::new(),
-                            double_colon_syntax: false,
-                            format: None,
-                            default: None,
-                            inferred_type: None,
-                        }));
-                    }
+                            args[1] = Expression::Cast(Box::new(Cast {
+                                this: args[1].clone(),
+                                to: DataType::Custom {
+                                    name: "DATETIME2".to_string(),
+                                },
+                                trailing_comments: Vec::new(),
+                                double_colon_syntax: false,
+                                format: None,
+                                default: None,
+                                inferred_type: None,
+                            }));
+                        }
                     }
                 }
                 Ok(Expression::Function(Box::new(Function::new(
@@ -863,7 +868,9 @@ impl TSQLDialect {
                 let path = args.remove(0);
                 let json_path = match &path {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let normalized = if s.starts_with('$') {
                             s.clone()
                         } else if s.starts_with('[') {

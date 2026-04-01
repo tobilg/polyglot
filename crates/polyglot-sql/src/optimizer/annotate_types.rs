@@ -1861,7 +1861,9 @@ mod tests {
         );
 
         // TIMESTAMP literal
-        let ts_expr = Expression::Literal(Box::new(Literal::Timestamp("2024-01-15 10:30:00".to_string())));
+        let ts_expr = Expression::Literal(Box::new(Literal::Timestamp(
+            "2024-01-15 10:30:00".to_string(),
+        )));
         assert_eq!(
             annotator.annotate(&ts_expr),
             Some(DataType::Timestamp {

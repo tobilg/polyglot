@@ -18,9 +18,10 @@ pub struct PyExpression {
 
 impl Clone for PyExpression {
     fn clone(&self) -> Self {
-        let parent = self.parent.as_ref().and_then(|p| {
-            Python::try_attach(|py| p.clone_ref(py))
-        });
+        let parent = self
+            .parent
+            .as_ref()
+            .and_then(|p| Python::try_attach(|py| p.clone_ref(py)));
         Self {
             inner: self.inner.clone(),
             parent,
@@ -197,10 +198,7 @@ fn format_typed(
 }
 
 /// Collect non-empty fields as (key, formatted_value) pairs.
-fn collect_fields(
-    fields: &serde_json::Map<String, Value>,
-    indent: usize,
-) -> Vec<(String, String)> {
+fn collect_fields(fields: &serde_json::Map<String, Value>, indent: usize) -> Vec<(String, String)> {
     fields
         .iter()
         .filter(|(_, v)| !should_skip(v))
@@ -346,7 +344,12 @@ impl PyExpression {
         exprs
             .iter()
             .map(|child| {
-                wrap_expression_with_parent(py, child.clone(), parent_ref.clone_ref(py), "expressions")
+                wrap_expression_with_parent(
+                    py,
+                    child.clone(),
+                    parent_ref.clone_ref(py),
+                    "expressions",
+                )
             })
             .collect()
     }
@@ -455,7 +458,9 @@ impl PyExpression {
     fn is_star(&self) -> bool {
         match &self.inner {
             Expression::Star(_) => true,
-            Expression::Column(c) => matches!(&Expression::Identifier(c.name.clone()), Expression::Identifier(id) if id.name == "*"),
+            Expression::Column(c) => {
+                matches!(&Expression::Identifier(c.name.clone()), Expression::Identifier(id) if id.name == "*")
+            }
             _ => false,
         }
     }
@@ -551,9 +556,7 @@ impl PyExpression {
         let parent_ref = slf.unbind().into_any();
         rust_children
             .into_iter()
-            .map(|expr| {
-                wrap_expression_with_parent(py, expr, parent_ref.clone_ref(py), "child")
-            })
+            .map(|expr| wrap_expression_with_parent(py, expr, parent_ref.clone_ref(py), "child"))
             .collect()
     }
 

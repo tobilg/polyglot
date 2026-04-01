@@ -893,7 +893,12 @@ fn replace_alias_refs_in_expression(
 
 fn positional_reference(expr: &Expression) -> Option<usize> {
     match expr {
-        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(value) = lit.as_ref() else { unreachable!() }; value.parse::<usize>().ok() },
+        Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+            let Literal::Number(value) = lit.as_ref() else {
+                unreachable!()
+            };
+            value.parse::<usize>().ok()
+        }
         _ => None,
     }
 }
@@ -3193,9 +3198,8 @@ mod tests {
 
     #[test]
     fn test_qualify_columns_correlated_scalar_subquery_unqualified() {
-        let expr = parse(
-            "SELECT t1_id, (SELECT AVG(val) FROM t2 WHERE t2_id = t1_id) AS avg_val FROM t1",
-        );
+        let expr =
+            parse("SELECT t1_id, (SELECT AVG(val) FROM t2 WHERE t2_id = t1_id) AS avg_val FROM t1");
 
         let mut schema = MappingSchema::new();
         schema
@@ -3220,10 +3224,19 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        assert!(sql.contains("t1.t1_id"), "outer column should be qualified: {sql}");
-        assert!(sql.contains("t2.t2_id"), "inner column should be qualified: {sql}");
+        assert!(
+            sql.contains("t1.t1_id"),
+            "outer column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("t2.t2_id"),
+            "inner column should be qualified: {sql}"
+        );
         // Correlated reference t1_id in inner scope should be qualified as t1.t1_id
-        assert!(sql.contains("= t1.t1_id"), "correlated column should be qualified: {sql}");
+        assert!(
+            sql.contains("= t1.t1_id"),
+            "correlated column should be qualified: {sql}"
+        );
     }
 
     #[test]
@@ -3256,9 +3269,18 @@ mod tests {
             qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
         let sql = gen(&result);
 
-        assert!(sql.contains("orders.o_orderpriority"), "outer column should be qualified: {sql}");
-        assert!(sql.contains("lineitem.l_orderkey"), "inner column should be qualified: {sql}");
-        assert!(sql.contains("orders.o_orderkey"), "correlated outer column should be qualified: {sql}");
+        assert!(
+            sql.contains("orders.o_orderpriority"),
+            "outer column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("lineitem.l_orderkey"),
+            "inner column should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("orders.o_orderkey"),
+            "correlated outer column should be qualified: {sql}"
+        );
     }
 
     #[test]

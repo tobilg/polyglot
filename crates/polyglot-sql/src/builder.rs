@@ -2329,7 +2329,9 @@ pub trait IntoLiteral {
 impl IntoLiteral for &str {
     /// Produce a SQL string literal (e.g. `'hello'`).
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Box::new(Literal::String(self.to_string()))))
+        Expr(Expression::Literal(Box::new(Literal::String(
+            self.to_string(),
+        ))))
     }
 }
 
@@ -2343,28 +2345,36 @@ impl IntoLiteral for String {
 impl IntoLiteral for i64 {
     /// Produce a SQL numeric literal from a 64-bit integer.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
+        Expr(Expression::Literal(Box::new(Literal::Number(
+            self.to_string(),
+        ))))
     }
 }
 
 impl IntoLiteral for i32 {
     /// Produce a SQL numeric literal from a 32-bit integer.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
+        Expr(Expression::Literal(Box::new(Literal::Number(
+            self.to_string(),
+        ))))
     }
 }
 
 impl IntoLiteral for usize {
     /// Produce a SQL numeric literal from a `usize`.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
+        Expr(Expression::Literal(Box::new(Literal::Number(
+            self.to_string(),
+        ))))
     }
 }
 
 impl IntoLiteral for f64 {
     /// Produce a SQL numeric literal from a 64-bit float.
     fn into_literal(self) -> Expr {
-        Expr(Expression::Literal(Box::new(Literal::Number(self.to_string()))))
+        Expr(Expression::Literal(Box::new(Literal::Number(
+            self.to_string(),
+        ))))
     }
 }
 

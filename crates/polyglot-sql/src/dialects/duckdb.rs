@@ -27,7 +27,9 @@ fn normalize_json_path(path: Expression) -> Expression {
     match &path {
         // String literal: 'foo' -> JSONPath with $.foo
         Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-            let Literal::String(s) = lit.as_ref() else { unreachable!() };
+            let Literal::String(s) = lit.as_ref() else {
+                unreachable!()
+            };
             // Skip paths that are already normalized (start with $ or /)
             // Also skip JSON pointer syntax and back-of-list syntax [#-i]
             if s.starts_with('$') || s.starts_with('/') || s.contains("[#") {
@@ -46,7 +48,9 @@ fn normalize_json_path(path: Expression) -> Expression {
         }
         // Number literal: 0 -> JSONPath with $[0]
         Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-            let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+            let Literal::Number(n) = lit.as_ref() else {
+                unreachable!()
+            };
             // Create JSONPath expression: $[n]
             Expression::JSONPath(Box::new(JSONPath {
                 expressions: vec![
@@ -545,7 +549,9 @@ impl DialectImpl for DuckDBDialect {
 
             // ===== DDL Column Constraints =====
             // CommentColumnConstraint -> ignored (DuckDB doesn't support column comments this way)
-            Expression::CommentColumnConstraint(_) => Ok(Expression::Literal(Box::new(crate::expressions::Literal::String(String::new()),))),
+            Expression::CommentColumnConstraint(_) => Ok(Expression::Literal(Box::new(
+                crate::expressions::Literal::String(String::new()),
+            ))),
 
             // JsonExtract -> use arrow syntax (->) in DuckDB with normalized JSON path
             Expression::JsonExtract(mut f) => {
@@ -633,7 +639,12 @@ impl DialectImpl for DuckDBDialect {
                 let x = f.this;
                 let scale = f.scale.unwrap();
                 let needs_cast = match &scale {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     _ => false,
                 };
                 let int_scale = if needs_cast {
@@ -697,7 +708,12 @@ impl DialectImpl for DuckDBDialect {
                 let x = f.this;
                 let scale = f.decimals.unwrap();
                 let needs_cast = match &scale {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     _ => false,
                 };
                 let int_scale = if needs_cast {
@@ -794,7 +810,9 @@ impl DialectImpl for DuckDBDialect {
             Expression::JSONExtract(e) if e.variant_extract.is_some() => {
                 let path = match *e.expression {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         // Convert bracket notation ["key"] to quoted dot notation ."key"
                         let s = Self::convert_bracket_to_quoted_path(&s);
                         let normalized = if s.starts_with('$') {
@@ -823,7 +841,9 @@ impl DialectImpl for DuckDBDialect {
 
             // X'ABCD' -> UNHEX('ABCD') in DuckDB
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::HexString(_)) => {
-                let Literal::HexString(s) = lit.as_ref() else { unreachable!() };
+                let Literal::HexString(s) = lit.as_ref() else {
+                    unreachable!()
+                };
                 Ok(Expression::Function(Box::new(Function::new(
                     "UNHEX".to_string(),
                     vec![Expression::Literal(Box::new(Literal::String(s.clone())))],
@@ -831,15 +851,20 @@ impl DialectImpl for DuckDBDialect {
             }
 
             // b'a' -> CAST(e'a' AS BLOB) in DuckDB
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::ByteString(_)) => { let Literal::ByteString(s) = lit.as_ref() else { unreachable!() }; Ok(Expression::Cast(Box::new(Cast {
-                this: Expression::Literal(Box::new(Literal::EscapeString(s.clone()))),
-                to: DataType::VarBinary { length: None },
-                trailing_comments: Vec::new(),
-                double_colon_syntax: false,
-                format: None,
-                default: None,
-                inferred_type: None,
-            }))) },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::ByteString(_)) => {
+                let Literal::ByteString(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                Ok(Expression::Cast(Box::new(Cast {
+                    this: Expression::Literal(Box::new(Literal::EscapeString(s.clone()))),
+                    to: DataType::VarBinary { length: None },
+                    trailing_comments: Vec::new(),
+                    double_colon_syntax: false,
+                    format: None,
+                    default: None,
+                    inferred_type: None,
+                })))
+            }
 
             // CAST(x AS DECIMAL) -> CAST(x AS DECIMAL(18, 3)) in DuckDB (default precision)
             // Exception: CAST(a // b AS DECIMAL) from DIV conversion keeps bare DECIMAL
@@ -1150,8 +1175,12 @@ impl DialectImpl for DuckDBDialect {
                                     _ => None,
                                 };
                                 let value_expr = match je.expression.as_ref() {
-                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                                    Expression::Literal(lit)
+                                        if matches!(lit.as_ref(), Literal::String(_)) =>
+                                    {
+                                        let Literal::String(s) = lit.as_ref() else {
+                                            unreachable!()
+                                        };
                                         // Convert string path to column reference
                                         if s.contains('.') {
                                             // t.col → Column { name: col, table: t }
@@ -1334,7 +1363,12 @@ impl DuckDBDialect {
     /// Extract a numeric value from a literal expression, if possible
     fn extract_number_value(expr: &Expression) -> Option<f64> {
         match expr {
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.parse::<f64>().ok() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                let Literal::Number(n) = lit.as_ref() else {
+                    unreachable!()
+                };
+                n.parse::<f64>().ok()
+            }
             _ => None,
         }
     }
@@ -1558,18 +1592,20 @@ impl DuckDBDialect {
 
         if let Some(Expression::Literal(ref lit)) = interval.this {
             if let Literal::String(ref s) = lit.as_ref() {
-            // Try to parse the string as "value unit" format
-            if let Some((value, unit)) = Self::parse_interval_string(s) {
-                // Create new interval with separated value and unit
-                return Ok(Expression::Interval(Box::new(Interval {
-                    this: Some(Expression::Literal(Box::new(Literal::String(value.to_string())))),
-                    unit: Some(IntervalUnitSpec::Simple {
-                        unit,
-                        use_plural: false, // DuckDB uses singular form
-                    }),
-                })));
+                // Try to parse the string as "value unit" format
+                if let Some((value, unit)) = Self::parse_interval_string(s) {
+                    // Create new interval with separated value and unit
+                    return Ok(Expression::Interval(Box::new(Interval {
+                        this: Some(Expression::Literal(Box::new(Literal::String(
+                            value.to_string(),
+                        )))),
+                        unit: Some(IntervalUnitSpec::Simple {
+                            unit,
+                            use_plural: false, // DuckDB uses singular form
+                        }),
+                    })));
+                }
             }
-        }
         }
 
         // No transformation needed
@@ -1792,7 +1828,9 @@ impl DuckDBDialect {
             // RPAD with 2 args -> RPAD with 3 args (default padding ' ')
             "RPAD" if f.args.len() == 2 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(Box::new(Literal::String(" ".to_string()))));
+                args.push(Expression::Literal(Box::new(Literal::String(
+                    " ".to_string(),
+                ))));
                 Ok(Expression::Function(Box::new(Function::new(
                     "RPAD".to_string(),
                     args,
@@ -1956,16 +1994,15 @@ impl DuckDBDialect {
             })),
 
             // CURRENT_LOCALTIMESTAMP -> LOCALTIMESTAMP
-            "CURRENT_LOCALTIMESTAMP" => {
-                Ok(Expression::Localtimestamp(Box::new(
-                    crate::expressions::Localtimestamp { this: None },
-                )))
-            }
+            "CURRENT_LOCALTIMESTAMP" => Ok(Expression::Localtimestamp(Box::new(
+                crate::expressions::Localtimestamp { this: None },
+            ))),
 
             // REGEXP_EXTRACT_ALL: strip default group_idx=0
             "REGEXP_EXTRACT_ALL" if f.args.len() == 3 => {
                 // If third arg is literal 0, strip it
-                if matches!(&f.args[2], Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n == "0")) {
+                if matches!(&f.args[2], Expression::Literal(lit) if matches!(lit.as_ref(), crate::expressions::Literal::Number(n) if n == "0"))
+                {
                     Ok(Expression::Function(Box::new(Function::new(
                         "REGEXP_EXTRACT_ALL".to_string(),
                         vec![f.args[0].clone(), f.args[1].clone()],
@@ -2383,7 +2420,12 @@ impl DuckDBDialect {
             "REGEXP_EXTRACT" if f.args.len() == 3 => {
                 // Check if the third argument is 0
                 let drop_group = match &f.args[2] {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n == "0" },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n == "0"
+                    }
                     _ => false,
                 };
                 if drop_group {
@@ -2416,7 +2458,9 @@ impl DuckDBDialect {
             // REPLACE with 2 args -> add empty string 3rd arg
             "REPLACE" if f.args.len() == 2 => {
                 let mut args = f.args;
-                args.push(Expression::Literal(Box::new(Literal::String(String::new()))));
+                args.push(Expression::Literal(Box::new(
+                    Literal::String(String::new()),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "REPLACE".to_string(),
                     args,
@@ -2682,7 +2726,14 @@ impl DuckDBDialect {
                         let key = &args[i];
                         let value = args[i + 1].clone();
                         let key_name = match key {
-                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; Some(s.clone()) },
+                            Expression::Literal(lit)
+                                if matches!(lit.as_ref(), Literal::String(_)) =>
+                            {
+                                let Literal::String(s) = lit.as_ref() else {
+                                    unreachable!()
+                                };
+                                Some(s.clone())
+                            }
                             _ => None,
                         };
                         fields.push((key_name, value));
@@ -2887,7 +2938,9 @@ impl DuckDBDialect {
                         inferred_type: None,
                     }));
                     let base_time = Expression::Cast(Box::new(Cast {
-                        this: Expression::Literal(Box::new(Literal::String("00:00:00".to_string()))),
+                        this: Expression::Literal(Box::new(Literal::String(
+                            "00:00:00".to_string(),
+                        ))),
                         to: DataType::Time {
                             precision: None,
                             timezone: false,
@@ -2962,7 +3015,9 @@ impl DuckDBDialect {
                     right: Expression::Paren(Box::new(Paren {
                         this: Expression::Div(Box::new(BinaryOp {
                             left: ns,
-                            right: Expression::Literal(Box::new(Literal::Number("1000000000.0".to_string()))),
+                            right: Expression::Literal(Box::new(Literal::Number(
+                                "1000000000.0".to_string(),
+                            ))),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
@@ -3402,7 +3457,9 @@ impl DuckDBDialect {
             "REGEXP_REPLACE" if f.args.len() == 2 => {
                 // 2-arg form (subject, pattern) -> add empty replacement
                 let mut args = f.args;
-                args.push(Expression::Literal(Box::new(Literal::String(String::new()))));
+                args.push(Expression::Literal(Box::new(
+                    Literal::String(String::new()),
+                )));
                 Ok(Expression::Function(Box::new(Function::new(
                     "REGEXP_REPLACE".to_string(),
                     args,
@@ -3649,8 +3706,8 @@ impl DuckDBDialect {
                 let value = args.remove(0);
                 let second_arg = args.remove(0);
                 match &second_arg {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => Ok(Expression::AtTimeZone(
-                        Box::new(crate::expressions::AtTimeZone {
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => Ok(
+                        Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
                             this: Expression::Function(Box::new(Function::new(
                                 "TO_TIMESTAMP".to_string(),
                                 vec![Expression::Div(Box::new(BinaryOp {
@@ -3666,8 +3723,8 @@ impl DuckDBDialect {
                                 }))],
                             ))),
                             zone: Expression::Literal(Box::new(Literal::String("UTC".to_string()))),
-                        }),
-                    )),
+                        })),
+                    ),
                     _ => {
                         let fmt = self.convert_snowflake_time_format(second_arg);
                         Ok(Expression::Function(Box::new(Function::new(
@@ -3790,7 +3847,9 @@ impl DuckDBDialect {
                     vec![
                         Expression::Literal(Box::new(Literal::String("DAY".to_string()))),
                         Expression::Cast(Box::new(Cast {
-                            this: Expression::Literal(Box::new(Literal::String("1970-01-01".to_string()))),
+                            this: Expression::Literal(Box::new(Literal::String(
+                                "1970-01-01".to_string(),
+                            ))),
                             to: DataType::Date,
                             trailing_comments: Vec::new(),
                             double_colon_syntax: false,
@@ -4034,7 +4093,9 @@ impl DuckDBDialect {
                         (
                             Expression::Eq(Box::new(BinaryOp {
                                 left: upper_text.clone(),
-                                right: Expression::Literal(Box::new(Literal::String("ON".to_string()))),
+                                right: Expression::Literal(Box::new(Literal::String(
+                                    "ON".to_string(),
+                                ))),
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
@@ -4045,7 +4106,9 @@ impl DuckDBDialect {
                         (
                             Expression::Eq(Box::new(BinaryOp {
                                 left: upper_text,
-                                right: Expression::Literal(Box::new(Literal::String("OFF".to_string()))),
+                                right: Expression::Literal(Box::new(Literal::String(
+                                    "OFF".to_string(),
+                                ))),
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
@@ -4089,7 +4152,9 @@ impl DuckDBDialect {
                         (
                             Expression::Eq(Box::new(BinaryOp {
                                 left: upper_text.clone(),
-                                right: Expression::Literal(Box::new(Literal::String("ON".to_string()))),
+                                right: Expression::Literal(Box::new(Literal::String(
+                                    "ON".to_string(),
+                                ))),
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
@@ -4100,7 +4165,9 @@ impl DuckDBDialect {
                         (
                             Expression::Eq(Box::new(BinaryOp {
                                 left: upper_text,
-                                right: Expression::Literal(Box::new(Literal::String("OFF".to_string()))),
+                                right: Expression::Literal(Box::new(Literal::String(
+                                    "OFF".to_string(),
+                                ))),
                                 left_comments: Vec::new(),
                                 operator_comments: Vec::new(),
                                 trailing_comments: Vec::new(),
@@ -4177,7 +4244,12 @@ impl DuckDBDialect {
                 let value = args.remove(0);
                 // Extract key string for named arg
                 let key_name = match &key {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.clone() },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        s.clone()
+                    }
                     _ => "key".to_string(),
                 };
                 let named_arg =
@@ -4217,7 +4289,9 @@ impl DuckDBDialect {
                 match &key {
                     // String key -> JSON extract (object access)
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let json_path = format!("$.{}", s);
                         Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
                             this,
@@ -4235,7 +4309,9 @@ impl DuckDBDialect {
                     // For MAP access: key is used as-is (map[key])
                     // For ARRAY access: Snowflake is 0-based, DuckDB is 1-based, so add 1
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
-                        let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let idx: i64 = n.parse().unwrap_or(0);
                         let is_map = matches!(&this, Expression::Cast(c) if matches!(c.to, DataType::Map { .. }));
                         let index_val = if is_map { idx } else { idx + 1 };
@@ -4279,7 +4355,9 @@ impl DuckDBDialect {
                 // Convert Snowflake path to JSONPath
                 let json_path = match &path {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         // Convert bracket notation ["key"] to quoted dot notation ."key"
                         let s = Self::convert_bracket_to_quoted_path(s);
                         // Convert Snowflake path (e.g., 'attr[0].name' or '[0].attr') to JSON path ($.attr[0].name or $[0].attr)
@@ -4318,7 +4396,12 @@ impl DuckDBDialect {
                 let x = args.remove(0);
                 let line_len = args.remove(0);
                 let line_len_str = match &line_len {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.clone() },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.clone()
+                    }
                     _ => "76".to_string(),
                 };
                 let to_base64 =
@@ -4384,8 +4467,7 @@ impl DuckDBDialect {
             // REGEXP_REPLACE with 4 args: check if 4th arg is a number (Snowflake position) or flags (DuckDB native)
             // REGEXP_REPLACE with 4 args: check if 4th is a string flag (DuckDB native) or a numeric position
             "REGEXP_REPLACE" if f.args.len() == 4 => {
-                let is_snowflake_position =
-                    matches!(&f.args[3], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)));
+                let is_snowflake_position = matches!(&f.args[3], Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)));
                 if is_snowflake_position {
                     // Snowflake form: REGEXP_REPLACE(subject, pattern, replacement, position) -> add 'g' flag
                     let mut args = f.args;
@@ -4428,12 +4510,16 @@ impl DuckDBDialect {
                 let mut flags = String::new();
                 if let Some(Expression::Literal(lit)) = &params {
                     if let Literal::String(p) = lit.as_ref() {
-                    flags = p.clone();
-                }
+                        flags = p.clone();
+                    }
                 }
                 let is_global = match &occurrence {
-                    Some(Expression::Literal(lit)) if matches!(lit.as_ref(), Literal::Number(_)) => {
-                        let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                    Some(Expression::Literal(lit))
+                        if matches!(lit.as_ref(), Literal::Number(_)) =>
+                    {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         n == "0"
                     }
                     None => true,
@@ -4476,8 +4562,12 @@ impl DuckDBDialect {
                 if let Some(expr) = expr_val {
                     let scale = scale_val.unwrap_or(Expression::number(0));
                     let is_half_to_even = match &rounding_mode {
-                        Some(Expression::Literal(lit)) if matches!(lit.as_ref(), Literal::String(_)) => {
-                            let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        Some(Expression::Literal(lit))
+                            if matches!(lit.as_ref(), Literal::String(_)) =>
+                        {
+                            let Literal::String(s) = lit.as_ref() else {
+                                unreachable!()
+                            };
                             s == "HALF_TO_EVEN"
                         }
                         _ => false,
@@ -4506,7 +4596,12 @@ impl DuckDBDialect {
                 let scale = args.remove(0);
                 let mode = args.remove(0);
                 let is_half_to_even = match &mode {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s == "HALF_TO_EVEN" },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        s == "HALF_TO_EVEN"
+                    }
                     _ => false,
                 };
                 if is_half_to_even {
@@ -4529,7 +4624,12 @@ impl DuckDBDialect {
                 let x = args.remove(0);
                 let scale = args.remove(0);
                 let needs_cast = match &scale {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     Expression::Cast(_) => {
                         // Already has a CAST - wrap in another CAST to INT
                         true
@@ -4570,7 +4670,12 @@ impl DuckDBDialect {
                 let scale = args.remove(0);
                 // Check if scale needs CAST to INT
                 let needs_cast = match &scale {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     _ => false,
                 };
                 let int_scale = if needs_cast {
@@ -4635,7 +4740,12 @@ impl DuckDBDialect {
                 let x = args.remove(0);
                 let scale = args.remove(0);
                 let needs_cast = match &scale {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     _ => false,
                 };
                 let int_scale = if needs_cast {
@@ -4701,23 +4811,24 @@ impl DuckDBDialect {
                 let months_expr = args.remove(0);
 
                 // Track whether the raw expression was a string literal
-                let was_string_literal =
-                    matches!(&date_expr_raw, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)));
+                let was_string_literal = matches!(&date_expr_raw, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)));
 
                 // Wrap string literals in CAST(... AS TIMESTAMP) for DuckDB
                 let date_expr = match &date_expr_raw {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => Expression::Cast(Box::new(Cast {
-                        this: date_expr_raw,
-                        to: DataType::Timestamp {
-                            precision: None,
-                            timezone: false,
-                        },
-                        trailing_comments: Vec::new(),
-                        double_colon_syntax: false,
-                        format: None,
-                        default: None,
-                        inferred_type: None,
-                    })),
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        Expression::Cast(Box::new(Cast {
+                            this: date_expr_raw,
+                            to: DataType::Timestamp {
+                                precision: None,
+                                timezone: false,
+                            },
+                            trailing_comments: Vec::new(),
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: None,
+                        }))
+                    }
                     _ => date_expr_raw,
                 };
 
@@ -4734,7 +4845,12 @@ impl DuckDBDialect {
 
                 // Determine interval expression - for non-integer months, use TO_MONTHS(CAST(ROUND(n) AS INT))
                 let is_non_integer_months = match &months_expr {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.contains('.') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.contains('.')
+                    }
                     Expression::Neg(_) => {
                         if let Expression::Neg(um) = &months_expr {
                             matches!(&um.this, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.contains('.')))
@@ -4749,7 +4865,12 @@ impl DuckDBDialect {
 
                 let is_negative = match &months_expr {
                     Expression::Neg(_) => true,
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => { let Literal::Number(n) = lit.as_ref() else { unreachable!() }; n.starts_with('-') },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)) => {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        n.starts_with('-')
+                    }
                     _ => false,
                 };
                 let is_null = matches!(&months_expr, Expression::Null(_));
@@ -4861,7 +4982,12 @@ impl DuckDBDialect {
 
                 // Extract unit string
                 let unit = match &unit_str {
-                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
+                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
+                        s.to_uppercase()
+                    }
                     Expression::Column(c) => c.name.name.to_uppercase(),
                     Expression::Identifier(i) => i.name.to_uppercase(),
                     _ => "DAY".to_string(),
@@ -4893,8 +5019,12 @@ impl DuckDBDialect {
                 )));
 
                 let is_end = match &alignment {
-                    Some(Expression::Literal(lit)) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                    Some(Expression::Literal(lit))
+                        if matches!(lit.as_ref(), Literal::String(_)) =>
+                    {
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         s.to_uppercase() == "END"
                     }
                     _ => false,
@@ -5046,7 +5176,9 @@ impl DuckDBDialect {
                 // Parse day name to ISO day number (1=Monday..7=Sunday)
                 let day_num = match &day_name {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let upper = s.to_uppercase();
                         if upper.starts_with("MO") {
                             Some(1)
@@ -5083,7 +5215,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("MO".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "MO".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(1),
@@ -5095,7 +5229,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("TU".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "TU".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(2),
@@ -5107,7 +5243,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("WE".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "WE".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(3),
@@ -5119,7 +5257,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("TH".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "TH".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(4),
@@ -5131,7 +5271,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("FR".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "FR".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(5),
@@ -5143,7 +5285,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("SA".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "SA".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(6),
@@ -5153,7 +5297,9 @@ impl DuckDBDialect {
                                     "STARTS_WITH".to_string(),
                                     vec![
                                         Expression::Upper(Box::new(UnaryFunc::new(day_name))),
-                                        Expression::Literal(Box::new(Literal::String("SU".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "SU".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(7),
@@ -5246,7 +5392,9 @@ impl DuckDBDialect {
 
                 let day_num = match &day_name {
                     Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                        let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                        let Literal::String(s) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         let upper = s.to_uppercase();
                         if upper.starts_with("MO") {
                             Some(1)
@@ -5282,7 +5430,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("MO".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "MO".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(1),
@@ -5294,7 +5444,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("TU".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "TU".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(2),
@@ -5306,7 +5458,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("WE".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "WE".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(3),
@@ -5318,7 +5472,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("TH".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "TH".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(4),
@@ -5330,7 +5486,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("FR".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "FR".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(5),
@@ -5342,7 +5500,9 @@ impl DuckDBDialect {
                                         Expression::Upper(Box::new(UnaryFunc::new(
                                             day_name.clone(),
                                         ))),
-                                        Expression::Literal(Box::new(Literal::String("SA".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "SA".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(6),
@@ -5352,7 +5512,9 @@ impl DuckDBDialect {
                                     "STARTS_WITH".to_string(),
                                     vec![
                                         Expression::Upper(Box::new(UnaryFunc::new(day_name))),
-                                        Expression::Literal(Box::new(Literal::String("SU".to_string()))),
+                                        Expression::Literal(Box::new(Literal::String(
+                                            "SU".to_string(),
+                                        ))),
                                     ],
                                 ))),
                                 Expression::number(7),
@@ -5564,8 +5726,12 @@ impl DuckDBDialect {
                 };
 
                 let is_signed = match f.args.first() {
-                    Some(Expression::Literal(lit)) if matches!(lit.as_ref(), Literal::Number(_)) => {
-                        let Literal::Number(n) = lit.as_ref() else { unreachable!() };
+                    Some(Expression::Literal(lit))
+                        if matches!(lit.as_ref(), Literal::Number(_)) =>
+                    {
+                        let Literal::Number(n) = lit.as_ref() else {
+                            unreachable!()
+                        };
                         n == "1"
                     }
                     _ => false,
@@ -5748,7 +5914,9 @@ impl DuckDBDialect {
                         }));
                         Expression::Div(Box::new(BinaryOp {
                             left: paren_modded,
-                            right: Expression::Literal(Box::new(Literal::Number("1000000.0".to_string()))),
+                            right: Expression::Literal(Box::new(Literal::Number(
+                                "1000000.0".to_string(),
+                            ))),
                             left_comments: Vec::new(),
                             operator_comments: Vec::new(),
                             trailing_comments: Vec::new(),
@@ -5820,7 +5988,9 @@ impl DuckDBDialect {
                     }));
                     Expression::Div(Box::new(BinaryOp {
                         left: paren_modded,
-                        right: Expression::Literal(Box::new(Literal::Number("1000000.0".to_string()))),
+                        right: Expression::Literal(Box::new(Literal::Number(
+                            "1000000.0".to_string(),
+                        ))),
                         left_comments: Vec::new(),
                         operator_comments: Vec::new(),
                         trailing_comments: Vec::new(),
@@ -6360,22 +6530,13 @@ impl DuckDBDialect {
 
                 // WHEN delim = '' AND str = '' THEN NULL
                 let when1_cond = Expression::And(Box::new(BinaryOp::new(
-                    Expression::Eq(Box::new(BinaryOp::new(
-                        delim_arg.clone(),
-                        empty_str(),
-                    ))),
-                    Expression::Eq(Box::new(BinaryOp::new(
-                        str_arg.clone(),
-                        empty_str(),
-                    ))),
+                    Expression::Eq(Box::new(BinaryOp::new(delim_arg.clone(), empty_str()))),
+                    Expression::Eq(Box::new(BinaryOp::new(str_arg.clone(), empty_str()))),
                 )));
 
                 // WHEN delim = '' AND pos = 1 THEN str
                 let when2_cond = Expression::And(Box::new(BinaryOp::new(
-                    Expression::Eq(Box::new(BinaryOp::new(
-                        delim_arg.clone(),
-                        empty_str(),
-                    ))),
+                    Expression::Eq(Box::new(BinaryOp::new(delim_arg.clone(), empty_str()))),
                     Expression::Eq(Box::new(BinaryOp::new(
                         pos_arg.clone(),
                         Expression::number(1),
@@ -6383,10 +6544,8 @@ impl DuckDBDialect {
                 )));
 
                 // WHEN delim = '' THEN NULL
-                let when3_cond = Expression::Eq(Box::new(BinaryOp::new(
-                    delim_arg.clone(),
-                    empty_str(),
-                )));
+                let when3_cond =
+                    Expression::Eq(Box::new(BinaryOp::new(delim_arg.clone(), empty_str())));
 
                 // WHEN pos < 0 THEN NULL
                 let when4_cond = Expression::Lt(Box::new(BinaryOp::new(
@@ -6411,10 +6570,7 @@ impl DuckDBDialect {
                     postfix_form: false,
                 }));
                 let when5_cond = Expression::Or(Box::new(BinaryOp::new(
-                    Expression::Or(Box::new(BinaryOp::new(
-                        str_is_null,
-                        delim_is_null,
-                    ))),
+                    Expression::Or(Box::new(BinaryOp::new(str_is_null, delim_is_null))),
                     pos_is_null,
                 )));
 
@@ -6445,15 +6601,10 @@ impl DuckDBDialect {
 
                 let inner_case = Expression::Case(Box::new(Case {
                     operand: None,
-                    whens: vec![
-                        (
-                            Expression::Eq(Box::new(BinaryOp::new(
-                                delim_arg.clone(),
-                                empty_str(),
-                            ))),
-                            empty_str(),
-                        ),
-                    ],
+                    whens: vec![(
+                        Expression::Eq(Box::new(BinaryOp::new(delim_arg.clone(), empty_str()))),
+                        empty_str(),
+                    )],
                     else_: Some(concat_regex),
                     comments: Vec::new(),
                     inferred_type: None,
@@ -6522,7 +6673,9 @@ impl DuckDBDialect {
     fn convert_snowflake_date_format(&self, fmt: Expression) -> Expression {
         match fmt {
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
                 let converted = Self::snowflake_to_strptime(&s);
                 Expression::Literal(Box::new(Literal::String(converted)))
             }
@@ -6534,7 +6687,9 @@ impl DuckDBDialect {
     fn convert_snowflake_time_format(&self, fmt: Expression) -> Expression {
         match fmt {
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
                 let converted = Self::snowflake_to_strptime(&s);
                 Expression::Literal(Box::new(Literal::String(converted)))
             }
@@ -6635,7 +6790,9 @@ impl DuckDBDialect {
     fn convert_bq_to_strptime_format(&self, fmt: Expression) -> Expression {
         match fmt {
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
-                let Literal::String(s) = lit.as_ref() else { unreachable!() };
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
                 let converted = s.replace("%E6S", "%S.%f").replace("%E*S", "%S.%f");
                 Expression::Literal(Box::new(Literal::String(converted)))
             }
@@ -6652,7 +6809,12 @@ impl DuckDBDialect {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
             Expression::Var(v) => v.this.to_uppercase(),
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                s.to_uppercase()
+            }
             _ => {
                 return Ok(Expression::Function(Box::new(Function::new(
                     "DATE_PART".to_string(),
@@ -6793,7 +6955,12 @@ impl DuckDBDialect {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
             Expression::Var(v) => v.this.to_uppercase(),
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                s.to_uppercase()
+            }
             _ => String::new(),
         };
         if unit_name == "NANOSECOND" || unit_name == "NS" {
@@ -6882,7 +7049,12 @@ impl DuckDBDialect {
             Expression::Column(c) => c.name.name.to_uppercase(),
             Expression::Identifier(i) => i.name.to_uppercase(),
             Expression::Var(v) => v.this.to_uppercase(),
-            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => { let Literal::String(s) = lit.as_ref() else { unreachable!() }; s.to_uppercase() },
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                let Literal::String(s) = lit.as_ref() else {
+                    unreachable!()
+                };
+                s.to_uppercase()
+            }
             _ => String::new(),
         };
         if unit_name == "NANOSECOND" || unit_name == "NS" {
@@ -6965,15 +7137,17 @@ impl DuckDBDialect {
         }
         let cast_if_string = |e: Expression| -> Expression {
             match &e {
-                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => Expression::Cast(Box::new(Cast {
-                    this: e,
-                    to: DataType::Date,
-                    trailing_comments: Vec::new(),
-                    double_colon_syntax: false,
-                    format: None,
-                    default: None,
-                    inferred_type: None,
-                })),
+                Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
+                    Expression::Cast(Box::new(Cast {
+                        this: e,
+                        to: DataType::Date,
+                        trailing_comments: Vec::new(),
+                        double_colon_syntax: false,
+                        format: None,
+                        default: None,
+                        inferred_type: None,
+                    }))
+                }
                 _ => e,
             }
         };
@@ -6981,7 +7155,11 @@ impl DuckDBDialect {
         let end = cast_if_string(end);
         Ok(Expression::Function(Box::new(Function::new(
             "DATE_DIFF".to_string(),
-            vec![Expression::Literal(Box::new(Literal::String(unit_name))), start, end],
+            vec![
+                Expression::Literal(Box::new(Literal::String(unit_name))),
+                start,
+                end,
+            ],
         ))))
     }
 
@@ -7214,9 +7392,11 @@ impl DuckDBDialect {
     fn convert_format_to_duckdb(expr: &Expression) -> Expression {
         if let Expression::Literal(lit) = expr {
             if let Literal::String(s) = lit.as_ref() {
-            let duckdb_fmt = Self::presto_to_duckdb_format(s);
-            Expression::Literal(Box::new(Literal::String(duckdb_fmt)))
-        } else { expr.clone() }
+                let duckdb_fmt = Self::presto_to_duckdb_format(s);
+                Expression::Literal(Box::new(Literal::String(duckdb_fmt)))
+            } else {
+                expr.clone()
+            }
         } else {
             expr.clone()
         }
