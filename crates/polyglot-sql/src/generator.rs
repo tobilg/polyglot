@@ -3309,6 +3309,7 @@ impl Generator {
                 self.write(&raw.sql);
                 Ok(())
             }
+            Expression::CreateTask(task) => self.generate_create_task(task),
             Expression::Command(cmd) => {
                 self.write(&cmd.this);
                 Ok(())
@@ -11401,6 +11402,9 @@ impl Generator {
             } else if principal.is_group {
                 self.write_keyword("GROUP");
                 self.write_space();
+            } else if principal.is_share {
+                self.write_keyword("SHARE");
+                self.write_space();
             }
             self.generate_identifier(&principal.name)?;
         }
@@ -11511,6 +11515,9 @@ impl Generator {
                 self.write_space();
             } else if principal.is_group {
                 self.write_keyword("GROUP");
+                self.write_space();
+            } else if principal.is_share {
+                self.write_keyword("SHARE");
                 self.write_space();
             }
             self.generate_identifier(&principal.name)?;
@@ -11866,11 +11873,21 @@ impl Generator {
         }
 
         self.write_space();
-        self.generate_identifier(&cs.name)?;
+        for (i, part) in cs.name.iter().enumerate() {
+            if i > 0 {
+                self.write(".");
+            }
+            self.generate_identifier(part)?;
+        }
 
-        if let Some(ref clone_src) = cs.clone_from {
+        if let Some(ref clone_parts) = cs.clone_from {
             self.write_keyword(" CLONE ");
-            self.generate_identifier(clone_src)?;
+            for (i, part) in clone_parts.iter().enumerate() {
+                if i > 0 {
+                    self.write(".");
+                }
+                self.generate_identifier(part)?;
+            }
         }
 
         if let Some(ref at_clause) = cs.at_clause {
@@ -13583,6 +13600,34 @@ impl Generator {
             }
         }
 
+        Ok(())
+    }
+
+    fn generate_create_task(&mut self, task: &crate::expressions::CreateTask) -> Result<()> {
+        self.write_keyword("CREATE");
+        if task.or_replace {
+            self.write_space();
+            self.write_keyword("OR REPLACE");
+        }
+        self.write_space();
+        self.write_keyword("TASK");
+        if task.if_not_exists {
+            self.write_space();
+            self.write_keyword("IF NOT EXISTS");
+        }
+        self.write_space();
+        self.write(&task.name);
+        if !task.properties.is_empty() {
+            // Properties already include leading whitespace from tokens_to_sql
+            if !task.properties.starts_with('\n') && !task.properties.starts_with(' ') {
+                self.write_space();
+            }
+            self.write(&task.properties);
+        }
+        self.write_space();
+        self.write_keyword("AS");
+        self.write_space();
+        self.generate_expression(&task.body)?;
         Ok(())
     }
 
@@ -28350,12 +28395,15 @@ impl Generator {
     }
 
     fn generate_grant_principal(&mut self, e: &GrantPrincipal) -> Result<()> {
-        // [ROLE|GROUP] name (e.g., "ROLE admin", "GROUP qa_users", or just "user1")
+        // [ROLE|GROUP|SHARE] name (e.g., "ROLE admin", "GROUP qa_users", "SHARE s1", or just "user1")
         if e.is_role {
             self.write_keyword("ROLE");
             self.write_space();
         } else if e.is_group {
             self.write_keyword("GROUP");
+            self.write_space();
+        } else if e.is_share {
+            self.write_keyword("SHARE");
             self.write_space();
         }
         self.write(&e.name.name);

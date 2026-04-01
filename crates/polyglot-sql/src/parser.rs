@@ -1040,12 +1040,13 @@ impl Parser {
                     self.parse_attach_detach(true)
                 }
             }
-            // ClickHouse: UNDROP TABLE [IF EXISTS] ... [UUID '...'] [ON CLUSTER ...]
+            // UNDROP TABLE/SCHEMA/DATABASE (ClickHouse, Snowflake)
             TokenType::Var
                 if self.peek().text.eq_ignore_ascii_case("UNDROP")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
+                            | Some(crate::dialects::DialectType::Snowflake)
                     ) =>
             {
                 self.skip(); // consume UNDROP
@@ -10918,6 +10919,9 @@ impl Parser {
                 if self.check_identifier("STREAM") {
                     return self.parse_create_stream(or_replace);
                 }
+                if self.check_identifier("TASK") {
+                    return self.parse_create_task(or_replace);
+                }
                 if (self.check_identifier("FILE") || self.check(TokenType::File)) && {
                     let next = self.current + 1;
                     next < self.tokens.len()
@@ -16873,6 +16877,58 @@ impl Parser {
                         })));
                     }
                 }
+                // Snowflake: DROP STREAM, DROP TASK, DROP STAGE, DROP WAREHOUSE, etc.
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Snowflake)
+                ) {
+                    let text_upper = self.peek().text.to_ascii_uppercase();
+                    let is_snowflake_drop = matches!(
+                        text_upper.as_str(),
+                        "STREAM"
+                            | "TASK"
+                            | "STAGE"
+                            | "WAREHOUSE"
+                            | "PIPE"
+                            | "INTEGRATION"
+                            | "TAG"
+                            | "NETWORK"
+                            | "SHARE"
+                    ) || (text_upper == "FILE"
+                        && self.current + 1 < self.tokens.len()
+                        && self.tokens[self.current + 1]
+                            .text
+                            .eq_ignore_ascii_case("FORMAT"));
+                    if is_snowflake_drop {
+                        self.skip(); // consume the object type keyword
+                        let mut tokens: Vec<(String, TokenType)> = vec![
+                            ("DROP".to_string(), TokenType::Var),
+                            (
+                                self.previous().text.to_ascii_uppercase(),
+                                self.previous().token_type,
+                            ),
+                        ];
+                        // For FILE FORMAT, also consume FORMAT
+                        if text_upper == "FILE" {
+                            let fmt = self.advance();
+                            tokens.push((fmt.text.to_ascii_uppercase(), fmt.token_type));
+                        }
+                        while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                            let token = self.advance();
+                            let text = if token.token_type == TokenType::QuotedIdentifier {
+                                format!("\"{}\"", token.text)
+                            } else if token.token_type == TokenType::String {
+                                format!("'{}'", token.text)
+                            } else {
+                                token.text.clone()
+                            };
+                            tokens.push((text, token.token_type));
+                        }
+                        return Ok(Expression::Command(Box::new(Command {
+                            this: self.join_command_tokens(tokens),
+                        })));
+                    }
+                }
                 Err(self.parse_error(format!(
                     "Expected TABLE, VIEW, INDEX, SCHEMA, DATABASE, FUNCTION, PROCEDURE, SEQUENCE, TRIGGER, TYPE, or NAMESPACE after DROP, got {:?}",
                     self.peek().token_type
@@ -21191,18 +21247,28 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            // Parse path segments: /path/to/file (slash is tokenized separately)
-            while self.check(TokenType::Slash) {
-                self.skip(); // consume /
+            // Parse path after stage: /path/to/file.csv
+            // Consume all connected path components (dots, dashes, numbers, etc.)
+            // matching the logic in parse_stage_reference.
+            if self.match_token(TokenType::Slash) {
                 stage_path.push('/');
-                // Get path segment (identifier, keyword, or special chars)
-                // But don't consume if followed by = (that's a parameter, not path)
-                if (self.check(TokenType::Var)
-                    || self.check_keyword()
-                    || self.is_identifier_token())
-                    && !self.check_next(TokenType::Eq)
-                {
-                    stage_path.push_str(&self.advance().text);
+                while !self.is_at_end() {
+                    if (self.check(TokenType::Var)
+                        || self.check(TokenType::Identifier)
+                        || self.check(TokenType::Number)
+                        || self.check(TokenType::Dot)
+                        || self.check(TokenType::Dash)
+                        || self.check(TokenType::Star)
+                        || self.check(TokenType::To)
+                        || self.is_safe_keyword_as_identifier())
+                        && !self.check_next(TokenType::Eq)
+                    {
+                        stage_path.push_str(&self.advance().text);
+                    } else if self.match_token(TokenType::Slash) {
+                        stage_path.push('/');
+                    } else {
+                        break;
+                    }
                 }
             }
             return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
@@ -21221,18 +21287,26 @@ impl Parser {
                     stage_path.push_str(&self.advance().text);
                 }
             }
-            // Parse path segments: /path/to/file
-            while self.check(TokenType::Slash) {
-                self.skip(); // consume /
+            // Parse path after stage: /path/to/file.csv
+            if self.match_token(TokenType::Slash) {
                 stage_path.push('/');
-                // Get path segment (identifier, keyword, or special chars)
-                // But don't consume if followed by = (that's a parameter, not path)
-                if (self.check(TokenType::Var)
-                    || self.check_keyword()
-                    || self.is_identifier_token())
-                    && !self.check_next(TokenType::Eq)
-                {
-                    stage_path.push_str(&self.advance().text);
+                while !self.is_at_end() {
+                    if (self.check(TokenType::Var)
+                        || self.check(TokenType::Identifier)
+                        || self.check(TokenType::Number)
+                        || self.check(TokenType::Dot)
+                        || self.check(TokenType::Dash)
+                        || self.check(TokenType::Star)
+                        || self.check(TokenType::To)
+                        || self.is_safe_keyword_as_identifier())
+                        && !self.check_next(TokenType::Eq)
+                    {
+                        stage_path.push_str(&self.advance().text);
+                    } else if self.match_token(TokenType::Slash) {
+                        stage_path.push('/');
+                    } else {
+                        break;
+                    }
                 }
             }
             return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
@@ -22060,6 +22134,37 @@ impl Parser {
         } else if self.check(TokenType::Sequence) {
             self.skip();
             Ok(Some("SEQUENCE".to_string()))
+        } else if self.check(TokenType::Warehouse) {
+            self.skip();
+            Ok(Some("WAREHOUSE".to_string()))
+        } else if self.check_identifier("STAGE")
+            || self.check_identifier("INTEGRATION")
+            || self.check_identifier("TASK")
+            || self.check_identifier("STREAM")
+            || self.check_identifier("PIPE")
+            || self.check_identifier("TAG")
+            || self.check_identifier("SHARE")
+        {
+            let kind = self.advance().text.to_ascii_uppercase();
+            Ok(Some(kind))
+        } else if self.check_identifier("FILE")
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("FORMAT")
+        {
+            self.skip(); // consume FILE
+            self.skip(); // consume FORMAT
+            Ok(Some("FILE FORMAT".to_string()))
+        } else if self.check_identifier("NETWORK")
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("POLICY")
+        {
+            self.skip(); // consume NETWORK
+            self.skip(); // consume POLICY
+            Ok(Some("NETWORK POLICY".to_string()))
         } else {
             Ok(None)
         }
@@ -22084,12 +22189,20 @@ impl Parser {
             } else {
                 false
             };
+            // Check for SHARE keyword (Snowflake)
+            let is_share = if !is_role && !is_group && self.check_identifier("SHARE") {
+                self.skip();
+                true
+            } else {
+                false
+            };
             // Parse principal name (with quoted flag preserved for backtick-quoted identifiers)
             let name = self.expect_identifier_or_keyword_with_quoted()?;
             principals.push(GrantPrincipal {
                 name,
                 is_role,
                 is_group,
+                is_share,
             });
             if !self.match_token(TokenType::Comma) {
                 break;
@@ -22683,11 +22796,11 @@ impl Parser {
 
         let if_not_exists =
             self.match_keywords(&[TokenType::If, TokenType::Not, TokenType::Exists]);
-        let name = self.expect_identifier_with_quoted()?;
+        let name = self.parse_identifier_parts()?;
 
         // Parse CLONE clause (Snowflake)
         let clone_from = if self.match_identifier("CLONE") {
-            Some(self.expect_identifier_with_quoted()?)
+            Some(self.parse_identifier_parts()?)
         } else {
             None
         };
@@ -24593,6 +24706,57 @@ impl Parser {
         Ok(Expression::Raw(Raw {
             sql: format!("CREATE STREAM {}", sql),
         }))
+    }
+
+    /// Parse CREATE TASK statement (Snowflake)
+    /// CREATE [OR REPLACE] TASK [IF NOT EXISTS] name
+    ///   [WAREHOUSE = wh] [SCHEDULE = '...'] [AFTER task1, ...] [WHEN expr]
+    ///   AS sql_statement
+    fn parse_create_task(&mut self, or_replace: bool) -> Result<Expression> {
+        self.skip(); // consume TASK
+
+        let if_not_exists =
+            self.match_keywords(&[TokenType::If, TokenType::Not, TokenType::Exists]);
+
+        // Parse task name (possibly qualified: db.schema.task)
+        let mut name = String::new();
+        if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token() {
+            name.push_str(&self.advance().text);
+        }
+        while self.check(TokenType::Dot) {
+            self.skip();
+            name.push('.');
+            if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token() {
+                name.push_str(&self.advance().text);
+            }
+        }
+
+        // Capture properties as raw text until AS keyword
+        let props_start = self.current;
+        while !self.is_at_end()
+            && !self.check(TokenType::Semicolon)
+            && !self.check(TokenType::As)
+        {
+            self.skip();
+        }
+        let properties = self.tokens_to_sql(props_start, self.current);
+
+        // Expect AS keyword followed by the SQL body
+        if !self.match_token(TokenType::As) {
+            return Err(self.parse_error("Expected AS keyword in CREATE TASK"));
+        }
+
+        let body = self.parse_statement()?;
+
+        Ok(Expression::CreateTask(Box::new(
+            crate::expressions::CreateTask {
+                or_replace,
+                if_not_exists,
+                name,
+                properties,
+                body,
+            },
+        )))
     }
 
     /// Parse CREATE FILE FORMAT statement (Snowflake)
@@ -28440,8 +28604,15 @@ impl Parser {
                 let func_expr = self.parse_typed_function(&original_text, "DATE", false)?;
                 return self.maybe_parse_over(func_expr);
             }
-            // Fallback to DATE as identifier/type - preserve original case
-            return Ok(Expression::Identifier(Identifier::new(original_text)));
+            // Fallback to DATE as column reference - preserve original case
+            return Ok(Expression::boxed_column(Column {
+                name: Identifier::new(original_text),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+                span: None,
+                inferred_type: None,
+            }));
         }
 
         // TIME literal: TIME '10:30:00' or TIME function: TIME(expr)
@@ -28457,9 +28628,15 @@ impl Parser {
                 let func_expr = self.parse_typed_function(&original_text, "TIME", false)?;
                 return self.maybe_parse_over(func_expr);
             }
-            // Fallback to TIME as identifier/type - preserve original case
-            return self
-                .maybe_parse_subscript(Expression::Identifier(Identifier::new(original_text)));
+            // Fallback to TIME as column reference - preserve original case
+            return self.maybe_parse_subscript(Expression::boxed_column(Column {
+                name: Identifier::new(original_text),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+                span: None,
+                inferred_type: None,
+            }));
         }
 
         // TIMESTAMP literal: TIMESTAMP '2024-01-15 10:30:00' or TIMESTAMP function: TIMESTAMP(expr)
@@ -28621,8 +28798,15 @@ impl Parser {
 
                 return Ok(Expression::DataType(data_type));
             }
-            // Fallback to TIMESTAMP as identifier/type - preserve original case
-            return Ok(Expression::Identifier(Identifier::new(original_text)));
+            // Fallback to TIMESTAMP as column reference - preserve original case
+            return Ok(Expression::boxed_column(Column {
+                name: Identifier::new(original_text),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+                span: None,
+                inferred_type: None,
+            }));
         }
 
         // DATETIME literal: DATETIME '2024-01-15 10:30:00' or DATETIME function: DATETIME(expr)
@@ -28638,8 +28822,15 @@ impl Parser {
                 let func_expr = self.parse_typed_function(&original_text, "DATETIME", false)?;
                 return self.maybe_parse_over(func_expr);
             }
-            // Fallback to DATETIME as identifier/type - preserve original case
-            return Ok(Expression::Identifier(Identifier::new(original_text)));
+            // Fallback to DATETIME as column reference - preserve original case
+            return Ok(Expression::boxed_column(Column {
+                name: Identifier::new(original_text),
+                table: None,
+                join_mark: false,
+                trailing_comments: Vec::new(),
+                span: None,
+                inferred_type: None,
+            }));
         }
 
         // ROW() function (window function for row number)
@@ -40354,6 +40545,16 @@ impl Parser {
                 }
             )))
         }
+    }
+
+    /// Parse a possibly dot-qualified identifier into parts (e.g. "mydb.hr" → [mydb, hr]).
+    fn parse_identifier_parts(&mut self) -> Result<Vec<Identifier>> {
+        let first = self.expect_identifier_with_quoted()?;
+        let mut parts = vec![first];
+        while self.match_token(TokenType::Dot) {
+            parts.push(self.expect_identifier_with_quoted()?);
+        }
+        Ok(parts)
     }
 
     /// Expect an identifier or keyword (for column names, field names, etc.)

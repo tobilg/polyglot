@@ -698,6 +698,9 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
         Expression::Describe(d) => {
             children.push(("target", &d.target));
         }
+        Expression::CreateTask(ct) => {
+            children.push(("body", &ct.body));
+        }
         _ => {}
     }
 

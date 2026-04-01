@@ -588,6 +588,9 @@ pub enum Expression {
     /// EXEC/EXECUTE statement (TSQL stored procedure call)
     Execute(Box<ExecuteStatement>),
 
+    /// Snowflake CREATE TASK statement
+    CreateTask(Box<CreateTask>),
+
     // Placeholder for unparsed/raw SQL
     Raw(Raw),
 
@@ -1216,6 +1219,7 @@ impl Expression {
             // Command (raw/unparsed statements)
             | Expression::Command(_)
             | Expression::Raw(_)
+            | Expression::CreateTask(_)
 
             // Return statement
             | Expression::ReturnStmt(_) => true,
@@ -2224,6 +2228,7 @@ impl Expression {
             Expression::Kill(_) => "kill",
             Expression::Execute(_) => "execute",
             Expression::Raw(_) => "raw",
+            Expression::CreateTask(_) => "create_task",
             Expression::Paren(_) => "paren",
             Expression::Annotated(_) => "annotated",
             Expression::Refresh(_) => "refresh",
@@ -5794,6 +5799,20 @@ pub struct Kill {
     pub kind: Option<String>,
 }
 
+/// Snowflake CREATE TASK statement
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct CreateTask {
+    pub or_replace: bool,
+    pub if_not_exists: bool,
+    /// Task name (possibly qualified: db.schema.task)
+    pub name: String,
+    /// Raw text of properties between name and AS (WAREHOUSE, SCHEDULE, etc.)
+    pub properties: String,
+    /// The SQL statement body after AS
+    pub body: Expression,
+}
+
 /// Raw/unparsed SQL
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
@@ -8398,6 +8417,9 @@ pub struct GrantPrincipal {
     /// Whether prefixed with GROUP keyword (Redshift)
     #[serde(default)]
     pub is_group: bool,
+    /// Whether prefixed with SHARE keyword (Snowflake)
+    #[serde(default)]
+    pub is_share: bool,
 }
 
 /// GRANT statement
@@ -8563,11 +8585,13 @@ impl AlterIndex {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateSchema {
-    pub name: Identifier,
+    /// Schema name parts, possibly dot-qualified (e.g. [mydb, hr] for "mydb.hr")
+    pub name: Vec<Identifier>,
     pub if_not_exists: bool,
     pub authorization: Option<Identifier>,
+    /// CLONE source parts, possibly dot-qualified
     #[serde(default)]
-    pub clone_from: Option<Identifier>,
+    pub clone_from: Option<Vec<Identifier>>,
     /// AT/BEFORE clause for time travel (Snowflake)
     #[serde(default)]
     pub at_clause: Option<Expression>,
@@ -8582,7 +8606,7 @@ pub struct CreateSchema {
 impl CreateSchema {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            name: Identifier::new(name),
+            name: vec![Identifier::new(name)],
             if_not_exists: false,
             authorization: None,
             clone_from: None,

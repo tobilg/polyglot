@@ -1401,6 +1401,12 @@ where
             Expression::CreateTable(ct)
         }
 
+        // CreateTask: recurse into the task body
+        Expression::CreateTask(mut ct) => {
+            ct.body = transform_recursive(ct.body, transform_fn)?;
+            Expression::CreateTask(ct)
+        }
+
         // CreateProcedure: recurse into body expressions
         Expression::CreateProcedure(mut cp) => {
             if let Some(body) = cp.body.take() {
