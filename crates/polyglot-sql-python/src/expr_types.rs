@@ -979,4 +979,6 @@ define_expression_subclasses!(
     Whens,
     NextValueFor,
     ReturnStmt,
+    CreateSynonym,
+    CreateTask,
 );
