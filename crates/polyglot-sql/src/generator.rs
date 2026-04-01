@@ -4340,6 +4340,13 @@ impl Generator {
                 } else {
                     self.generate_expression(expr)?;
                 }
+                // Output leading comments that were on the table name before FROM
+                // (e.g., FROM \n/* comment */\n tbl PIVOT(...) -> ... PIVOT(...) /* comment */)
+                let leading = Self::extract_table_leading_comments(expr);
+                for comment in &leading {
+                    self.write_space();
+                    self.write_formatted_comment(comment);
+                }
             }
         }
 
@@ -7507,6 +7514,15 @@ impl Generator {
         self.write_space();
         self.generate_table(&ct.name)?;
 
+        // ClickHouse: UUID 'xxx' clause after table name
+        if let Some(ref uuid) = ct.uuid {
+            self.write_space();
+            self.write_keyword("UUID");
+            self.write(" '");
+            self.write(uuid);
+            self.write("'");
+        }
+
         // ClickHouse: ON CLUSTER clause
         if let Some(ref on_cluster) = ct.on_cluster {
             self.write_space();
@@ -9757,7 +9773,11 @@ impl Generator {
             self.write_formatted_comment(comment);
             self.write_space();
         }
-        self.write_keyword("DROP TABLE");
+        if dt.iceberg {
+            self.write_keyword("DROP ICEBERG TABLE");
+        } else {
+            self.write_keyword("DROP TABLE");
+        }
 
         if dt.if_exists {
             self.write_space();
@@ -9778,6 +9798,11 @@ impl Generator {
         } else if dt.cascade {
             self.write_space();
             self.write_keyword("CASCADE");
+        }
+
+        if dt.restrict {
+            self.write_space();
+            self.write_keyword("RESTRICT");
         }
 
         if dt.purge {
@@ -9806,7 +9831,19 @@ impl Generator {
             self.athena_hive_context = true;
         }
 
-        self.write_keyword("ALTER TABLE");
+        self.write_keyword("ALTER");
+        // Write table modifier (e.g., ICEBERG) unless target is DuckDB
+        if let Some(ref modifier) = at.table_modifier {
+            if !matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::DuckDB)
+            ) {
+                self.write_space();
+                self.write_keyword(modifier);
+            }
+        }
+        self.write(" ");
+        self.write_keyword("TABLE");
         if at.if_exists {
             self.write_space();
             self.write_keyword("IF EXISTS");
@@ -15861,6 +15898,8 @@ impl Generator {
             self.write_space();
             self.write_formatted_comment(comment);
         }
+        // Note: leading_comments (from before table in FROM clause) are intentionally NOT
+        // output here - they are output by the FROM/PIVOT generator after the full expression
 
         Ok(())
     }
@@ -21320,8 +21359,18 @@ impl Generator {
         if let Some(quantifier) = &op.quantifier {
             self.write_space();
             self.write_keyword(quantifier);
+            // Match Python sqlglot behavior:
+            // ANY + Paren (single value): no space → ILIKE ANY('%a%')
+            // ANY + Tuple (multiple values): space → LIKE ANY ('a', 'b')
+            // ALL + anything: always space → LIKE ALL ('%a%'), LIKE ALL ('a', 'b')
+            let is_any = quantifier.eq_ignore_ascii_case("ANY")
+                || quantifier.eq_ignore_ascii_case("SOME");
+            if !(is_any && matches!(&op.right, Expression::Paren(_))) {
+                self.write_space();
+            }
+        } else {
+            self.write_space();
         }
-        self.write_space();
         self.generate_expression(&op.right)?;
         if let Some(escape) = &op.escape {
             self.write_space();
@@ -24255,6 +24304,10 @@ impl Generator {
         if content.trim().is_empty() {
             return;
         }
+        // Escape nested block comment markers to prevent premature closure or unintended nesting.
+        // This matches Python sqlglot's sanitize_comment behavior.
+        let sanitized = content.replace("*/", "* /").replace("/*", "/ *");
+        let content = &sanitized;
         // Ensure at least one space after /* and before */
         self.output.push_str("/*");
         if !content.starts_with(' ') {
@@ -28027,8 +28080,30 @@ impl Generator {
             } else {
                 self.generate_expression(expr)?;
             }
+            // Output leading comments that were on the table name before FROM
+            // (e.g., FROM \n/* comment */\n tbl PIVOT(...) -> ... PIVOT(...) /* comment */)
+            let leading = Self::extract_table_leading_comments(expr);
+            for comment in &leading {
+                self.write_space();
+                self.write_formatted_comment(comment);
+            }
         }
         Ok(())
+    }
+
+    /// Extract leading_comments from a table expression (possibly wrapped in PIVOT/UNPIVOT)
+    fn extract_table_leading_comments(expr: &Expression) -> Vec<String> {
+        match expr {
+            Expression::Table(t) => t.leading_comments.clone(),
+            Expression::Pivot(p) => {
+                if let Expression::Table(t) = &p.this {
+                    t.leading_comments.clone()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn generate_from_base(&mut self, e: &FromBase) -> Result<()> {

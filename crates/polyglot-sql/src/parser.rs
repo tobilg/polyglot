@@ -3155,7 +3155,36 @@ impl Parser {
         let mut expressions = Vec::new();
 
         loop {
-            let table = self.parse_table_expression()?;
+            // Capture leading comments before each table expression
+            // (e.g., FROM \n/* comment */\n table_name)
+            let pre_table_comments = if !self.is_at_end() {
+                self.tokens[self.current].comments.clone()
+            } else {
+                Vec::new()
+            };
+            // Clear them from the token to avoid double output
+            if !pre_table_comments.is_empty() && !self.is_at_end() {
+                self.tokens[self.current].comments.clear();
+            }
+
+            let mut table = self.parse_table_expression()?;
+
+            // Attach captured comments as trailing on the outermost expression
+            if !pre_table_comments.is_empty() {
+                match &mut table {
+                    Expression::Pivot(p) => {
+                        // For PIVOT, find the inner table and add to its leading_comments
+                        // The generator will output these after the PIVOT clause
+                        if let Expression::Table(ref mut t) = p.this {
+                            t.leading_comments = pre_table_comments;
+                        }
+                    }
+                    Expression::Table(ref mut t) => {
+                        t.trailing_comments.extend(pre_table_comments);
+                    }
+                    _ => {}
+                }
+            }
             expressions.push(table);
 
             if !self.match_token(TokenType::Comma) {
@@ -3242,6 +3271,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments,
                 when: None,
                 only: false,
@@ -3862,6 +3892,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -3893,6 +3924,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -3929,6 +3961,7 @@ impl Parser {
                             alias: None,
                             alias_explicit_as: false,
                             column_aliases: Vec::new(),
+                            leading_comments: Vec::new(),
                             trailing_comments,
                             when: None,
                             only: false,
@@ -3973,6 +4006,7 @@ impl Parser {
                             alias: None,
                             alias_explicit_as: false,
                             column_aliases: Vec::new(),
+                            leading_comments: Vec::new(),
                             trailing_comments,
                             when: None,
                             only: false,
@@ -4027,6 +4061,7 @@ impl Parser {
                             alias: None,
                             alias_explicit_as: false,
                             column_aliases: Vec::new(),
+                            leading_comments: Vec::new(),
                             trailing_comments,
                             when: None,
                             only: false,
@@ -4082,6 +4117,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -4306,6 +4342,7 @@ impl Parser {
                                         alias: None,
                                         alias_explicit_as: false,
                                         column_aliases: Vec::new(),
+                                        leading_comments: Vec::new(),
                                         trailing_comments: tc,
                                         when: None,
                                         only: false,
@@ -4329,6 +4366,7 @@ impl Parser {
                                         alias: None,
                                         alias_explicit_as: false,
                                         column_aliases: Vec::new(),
+                                        leading_comments: Vec::new(),
                                         trailing_comments: tc,
                                         when: None,
                                         only: false,
@@ -4353,6 +4391,7 @@ impl Parser {
                                     alias: None,
                                     alias_explicit_as: false,
                                     column_aliases: Vec::new(),
+                                    leading_comments: Vec::new(),
                                     trailing_comments: tc,
                                     when: None,
                                     only: false,
@@ -4393,6 +4432,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments,
                     when: None,
                     only: false,
@@ -4477,6 +4517,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments,
                 when: None,
                 only: false,
@@ -5968,6 +6009,16 @@ impl Parser {
 
     /// Parse a table reference (schema.table format)
     fn parse_table_ref(&mut self) -> Result<TableRef> {
+        // Capture leading comments on the first token (e.g., FROM \n/* comment */\n db.schema.tbl)
+        let table_ref_leading_comments = self.current_leading_comments().to_vec();
+        let mut result = self.parse_table_ref_inner()?;
+        if !table_ref_leading_comments.is_empty() && result.leading_comments.is_empty() {
+            result.leading_comments = table_ref_leading_comments;
+        }
+        Ok(result)
+    }
+
+    fn parse_table_ref_inner(&mut self) -> Result<TableRef> {
         // Check for Snowflake IDENTIFIER() function: IDENTIFIER('string') or IDENTIFIER($var)
         if self.check_identifier("IDENTIFIER") && self.check_next(TokenType::LParen) {
             self.skip(); // consume IDENTIFIER
@@ -6013,6 +6064,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments,
                 when: None,
                 only: false,
@@ -6045,6 +6097,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments,
                     when: None,
                     only: false,
@@ -6075,6 +6128,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -6107,6 +6161,7 @@ impl Parser {
                             alias: None,
                             alias_explicit_as: false,
                             column_aliases: Vec::new(),
+                            leading_comments: Vec::new(),
                             trailing_comments,
                             when: None,
                             only: false,
@@ -6130,6 +6185,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -6152,6 +6208,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments,
                         when: None,
                         only: false,
@@ -6176,6 +6233,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments,
                 when: None,
                 only: false,
@@ -9384,6 +9442,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments,
                 when: None,
                 only: false,
@@ -9406,6 +9465,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 when: None,
                 only: false,
                 final_: false,
@@ -9699,6 +9759,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments,
                     when: None,
                     only: false,
@@ -9721,6 +9782,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments,
                     when: None,
                     only: false,
@@ -10036,6 +10098,7 @@ impl Parser {
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
+                leading_comments: Vec::new(),
                 trailing_comments: Vec::new(),
                 when: None,
                 only: false,
@@ -10156,6 +10219,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments: Vec::new(),
                     when: None,
                     only: false,
@@ -10177,6 +10241,7 @@ impl Parser {
                     alias: None,
                     alias_explicit_as: false,
                     column_aliases: Vec::new(),
+                    leading_comments: Vec::new(),
                     trailing_comments: Vec::new(),
                     when: None,
                     only: false,
@@ -10226,6 +10291,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments: Vec::new(),
                         when: None,
                         only: false,
@@ -10247,6 +10313,7 @@ impl Parser {
                         alias: None,
                         alias_explicit_as: false,
                         column_aliases: Vec::new(),
+                        leading_comments: Vec::new(),
                         trailing_comments: Vec::new(),
                         when: None,
                         only: false,
@@ -11008,14 +11075,19 @@ impl Parser {
         let name = self.parse_table_ref()?;
 
         // ClickHouse: UUID 'xxx' clause after table name
-        if matches!(
+        let uuid = if matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check_identifier("UUID")
         {
             self.skip(); // consume UUID
-            let _ = self.advance(); // consume UUID string value
-        }
+            let uuid_token = self.advance().clone();
+            // Strip surrounding quotes from the UUID string
+            let uuid_text = uuid_token.text.trim_matches('\'').to_string();
+            Some(uuid_text)
+        } else {
+            None
+        };
 
         // ClickHouse: ON CLUSTER clause
         let on_cluster = self.parse_on_cluster_clause()?;
@@ -11173,6 +11245,7 @@ impl Parser {
                 copy_grants: false,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11227,6 +11300,7 @@ impl Parser {
                 copy_grants,
                 using_template,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11392,6 +11466,7 @@ impl Parser {
                         copy_grants,
                         using_template: None,
                         rollup: None,
+                        uuid: uuid.clone(),
                     })));
                 } else {
                     self.parse_table_ref()?
@@ -11431,6 +11506,7 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    uuid: uuid.clone(),
                 })));
             }
 
@@ -11535,6 +11611,7 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11594,6 +11671,7 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    uuid: uuid.clone(),
                 })));
             }
         }
@@ -11676,6 +11754,7 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11718,6 +11797,7 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11758,6 +11838,7 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11814,6 +11895,7 @@ impl Parser {
                 copy_grants,
                 using_template: None,
                 rollup: None,
+                uuid: uuid.clone(),
             })));
         }
 
@@ -11865,6 +11947,7 @@ impl Parser {
                     copy_grants,
                     using_template: None,
                     rollup: None,
+                    uuid: uuid.clone(),
                 })));
             }
         }
@@ -12922,6 +13005,7 @@ impl Parser {
             copy_grants,
             using_template: None,
             rollup,
+            uuid,
         })))
     }
 
@@ -13069,6 +13153,7 @@ impl Parser {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            uuid: None,
         })))
     }
 
@@ -16777,11 +16862,20 @@ impl Parser {
             if self.check(TokenType::View) {
                 return self.parse_drop_view(false);
             }
-            return self.parse_drop_table(leading_comments.clone());
+            return self.parse_drop_table_with_iceberg(leading_comments.clone(), false);
+        }
+
+        // Snowflake: DROP ICEBERG TABLE
+        if self.check_identifier("ICEBERG")
+            && self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1].token_type == TokenType::Table
+        {
+            self.skip(); // consume ICEBERG
+            return self.parse_drop_table_with_iceberg(leading_comments, true);
         }
 
         match self.peek().token_type {
-            TokenType::Table => self.parse_drop_table(leading_comments),
+            TokenType::Table => self.parse_drop_table_with_iceberg(leading_comments, false),
             TokenType::View => self.parse_drop_view(false),
             TokenType::Materialized => {
                 self.skip(); // consume MATERIALIZED
@@ -16938,7 +17032,11 @@ impl Parser {
     }
 
     /// Parse DROP TABLE
-    fn parse_drop_table(&mut self, leading_comments: Vec<String>) -> Result<Expression> {
+    fn parse_drop_table_with_iceberg(
+        &mut self,
+        leading_comments: Vec<String>,
+        iceberg: bool,
+    ) -> Result<Expression> {
         self.expect(TokenType::Table)?;
 
         let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
@@ -16973,6 +17071,7 @@ impl Parser {
         // Handle CASCADE [CONSTRAINTS] or RESTRICT
         let mut cascade = false;
         let mut cascade_constraints = false;
+        let mut restrict = false;
         if self.match_token(TokenType::Cascade) {
             if self.match_identifier("CONSTRAINTS") {
                 cascade_constraints = true;
@@ -16980,7 +17079,7 @@ impl Parser {
                 cascade = true;
             }
         } else {
-            self.match_token(TokenType::Restrict); // consume optional RESTRICT
+            restrict = self.match_token(TokenType::Restrict);
         }
 
         // Handle PURGE (Oracle)
@@ -17016,6 +17115,8 @@ impl Parser {
             leading_comments,
             object_id_args: None,
             sync,
+            iceberg,
+            restrict,
         })))
     }
 
@@ -17076,6 +17177,14 @@ impl Parser {
     /// Parse ALTER statement
     fn parse_alter(&mut self) -> Result<Expression> {
         self.expect(TokenType::Alter)?;
+
+        // Check for ICEBERG modifier before TABLE
+        let alter_table_modifier = if self.check_identifier("ICEBERG") {
+            self.skip();
+            Some("ICEBERG".to_string())
+        } else {
+            None
+        };
 
         match self.peek().token_type {
             TokenType::Table => {
@@ -17265,6 +17374,7 @@ impl Parser {
                     with_check: with_check_modifier,
                     partition,
                     on_cluster,
+                    table_modifier: alter_table_modifier,
                 })))
             }
             TokenType::View => self.parse_alter_view_with_modifiers(None, None, None),
@@ -37053,8 +37163,24 @@ impl Parser {
 
         // Parse optional FORMAT clause for BigQuery: CAST(x AS STRING FORMAT 'format_string')
         // Or for Oracle with comma: CAST(x AS DATE DEFAULT NULL ON CONVERSION ERROR, 'format')
+        // FORMAT string may be optionally wrapped in parentheses: FORMAT ('YYYY') -> FORMAT 'YYYY'
         let format = if self.match_token(TokenType::Format) {
-            Some(Box::new(self.parse_expression()?))
+            let wrapped = self.match_token(TokenType::LParen);
+            let fmt_expr = self.parse_primary()?;
+            if wrapped {
+                self.expect(TokenType::RParen)?;
+            }
+            // Check for AT TIME ZONE after format string
+            let fmt_with_tz = if self.match_text_seq(&["AT", "TIME", "ZONE"]) {
+                let zone = self.parse_primary()?;
+                Expression::AtTimeZone(Box::new(crate::expressions::AtTimeZone {
+                    this: fmt_expr,
+                    zone,
+                }))
+            } else {
+                fmt_expr
+            };
+            Some(Box::new(fmt_with_tz))
         } else if self.match_token(TokenType::Comma) {
             // Oracle date format: CAST(x AS DATE, 'format')
             Some(Box::new(self.parse_expression()?))
@@ -41570,6 +41696,7 @@ impl Parser {
                 with_check: None,
                 partition: None,
                 on_cluster: None,
+                table_modifier: None,
             }))));
         }
 
@@ -41830,6 +41957,7 @@ impl Parser {
                 with_check: None,
                 partition: None,
                 on_cluster: None,
+                table_modifier: None,
             }))));
         }
 
@@ -47013,6 +47141,8 @@ impl Parser {
                                     leading_comments: Vec::new(),
                                     object_id_args: object_id_args_text,
                                     sync: false,
+                                    iceberg: false,
+                                    restrict: false,
                                 },
                             ))));
                         }
@@ -54931,6 +55061,7 @@ impl Parser {
             alias: None,
             alias_explicit_as: false,
             column_aliases: Vec::new(),
+            leading_comments: Vec::new(),
             trailing_comments: Vec::new(),
             when: None,
             only: false,

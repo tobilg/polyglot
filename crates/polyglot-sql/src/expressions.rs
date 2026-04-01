@@ -3237,6 +3237,9 @@ pub struct TableRef {
     /// Column aliases for table alias: AS t(c1, c2)
     #[serde(default)]
     pub column_aliases: Vec<Identifier>,
+    /// Leading comments that appeared before this table reference (e.g., FROM \n/* comment */\n tbl)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leading_comments: Vec<String>,
     /// Trailing comments that appeared after this table reference
     #[serde(default)]
     pub trailing_comments: Vec<String>,
@@ -3286,6 +3289,7 @@ impl TableRef {
             alias: None,
             alias_explicit_as: false,
             column_aliases: Vec::new(),
+            leading_comments: Vec::new(),
             trailing_comments: Vec::new(),
             when: None,
             only: false,
@@ -3329,6 +3333,7 @@ impl TableRef {
             alias: None,
             alias_explicit_as: false,
             column_aliases: Vec::new(),
+            leading_comments: Vec::new(),
             trailing_comments: Vec::new(),
             when: None,
             only: false,
@@ -7112,6 +7117,9 @@ pub struct CreateTable {
     /// StarRocks: ROLLUP (r1(col1, col2), r2(col1))
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollup: Option<RollupProperty>,
+    /// ClickHouse: UUID 'xxx' clause after table name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 /// Teradata index specification for CREATE TABLE
@@ -7178,6 +7186,7 @@ impl CreateTable {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            uuid: None,
         }
     }
 }
@@ -7710,6 +7719,12 @@ pub struct DropTable {
     /// ClickHouse: SYNC modifier
     #[serde(default)]
     pub sync: bool,
+    /// Snowflake: DROP ICEBERG TABLE
+    #[serde(default)]
+    pub iceberg: bool,
+    /// RESTRICT modifier (opposite of CASCADE)
+    #[serde(default)]
+    pub restrict: bool,
 }
 
 impl DropTable {
@@ -7723,6 +7738,8 @@ impl DropTable {
             leading_comments: Vec::new(),
             object_id_args: None,
             sync: false,
+            iceberg: false,
+            restrict: false,
         }
     }
 }
@@ -7751,6 +7768,9 @@ pub struct AlterTable {
     /// ClickHouse: ON CLUSTER clause for distributed DDL
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_cluster: Option<OnCluster>,
+    /// Snowflake: ALTER ICEBERG TABLE
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_modifier: Option<String>,
 }
 
 impl AlterTable {
@@ -7764,6 +7784,7 @@ impl AlterTable {
             with_check: None,
             partition: None,
             on_cluster: None,
+            table_modifier: None,
         }
     }
 }

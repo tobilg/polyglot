@@ -315,16 +315,49 @@ impl DialectImpl for PostgresDialect {
             // ============================================
             // DateAdd -> date + INTERVAL in PostgreSQL
             Expression::DateAdd(f) => {
-                let interval_expr = Expression::Interval(Box::new(Interval {
-                    this: Some(f.interval),
-                    unit: Some(IntervalUnitSpec::Simple {
-                        unit: f.unit,
-                        use_plural: false,
-                    }),
-                }));
+                let is_literal = matches!(&f.interval, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_) | Literal::String(_)));
+                let right_expr = if is_literal {
+                    // Literal value: INTERVAL 'value' unit
+                    Expression::Interval(Box::new(Interval {
+                        this: Some(f.interval),
+                        unit: Some(IntervalUnitSpec::Simple {
+                            unit: f.unit,
+                            use_plural: false,
+                        }),
+                    }))
+                } else {
+                    // Non-literal (column ref, expression): INTERVAL '1 unit' * value
+                    let unit_str = match f.unit {
+                        IntervalUnit::Year => "YEAR",
+                        IntervalUnit::Quarter => "QUARTER",
+                        IntervalUnit::Month => "MONTH",
+                        IntervalUnit::Week => "WEEK",
+                        IntervalUnit::Day => "DAY",
+                        IntervalUnit::Hour => "HOUR",
+                        IntervalUnit::Minute => "MINUTE",
+                        IntervalUnit::Second => "SECOND",
+                        IntervalUnit::Millisecond => "MILLISECOND",
+                        IntervalUnit::Microsecond => "MICROSECOND",
+                        IntervalUnit::Nanosecond => "NANOSECOND",
+                    };
+                    let interval_one = Expression::Interval(Box::new(Interval {
+                        this: Some(Expression::Literal(Box::new(Literal::String(
+                            format!("1 {unit_str}"),
+                        )))),
+                        unit: None,
+                    }));
+                    Expression::Mul(Box::new(BinaryOp {
+                        left: interval_one,
+                        right: f.interval,
+                        left_comments: Vec::new(),
+                        operator_comments: Vec::new(),
+                        trailing_comments: Vec::new(),
+                        inferred_type: None,
+                    }))
+                };
                 Ok(Expression::Add(Box::new(BinaryOp {
                     left: f.this,
-                    right: interval_expr,
+                    right: right_expr,
                     left_comments: Vec::new(),
                     operator_comments: Vec::new(),
                     trailing_comments: Vec::new(),

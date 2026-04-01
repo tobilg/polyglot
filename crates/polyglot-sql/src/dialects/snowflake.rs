@@ -2342,7 +2342,7 @@ impl SnowflakeDialect {
                     args.push(Expression::number(1));
                 }
                 Ok(Expression::Function(Box::new(Function::new(
-                    "SPLIT_PART".to_string(),
+                    "STRTOK".to_string(),
                     args,
                 ))))
             }

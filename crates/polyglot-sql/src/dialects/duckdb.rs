@@ -12,10 +12,10 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    Alias, BinaryOp, Case, Cast, CeilFunc, Column, DataType, Expression, Function,
-    FunctionParameter, Identifier, Interval, IntervalUnit, IntervalUnitSpec, JSONPath, JSONPathKey,
-    JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Paren, Struct, Subquery, UnaryFunc,
-    VarArgFunc, WindowFunction,
+    AggFunc, Alias, BinaryOp, Case, Cast, CeilFunc, Column, DataType, Expression, Function,
+    FunctionParameter, Identifier, Interval, IntervalUnit, IntervalUnitSpec, IsNull, JSONPath,
+    JSONPathKey, JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Null, Paren, Struct,
+    Subquery, SubstringFunc, UnaryFunc, UnaryOp, VarArgFunc, WindowFunction,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -318,11 +318,30 @@ impl DialectImpl for DuckDBDialect {
                 vec![f.expression, f.this],
             )))),
 
-            // ArrayUniqueAgg -> LIST
-            Expression::ArrayUniqueAgg(f) => Ok(Expression::Function(Box::new(Function::new(
-                "LIST".to_string(),
-                vec![f.this],
-            )))),
+            // ArrayUniqueAgg -> LIST(DISTINCT col) FILTER(WHERE NOT col IS NULL)
+            Expression::ArrayUniqueAgg(f) => {
+                let col = f.this;
+                // NOT col IS NULL
+                let filter_expr = Expression::Not(Box::new(UnaryOp {
+                    this: Expression::IsNull(Box::new(IsNull {
+                        this: col.clone(),
+                        not: false,
+                        postfix_form: false,
+                    })),
+                    inferred_type: None,
+                }));
+                Ok(Expression::ArrayAgg(Box::new(AggFunc {
+                    this: col,
+                    distinct: true,
+                    filter: Some(filter_expr),
+                    order_by: Vec::new(),
+                    name: Some("LIST".to_string()),
+                    ignore_nulls: None,
+                    having_max: None,
+                    limit: None,
+                    inferred_type: None,
+                })))
+            }
 
             // Split -> STR_SPLIT
             Expression::Split(f) => Ok(Expression::Function(Box::new(Function::new(
@@ -1696,6 +1715,65 @@ impl DuckDBDialect {
                 Function::new("LISTAGG".to_string(), f.args),
             ))),
 
+            // ARRAY_UNIQUE_AGG(col) -> LIST(DISTINCT col) FILTER(WHERE NOT col IS NULL)
+            "ARRAY_UNIQUE_AGG" if f.args.len() == 1 => {
+                let col = f.args.into_iter().next().unwrap();
+                // NOT col IS NULL
+                let filter_expr = Expression::Not(Box::new(UnaryOp {
+                    this: Expression::IsNull(Box::new(IsNull {
+                        this: col.clone(),
+                        not: false,
+                        postfix_form: false,
+                    })),
+                    inferred_type: None,
+                }));
+                Ok(Expression::ArrayAgg(Box::new(AggFunc {
+                    this: col,
+                    distinct: true,
+                    filter: Some(filter_expr),
+                    order_by: Vec::new(),
+                    name: Some("LIST".to_string()),
+                    ignore_nulls: None,
+                    having_max: None,
+                    limit: None,
+                    inferred_type: None,
+                })))
+            }
+
+            // CHECK_JSON(x) -> CASE WHEN x IS NULL OR x = '' OR JSON_VALID(x) THEN NULL ELSE 'Invalid JSON' END
+            "CHECK_JSON" if f.args.len() == 1 => {
+                let x = f.args.into_iter().next().unwrap();
+                // x IS NULL
+                let is_null = Expression::IsNull(Box::new(IsNull {
+                    this: x.clone(),
+                    not: false,
+                    postfix_form: false,
+                }));
+                // x = ''
+                let eq_empty = Expression::Eq(Box::new(BinaryOp::new(
+                    x.clone(),
+                    Expression::Literal(Box::new(Literal::String(String::new()))),
+                )));
+                // JSON_VALID(x)
+                let json_valid = Expression::Function(Box::new(Function::new(
+                    "JSON_VALID".to_string(),
+                    vec![x],
+                )));
+                // x IS NULL OR x = ''
+                let or1 = Expression::Or(Box::new(BinaryOp::new(is_null, eq_empty)));
+                // (x IS NULL OR x = '') OR JSON_VALID(x)
+                let condition = Expression::Or(Box::new(BinaryOp::new(or1, json_valid)));
+                Ok(Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![(condition, Expression::Null(Null))],
+                    else_: Some(Expression::Literal(Box::new(Literal::String(
+                        "Invalid JSON".to_string(),
+                    )))),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                })))
+            }
+
             // SUBSTR is native in DuckDB (keep as-is, don't convert to SUBSTRING)
             "SUBSTR" => Ok(Expression::Function(Box::new(f))),
 
@@ -2116,6 +2194,73 @@ impl DuckDBDialect {
 
             // POSITION is native
             "POSITION" => Ok(Expression::Function(Box::new(f))),
+
+            // CHARINDEX(substr, str) -> STRPOS(str, substr) in DuckDB
+            "CHARINDEX" if f.args.len() == 2 => {
+                let mut args = f.args;
+                let substr = args.remove(0);
+                let str_expr = args.remove(0);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "STRPOS".to_string(),
+                    vec![str_expr, substr],
+                ))))
+            }
+
+            // CHARINDEX(substr, str, pos) -> complex CASE expression for DuckDB
+            // CASE WHEN STRPOS(SUBSTRING(str, CASE WHEN pos <= 0 THEN 1 ELSE pos END), substr) = 0
+            // THEN 0
+            // ELSE STRPOS(SUBSTRING(str, CASE WHEN pos <= 0 THEN 1 ELSE pos END), substr) + CASE WHEN pos <= 0 THEN 1 ELSE pos END - 1
+            // END
+            "CHARINDEX" if f.args.len() == 3 => {
+                let mut args = f.args;
+                let substr = args.remove(0);
+                let str_expr = args.remove(0);
+                let pos = args.remove(0);
+
+                let zero = Expression::Literal(Box::new(Literal::Number("0".to_string())));
+                let one = Expression::Literal(Box::new(Literal::Number("1".to_string())));
+
+                // CASE WHEN pos <= 0 THEN 1 ELSE pos END
+                let pos_case = Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![(
+                        Expression::Lte(Box::new(BinaryOp::new(pos.clone(), zero.clone()))),
+                        one.clone(),
+                    )],
+                    else_: Some(pos.clone()),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                }));
+
+                // SUBSTRING(str, pos_case)
+                let substring_expr = Expression::Substring(Box::new(SubstringFunc {
+                    this: str_expr,
+                    start: pos_case.clone(),
+                    length: None,
+                    from_for_syntax: false,
+                }));
+
+                // STRPOS(SUBSTRING(...), substr)
+                let strpos = Expression::Function(Box::new(Function::new(
+                    "STRPOS".to_string(),
+                    vec![substring_expr, substr],
+                )));
+
+                // STRPOS(...) = 0
+                let eq_zero = Expression::Eq(Box::new(BinaryOp::new(strpos.clone(), zero.clone())));
+
+                // STRPOS(...) + pos_case - 1
+                let add_pos = Expression::Add(Box::new(BinaryOp::new(strpos, pos_case)));
+                let sub_one = Expression::Sub(Box::new(BinaryOp::new(add_pos, one)));
+
+                Ok(Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![(eq_zero, zero)],
+                    else_: Some(sub_one),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                })))
+            }
 
             // SPLIT -> STR_SPLIT in DuckDB
             "SPLIT" => Ok(Expression::Function(Box::new(Function::new(
@@ -6194,6 +6339,175 @@ impl DuckDBDialect {
                         (empty_cond, empty_result),
                     ],
                     else_: Some(zipped_result),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                })))
+            }
+
+            // STRTOK(str, delim, pos) -> complex CASE expression
+            // Snowflake's STRTOK treats each character in delim as a separate delimiter,
+            // so we use REGEXP_SPLIT_TO_ARRAY with a character class regex.
+            "STRTOK" if f.args.len() == 3 => {
+                let mut args = f.args.into_iter();
+                let str_arg = args.next().unwrap();
+                let delim_arg = args.next().unwrap();
+                let pos_arg = args.next().unwrap();
+
+                // Helper: create empty string literal ''
+                let empty_str = || Expression::string("".to_string());
+                // Helper: create NULL literal
+                let null_expr = || Expression::Null(crate::expressions::Null);
+
+                // WHEN delim = '' AND str = '' THEN NULL
+                let when1_cond = Expression::And(Box::new(BinaryOp::new(
+                    Expression::Eq(Box::new(BinaryOp::new(
+                        delim_arg.clone(),
+                        empty_str(),
+                    ))),
+                    Expression::Eq(Box::new(BinaryOp::new(
+                        str_arg.clone(),
+                        empty_str(),
+                    ))),
+                )));
+
+                // WHEN delim = '' AND pos = 1 THEN str
+                let when2_cond = Expression::And(Box::new(BinaryOp::new(
+                    Expression::Eq(Box::new(BinaryOp::new(
+                        delim_arg.clone(),
+                        empty_str(),
+                    ))),
+                    Expression::Eq(Box::new(BinaryOp::new(
+                        pos_arg.clone(),
+                        Expression::number(1),
+                    ))),
+                )));
+
+                // WHEN delim = '' THEN NULL
+                let when3_cond = Expression::Eq(Box::new(BinaryOp::new(
+                    delim_arg.clone(),
+                    empty_str(),
+                )));
+
+                // WHEN pos < 0 THEN NULL
+                let when4_cond = Expression::Lt(Box::new(BinaryOp::new(
+                    pos_arg.clone(),
+                    Expression::number(0),
+                )));
+
+                // WHEN str IS NULL OR delim IS NULL OR pos IS NULL THEN NULL
+                let str_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                    this: str_arg.clone(),
+                    not: false,
+                    postfix_form: false,
+                }));
+                let delim_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                    this: delim_arg.clone(),
+                    not: false,
+                    postfix_form: false,
+                }));
+                let pos_is_null = Expression::IsNull(Box::new(crate::expressions::IsNull {
+                    this: pos_arg.clone(),
+                    not: false,
+                    postfix_form: false,
+                }));
+                let when5_cond = Expression::Or(Box::new(BinaryOp::new(
+                    Expression::Or(Box::new(BinaryOp::new(
+                        str_is_null,
+                        delim_is_null,
+                    ))),
+                    pos_is_null,
+                )));
+
+                // Inner CASE for the regex pattern:
+                // CASE WHEN delim = '' THEN ''
+                //      ELSE '[' || REGEXP_REPLACE(delim, '([\[\]^.\-*+?(){}|$\\])', '\\\1', 'g') || ']'
+                // END
+                let regex_replace = Expression::Function(Box::new(Function::new(
+                    "REGEXP_REPLACE".to_string(),
+                    vec![
+                        delim_arg.clone(),
+                        Expression::string(r"([\[\]^.\-*+?(){}|$\\])".to_string()),
+                        Expression::string(r"\\\1".to_string()),
+                        Expression::string("g".to_string()),
+                    ],
+                )));
+
+                // '[' || REGEXP_REPLACE(...) || ']'
+                let concat_regex = Expression::DPipe(Box::new(crate::expressions::DPipe {
+                    this: Box::new(Expression::DPipe(Box::new(crate::expressions::DPipe {
+                        this: Box::new(Expression::string("[".to_string())),
+                        expression: Box::new(regex_replace),
+                        safe: None,
+                    }))),
+                    expression: Box::new(Expression::string("]".to_string())),
+                    safe: None,
+                }));
+
+                let inner_case = Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![
+                        (
+                            Expression::Eq(Box::new(BinaryOp::new(
+                                delim_arg.clone(),
+                                empty_str(),
+                            ))),
+                            empty_str(),
+                        ),
+                    ],
+                    else_: Some(concat_regex),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                }));
+
+                // REGEXP_SPLIT_TO_ARRAY(str, <inner_case>)
+                let regexp_split = Expression::Function(Box::new(Function::new(
+                    "REGEXP_SPLIT_TO_ARRAY".to_string(),
+                    vec![str_arg.clone(), inner_case],
+                )));
+
+                // Lambda: x -> NOT x = ''
+                let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                    parameters: vec![Identifier::new("x".to_string())],
+                    body: Expression::Not(Box::new(crate::expressions::UnaryOp {
+                        this: Expression::Eq(Box::new(BinaryOp::new(
+                            Expression::boxed_column(Column {
+                                table: None,
+                                name: Identifier::new("x".to_string()),
+                                join_mark: false,
+                                trailing_comments: Vec::new(),
+                                span: None,
+                                inferred_type: None,
+                            }),
+                            empty_str(),
+                        ))),
+                        inferred_type: None,
+                    })),
+                    colon: false,
+                    parameter_types: Vec::new(),
+                }));
+
+                // LIST_FILTER(<regexp_split>, <lambda>)
+                let list_filter = Expression::Function(Box::new(Function::new(
+                    "LIST_FILTER".to_string(),
+                    vec![regexp_split, lambda],
+                )));
+
+                // LIST_FILTER(...)[pos]
+                let subscripted = Expression::Subscript(Box::new(crate::expressions::Subscript {
+                    this: list_filter,
+                    index: pos_arg.clone(),
+                }));
+
+                Ok(Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![
+                        (when1_cond, null_expr()),
+                        (when2_cond, str_arg.clone()),
+                        (when3_cond, null_expr()),
+                        (when4_cond, null_expr()),
+                        (when5_cond, null_expr()),
+                    ],
+                    else_: Some(subscripted),
                     comments: Vec::new(),
                     inferred_type: None,
                 })))

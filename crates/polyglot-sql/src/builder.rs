@@ -1617,6 +1617,7 @@ impl SelectBuilder {
             copy_grants: false,
             using_template: None,
             rollup: None,
+            uuid: None,
         }))
     }
 

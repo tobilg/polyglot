@@ -3917,7 +3917,7 @@ impl Dialect {
             BigQueryAnyValueHaving, // ANY_VALUE(x HAVING MAX/MIN y) -> ARG_MAX_NULL/ARG_MIN_NULL for DuckDB
             BigQueryApproxQuantiles, // APPROX_QUANTILES(x, n) -> APPROX_QUANTILE(x, [quantiles]) for DuckDB
             GenericFunctionNormalize, // Cross-dialect function renaming (non-BigQuery sources)
-            RegexpLikeToDuckDB, // RegexpLike -> REGEXP_MATCHES for DuckDB target (partial match)
+            RegexpLikeToDuckDB, // RegexpLike -> REGEXP_MATCHES for DuckDB target
             EpochConvert,       // Expression::Epoch -> target-specific epoch function
             EpochMsConvert,     // Expression::EpochMs -> target-specific epoch ms function
             TSQLTypeNormalize,  // TSQL types (MONEY, SMALLMONEY, REAL, DATETIME2) -> standard types
@@ -4061,7 +4061,7 @@ impl Dialect {
             RegexpCountSnowflakeToDuckDB, // REGEXP_COUNT(s, p, ...) -> LENGTH(REGEXP_EXTRACT_ALL(...)) for DuckDB
             RegexpInstrSnowflakeToDuckDB, // REGEXP_INSTR(s, p, ...) -> complex CASE expression for DuckDB
             RegexpReplacePositionSnowflakeToDuckDB, // REGEXP_REPLACE(s, p, r, pos, occ) -> DuckDB form
-            RlikeSnowflakeToDuckDB, // RLIKE(a, b[, flags]) -> REGEXP_MATCHES(a, anchored_pattern) for DuckDB
+            RlikeSnowflakeToDuckDB, // RLIKE(a, b[, flags]) -> REGEXP_FULL_MATCH(a, b[, flags]) for DuckDB
             RegexpExtractAllToSnowflake, // BigQuery REGEXP_EXTRACT_ALL -> REGEXP_SUBSTR_ALL for Snowflake
             ArrayExceptConvert, // ARRAY_EXCEPT -> DuckDB complex CASE / Snowflake ARRAY_EXCEPT / Presto ARRAY_EXCEPT
             ArrayPositionSnowflakeSwap, // ARRAY_POSITION(arr, elem) -> ARRAY_POSITION(elem, arr) for Snowflake
@@ -6804,16 +6804,14 @@ impl Dialect {
                         }
                     }
                     // BigQuery APPROX_QUANTILES(x, n) -> APPROX_QUANTILE(x, [quantiles]) for DuckDB
-                    // Snowflake RLIKE does full-string match; DuckDB REGEXP_MATCHES is partial
-                    // So anchor the pattern with ^(...) $ for Snowflake -> DuckDB
+                    // Snowflake RLIKE does full-string match; DuckDB REGEXP_FULL_MATCH also does full-string match
                     Expression::RegexpLike(_)
                         if matches!(source, DialectType::Snowflake)
                             && matches!(target, DialectType::DuckDB) =>
                     {
                         Action::RlikeSnowflakeToDuckDB
                     }
-                    // RegexpLike from non-DuckDB sources -> REGEXP_MATCHES for DuckDB target
-                    // DuckDB's ~ is a full match, but other dialects' REGEXP/RLIKE is a partial match
+                    // RegexpLike from non-DuckDB/non-Snowflake sources -> REGEXP_MATCHES for DuckDB target
                     Expression::RegexpLike(_)
                         if !matches!(source, DialectType::DuckDB)
                             && matches!(target, DialectType::DuckDB) =>
@@ -7396,7 +7394,9 @@ impl Dialect {
                                         {
                                             // RESPECT NULLS
                                             match target {
-                                                DialectType::SQLite => Action::RespectNullsConvert,
+                                                DialectType::SQLite | DialectType::PostgreSQL => {
+                                                    Action::RespectNullsConvert
+                                                }
                                                 _ => Action::None,
                                             }
                                         }
@@ -9207,11 +9207,8 @@ impl Dialect {
                 }
 
                 Action::RlikeSnowflakeToDuckDB => {
-                    // Snowflake RLIKE(a, b[, flags]) -> DuckDB REGEXP_MATCHES(a, '^(' || (b) || ')$'[, flags])
-                    // Snowflake RLIKE does full-string match; DuckDB REGEXP_MATCHES does partial match
-                    // So we anchor the pattern with ^ and $
-                    // Can come as Expression::RegexpLike (from Snowflake transform_expr) or
-                    // Expression::Function("RLIKE", args) (if not transformed yet)
+                    // Snowflake RLIKE(a, b[, flags]) -> DuckDB REGEXP_FULL_MATCH(a, b[, flags])
+                    // Both do full-string matching, so no anchoring needed
                     let (subject, pattern, flags) = match e {
                         Expression::RegexpLike(ref rl) => {
                             (rl.this.clone(), rl.pattern.clone(), rl.flags.clone())
@@ -9225,34 +9222,12 @@ impl Dialect {
                         _ => return Ok(e),
                     };
 
-                    // Build anchored pattern: '^(' || (pattern) || ')$'
-                    let prefix = Expression::Literal(Box::new(Literal::String("^(".to_string())));
-                    let suffix = Expression::Literal(Box::new(Literal::String(")$".to_string())));
-                    let paren_pattern = Expression::Paren(Box::new(Paren {
-                        this: pattern,
-                        trailing_comments: vec![],
-                    }));
-                    let left_concat = Expression::DPipe(Box::new(
-                        crate::expressions::DPipe {
-                            this: Box::new(prefix),
-                            expression: Box::new(paren_pattern),
-                            safe: None,
-                        },
-                    ));
-                    let anchored = Expression::DPipe(Box::new(
-                        crate::expressions::DPipe {
-                            this: Box::new(left_concat),
-                            expression: Box::new(suffix),
-                            safe: None,
-                        },
-                    ));
-
-                    let mut result_args = vec![subject, anchored];
+                    let mut result_args = vec![subject, pattern];
                     if let Some(fl) = flags {
                         result_args.push(fl);
                     }
                     Ok(Expression::Function(Box::new(Function::new(
-                        "REGEXP_MATCHES".to_string(),
+                        "REGEXP_FULL_MATCH".to_string(),
                         result_args,
                     ))))
                 }
@@ -9926,7 +9901,7 @@ impl Dialect {
                                 ))),
                                 _ => Ok(Expression::Function(f)),
                             },
-                            // REGEXP_MATCHES(x, y) -> RegexpLike for most targets, keep for DuckDB
+                            // REGEXP_MATCHES(x, y) -> RegexpLike for most targets, keep as-is for DuckDB
                             "REGEXP_MATCHES" if f.args.len() >= 2 => {
                                 if matches!(target, DialectType::DuckDB) {
                                     Ok(Expression::Function(f))
@@ -12556,6 +12531,56 @@ impl Dialect {
                                 })))
                             }
                             // ARRAY_TO_STRING(arr, delim) -> target-specific
+                            "ARRAY_TO_STRING" if f.args.len() == 2 && matches!(target, DialectType::DuckDB) && matches!(source, DialectType::Snowflake) => {
+                                let mut args = f.args;
+                                let arr = args.remove(0);
+                                let sep = args.remove(0);
+                                // sep IS NULL
+                                let sep_is_null = Expression::IsNull(Box::new(IsNull {
+                                    this: sep.clone(),
+                                    not: false,
+                                    postfix_form: false,
+                                }));
+                                // COALESCE(CAST(x AS TEXT), '')
+                                let cast_x = Expression::Cast(Box::new(Cast {
+                                    this: Expression::Identifier(Identifier::new("x")),
+                                    to: DataType::Text,
+                                    trailing_comments: Vec::new(),
+                                    double_colon_syntax: false,
+                                    format: None,
+                                    default: None,
+                                    inferred_type: None,
+                                }));
+                                let coalesce = Expression::Coalesce(Box::new(crate::expressions::VarArgFunc {
+                                    original_name: None,
+                                    expressions: vec![
+                                        cast_x,
+                                        Expression::Literal(Box::new(Literal::String(String::new()))),
+                                    ],
+                                    inferred_type: None,
+                                }));
+                                let lambda = Expression::Lambda(Box::new(crate::expressions::LambdaExpr {
+                                    parameters: vec![Identifier::new("x")],
+                                    body: coalesce,
+                                    colon: false,
+                                    parameter_types: Vec::new(),
+                                }));
+                                let list_transform = Expression::Function(Box::new(Function::new(
+                                    "LIST_TRANSFORM".to_string(),
+                                    vec![arr, lambda],
+                                )));
+                                let array_to_string = Expression::Function(Box::new(Function::new(
+                                    "ARRAY_TO_STRING".to_string(),
+                                    vec![list_transform, sep],
+                                )));
+                                Ok(Expression::Case(Box::new(Case {
+                                    operand: None,
+                                    whens: vec![(sep_is_null, Expression::Null(Null))],
+                                    else_: Some(array_to_string),
+                                    comments: Vec::new(),
+                                    inferred_type: None,
+                                })))
+                            }
                             "ARRAY_TO_STRING" if f.args.len() >= 2 => match target {
                                 DialectType::Presto | DialectType::Trino => {
                                     Ok(Expression::Function(Box::new(Function::new(
@@ -15843,6 +15868,74 @@ impl Dialect {
                                         "DATE_ADD".to_string(),
                                         vec![date, days],
                                     )))),
+                                }
+                            }
+                            // DATE_ADD(date, INTERVAL val UNIT) - MySQL 2-arg form with INTERVAL as 2nd arg
+                            "DATE_ADD"
+                                if f.args.len() == 2
+                                    && matches!(source, DialectType::MySQL | DialectType::SingleStore)
+                                    && matches!(&f.args[1], Expression::Interval(_)) =>
+                            {
+                                let mut args = f.args;
+                                let date = args.remove(0);
+                                let interval_expr = args.remove(0);
+                                let (val, unit) = Self::extract_interval_parts(&interval_expr);
+                                let unit_str = Self::interval_unit_to_string(&unit);
+                                let is_literal = matches!(&val,
+                                    Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_) | Literal::String(_))
+                                );
+
+                                match target {
+                                    DialectType::MySQL | DialectType::SingleStore => {
+                                        // Keep as DATE_ADD(date, INTERVAL val UNIT)
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE_ADD".to_string(),
+                                            vec![date, interval_expr],
+                                        ))))
+                                    }
+                                    DialectType::PostgreSQL => {
+                                        if is_literal {
+                                            // Literal: date + INTERVAL 'val UNIT'
+                                            let interval = Expression::Interval(Box::new(
+                                                crate::expressions::Interval {
+                                                    this: Some(Expression::Literal(Box::new(
+                                                        Literal::String(format!(
+                                                            "{} {}",
+                                                            Self::expr_to_string(&val),
+                                                            unit_str
+                                                        )),
+                                                    ))),
+                                                    unit: None,
+                                                },
+                                            ));
+                                            Ok(Expression::Add(Box::new(
+                                                crate::expressions::BinaryOp::new(date, interval),
+                                            )))
+                                        } else {
+                                            // Non-literal (column ref): date + INTERVAL '1 UNIT' * val
+                                            let interval_one = Expression::Interval(Box::new(
+                                                crate::expressions::Interval {
+                                                    this: Some(Expression::Literal(Box::new(
+                                                        Literal::String(format!("1 {}", unit_str)),
+                                                    ))),
+                                                    unit: None,
+                                                },
+                                            ));
+                                            let mul = Expression::Mul(Box::new(
+                                                crate::expressions::BinaryOp::new(interval_one, val),
+                                            ));
+                                            Ok(Expression::Add(Box::new(
+                                                crate::expressions::BinaryOp::new(date, mul),
+                                            )))
+                                        }
+                                    }
+                                    _ => {
+                                        // Default: keep as DATE_ADD(date, interval)
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "DATE_ADD".to_string(),
+                                            vec![date, interval_expr],
+                                        ))))
+                                    }
                                 }
                             }
                             // DATE_SUB(date, days) - 2-arg Hive/Spark form (subtract days)
@@ -28991,6 +29084,7 @@ impl Dialect {
                             copy_grants: false,
                             using_template: None,
                             rollup: None,
+                            uuid: None,
                         };
                         return Expression::CreateTable(Box::new(ct));
                     }
@@ -35305,7 +35399,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result[0],
-            "SELECT REGEXP_MATCHES(a, '^(' || (b) || ')$')"
+            "SELECT REGEXP_FULL_MATCH(a, b)"
         );
     }
 
@@ -35317,7 +35411,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             result[0],
-            "SELECT REGEXP_MATCHES(a, '^(' || (b) || ')$', 'i')"
+            "SELECT REGEXP_FULL_MATCH(a, b, 'i')"
         );
     }
 

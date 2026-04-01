@@ -4969,8 +4969,15 @@ pub fn no_limit_order_by_union(expr: Expression) -> Result<Expression> {
 ///
 /// For dialects that don't support quantifiers on LIKE/ILIKE (e.g. DuckDB),
 /// expand `x LIKE ANY (('a', 'b'))` to `x LIKE 'a' OR x LIKE 'b'`.
+///
+/// Handles precedence: when LIKE ANY (→OR) is inside AND, wraps in parens.
+/// When LIKE ALL (→AND) is inside OR, wraps in parens for readability.
 pub fn expand_like_any(expr: Expression) -> Result<Expression> {
-    use crate::expressions::{BinaryOp, LikeOp};
+    use crate::expressions::{BinaryOp, LikeOp, Paren};
+
+    /// Sentinel comment used to mark Paren nodes created by LIKE ALL expansion.
+    /// These markers are stripped in a cleanup pass unless they end up inside an OR parent.
+    const LIKE_ALL_MARKER: &str = "__LIKE_ALL_EXPANSION__";
 
     fn unwrap_parens(e: &Expression) -> &Expression {
         match e {
@@ -4983,63 +4990,175 @@ pub fn expand_like_any(expr: Expression) -> Result<Expression> {
         let inner = unwrap_parens(e);
         match inner {
             Expression::Tuple(t) => Some(t.expressions.clone()),
+            // Single value in parens: treat as single-element list
+            _ if !matches!(e, Expression::Tuple(_)) => Some(vec![inner.clone()]),
             _ => None,
         }
     }
 
-    transform_recursive(expr, &|e| {
+    /// Build a chain of LIKE/ILIKE conditions joined by a combiner (OR for ANY, AND for ALL).
+    fn expand_like_quantifier(
+        op: &LikeOp,
+        values: Vec<Expression>,
+        is_ilike: bool,
+        combiner: fn(Expression, Expression) -> Expression,
+        wrap_marker: bool,
+    ) -> Expression {
+        let num_values = values.len();
+        let mut result: Option<Expression> = None;
+        for val in values {
+            let like = if is_ilike {
+                Expression::ILike(Box::new(LikeOp {
+                    left: op.left.clone(),
+                    right: val,
+                    escape: op.escape.clone(),
+                    quantifier: None,
+                    inferred_type: None,
+                }))
+            } else {
+                Expression::Like(Box::new(LikeOp {
+                    left: op.left.clone(),
+                    right: val,
+                    escape: op.escape.clone(),
+                    quantifier: None,
+                    inferred_type: None,
+                }))
+            };
+            result = Some(match result {
+                None => like,
+                Some(prev) => combiner(prev, like),
+            });
+        }
+        let expanded = result.unwrap_or_else(|| unreachable!("values is non-empty"));
+        // For LIKE ALL (AND chain) with multiple values, wrap in a marker Paren.
+        // The marker lets us distinguish expansion-created AND from parser-created AND
+        // when deciding whether to keep parens inside OR.
+        if wrap_marker && num_values > 1 {
+            Expression::Paren(Box::new(Paren {
+                this: expanded,
+                trailing_comments: vec![LIKE_ALL_MARKER.to_string()],
+            }))
+        } else {
+            expanded
+        }
+    }
+
+    fn or_combiner(a: Expression, b: Expression) -> Expression {
+        Expression::Or(Box::new(BinaryOp::new(a, b)))
+    }
+
+    fn and_combiner(a: Expression, b: Expression) -> Expression {
+        Expression::And(Box::new(BinaryOp::new(a, b)))
+    }
+
+    fn is_like_all_marker(p: &Paren) -> bool {
+        p.trailing_comments.len() == 1 && p.trailing_comments[0] == LIKE_ALL_MARKER
+    }
+
+    // Phase 1: Expand LIKE ANY/ALL and fix precedence in a single bottom-up pass.
+    //
+    // - LIKE ANY → bare Or chain
+    // - LIKE ALL → Paren(And chain) with marker comment
+    // - And handler: wraps bare Or children in Paren (from LIKE ANY expansion;
+    //   parser never creates bare Or inside And)
+    // - Or handler: converts marker Paren to clean Paren (keeps the wrapping)
+    let result = transform_recursive(expr, &|e| {
         match e {
+            // LIKE ANY -> OR chain (bare)
             Expression::Like(ref op) if op.quantifier.as_deref() == Some("ANY") => {
                 if let Some(values) = extract_tuple_values(&op.right) {
                     if values.is_empty() {
                         return Ok(e);
                     }
-                    // Build: left LIKE val1 OR left LIKE val2 OR ...
-                    let mut result: Option<Expression> = None;
-                    for val in values {
-                        let like = Expression::Like(Box::new(LikeOp {
-                            left: op.left.clone(),
-                            right: val,
-                            escape: op.escape.clone(),
-                            quantifier: None,
-                            inferred_type: None,
-                        }));
-                        result = Some(match result {
-                            None => like,
-                            Some(prev) => Expression::Or(Box::new(BinaryOp::new(prev, like))),
-                        });
-                    }
-                    Ok(result.unwrap_or(e))
+                    Ok(expand_like_quantifier(op, values, false, or_combiner, false))
                 } else {
                     Ok(e)
                 }
             }
+            // LIKE ALL -> AND chain (with marker Paren)
+            Expression::Like(ref op) if op.quantifier.as_deref() == Some("ALL") => {
+                if let Some(values) = extract_tuple_values(&op.right) {
+                    if values.is_empty() {
+                        return Ok(e);
+                    }
+                    Ok(expand_like_quantifier(op, values, false, and_combiner, true))
+                } else {
+                    Ok(e)
+                }
+            }
+            // ILIKE ANY -> OR chain (bare)
             Expression::ILike(ref op) if op.quantifier.as_deref() == Some("ANY") => {
                 if let Some(values) = extract_tuple_values(&op.right) {
                     if values.is_empty() {
                         return Ok(e);
                     }
-                    let mut result: Option<Expression> = None;
-                    for val in values {
-                        let ilike = Expression::ILike(Box::new(LikeOp {
-                            left: op.left.clone(),
-                            right: val,
-                            escape: op.escape.clone(),
-                            quantifier: None,
-                            inferred_type: None,
-                        }));
-                        result = Some(match result {
-                            None => ilike,
-                            Some(prev) => Expression::Or(Box::new(BinaryOp::new(prev, ilike))),
-                        });
-                    }
-                    Ok(result.unwrap_or(e))
+                    Ok(expand_like_quantifier(op, values, true, or_combiner, false))
                 } else {
                     Ok(e)
                 }
             }
+            // ILIKE ALL -> AND chain (with marker Paren)
+            Expression::ILike(ref op) if op.quantifier.as_deref() == Some("ALL") => {
+                if let Some(values) = extract_tuple_values(&op.right) {
+                    if values.is_empty() {
+                        return Ok(e);
+                    }
+                    Ok(expand_like_quantifier(op, values, true, and_combiner, true))
+                } else {
+                    Ok(e)
+                }
+            }
+            // After children are expanded (bottom-up), fix And nodes:
+            // Wrap bare Or children in Paren (from LIKE ANY expansion).
+            // The parser never produces bare Or inside And (AND binds tighter than OR,
+            // so explicit parens in SQL like "(a OR b) AND c" create Paren(Or(...)) in the AST).
+            Expression::And(mut op) => {
+                if matches!(&op.left, Expression::Or(_)) {
+                    op.left = Expression::Paren(Box::new(Paren {
+                        this: op.left,
+                        trailing_comments: vec![],
+                    }));
+                }
+                if matches!(&op.right, Expression::Or(_)) {
+                    op.right = Expression::Paren(Box::new(Paren {
+                        this: op.right,
+                        trailing_comments: vec![],
+                    }));
+                }
+                Ok(Expression::And(op))
+            }
+            // After children are expanded (bottom-up), fix Or nodes:
+            // Convert marker Paren(And) to clean Paren(And) so the cleanup pass won't strip it.
+            Expression::Or(mut op) => {
+                if let Expression::Paren(ref mut p) = op.left {
+                    if is_like_all_marker(p) {
+                        p.trailing_comments.clear();
+                    }
+                }
+                if let Expression::Paren(ref mut p) = op.right {
+                    if is_like_all_marker(p) {
+                        p.trailing_comments.clear();
+                    }
+                }
+                Ok(Expression::Or(op))
+            }
             _ => Ok(e),
         }
+    })?;
+
+    // Phase 2: Strip remaining marker Paren(And) nodes that weren't inside an Or parent.
+    // These are standalone LIKE ALL expansions (e.g., in SELECT expressions) that don't
+    // need parentheses.
+    transform_recursive(result, &|e| {
+        if let Expression::Paren(p) = &e {
+            if is_like_all_marker(p) {
+                let Expression::Paren(p) = e else {
+                    unreachable!()
+                };
+                return Ok(p.this);
+            }
+        }
+        Ok(e)
     })
 }
 

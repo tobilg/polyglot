@@ -537,15 +537,55 @@ impl DialectImpl for BigQueryDialect {
 
             // Cast: Transform the target type according to BigQuery TYPE_MAPPING
             // Special case: CAST to JSON -> PARSE_JSON in BigQuery
+            // Special case: CAST(x AS temporal FORMAT 'fmt') -> PARSE_DATE/PARSE_TIMESTAMP
             Expression::Cast(c) => {
                 use crate::expressions::DataType;
                 // Check if casting to JSON - use PARSE_JSON instead
-                // Handle both DataType::Json/JsonB and DataType::Custom { name: "JSON" }
-                // (parser creates Custom for type literals like JSON 'string')
                 let is_json = matches!(c.to, DataType::Json | DataType::JsonB)
                     || matches!(&c.to, DataType::Custom { name } if name.eq_ignore_ascii_case("JSON") || name.eq_ignore_ascii_case("JSONB"));
                 if is_json {
                     return Ok(Expression::ParseJson(Box::new(UnaryFunc::new(c.this))));
+                }
+                // CAST(x AS temporal_type FORMAT 'fmt') -> PARSE_DATE/PARSE_TIMESTAMP(strftime_fmt, x)
+                if c.format.is_some() {
+                    let is_temporal = matches!(
+                        c.to,
+                        DataType::Date | DataType::Timestamp { .. } | DataType::Time { .. }
+                    ) || matches!(&c.to, DataType::Custom { name } if
+                        name.eq_ignore_ascii_case("TIMESTAMP") ||
+                        name.eq_ignore_ascii_case("DATE") ||
+                        name.eq_ignore_ascii_case("DATETIME") ||
+                        name.eq_ignore_ascii_case("TIME")
+                    );
+                    if is_temporal {
+                        let format_expr = c.format.as_ref().unwrap().as_ref();
+                        // Extract the actual format expr and timezone (if AT TIME ZONE is present)
+                        let (actual_format, timezone) = match format_expr {
+                            Expression::AtTimeZone(ref atz) => {
+                                (atz.this.clone(), Some(atz.zone.clone()))
+                            }
+                            _ => (format_expr.clone(), None),
+                        };
+                        let strftime_fmt = Self::bq_cast_format_to_strftime(&actual_format);
+                        let func_name = match &c.to {
+                            DataType::Date => "PARSE_DATE",
+                            DataType::Custom { name } if name.eq_ignore_ascii_case("DATE") => {
+                                "PARSE_DATE"
+                            }
+                            DataType::Custom { name } if name.eq_ignore_ascii_case("DATETIME") => {
+                                "PARSE_DATETIME"
+                            }
+                            _ => "PARSE_TIMESTAMP",
+                        };
+                        let mut func_args = vec![strftime_fmt, c.this];
+                        if let Some(tz) = timezone {
+                            func_args.push(tz);
+                        }
+                        return Ok(Expression::Function(Box::new(Function::new(
+                            func_name.to_string(),
+                            func_args,
+                        ))));
+                    }
                 }
                 let transformed_type = match self.transform_data_type(c.to)? {
                     Expression::DataType(dt) => dt,
@@ -1398,6 +1438,35 @@ impl BigQueryDialect {
     /// %H:%M:%S -> %T (time)
     fn normalize_time_format(&self, format: &str) -> String {
         format.replace("%Y-%m-%d", "%F").replace("%H:%M:%S", "%T")
+    }
+
+    /// Convert BigQuery CAST FORMAT elements to strftime equivalents,
+    /// then normalize BigQuery shorthand forms (%Y-%m-%d -> %F, %H:%M:%S -> %T)
+    fn bq_cast_format_to_strftime(format_expr: &Expression) -> Expression {
+        use crate::expressions::Literal;
+        if let Expression::Literal(lit) = format_expr {
+            if let Literal::String(s) = lit.as_ref() {
+                let result = s
+                    .replace("YYYYMMDD", "%Y%m%d")
+                    .replace("YYYY", "%Y")
+                    .replace("YY", "%y")
+                    .replace("MONTH", "%B")
+                    .replace("MON", "%b")
+                    .replace("MM", "%m")
+                    .replace("DD", "%d")
+                    .replace("HH24", "%H")
+                    .replace("HH12", "%I")
+                    .replace("HH", "%I")
+                    .replace("MI", "%M")
+                    .replace("SSTZH", "%S%z")
+                    .replace("SS", "%S")
+                    .replace("TZH", "%z");
+                // Normalize: %Y-%m-%d -> %F, %H:%M:%S -> %T
+                let normalized = result.replace("%Y-%m-%d", "%F").replace("%H:%M:%S", "%T");
+                return Expression::Literal(Box::new(Literal::String(normalized)));
+            }
+        }
+        format_expr.clone()
     }
 }
 

@@ -262,7 +262,7 @@ pub(crate) const TYPED_FUNCTION_SPECS: &[TypedFunctionSpec] = &[
     },
     TypedFunctionSpec {
         canonical_name: "LENGTH",
-        aliases: &["LEN", "CHAR_LENGTH", "CHARACTER_LENGTH"],
+        aliases: &["LEN", "CHAR_LENGTH", "CHARACTER_LENGTH", "TEXTLEN"],
         parse_kind: TypedParseKind::Unary,
     },
     TypedFunctionSpec {
