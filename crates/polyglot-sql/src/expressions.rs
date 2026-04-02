@@ -3815,6 +3815,22 @@ pub struct Union {
     pub on_columns: Vec<Expression>,
 }
 
+/// Iteratively flatten the left-recursive chain to prevent stack overflow
+/// when dropping deeply nested set operation trees (e.g., 1000+ UNION ALLs).
+impl Drop for Union {
+    fn drop(&mut self) {
+        loop {
+            if let Expression::Union(ref mut inner) = self.left {
+                let next_left = std::mem::replace(&mut inner.left, Expression::Null(Null));
+                let old_left = std::mem::replace(&mut self.left, next_left);
+                drop(old_left);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 /// Represent an INTERSECT set operation between two query expressions.
 ///
 /// Returns only rows that appear in both operands. When `all` is true,
@@ -3868,6 +3884,20 @@ pub struct Intersect {
     pub on_columns: Vec<Expression>,
 }
 
+impl Drop for Intersect {
+    fn drop(&mut self) {
+        loop {
+            if let Expression::Intersect(ref mut inner) = self.left {
+                let next_left = std::mem::replace(&mut inner.left, Expression::Null(Null));
+                let old_left = std::mem::replace(&mut self.left, next_left);
+                drop(old_left);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 /// Represent an EXCEPT (MINUS) set operation between two query expressions.
 ///
 /// Returns rows from the left operand that do not appear in the right operand.
@@ -3919,6 +3949,20 @@ pub struct Except {
     /// BigQuery: BY (columns) after CORRESPONDING
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub on_columns: Vec<Expression>,
+}
+
+impl Drop for Except {
+    fn drop(&mut self) {
+        loop {
+            if let Expression::Except(ref mut inner) = self.left {
+                let next_left = std::mem::replace(&mut inner.left, Expression::Null(Null));
+                let old_left = std::mem::replace(&mut self.left, next_left);
+                drop(old_left);
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 /// INTO clause for SELECT INTO statements

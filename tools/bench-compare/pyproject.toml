@@ -9,7 +9,7 @@ dependencies = [
     "pyperf>=2.7.0",
     "sqloxide>=0.1.56; python_version < '3.14'",
     "sqlfluff>=3.4.2",
-    "sqlglot[c]>=30.0.1",
+    "sqlglot[c]==30.2.0",
     "sqlparse>=0.5.3",
     "sqltree>=0.3.0",
 ]

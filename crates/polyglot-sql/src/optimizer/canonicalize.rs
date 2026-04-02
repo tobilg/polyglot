@@ -11,7 +11,7 @@
 //! Ported from sqlglot's optimizer/canonicalize.py
 
 use crate::dialects::DialectType;
-use crate::expressions::{DataType, Expression, Literal};
+use crate::expressions::{DataType, Expression, Literal, Null};
 use crate::helper::{is_iso_date, is_iso_datetime};
 
 /// Converts a SQL expression into a standard canonical form.
@@ -309,73 +309,28 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
 
         // Set operations
         Expression::Union(union) => {
-            let left = canonicalize_recursive(union.left, dialect);
-            let right = canonicalize_recursive(union.right, dialect);
-            Expression::Union(Box::new(crate::expressions::Union {
-                left,
-                right,
-                all: union.all,
-                distinct: union.distinct,
-                with: union.with,
-                order_by: union.order_by,
-                limit: union.limit,
-                offset: union.offset,
-                distribute_by: union.distribute_by,
-                sort_by: union.sort_by,
-                cluster_by: union.cluster_by,
-                by_name: union.by_name,
-                side: union.side,
-                kind: union.kind,
-                corresponding: union.corresponding,
-                strict: union.strict,
-                on_columns: union.on_columns,
-            }))
+            let mut u = *union;
+            let left = std::mem::replace(&mut u.left, Expression::Null(Null));
+            u.left = canonicalize_recursive(left, dialect);
+            let right = std::mem::replace(&mut u.right, Expression::Null(Null));
+            u.right = canonicalize_recursive(right, dialect);
+            Expression::Union(Box::new(u))
         }
         Expression::Intersect(intersect) => {
-            let left = canonicalize_recursive(intersect.left, dialect);
-            let right = canonicalize_recursive(intersect.right, dialect);
-            Expression::Intersect(Box::new(crate::expressions::Intersect {
-                left,
-                right,
-                all: intersect.all,
-                distinct: intersect.distinct,
-                with: intersect.with,
-                order_by: intersect.order_by,
-                limit: intersect.limit,
-                offset: intersect.offset,
-                distribute_by: intersect.distribute_by,
-                sort_by: intersect.sort_by,
-                cluster_by: intersect.cluster_by,
-                by_name: intersect.by_name,
-                side: intersect.side,
-                kind: intersect.kind,
-                corresponding: intersect.corresponding,
-                strict: intersect.strict,
-                on_columns: intersect.on_columns,
-            }))
+            let mut i = *intersect;
+            let left = std::mem::replace(&mut i.left, Expression::Null(Null));
+            i.left = canonicalize_recursive(left, dialect);
+            let right = std::mem::replace(&mut i.right, Expression::Null(Null));
+            i.right = canonicalize_recursive(right, dialect);
+            Expression::Intersect(Box::new(i))
         }
         Expression::Except(except) => {
-            let left = canonicalize_recursive(except.left, dialect);
-            let right = canonicalize_recursive(except.right, dialect);
-            Expression::Except(Box::new(crate::expressions::Except {
-                left,
-                right,
-                all: except.all,
-                distinct: except.distinct,
-                with: except.with,
-                order_by: except.order_by,
-                limit: except.limit,
-                offset: except.offset,
-                distribute_by: except.distribute_by,
-                sort_by: except.sort_by,
-                cluster_by: except.cluster_by,
-                by_name: except.by_name,
-                side: except.side,
-                kind: except.kind,
-                corresponding: except.corresponding,
-                strict: except.strict,
-                on_columns: except.on_columns,
-            }))
+            let mut e = *except;
+            let left = std::mem::replace(&mut e.left, Expression::Null(Null));
+            e.left = canonicalize_recursive(left, dialect);
+            let right = std::mem::replace(&mut e.right, Expression::Null(Null));
+            e.right = canonicalize_recursive(right, dialect);
+            Expression::Except(Box::new(e))
         }
 
         // Leaf nodes - return unchanged

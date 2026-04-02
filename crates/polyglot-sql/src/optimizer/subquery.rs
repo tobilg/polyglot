@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::expressions::{
-    Alias, BinaryOp, Cte, Expression, Identifier, Select, Subquery, TableRef, Where, With,
+    Alias, BinaryOp, Cte, Expression, Identifier, Null, Select, Subquery, TableRef, Where, With,
 };
 use crate::helper::find_new_name;
 use crate::scope::Scope;
@@ -283,18 +283,24 @@ fn transform_expression(expr: Expression, leave_tables_isolated: bool) -> Expres
             Expression::Subquery(sub)
         }
         Expression::Union(mut u) => {
-            u.left = transform_expression(u.left, leave_tables_isolated);
-            u.right = transform_expression(u.right, leave_tables_isolated);
+            let left = std::mem::replace(&mut u.left, Expression::Null(Null));
+            u.left = transform_expression(left, leave_tables_isolated);
+            let right = std::mem::replace(&mut u.right, Expression::Null(Null));
+            u.right = transform_expression(right, leave_tables_isolated);
             Expression::Union(u)
         }
         Expression::Intersect(mut i) => {
-            i.left = transform_expression(i.left, leave_tables_isolated);
-            i.right = transform_expression(i.right, leave_tables_isolated);
+            let left = std::mem::replace(&mut i.left, Expression::Null(Null));
+            i.left = transform_expression(left, leave_tables_isolated);
+            let right = std::mem::replace(&mut i.right, Expression::Null(Null));
+            i.right = transform_expression(right, leave_tables_isolated);
             Expression::Intersect(i)
         }
         Expression::Except(mut e) => {
-            e.left = transform_expression(e.left, leave_tables_isolated);
-            e.right = transform_expression(e.right, leave_tables_isolated);
+            let left = std::mem::replace(&mut e.left, Expression::Null(Null));
+            e.left = transform_expression(left, leave_tables_isolated);
+            let right = std::mem::replace(&mut e.right, Expression::Null(Null));
+            e.right = transform_expression(right, leave_tables_isolated);
             Expression::Except(e)
         }
         other => other,

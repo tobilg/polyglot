@@ -1,5 +1,5 @@
 use crate::errors::map_transpile_error;
-use crate::helpers::{normalize_error_level, resolve_dialect};
+use crate::helpers::{normalize_error_level, resolve_dialect, run_on_large_stack};
 use polyglot_sql::dialects::Dialect;
 use pyo3::prelude::*;
 
@@ -23,9 +23,13 @@ pub fn transpile(
     };
     resolve_dialect(write)?;
 
-    let statements = py
-        .detach(|| polyglot_sql::transpile_by_name(sql, read, write))
-        .map_err(map_transpile_error)?;
+    let sql_owned = sql.to_owned();
+    let read_owned = read.to_owned();
+    let write_owned = write.to_owned();
+    let statements = run_on_large_stack(py, move || {
+        polyglot_sql::transpile_by_name(&sql_owned, &read_owned, &write_owned)
+    })?
+    .map_err(map_transpile_error)?;
 
     if !pretty {
         return Ok(statements);

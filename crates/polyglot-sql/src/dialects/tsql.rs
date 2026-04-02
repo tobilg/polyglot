@@ -14,7 +14,7 @@ use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
     Alias, Cast, Cte, DataType, Expression, Function, Identifier, Join, JoinKind, LikeOp, Literal,
-    StringAggFunc, Subquery, UnaryFunc,
+    Null, StringAggFunc, Subquery, UnaryFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -1087,15 +1087,18 @@ impl TSQLDialect {
             }
             // For UNION/INTERSECT/EXCEPT, transform the first SELECT
             Expression::Union(mut u) => {
-                u.left = self.qualify_derived_table_outputs(u.left);
+                let left = std::mem::replace(&mut u.left, Expression::Null(Null));
+                u.left = self.qualify_derived_table_outputs(left);
                 Expression::Union(u)
             }
             Expression::Intersect(mut i) => {
-                i.left = self.qualify_derived_table_outputs(i.left);
+                let left = std::mem::replace(&mut i.left, Expression::Null(Null));
+                i.left = self.qualify_derived_table_outputs(left);
                 Expression::Intersect(i)
             }
             Expression::Except(mut e) => {
-                e.left = self.qualify_derived_table_outputs(e.left);
+                let left = std::mem::replace(&mut e.left, Expression::Null(Null));
+                e.left = self.qualify_derived_table_outputs(left);
                 Expression::Except(e)
             }
             // Already wrapped in a Subquery (nested), transform the inner

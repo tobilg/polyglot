@@ -52,18 +52,24 @@ pub fn isolate_table_selects(
             Expression::Select(Box::new(transformed))
         }
         Expression::Union(mut union) => {
-            union.left = isolate_table_selects(union.left, schema, _dialect);
-            union.right = isolate_table_selects(union.right, schema, _dialect);
+            let left = std::mem::replace(&mut union.left, Expression::Null(Null));
+            union.left = isolate_table_selects(left, schema, _dialect);
+            let right = std::mem::replace(&mut union.right, Expression::Null(Null));
+            union.right = isolate_table_selects(right, schema, _dialect);
             Expression::Union(union)
         }
         Expression::Intersect(mut intersect) => {
-            intersect.left = isolate_table_selects(intersect.left, schema, _dialect);
-            intersect.right = isolate_table_selects(intersect.right, schema, _dialect);
+            let left = std::mem::replace(&mut intersect.left, Expression::Null(Null));
+            intersect.left = isolate_table_selects(left, schema, _dialect);
+            let right = std::mem::replace(&mut intersect.right, Expression::Null(Null));
+            intersect.right = isolate_table_selects(right, schema, _dialect);
             Expression::Intersect(intersect)
         }
         Expression::Except(mut except) => {
-            except.left = isolate_table_selects(except.left, schema, _dialect);
-            except.right = isolate_table_selects(except.right, schema, _dialect);
+            let left = std::mem::replace(&mut except.left, Expression::Null(Null));
+            except.left = isolate_table_selects(left, schema, _dialect);
+            let right = std::mem::replace(&mut except.right, Expression::Null(Null));
+            except.right = isolate_table_selects(right, schema, _dialect);
             Expression::Except(except)
         }
         other => other,

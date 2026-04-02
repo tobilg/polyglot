@@ -497,18 +497,24 @@ fn apply_removals(expression: Expression, removals: &[JoinRemoval]) -> Expressio
             Expression::Subquery(subquery)
         }
         Expression::Union(mut union) => {
-            union.left = apply_removals(union.left, removals);
-            union.right = apply_removals(union.right, removals);
+            let left = std::mem::replace(&mut union.left, Expression::Null(Null));
+            union.left = apply_removals(left, removals);
+            let right = std::mem::replace(&mut union.right, Expression::Null(Null));
+            union.right = apply_removals(right, removals);
             Expression::Union(union)
         }
         Expression::Intersect(mut intersect) => {
-            intersect.left = apply_removals(intersect.left, removals);
-            intersect.right = apply_removals(intersect.right, removals);
+            let left = std::mem::replace(&mut intersect.left, Expression::Null(Null));
+            intersect.left = apply_removals(left, removals);
+            let right = std::mem::replace(&mut intersect.right, Expression::Null(Null));
+            intersect.right = apply_removals(right, removals);
             Expression::Intersect(intersect)
         }
         Expression::Except(mut except) => {
-            except.left = apply_removals(except.left, removals);
-            except.right = apply_removals(except.right, removals);
+            let left = std::mem::replace(&mut except.left, Expression::Null(Null));
+            except.left = apply_removals(left, removals);
+            let right = std::mem::replace(&mut except.right, Expression::Null(Null));
+            except.right = apply_removals(right, removals);
             Expression::Except(except)
         }
         other => other,

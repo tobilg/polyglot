@@ -6,7 +6,7 @@
 //! Ported from sqlglot's optimizer/qualify_tables.py
 
 use crate::dialects::DialectType;
-use crate::expressions::{Expression, Identifier, Select, TableRef};
+use crate::expressions::{Expression, Identifier, Null, Select, TableRef};
 use crate::helper::name_sequence;
 use crate::optimizer::normalize_identifiers::{
     get_normalization_strategy, normalize_identifier, NormalizationStrategy,
@@ -83,18 +83,24 @@ pub fn qualify_tables(expression: Expression, options: &QualifyTablesOptions) ->
             Expression::Select(Box::new(qualified))
         }
         Expression::Union(mut union) => {
-            union.left = qualify_tables(union.left, options);
-            union.right = qualify_tables(union.right, options);
+            let left = std::mem::replace(&mut union.left, Expression::Null(Null));
+            union.left = qualify_tables(left, options);
+            let right = std::mem::replace(&mut union.right, Expression::Null(Null));
+            union.right = qualify_tables(right, options);
             Expression::Union(union)
         }
         Expression::Intersect(mut intersect) => {
-            intersect.left = qualify_tables(intersect.left, options);
-            intersect.right = qualify_tables(intersect.right, options);
+            let left = std::mem::replace(&mut intersect.left, Expression::Null(Null));
+            intersect.left = qualify_tables(left, options);
+            let right = std::mem::replace(&mut intersect.right, Expression::Null(Null));
+            intersect.right = qualify_tables(right, options);
             Expression::Intersect(intersect)
         }
         Expression::Except(mut except) => {
-            except.left = qualify_tables(except.left, options);
-            except.right = qualify_tables(except.right, options);
+            let left = std::mem::replace(&mut except.left, Expression::Null(Null));
+            except.left = qualify_tables(left, options);
+            let right = std::mem::replace(&mut except.right, Expression::Null(Null));
+            except.right = qualify_tables(right, options);
             Expression::Except(except)
         }
         _ => expression,

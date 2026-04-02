@@ -158,7 +158,7 @@ pub use trino::TrinoDialect;
 pub use tsql::TSQLDialect;
 
 use crate::error::Result;
-use crate::expressions::{Expression, FunctionBody};
+use crate::expressions::{Expression, FunctionBody, Null};
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
 use crate::tokens::{Token, Tokenizer, TokenizerConfig};
@@ -1141,8 +1141,10 @@ where
 
         // ===== Set operations =====
         Expression::Union(mut u) => {
-            u.left = transform_recursive(u.left, transform_fn)?;
-            u.right = transform_recursive(u.right, transform_fn)?;
+            let left = std::mem::replace(&mut u.left, Expression::Null(Null));
+            u.left = transform_recursive(left, transform_fn)?;
+            let right = std::mem::replace(&mut u.right, Expression::Null(Null));
+            u.right = transform_recursive(right, transform_fn)?;
             if let Some(mut with) = u.with.take() {
                 with.ctes = with
                     .ctes
@@ -1158,8 +1160,10 @@ where
             Expression::Union(u)
         }
         Expression::Intersect(mut i) => {
-            i.left = transform_recursive(i.left, transform_fn)?;
-            i.right = transform_recursive(i.right, transform_fn)?;
+            let left = std::mem::replace(&mut i.left, Expression::Null(Null));
+            i.left = transform_recursive(left, transform_fn)?;
+            let right = std::mem::replace(&mut i.right, Expression::Null(Null));
+            i.right = transform_recursive(right, transform_fn)?;
             if let Some(mut with) = i.with.take() {
                 with.ctes = with
                     .ctes
@@ -1175,8 +1179,10 @@ where
             Expression::Intersect(i)
         }
         Expression::Except(mut e) => {
-            e.left = transform_recursive(e.left, transform_fn)?;
-            e.right = transform_recursive(e.right, transform_fn)?;
+            let left = std::mem::replace(&mut e.left, Expression::Null(Null));
+            e.left = transform_recursive(left, transform_fn)?;
+            let right = std::mem::replace(&mut e.right, Expression::Null(Null));
+            e.right = transform_recursive(right, transform_fn)?;
             if let Some(mut with) = e.with.take() {
                 with.ctes = with
                     .ctes
@@ -19884,15 +19890,31 @@ impl Dialect {
                                         Ok(Expression::Function(Box::new(new_f)))
                                     }
                                     DialectType::DuckDB => {
-                                        // TRUNC(x) - drop decimals
-                                        let this = f.args.into_iter().next().unwrap_or(
-                                            Expression::Literal(Box::new(Literal::Number(
-                                                "0".to_string(),
-                                            ))),
-                                        );
+                                        // DuckDB supports TRUNC(x, decimals) — preserve both args
+                                        let mut args = f.args;
+                                        // Snowflake fractions_supported: wrap non-INT decimals in CAST(... AS INT)
+                                        if args.len() == 2 && matches!(source, DialectType::Snowflake) {
+                                            let decimals = args.remove(1);
+                                            let is_int = matches!(&decimals, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)))
+                                                || matches!(&decimals, Expression::Cast(c) if matches!(c.to, DataType::Int { .. } | DataType::SmallInt { .. } | DataType::BigInt { .. } | DataType::TinyInt { .. }));
+                                            let wrapped = if !is_int {
+                                                Expression::Cast(Box::new(crate::expressions::Cast {
+                                                    this: decimals,
+                                                    to: DataType::Int { length: None, integer_spelling: false },
+                                                    double_colon_syntax: false,
+                                                    trailing_comments: Vec::new(),
+                                                    format: None,
+                                                    default: None,
+                                                    inferred_type: None,
+                                                }))
+                                            } else {
+                                                decimals
+                                            };
+                                            args.push(wrapped);
+                                        }
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "TRUNC".to_string(),
-                                            vec![this],
+                                            args,
                                         ))))
                                     }
                                     DialectType::ClickHouse => {

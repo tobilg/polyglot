@@ -13,7 +13,7 @@ use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
     AggFunc, Alias, BinaryOp, Case, Cast, CeilFunc, Column, DataType, Expression, Function,
-    FunctionParameter, Identifier, Interval, IntervalUnit, IntervalUnitSpec, IsNull, JSONPath,
+    Identifier, Interval, IntervalUnit, IntervalUnitSpec, IsNull, JSONPath,
     JSONPathKey, JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Null, Paren, Struct,
     Subquery, SubstringFunc, UnaryFunc, UnaryOp, VarArgFunc, WindowFunction,
 };
@@ -1288,32 +1288,31 @@ impl DialectImpl for DuckDBDialect {
             // split it into INTERVAL 'value' UNIT
             Expression::Interval(interval) => self.transform_interval(*interval),
 
-            // DuckDB CREATE FUNCTION (macro syntax): strip param types, suppress RETURNS
+            // DuckDB CREATE FUNCTION (macro syntax): normalize param types
             Expression::CreateFunction(mut cf) => {
-                // Strip parameter data types (DuckDB macros don't use types)
+                // Apply DuckDB type normalization to function parameters (e.g., FLOAT -> REAL)
                 cf.parameters = cf
                     .parameters
                     .into_iter()
-                    .map(|p| FunctionParameter {
-                        name: p.name,
-                        data_type: DataType::Custom {
-                            name: String::new(),
-                        },
-                        mode: None,
-                        default: p.default,
-                        mode_text: None,
+                    .map(|mut p| {
+                        if let Ok(Expression::DataType(new_dt)) =
+                            self.transform_data_type(p.data_type.clone())
+                        {
+                            p.data_type = new_dt;
+                        }
+                        p
                     })
                     .collect();
 
-                // For DuckDB macro syntax: suppress RETURNS output
-                // Use a marker in returns_table_body to signal TABLE keyword in body
-                let was_table_return = cf.returns_table_body.is_some()
-                    || matches!(&cf.return_type, Some(DataType::Custom { ref name }) if name == "TABLE");
-                cf.return_type = None;
-                if was_table_return {
-                    // Use empty marker to signal TABLE return without outputting RETURNS
-                    cf.returns_table_body = Some(String::new());
-                } else {
+                // Normalize TABLE return: if returns_table_body is set (from other dialects
+                // like TSQL/Databricks), convert to return_type = Custom { "TABLE" } marker.
+                // This is dialect-agnostic and the generator handles DuckDB vs non-DuckDB output.
+                if cf.returns_table_body.is_some()
+                    && !matches!(&cf.return_type, Some(DataType::Custom { ref name }) if name == "TABLE")
+                {
+                    cf.return_type = Some(DataType::Custom {
+                        name: "TABLE".to_string(),
+                    });
                     cf.returns_table_body = None;
                 }
 
@@ -2702,6 +2701,30 @@ impl DuckDBDialect {
                 "JSON".to_string(),
                 f.args,
             )))),
+            // TRY_PARSE_JSON(x) -> CASE WHEN JSON_VALID(x) THEN CAST(x AS JSON) ELSE NULL END
+            "TRY_PARSE_JSON" if f.args.len() == 1 => {
+                let x = f.args.into_iter().next().unwrap();
+                let json_valid = Expression::Function(Box::new(Function::new(
+                    "JSON_VALID".to_string(),
+                    vec![x.clone()],
+                )));
+                let cast_json = Expression::Cast(Box::new(crate::expressions::Cast {
+                    this: x,
+                    to: DataType::Json,
+                    double_colon_syntax: false,
+                    trailing_comments: Vec::new(),
+                    format: None,
+                    default: None,
+                    inferred_type: None,
+                }));
+                Ok(Expression::Case(Box::new(crate::expressions::Case {
+                    operand: None,
+                    whens: vec![(json_valid, cast_json)],
+                    else_: Some(Expression::Null(crate::expressions::Null)),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                })))
+            }
             "OBJECT_CONSTRUCT_KEEP_NULL" => {
                 // OBJECT_CONSTRUCT_KEEP_NULL -> JSON_OBJECT (preserves NULLs)
                 Ok(Expression::Function(Box::new(Function::new(

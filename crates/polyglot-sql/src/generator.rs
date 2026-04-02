@@ -6277,13 +6277,38 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_union(&mut self, union: &Union) -> Result<()> {
-        // WITH clause
-        if let Some(with) = &union.with {
+    fn generate_union(&mut self, outermost: &Union) -> Result<()> {
+        // Collect the left-recursive chain of Union nodes iteratively.
+        // This avoids stack overflow for deeply nested chains like
+        // SELECT 1 UNION ALL SELECT 2 UNION ALL ... UNION ALL SELECT N
+        // where the parser builds: Union(Union(Union(A, B), C), D)
+        let mut chain: Vec<&Union> = vec![outermost];
+        let mut leftmost: &Expression = &outermost.left;
+        while let Expression::Union(inner) = leftmost {
+            chain.push(inner);
+            leftmost = &inner.left;
+        }
+        // chain[0] = outermost, chain[last] = innermost
+        // leftmost = innermost.left (a non-Union expression, typically Select)
+
+        // WITH clause (only on outermost)
+        if let Some(with) = &outermost.with {
             self.generate_with(with)?;
             self.write_space();
         }
-        self.generate_expression(&union.left)?;
+
+        // Generate the base (leftmost) expression
+        self.generate_expression(leftmost)?;
+
+        // Generate each union step from innermost to outermost
+        for union in chain.iter().rev() {
+            self.generate_union_step(union)?;
+        }
+        Ok(())
+    }
+
+    /// Generate a single UNION step: keyword, right expression, and trailing modifiers.
+    fn generate_union_step(&mut self, union: &Union) -> Result<()> {
         if self.config.pretty {
             self.write_newline();
             self.write_indent();
@@ -6411,13 +6436,30 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_intersect(&mut self, intersect: &Intersect) -> Result<()> {
-        // WITH clause
-        if let Some(with) = &intersect.with {
+    fn generate_intersect(&mut self, outermost: &Intersect) -> Result<()> {
+        // Collect the left-recursive chain iteratively to avoid stack overflow
+        let mut chain: Vec<&Intersect> = vec![outermost];
+        let mut leftmost: &Expression = &outermost.left;
+        while let Expression::Intersect(inner) = leftmost {
+            chain.push(inner);
+            leftmost = &inner.left;
+        }
+
+        if let Some(with) = &outermost.with {
             self.generate_with(with)?;
             self.write_space();
         }
-        self.generate_expression(&intersect.left)?;
+
+        self.generate_expression(leftmost)?;
+
+        for intersect in chain.iter().rev() {
+            self.generate_intersect_step(intersect)?;
+        }
+        Ok(())
+    }
+
+    /// Generate a single INTERSECT step: keyword, right expression, and trailing modifiers.
+    fn generate_intersect_step(&mut self, intersect: &Intersect) -> Result<()> {
         if self.config.pretty {
             self.write_newline();
             self.write_indent();
@@ -6545,16 +6587,32 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_except(&mut self, except: &Except) -> Result<()> {
-        use crate::dialects::DialectType;
+    fn generate_except(&mut self, outermost: &Except) -> Result<()> {
+        // Collect the left-recursive chain iteratively to avoid stack overflow
+        let mut chain: Vec<&Except> = vec![outermost];
+        let mut leftmost: &Expression = &outermost.left;
+        while let Expression::Except(inner) = leftmost {
+            chain.push(inner);
+            leftmost = &inner.left;
+        }
 
-        // WITH clause
-        if let Some(with) = &except.with {
+        if let Some(with) = &outermost.with {
             self.generate_with(with)?;
             self.write_space();
         }
 
-        self.generate_expression(&except.left)?;
+        self.generate_expression(leftmost)?;
+
+        for except in chain.iter().rev() {
+            self.generate_except_step(except)?;
+        }
+        Ok(())
+    }
+
+    /// Generate a single EXCEPT step: keyword, right expression, and trailing modifiers.
+    fn generate_except_step(&mut self, except: &Except) -> Result<()> {
+        use crate::dialects::DialectType;
+
         if self.config.pretty {
             self.write_newline();
             self.write_indent();
@@ -12257,14 +12315,22 @@ impl Generator {
                     self.write(rtb);
                 }
             } else if let Some(return_type) = &cf.return_type {
-                if use_multiline {
-                    self.write_newline();
-                } else {
+                // DuckDB: skip all RETURNS (DuckDB macros don't use RETURNS clause)
+                if !is_duckdb {
+                    let is_table_return = matches!(return_type, crate::expressions::DataType::Custom { ref name } if name.eq_ignore_ascii_case("TABLE"));
+                    if use_multiline {
+                        self.write_newline();
+                    } else {
+                        self.write_space();
+                    }
+                    self.write_keyword("RETURNS");
                     self.write_space();
+                    if is_table_return {
+                        self.write_keyword("TABLE");
+                    } else {
+                        self.generate_data_type(return_type)?;
+                    }
                 }
-                self.write_keyword("RETURNS");
-                self.write_space();
-                self.generate_data_type(return_type)?;
             }
         }
 
@@ -12560,8 +12626,10 @@ impl Generator {
                         // DuckDB macro syntax: AS [TABLE] expression (no RETURN keyword)
                         self.write_keyword("AS");
                         self.write_space();
-                        // Empty returns_table_body signals TABLE return
-                        if cf.returns_table_body.is_some() {
+                        // Check both returns_table_body marker and return_type = Custom "TABLE"
+                        let is_table_return = cf.returns_table_body.is_some()
+                            || matches!(&cf.return_type, Some(crate::expressions::DataType::Custom { ref name }) if name.eq_ignore_ascii_case("TABLE"));
+                        if is_table_return {
                             self.write_keyword("TABLE");
                             self.write_space();
                         }

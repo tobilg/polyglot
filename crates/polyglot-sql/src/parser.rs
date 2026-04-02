@@ -1364,6 +1364,15 @@ impl Parser {
 
     /// Parse a SELECT statement
     fn parse_select(&mut self) -> Result<Expression> {
+        let result = self.parse_select_body()?;
+        // Check for set operations (UNION, INTERSECT, EXCEPT)
+        self.parse_set_operation(result)
+    }
+
+    /// Parse a SELECT statement body without consuming trailing set operations.
+    /// Used by `parse_select_or_paren_select` to avoid mutual recursion with
+    /// `parse_set_operation`, which handles set-op chaining iteratively.
+    fn parse_select_body(&mut self) -> Result<Expression> {
         // Capture the SELECT token to get its comments
         let select_token = self.expect(TokenType::Select)?;
         let leading_comments = select_token.comments;
@@ -2172,9 +2181,7 @@ impl Parser {
             exclude,
         };
 
-        // Check for set operations (UNION, INTERSECT, EXCEPT)
-        let result = Expression::Select(Box::new(select));
-        self.parse_set_operation(result)
+        Ok(Expression::Select(Box::new(select)))
     }
 
     /// Parse a WITH clause (CTEs)
@@ -8851,169 +8858,164 @@ impl Parser {
 
     /// Parse set operations (UNION, INTERSECT, EXCEPT)
     fn parse_set_operation(&mut self, left: Expression) -> Result<Expression> {
-        // Check for BigQuery set operation modifiers BEFORE the set operation keyword
-        // Pattern: SELECT ... [INNER|LEFT|RIGHT|FULL] UNION/INTERSECT/EXCEPT ...
-        let (side, kind) = self.parse_set_operation_side_kind();
+        let mut result = left;
+        let mut found_set_op = false;
 
-        // Capture leading comments from the set operation keyword token (e.g., /*x*/ before UNION).
-        // These comments appeared on a new line between the left SELECT and the set operation keyword.
-        let set_op_leading_comments = if self.check(TokenType::Union)
-            || self.check(TokenType::Intersect)
-            || self.check(TokenType::Except)
-        {
-            self.current_leading_comments().to_vec()
-        } else {
-            Vec::new()
-        };
+        loop {
+            // Check for BigQuery set operation modifiers BEFORE the set operation keyword
+            // Pattern: SELECT ... [INNER|LEFT|RIGHT|FULL] UNION/INTERSECT/EXCEPT ...
+            let (side, kind) = self.parse_set_operation_side_kind();
 
-        // Wrap left expression with comments if needed
-        let left = if !set_op_leading_comments.is_empty() {
-            Expression::Annotated(Box::new(Annotated {
-                this: left,
-                trailing_comments: set_op_leading_comments,
-            }))
-        } else {
-            left
-        };
-
-        if self.match_token(TokenType::Union) {
-            let all = self.match_token(TokenType::All);
-            let distinct = if !all {
-                self.match_token(TokenType::Distinct)
+            // Capture leading comments from the set operation keyword token (e.g., /*x*/ before UNION).
+            // These comments appeared on a new line between the left SELECT and the set operation keyword.
+            let set_op_leading_comments = if self.check(TokenType::Union)
+                || self.check(TokenType::Intersect)
+                || self.check(TokenType::Except)
+            {
+                self.current_leading_comments().to_vec()
             } else {
-                false
+                Vec::new()
             };
 
-            // Parse STRICT CORRESPONDING, CORRESPONDING, BY NAME modifiers
-            let (by_name, strict, corresponding, on_columns) =
-                self.parse_set_operation_corresponding()?;
-
-            // If CORRESPONDING (without STRICT) is present and no explicit side/kind, default kind to INNER
-            // STRICT CORRESPONDING does NOT set kind to INNER
-            let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
-                Some("INNER".to_string())
+            // Wrap left expression with comments if needed
+            let left = if !set_op_leading_comments.is_empty() {
+                Expression::Annotated(Box::new(Annotated {
+                    this: result,
+                    trailing_comments: set_op_leading_comments,
+                }))
             } else {
-                kind
+                result
             };
 
-            let right = self.parse_select_or_paren_select()?;
-            // Check for chained set operations first
-            let mut result = Expression::Union(Box::new(Union {
-                left,
-                right,
-                all,
-                distinct,
-                with: None,
-                order_by: None,
-                limit: None,
-                offset: None,
-                distribute_by: None,
-                sort_by: None,
-                cluster_by: None,
-                by_name,
-                side,
-                kind,
-                corresponding,
-                strict,
-                on_columns,
-            }));
-            result = self.parse_set_operation(result)?;
-            // Parse ORDER BY, LIMIT, OFFSET for the outermost set operation
-            self.parse_set_operation_modifiers(&mut result)?;
-            Ok(result)
-        } else if self.match_token(TokenType::Intersect) {
-            let all = self.match_token(TokenType::All);
-            let distinct = if !all {
-                self.match_token(TokenType::Distinct)
+            if self.match_token(TokenType::Union) {
+                let all = self.match_token(TokenType::All);
+                let distinct = if !all {
+                    self.match_token(TokenType::Distinct)
+                } else {
+                    false
+                };
+
+                let (by_name, strict, corresponding, on_columns) =
+                    self.parse_set_operation_corresponding()?;
+
+                let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
+                    Some("INNER".to_string())
+                } else {
+                    kind
+                };
+
+                let right = self.parse_select_or_paren_select()?;
+                result = Expression::Union(Box::new(Union {
+                    left,
+                    right,
+                    all,
+                    distinct,
+                    with: None,
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    by_name,
+                    side,
+                    kind,
+                    corresponding,
+                    strict,
+                    on_columns,
+                }));
+                found_set_op = true;
+            } else if self.match_token(TokenType::Intersect) {
+                let all = self.match_token(TokenType::All);
+                let distinct = if !all {
+                    self.match_token(TokenType::Distinct)
+                } else {
+                    false
+                };
+
+                let (by_name, strict, corresponding, on_columns) =
+                    self.parse_set_operation_corresponding()?;
+
+                let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
+                    Some("INNER".to_string())
+                } else {
+                    kind
+                };
+
+                let right = self.parse_select_or_paren_select()?;
+                result = Expression::Intersect(Box::new(Intersect {
+                    left,
+                    right,
+                    all,
+                    distinct,
+                    with: None,
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    by_name,
+                    side,
+                    kind,
+                    corresponding,
+                    strict,
+                    on_columns,
+                }));
+                found_set_op = true;
+            } else if self.match_token(TokenType::Except) {
+                let all = self.match_token(TokenType::All);
+                let distinct = if !all {
+                    self.match_token(TokenType::Distinct)
+                } else {
+                    false
+                };
+
+                let (by_name, strict, corresponding, on_columns) =
+                    self.parse_set_operation_corresponding()?;
+
+                let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
+                    Some("INNER".to_string())
+                } else {
+                    kind
+                };
+
+                let right = self.parse_select_or_paren_select()?;
+                result = Expression::Except(Box::new(Except {
+                    left,
+                    right,
+                    all,
+                    distinct,
+                    with: None,
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    by_name,
+                    side,
+                    kind,
+                    corresponding,
+                    strict,
+                    on_columns,
+                }));
+                found_set_op = true;
+            } else if side.is_some() || kind.is_some() {
+                return Err(self.parse_error(
+                    "Expected UNION, INTERSECT, or EXCEPT after set operation modifier",
+                ));
             } else {
-                false
-            };
-
-            // Parse STRICT CORRESPONDING, CORRESPONDING, BY NAME modifiers
-            let (by_name, strict, corresponding, on_columns) =
-                self.parse_set_operation_corresponding()?;
-
-            // If CORRESPONDING (without STRICT) is present and no explicit side/kind, default kind to INNER
-            // STRICT CORRESPONDING does NOT set kind to INNER
-            let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
-                Some("INNER".to_string())
-            } else {
-                kind
-            };
-
-            let right = self.parse_select_or_paren_select()?;
-            let mut result = Expression::Intersect(Box::new(Intersect {
-                left,
-                right,
-                all,
-                distinct,
-                with: None,
-                order_by: None,
-                limit: None,
-                offset: None,
-                distribute_by: None,
-                sort_by: None,
-                cluster_by: None,
-                by_name,
-                side,
-                kind,
-                corresponding,
-                strict,
-                on_columns,
-            }));
-            result = self.parse_set_operation(result)?;
-            self.parse_set_operation_modifiers(&mut result)?;
-            Ok(result)
-        } else if self.match_token(TokenType::Except) {
-            let all = self.match_token(TokenType::All);
-            let distinct = if !all {
-                self.match_token(TokenType::Distinct)
-            } else {
-                false
-            };
-
-            // Parse STRICT CORRESPONDING, CORRESPONDING, BY NAME modifiers
-            let (by_name, strict, corresponding, on_columns) =
-                self.parse_set_operation_corresponding()?;
-
-            // If CORRESPONDING (without STRICT) is present and no explicit side/kind, default kind to INNER
-            // STRICT CORRESPONDING does NOT set kind to INNER
-            let kind = if corresponding && !strict && side.is_none() && kind.is_none() {
-                Some("INNER".to_string())
-            } else {
-                kind
-            };
-
-            let right = self.parse_select_or_paren_select()?;
-            let mut result = Expression::Except(Box::new(Except {
-                left,
-                right,
-                all,
-                distinct,
-                with: None,
-                order_by: None,
-                limit: None,
-                offset: None,
-                distribute_by: None,
-                sort_by: None,
-                cluster_by: None,
-                by_name,
-                side,
-                kind,
-                corresponding,
-                strict,
-                on_columns,
-            }));
-            result = self.parse_set_operation(result)?;
-            self.parse_set_operation_modifiers(&mut result)?;
-            Ok(result)
-        } else if side.is_some() || kind.is_some() {
-            // We parsed side/kind but didn't find a set operation - this is an error
-            Err(self
-                .parse_error("Expected UNION, INTERSECT, or EXCEPT after set operation modifier"))
-        } else {
-            Ok(left)
+                result = left;
+                break;
+            }
         }
+
+        // Parse ORDER BY, LIMIT, OFFSET for the outermost set operation
+        if found_set_op {
+            self.parse_set_operation_modifiers(&mut result)?;
+        }
+        Ok(result)
     }
 
     /// Parse BigQuery set operation side (LEFT, RIGHT, FULL) and kind (INNER)
@@ -9255,7 +9257,10 @@ impl Parser {
             // WITH CTE as right-hand side of UNION/INTERSECT/EXCEPT
             self.parse_statement()
         } else {
-            self.parse_select()
+            // Use parse_select_body (not parse_select) to avoid mutual recursion:
+            // parse_select calls parse_set_operation, which calls back here.
+            // The caller (parse_set_operation's loop) handles set-op chaining.
+            self.parse_select_body()
         }
     }
 
@@ -23594,6 +23599,16 @@ impl Parser {
                         block_content.push(' ');
                     }
                     body = Some(FunctionBody::Block(block_content.trim().to_string()));
+                } else if self.check(TokenType::Table) {
+                    // DuckDB: AS TABLE SELECT ... (table macro)
+                    self.advance(); // consume TABLE
+                    if return_type.is_none() {
+                        return_type = Some(DataType::Custom {
+                            name: "TABLE".to_string(),
+                        });
+                    }
+                    let stmt = self.parse_statement()?;
+                    body = Some(FunctionBody::Return(stmt));
                 } else {
                     // Expression-based body
                     let expr = self.parse_expression()?;

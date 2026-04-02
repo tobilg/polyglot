@@ -6,7 +6,7 @@
 //! Ported from sqlglot's optimizer/normalize_identifiers.py
 
 use crate::dialects::DialectType;
-use crate::expressions::{Column, Expression, Identifier};
+use crate::expressions::{Column, Expression, Identifier, Null};
 
 /// Strategy for normalizing identifiers based on dialect rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,23 +314,26 @@ fn normalize_expression(expression: Expression, strategy: NormalizationStrategy)
             Expression::Subquery(Box::new(subquery))
         }
         // Set operations
-        Expression::Union(union) => {
-            let mut union = *union;
-            union.left = normalize_expression(union.left, strategy);
-            union.right = normalize_expression(union.right, strategy);
-            Expression::Union(Box::new(union))
+        Expression::Union(mut union) => {
+            let left = std::mem::replace(&mut union.left, Expression::Null(Null));
+            union.left = normalize_expression(left, strategy);
+            let right = std::mem::replace(&mut union.right, Expression::Null(Null));
+            union.right = normalize_expression(right, strategy);
+            Expression::Union(union)
         }
-        Expression::Intersect(intersect) => {
-            let mut intersect = *intersect;
-            intersect.left = normalize_expression(intersect.left, strategy);
-            intersect.right = normalize_expression(intersect.right, strategy);
-            Expression::Intersect(Box::new(intersect))
+        Expression::Intersect(mut intersect) => {
+            let left = std::mem::replace(&mut intersect.left, Expression::Null(Null));
+            intersect.left = normalize_expression(left, strategy);
+            let right = std::mem::replace(&mut intersect.right, Expression::Null(Null));
+            intersect.right = normalize_expression(right, strategy);
+            Expression::Intersect(intersect)
         }
-        Expression::Except(except) => {
-            let mut except = *except;
-            except.left = normalize_expression(except.left, strategy);
-            except.right = normalize_expression(except.right, strategy);
-            Expression::Except(Box::new(except))
+        Expression::Except(mut except) => {
+            let left = std::mem::replace(&mut except.left, Expression::Null(Null));
+            except.left = normalize_expression(left, strategy);
+            let right = std::mem::replace(&mut except.right, Expression::Null(Null));
+            except.right = normalize_expression(right, strategy);
+            Expression::Except(except)
         }
         // Leaf nodes and others - return unchanged
         _ => expression,
