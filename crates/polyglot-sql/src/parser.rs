@@ -872,6 +872,11 @@ impl Parser {
                     self.skip(); // consume EXECUTE
                     self.parse_command()?
                         .ok_or_else(|| self.parse_error("Failed to parse EXECUTE statement"))
+                } else if self.peek_nth(1).map(|t| t.text.eq_ignore_ascii_case("IMMEDIATE")) == Some(true) {
+                    // EXECUTE IMMEDIATE — Snowflake/BigQuery dynamic SQL, treat as raw command
+                    self.skip(); // consume EXECUTE
+                    self.parse_command()?
+                        .ok_or_else(|| self.parse_error("Failed to parse EXECUTE IMMEDIATE statement"))
                 } else {
                     self.parse_execute()
                 }
@@ -9418,7 +9423,8 @@ impl Parser {
         }
 
         if overwrite {
-            // OVERWRITE is typically followed by TABLE
+            // OVERWRITE can be followed by INTO (Snowflake) or TABLE (Hive/Spark)
+            self.match_token(TokenType::Into);
             self.match_token(TokenType::Table);
         } else {
             self.expect(TokenType::Into)?;
@@ -17534,6 +17540,60 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 });
             }
+            // ADD SEARCH OPTIMIZATION [ON method(columns), ...] — Snowflake
+            if self.check_identifier("SEARCH")
+                && self
+                    .peek_nth(1)
+                    .map(|t| t.text.eq_ignore_ascii_case("OPTIMIZATION"))
+                    == Some(true)
+            {
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("ADD".to_string(), TokenType::Add)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 {
+                        break;
+                    }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen {
+                        paren_depth += 1;
+                    }
+                    if token.token_type == TokenType::RParen {
+                        paren_depth -= 1;
+                    }
+                    tokens.push((token.text.clone(), token.token_type));
+                }
+                return Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                });
+            }
+            // ADD ROW ACCESS POLICY name ON (columns) — Snowflake
+            if self.check_identifier("ROW")
+                && self
+                    .peek_nth(1)
+                    .map(|t| t.text.eq_ignore_ascii_case("ACCESS"))
+                    == Some(true)
+            {
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("ADD".to_string(), TokenType::Add)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 {
+                        break;
+                    }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen {
+                        paren_depth += 1;
+                    }
+                    if token.token_type == TokenType::RParen {
+                        paren_depth -= 1;
+                    }
+                    tokens.push((token.text.clone(), token.token_type));
+                }
+                return Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                });
+            }
             // ADD CONSTRAINT or ADD COLUMN or ADD INDEX
             if self.match_token(TokenType::Constraint) {
                 // ADD CONSTRAINT name ...
@@ -17769,6 +17829,67 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 });
             }
+            // DROP SEARCH OPTIMIZATION [ON method(columns), ...] — Snowflake
+            if self.check_identifier("SEARCH")
+                && self
+                    .peek_nth(1)
+                    .map(|t| t.text.eq_ignore_ascii_case("OPTIMIZATION"))
+                    == Some(true)
+            {
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("DROP".to_string(), TokenType::Drop)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 {
+                        break;
+                    }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen {
+                        paren_depth += 1;
+                    }
+                    if token.token_type == TokenType::RParen {
+                        paren_depth -= 1;
+                    }
+                    tokens.push((token.text.clone(), token.token_type));
+                }
+                return Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                });
+            }
+
+            // DROP [ALL] ROW ACCESS POLICY/POLICIES — Snowflake
+            if (self.check_identifier("ROW")
+                && self
+                    .peek_nth(1)
+                    .map(|t| t.text.eq_ignore_ascii_case("ACCESS"))
+                    == Some(true))
+                || (self.check_identifier("ALL")
+                    && self
+                        .peek_nth(1)
+                        .map(|t| t.text.eq_ignore_ascii_case("ROW"))
+                        == Some(true))
+            {
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("DROP".to_string(), TokenType::Drop)];
+                let mut paren_depth = 0i32;
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) && paren_depth == 0 {
+                        break;
+                    }
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen {
+                        paren_depth += 1;
+                    }
+                    if token.token_type == TokenType::RParen {
+                        paren_depth -= 1;
+                    }
+                    tokens.push((token.text.clone(), token.token_type));
+                }
+                return Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                });
+            }
+
             // Handle IF EXISTS before determining what to drop
             let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
 
@@ -18106,30 +18227,13 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 });
             }
-            // MODIFY COLUMN (MySQL syntax for altering column type)
+            // MODIFY COLUMN (MySQL/Snowflake syntax — routes through same action parser as ALTER COLUMN)
             self.match_token(TokenType::Column); // optional COLUMN keyword
             let name = Identifier::new(self.expect_identifier()?);
-            // Parse the data type directly (MySQL MODIFY COLUMN col TYPE)
-            let data_type = self.parse_data_type()?;
-            // Parse optional COLLATE clause
-            let collate = if self.match_token(TokenType::Collate) {
-                if self.check(TokenType::String) {
-                    Some(self.advance().text)
-                } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    Some(self.advance().text)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            let action = self.parse_alter_column_action()?;
             Ok(AlterTableAction::AlterColumn {
                 name,
-                action: AlterColumnAction::SetDataType {
-                    data_type,
-                    using: None,
-                    collate,
-                },
+                action,
                 use_modify_keyword: true,
             })
         } else if self.match_identifier("CHANGE") {
@@ -18352,6 +18456,19 @@ impl Parser {
                 // Redshift: ALTER TABLE t SET FILE FORMAT AVRO
                 let format = self.expect_identifier_or_keyword()?;
                 Ok(AlterTableAction::SetFileFormat { format })
+            } else if self.peek_nth(1).map(|t| t.token_type) != Some(TokenType::Eq) {
+                // SET <multi-word clause> (e.g., SET PROJECTION POLICY name) — consume as Raw
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("SET".to_string(), TokenType::Set)];
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) {
+                        break;
+                    }
+                    tokens.push((self.advance().text.clone(), TokenType::Var));
+                }
+                Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                })
             } else {
                 // Snowflake: SET property=value, ...
                 let mut properties = Vec::new();
@@ -18383,6 +18500,26 @@ impl Parser {
                     }
                 }
                 Ok(AlterTableAction::UnsetTag { names })
+            } else if self.peek_nth(1).map(|t| {
+                t.token_type != TokenType::Comma
+                    && t.token_type != TokenType::Semicolon
+                    && t.token_type != TokenType::Eof
+            }) == Some(true)
+                && !self.is_at_end()
+                && self.peek_nth(1).map(|t| t.token_type != TokenType::Eq) == Some(true)
+            {
+                // UNSET <multi-word clause> (e.g., UNSET PROJECTION POLICY) — consume as Raw
+                let mut tokens: Vec<(String, TokenType)> =
+                    vec![("UNSET".to_string(), TokenType::Var)];
+                while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                    if self.check(TokenType::Comma) {
+                        break;
+                    }
+                    tokens.push((self.advance().text.clone(), TokenType::Var));
+                }
+                Ok(AlterTableAction::Raw {
+                    sql: self.join_command_tokens(tokens),
+                })
             } else {
                 // UNSET property1, property2
                 let mut properties = Vec::new();
@@ -18662,9 +18799,14 @@ impl Parser {
                 // TYPE can be a keyword token or identifier
                 let _ = self.match_token(TokenType::Type) || self.match_identifier("TYPE");
                 let data_type = self.parse_data_type()?;
-                // Optional COLLATE
+                // Optional COLLATE (can be identifier or string literal like 'binary')
                 let collate = if self.match_token(TokenType::Collate) {
-                    Some(self.expect_identifier_or_keyword()?)
+                    if self.check(TokenType::String) {
+                        let text = self.advance().text.clone();
+                        Some(format!("'{}'", text))
+                    } else {
+                        Some(self.expect_identifier_or_keyword()?)
+                    }
                 } else {
                     None
                 };
@@ -18704,9 +18846,13 @@ impl Parser {
         {
             // TYPE data_type or just data_type (PostgreSQL/Redshift: ALTER COLUMN col TYPE datatype)
             let data_type = self.parse_data_type()?;
-            // Optional COLLATE
+            // Optional COLLATE (can be identifier or string literal like 'binary')
             let collate = if self.match_token(TokenType::Collate) {
-                Some(self.expect_identifier_or_keyword()?)
+                if self.check(TokenType::String) {
+                    Some(self.advance().text.clone())
+                } else {
+                    Some(self.expect_identifier_or_keyword()?)
+                }
             } else {
                 None
             };
@@ -19781,6 +19927,10 @@ impl Parser {
             Some("DATABASE".to_string())
         } else if self.match_identifier("SCHEMA") {
             Some("SCHEMA".to_string())
+        } else if self.match_token(TokenType::Procedure) {
+            Some("PROCEDURE".to_string())
+        } else if self.match_token(TokenType::Function) {
+            Some("FUNCTION".to_string())
         } else if self.match_token(TokenType::Input) {
             Some("INPUT".to_string())
         } else if self.match_token(TokenType::Output) {
@@ -19863,6 +20013,45 @@ impl Parser {
             Expression::Table(Box::new(table))
         };
 
+        // Parse optional parenthesized type signature for PROCEDURE/FUNCTION
+        // e.g., DESCRIBE PROCEDURE get_employees(INT, VARCHAR)
+        let params = if matches!(kind.as_deref(), Some("PROCEDURE") | Some("FUNCTION"))
+            && self.match_token(TokenType::LParen)
+        {
+            let mut type_args = Vec::new();
+            if !self.check(TokenType::RParen) {
+                loop {
+                    // Collect tokens for this type until comma or closing paren
+                    let mut parts = Vec::new();
+                    let mut paren_depth = 0usize;
+                    while !self.is_at_end() {
+                        if self.check(TokenType::LParen) {
+                            paren_depth += 1;
+                            parts.push(self.advance().text.clone());
+                        } else if self.check(TokenType::RParen) {
+                            if paren_depth == 0 {
+                                break;
+                            }
+                            paren_depth -= 1;
+                            parts.push(self.advance().text.clone());
+                        } else if self.check(TokenType::Comma) && paren_depth == 0 {
+                            break;
+                        } else {
+                            parts.push(self.advance().text.clone());
+                        }
+                    }
+                    type_args.push(parts.join(" ").trim().to_uppercase());
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(TokenType::RParen)?;
+            type_args
+        } else {
+            Vec::new()
+        };
+
         // Parse optional PARTITION clause (Spark/Hive)
         let partition = if self.match_token(TokenType::Partition) {
             // PARTITION(key = value, ...)
@@ -19942,6 +20131,7 @@ impl Parser {
             partition,
             leading_comments,
             as_json,
+            params,
         })))
     }
 
@@ -38933,6 +39123,62 @@ impl Parser {
                     inner: Box::new(inner),
                 }
             }
+            // VECTOR(type, dimension) - Snowflake vector type
+            // VECTOR(dimension, element_type_alias) or VECTOR(dimension) - SingleStore vector type
+            "VECTOR" => {
+                if self.match_token(TokenType::LParen) {
+                    if self.check(TokenType::Number) {
+                        // SingleStore format: VECTOR(dimension) or VECTOR(dimension, type_alias)
+                        let dimension = self.expect_number()? as u32;
+                        let element_type = if self.match_token(TokenType::Comma) {
+                            let type_alias = self.expect_identifier_or_keyword()?;
+                            let mapped_type = match type_alias.to_ascii_uppercase().as_str() {
+                                "I8" => DataType::TinyInt { length: None },
+                                "I16" => DataType::SmallInt { length: None },
+                                "I32" => DataType::Int {
+                                    length: None,
+                                    integer_spelling: false,
+                                },
+                                "I64" => DataType::BigInt { length: None },
+                                "F32" => DataType::Float {
+                                    precision: None,
+                                    scale: None,
+                                    real_spelling: false,
+                                },
+                                "F64" => DataType::Double {
+                                    precision: None,
+                                    scale: None,
+                                },
+                                _ => DataType::Custom {
+                                    name: type_alias.to_string(),
+                                },
+                            };
+                            Some(Box::new(mapped_type))
+                        } else {
+                            None
+                        };
+                        self.expect(TokenType::RParen)?;
+                        DataType::Vector {
+                            element_type,
+                            dimension: Some(dimension),
+                        }
+                    } else {
+                        // Snowflake format: VECTOR(type, dimension)
+                        let element_type = self.parse_data_type()?;
+                        self.expect(TokenType::Comma)?;
+                        let dimension = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        DataType::Vector {
+                            element_type: Some(Box::new(element_type)),
+                            dimension: Some(dimension),
+                        }
+                    }
+                } else {
+                    DataType::Custom {
+                        name: "VECTOR".to_string(),
+                    }
+                }
+            }
             // For simple types, use convert_name_to_type to get proper DataType variants
             // This ensures VARCHAR becomes DataType::VarChar, not DataType::Custom
             // For user-defined types in generic mode, preserve original case from raw_name
@@ -43575,8 +43821,15 @@ impl Parser {
             return Ok(None);
         }
 
-        // Parse information (any token as var)
-        let information = self.parse_var()?.map(Box::new);
+        // Parse information (any token as var, matching Python's any_token=True)
+        let information = if !self.is_at_end() && !self.check(TokenType::RParen) {
+            let tok = self.advance();
+            Some(Box::new(Expression::Var(Box::new(crate::expressions::Var {
+                this: tok.text.clone(),
+            }))))
+        } else {
+            None
+        };
 
         // Match closing paren
         self.match_token(TokenType::RParen);
@@ -45113,9 +45366,17 @@ impl Parser {
             } else {
                 break;
             }
-            if !self.match_token(TokenType::Comma) {
-                break;
+            // Accept comma (TSQL/BigQuery) or semicolon (Snowflake scripting) as separator
+            if self.match_token(TokenType::Comma)
+                || self.match_token(TokenType::Semicolon)
+            {
+                // Stop if next token is BEGIN (end of DECLARE block)
+                if self.check(TokenType::Begin) {
+                    break;
+                }
+                continue;
             }
+            break;
         }
 
         // If we successfully parsed at least one item, return the Declare

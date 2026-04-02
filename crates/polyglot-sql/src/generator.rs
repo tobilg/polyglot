@@ -13846,6 +13846,18 @@ impl Generator {
         self.write_space();
         self.generate_expression(&d.target)?;
 
+        // Output parenthesized parameter types for PROCEDURE/FUNCTION
+        if !d.params.is_empty() {
+            self.write("(");
+            for (i, param) in d.params.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(param);
+            }
+            self.write(")");
+        }
+
         // Output PARTITION clause if present (the Partition expression outputs its own PARTITION keyword)
         if let Some(ref partition) = d.partition {
             self.write_space();

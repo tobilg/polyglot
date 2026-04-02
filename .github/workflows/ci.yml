@@ -14,19 +14,19 @@ jobs:
   rust-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Extract test fixtures
         run: make extract-all-fixtures
@@ -80,17 +80,17 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Python bindings tests
         run: make test-python
@@ -102,7 +102,7 @@ jobs:
     needs: rust-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -117,9 +117,9 @@ jobs:
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Clean WASM crate artifacts
@@ -155,19 +155,19 @@ jobs:
         run: cd packages/sdk && pnpm typecheck
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wasm
           path: packages/sdk/wasm/
 
       - name: Upload SDK dist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist
           path: packages/sdk/dist/
 
       - name: Upload SDK generated bindings artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdk-generated-bindings
           path: packages/sdk/src/generated/
@@ -181,7 +181,7 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Python wheels (Linux ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
@@ -199,7 +199,7 @@ jobs:
           python -c "import polyglot_sql; assert polyglot_sql.transpile('SELECT 1', read='postgres', write='postgres') == ['SELECT 1']"
 
       - name: Upload wheel artifacts (Linux ${{ matrix.target }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheels-linux-${{ matrix.target }}
           path: dist
@@ -217,7 +217,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Python wheels (macOS ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
@@ -233,7 +233,7 @@ jobs:
           python -c "import polyglot_sql; assert polyglot_sql.parse_one('SELECT 1', dialect='postgres')"
 
       - name: Upload wheel artifacts (macOS ${{ matrix.target }})
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheels-macos-${{ matrix.target }}
           path: dist
@@ -243,7 +243,7 @@ jobs:
     needs: rust-test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Python wheels (Windows x86_64)
         uses: PyO3/maturin-action@v1
@@ -260,7 +260,7 @@ jobs:
           python -c "import polyglot_sql; assert polyglot_sql.dialects()"
 
       - name: Upload wheel artifacts (Windows x86_64)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheels-windows-x86_64
           path: dist
@@ -270,7 +270,7 @@ jobs:
     needs: rust-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build Python source distribution
         uses: PyO3/maturin-action@v1
@@ -279,7 +279,7 @@ jobs:
           args: --out dist --manifest-path crates/polyglot-sql-python/Cargo.toml
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-wheels-sdist
           path: dist
@@ -295,10 +295,10 @@ jobs:
       name: pypi
       url: https://pypi.org/p/polyglot-sql
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download Python distribution artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: python-wheels-*
           merge-multiple: true
@@ -377,7 +377,7 @@ jobs:
     needs: sdk-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -420,26 +420,26 @@ jobs:
     needs: sdk-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - name: Download WASM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm
           path: packages/sdk/wasm/
 
       - name: Download SDK dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: packages/sdk/dist/
@@ -502,7 +502,7 @@ jobs:
             use_cross: false
             target_dir: target
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -551,7 +551,7 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "$dir.zip" -Force
 
       - name: Upload archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ffi-${{ matrix.archive_name }}
           path: polyglot-sql-ffi-${{ matrix.archive_name }}.${{ matrix.archive_ext }}
@@ -564,7 +564,7 @@ jobs:
       contents: write
     steps:
       - name: Download all FFI archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: ffi-*
           path: dist
@@ -594,25 +594,25 @@ jobs:
     needs: [publish-crate, publish-npm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Download WASM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm
           path: packages/sdk/wasm/
 
       - name: Download SDK generated bindings artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sdk-generated-bindings
           path: packages/sdk/src/generated/
@@ -652,15 +652,15 @@ jobs:
     needs: [publish-pypi]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Build Python API documentation
         run: |
@@ -692,25 +692,25 @@ jobs:
     needs: [publish-crate, publish-npm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Download WASM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm
           path: packages/sdk/wasm/
 
       - name: Download SDK dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist
           path: packages/sdk/dist/

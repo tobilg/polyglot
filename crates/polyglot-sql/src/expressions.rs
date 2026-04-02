@@ -9667,6 +9667,9 @@ pub struct Describe {
     /// AS JSON suffix (Databricks)
     #[serde(default)]
     pub as_json: bool,
+    /// Parenthesized parameter types for DESCRIBE PROCEDURE/FUNCTION (e.g., INT, VARCHAR)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
 }
 
 impl Describe {
@@ -9681,6 +9684,7 @@ impl Describe {
             partition: None,
             leading_comments: Vec::new(),
             as_json: false,
+            params: Vec::new(),
         }
     }
 }
