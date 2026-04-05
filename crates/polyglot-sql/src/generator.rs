@@ -17967,6 +17967,7 @@ impl Generator {
                 Some(s.clone())
             }
             Expression::Identifier(id) => Some(id.name.clone()),
+            Expression::Var(v) => Some(v.this.clone()),
             Expression::Column(col) if col.table.is_none() => {
                 // Simple column reference without table prefix, treat as identifier
                 Some(col.name.name.clone())

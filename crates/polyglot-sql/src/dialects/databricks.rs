@@ -931,6 +931,14 @@ impl DatabricksDialect {
                         span: None,
                     });
                 }
+                Expression::Var(v) => {
+                    args[0] = Expression::Identifier(Identifier {
+                        name: v.this.to_uppercase(),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    });
+                }
                 Expression::Column(col) if col.table.is_none() => {
                     // Unqualified column name like "day" should be treated as a unit
                     args[0] = Expression::Identifier(Identifier {

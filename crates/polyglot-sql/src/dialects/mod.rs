@@ -1419,6 +1419,12 @@ where
             Expression::CreateTable(ct)
         }
 
+        // CreateView: recurse into the view body query
+        Expression::CreateView(mut cv) => {
+            cv.query = transform_recursive(cv.query, transform_fn)?;
+            Expression::CreateView(cv)
+        }
+
         // CreateTask: recurse into the task body
         Expression::CreateTask(mut ct) => {
             ct.body = transform_recursive(ct.body, transform_fn)?;
@@ -3989,7 +3995,10 @@ impl Dialect {
             JsonExtractToGetJsonObject, // JSON_EXTRACT/JSON_EXTRACT_SCALAR -> GET_JSON_OBJECT for Hive/Spark
             JsonExtractScalarToGetJsonObject, // JSON_EXTRACT_SCALAR -> GET_JSON_OBJECT for Hive/Spark
             JsonQueryValueConvert, // JsonQuery/JsonValue -> target-specific (ISNULL wrapper for TSQL, GET_JSON_OBJECT for Spark, etc.)
-            JsonLiteralToJsonParse, // JSON 'x' -> JSON_PARSE('x') for Presto, PARSE_JSON for Snowflake
+            JsonLiteralToJsonParse, // JSON 'x' -> JSON_PARSE('x') for Presto, PARSE_JSON for Snowflake; also DuckDB CAST(x AS JSON)
+            DuckDBTryCastJsonToTryJsonParse, // DuckDB TRY_CAST(x AS JSON) -> TRY(JSON_PARSE(x)) for Trino/Presto/Athena
+            DuckDBJsonFuncToJsonParse, // DuckDB json(x) -> JSON_PARSE(x) for Trino/Presto/Athena
+            DuckDBJsonValidToIsJson,   // DuckDB json_valid(x) -> x IS JSON for Trino/Presto/Athena
             ArraySyntaxConvert,     // ARRAY[x] -> ARRAY(x) for Spark, [x] for BigQuery/DuckDB
             AtTimeZoneConvert, // AT TIME ZONE -> AT_TIMEZONE (Presto) / FROM_UTC_TIMESTAMP (Spark)
             DayOfWeekConvert,  // DAY_OF_WEEK -> dialect-specific
@@ -5806,8 +5815,30 @@ impl Dialect {
                 match &e {
                     Expression::Function(f) => {
                         let name = f.name.to_ascii_uppercase();
+                        // DuckDB json(x) is a synonym for CAST(x AS JSON) — parses a string.
+                        // Map to JSON_PARSE(x) for Trino/Presto/Athena to preserve semantics.
+                        if name == "JSON"
+                            && f.args.len() == 1
+                            && matches!(source, DialectType::DuckDB)
+                            && matches!(
+                                target,
+                                DialectType::Presto | DialectType::Trino | DialectType::Athena
+                            )
+                        {
+                            Action::DuckDBJsonFuncToJsonParse
+                        // DuckDB json_valid(x) has no direct Trino equivalent; emit the
+                        // SQL:2016 `x IS JSON` predicate which has matching semantics.
+                        } else if name == "JSON_VALID"
+                            && f.args.len() == 1
+                            && matches!(source, DialectType::DuckDB)
+                            && matches!(
+                                target,
+                                DialectType::Presto | DialectType::Trino | DialectType::Athena
+                            )
+                        {
+                            Action::DuckDBJsonValidToIsJson
                         // DATE_PART: strip quotes from first arg when target is Snowflake (source != Snowflake)
-                        if (name == "DATE_PART" || name == "DATEPART")
+                        } else if (name == "DATE_PART" || name == "DATEPART")
                             && f.args.len() == 2
                             && matches!(target, DialectType::Snowflake)
                             && !matches!(source, DialectType::Snowflake)
@@ -6559,6 +6590,18 @@ impl Dialect {
                             // CAST('x' AS JSON) -> JSON_PARSE('x') for Presto, PARSE_JSON for Snowflake
                             // Only when the input is a string literal (JSON 'value' syntax)
                             Action::JsonLiteralToJsonParse
+                        } else if matches!(&c.to, DataType::Json)
+                            && matches!(source, DialectType::DuckDB)
+                            && matches!(
+                                target,
+                                DialectType::Presto | DialectType::Trino | DialectType::Athena
+                            )
+                        {
+                            // DuckDB's CAST(x AS JSON) parses the string value into a JSON value.
+                            // Trino/Presto/Athena's CAST(x AS JSON) instead wraps the value as a
+                            // JSON string (no parsing) — different semantics. Use JSON_PARSE(x)
+                            // in the target to preserve DuckDB's parse semantics.
+                            Action::JsonLiteralToJsonParse
                         } else if matches!(&c.to, DataType::Json | DataType::JsonB)
                             && matches!(target, DialectType::Spark | DialectType::Databricks)
                         {
@@ -6629,6 +6672,23 @@ impl Dialect {
                             && !matches!(target, DialectType::BigQuery)
                         {
                             Action::BigQueryCastFormat
+                        } else {
+                            Action::None
+                        }
+                    }
+                    Expression::TryCast(ref c) => {
+                        if matches!(&c.to, DataType::Json)
+                            && matches!(source, DialectType::DuckDB)
+                            && matches!(
+                                target,
+                                DialectType::Presto | DialectType::Trino | DialectType::Athena
+                            )
+                        {
+                            // DuckDB's TRY_CAST(x AS JSON) tries to parse x as JSON, returning
+                            // NULL on parse failure. Trino/Presto/Athena's TRY_CAST(x AS JSON)
+                            // wraps the value as a JSON string (no parse). Emit TRY(JSON_PARSE(x))
+                            // to preserve DuckDB's parse-or-null semantics.
+                            Action::DuckDBTryCastJsonToTryJsonParse
                         } else {
                             Action::None
                         }
@@ -17678,6 +17738,7 @@ impl Dialect {
                                 // Get the raw unit text preserving original case
                                 let raw_unit = match &f.args[0] {
                                     Expression::Identifier(id) => id.name.clone(),
+                                    Expression::Var(v) => v.this.clone(),
                                     Expression::Literal(lit)
                                         if matches!(
                                             lit.as_ref(),
@@ -22003,6 +22064,7 @@ impl Dialect {
 
                 Action::JsonLiteralToJsonParse => {
                     // CAST('x' AS JSON) -> JSON_PARSE('x') for Presto, PARSE_JSON for Snowflake
+                    // Also DuckDB CAST(x AS JSON) -> JSON_PARSE(x) for Trino/Presto/Athena
                     if let Expression::Cast(c) = e {
                         let func_name = if matches!(target, DialectType::Snowflake) {
                             "PARSE_JSON"
@@ -22013,6 +22075,52 @@ impl Dialect {
                             func_name.to_string(),
                             vec![c.this],
                         ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::DuckDBTryCastJsonToTryJsonParse => {
+                    // DuckDB TRY_CAST(x AS JSON) -> TRY(JSON_PARSE(x)) for Trino/Presto/Athena
+                    if let Expression::TryCast(c) = e {
+                        let json_parse = Expression::Function(Box::new(Function::new(
+                            "JSON_PARSE".to_string(),
+                            vec![c.this],
+                        )));
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "TRY".to_string(),
+                            vec![json_parse],
+                        ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::DuckDBJsonFuncToJsonParse => {
+                    // DuckDB json(x) -> JSON_PARSE(x) for Trino/Presto/Athena
+                    if let Expression::Function(f) = e {
+                        let args = f.args;
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "JSON_PARSE".to_string(),
+                            args,
+                        ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::DuckDBJsonValidToIsJson => {
+                    // DuckDB json_valid(x) -> x IS JSON (SQL:2016 predicate) for Trino/Presto/Athena
+                    if let Expression::Function(mut f) = e {
+                        let arg = f.args.remove(0);
+                        Ok(Expression::IsJson(Box::new(
+                            crate::expressions::IsJson {
+                                this: arg,
+                                json_type: None,
+                                unique_keys: None,
+                                negated: false,
+                            },
+                        )))
                     } else {
                         Ok(e)
                     }
@@ -30301,6 +30409,7 @@ impl Dialect {
         fn get_unit_str(expr: &Expression) -> String {
             match expr {
                 Expression::Identifier(id) => id.name.to_ascii_uppercase(),
+                Expression::Var(v) => v.this.to_ascii_uppercase(),
                 Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
                     let Literal::String(s) = lit.as_ref() else {
                         unreachable!()
@@ -34724,6 +34833,7 @@ impl Dialect {
         use crate::expressions::Literal;
         match expr {
             Expression::Identifier(id) => id.name.to_ascii_uppercase(),
+            Expression::Var(v) => v.this.to_ascii_uppercase(),
             Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)) => {
                 let Literal::String(s) = lit.as_ref() else {
                     unreachable!()

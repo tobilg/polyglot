@@ -844,6 +844,7 @@ impl PrestoDialect {
             "DATE_PART" if f.args.len() == 2 => {
                 let part_name = match &f.args[0] {
                     Expression::Identifier(id) => Some(id.name.to_uppercase()),
+                    Expression::Var(v) => Some(v.this.to_uppercase()),
                     Expression::Column(c) => Some(c.name.name.to_uppercase()),
                     _ => None,
                 };

@@ -609,6 +609,7 @@ fn hive_expr_to_datetime_field(expr: &Expression) -> Option<DateTimeField> {
             s.to_uppercase()
         }
         Expression::Identifier(id) => id.name.to_uppercase(),
+        Expression::Var(v) => v.this.to_uppercase(),
         Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
         _ => return None,
     };

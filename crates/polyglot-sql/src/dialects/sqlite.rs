@@ -354,6 +354,10 @@ impl SQLiteDialect {
                         s.to_lowercase()
                     }
                     Expression::Identifier(id) => id.name.to_lowercase(),
+                    Expression::Var(v) => v.this.to_lowercase(),
+                    Expression::Column(col) if col.table.is_none() => {
+                        col.name.name.to_lowercase()
+                    }
                     _ => "day".to_string(),
                 };
 

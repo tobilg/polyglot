@@ -2816,6 +2816,7 @@ impl SnowflakeDialect {
                 // Transform the unit to canonical form and convert to string literal
                 let unit_name = match &args[0] {
                     Expression::Identifier(id) => Some(id.name.as_str()),
+                    Expression::Var(v) => Some(v.this.as_str()),
                     Expression::Column(col) if col.table.is_none() => Some(col.name.name.as_str()),
                     _ => None,
                 };

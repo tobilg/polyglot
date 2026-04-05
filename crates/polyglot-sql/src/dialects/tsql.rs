@@ -1203,6 +1203,14 @@ impl TSQLDialect {
                         span: None,
                     });
                 }
+                Expression::Var(v) => {
+                    args[0] = Expression::Identifier(Identifier {
+                        name: v.this.to_uppercase(),
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    });
+                }
                 Expression::Column(col) if col.table.is_none() => {
                     args[0] = Expression::Identifier(Identifier {
                         name: col.name.name.to_uppercase(),

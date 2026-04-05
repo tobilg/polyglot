@@ -31503,9 +31503,11 @@ impl Parser {
                         part = self.convert_date_part_identifier_expr_to_var(part);
                     }
                 }
+                let mut args = vec![part, from_expr];
+                self.normalize_date_part_arg("DATE_PART", &mut args);
                 Ok(Some(Expression::Function(Box::new(Function {
                     name: "DATE_PART".to_string(),
-                    args: vec![part, from_expr],
+                    args,
                     distinct: false,
                     trailing_comments: Vec::new(),
                     use_bracket_syntax: false,
@@ -31538,9 +31540,11 @@ impl Parser {
                             first_arg = self.convert_date_part_identifier_expr_to_var(first_arg);
                         }
                     }
+                    let mut args = vec![first_arg, second_arg, third_arg];
+                    self.normalize_date_part_arg(name, &mut args);
                     Ok(Some(Expression::Function(Box::new(Function {
                         name: name.to_string(),
-                        args: vec![first_arg, second_arg, third_arg],
+                        args,
                         distinct: false,
                         trailing_comments: Vec::new(),
                         use_bracket_syntax: false,
@@ -31599,6 +31603,7 @@ impl Parser {
                         }))));
                     }
                 }
+                self.normalize_date_part_arg(name, &mut args);
                 Ok(Some(Expression::Function(Box::new(Function {
                     name: name.to_string(),
                     args,
@@ -34212,10 +34217,11 @@ impl Parser {
                             let key = if let Some(s) = self.parse_string()? {
                                 s
                             } else {
-                                // Use parse_column for key to avoid interpreting colon as JSON path
-                                self.parse_column()?.ok_or_else(|| {
-                                    self.parse_error("Expected key expression in JSON_OBJECT")
-                                })?
+                                // Use parse_primary to handle function calls (ARRAY_AGG, CAST,
+                                // f(x)) as well as simple columns. parse_primary does NOT call
+                                // parse_postfix_operators, so a trailing ':' remains as a
+                                // key/value separator and is not consumed as JSON path.
+                                self.parse_primary()?
                             };
 
                             // Support colon, VALUE keyword (identifier), and IS keyword (for KEY...IS syntax)
@@ -34663,7 +34669,7 @@ impl Parser {
     fn parse_generic_function(&mut self, name: &str, quoted: bool) -> Result<Expression> {
         let is_known_agg = Self::is_aggregate_function(name);
 
-        let (args, distinct) = if self.check(TokenType::RParen) {
+        let (mut args, distinct) = if self.check(TokenType::RParen) {
             (Vec::new(), false)
         } else if self.check(TokenType::Star) {
             // Check for DuckDB *COLUMNS(...) syntax first
@@ -34829,6 +34835,7 @@ impl Parser {
                 inferred_type: None,
             })))
         } else {
+            self.normalize_date_part_arg(name, &mut args);
             let mut func = Function::new(name.to_string(), args);
             func.distinct = distinct;
             func.trailing_comments = trailing_comments;
@@ -52414,6 +52421,82 @@ impl Parser {
             }
             Expression::Identifier(id) => Expression::Var(Box::new(Var { this: id.name })),
             _ => expr,
+        }
+    }
+
+    /// For date-part functions where one argument is a date-part keyword
+    /// (DAY, MONTH, WEEK, WEEK(MONDAY), ...) rather than a column reference,
+    /// convert Column/Identifier at that position to Var so it is not caught
+    /// by column qualification (lineage, validation). Matches sqlglot's
+    /// build_date_diff/unit-aware parsing.
+    ///
+    /// The unit-position varies by dialect:
+    /// - BigQuery: last arg (DATE_DIFF(a, b, DAY); DATE_TRUNC(a, MONTH))
+    /// - TSQL/Fabric/Redshift/Snowflake: first arg (DATEDIFF(day, a, b))
+    fn normalize_date_part_arg(&self, name: &str, args: &mut [Expression]) {
+        use crate::dialects::DialectType as DT;
+        let dialect = match self.config.dialect {
+            Some(d) => d,
+            None => return,
+        };
+        let upper = name.to_ascii_uppercase();
+        let unit_index: Option<usize> = match dialect {
+            DT::BigQuery => match upper.as_str() {
+                "DATE_DIFF" | "DATETIME_DIFF" | "TIMESTAMP_DIFF" | "TIME_DIFF"
+                    if args.len() == 3 =>
+                {
+                    Some(2)
+                }
+                "DATE_TRUNC" | "DATETIME_TRUNC" | "TIMESTAMP_TRUNC" | "TIME_TRUNC"
+                    if args.len() >= 2 =>
+                {
+                    Some(1)
+                }
+                _ => None,
+            },
+            DT::TSQL | DT::Fabric => match upper.as_str() {
+                "DATEDIFF" | "DATEDIFF_BIG" | "DATEADD" | "DATEPART" | "DATE_PART"
+                | "DATENAME" | "DATETRUNC"
+                    if !args.is_empty() =>
+                {
+                    Some(0)
+                }
+                _ => None,
+            },
+            DT::Redshift => match upper.as_str() {
+                "DATEDIFF" | "DATE_DIFF" | "DATEADD" | "DATE_ADD" | "DATE_PART" | "DATEPART"
+                | "DATE_TRUNC" | "DATETRUNC"
+                    if !args.is_empty() =>
+                {
+                    Some(0)
+                }
+                _ => None,
+            },
+            DT::Snowflake => match upper.as_str() {
+                "DATE_TRUNC" | "DATETRUNC" if !args.is_empty() => Some(0),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(idx) = unit_index {
+            let taken = std::mem::replace(&mut args[idx], Expression::Null(Null));
+            args[idx] = Self::date_part_arg_to_var(taken);
+        }
+    }
+
+    fn date_part_arg_to_var(expr: Expression) -> Expression {
+        match expr {
+            Expression::Column(c) if c.table.is_none() => {
+                Expression::Var(Box::new(Var { this: c.name.name }))
+            }
+            Expression::Identifier(id) => Expression::Var(Box::new(Var { this: id.name })),
+            // WEEK(MONDAY), WEEK(SATURDAY), etc. — recurse into the inner arg
+            Expression::Function(mut f) if !f.args.is_empty() => {
+                let inner = std::mem::replace(&mut f.args[0], Expression::Null(Null));
+                f.args[0] = Self::date_part_arg_to_var(inner);
+                Expression::Function(f)
+            }
+            other => other,
         }
     }
 
