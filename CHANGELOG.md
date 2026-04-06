@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.0] - 2026-04-06
+
+### Added
+- `Dialect::transpile` and `Dialect::transpile_with` — the new canonical method
+  API for transpilation from a `Dialect` handle. Both accept either a
+  `DialectType` enum or a `&Dialect` reference as the target via the new
+  `TranspileTarget` trait (implemented for both).
+- `TranspileOptions` struct (`#[non_exhaustive]`) carrying transpile
+  configuration, with `TranspileOptions::pretty()` helper for pretty-printed
+  output. Derives `Serialize`/`Deserialize` (camelCase) for JSON bridges.
+- `TranspileTarget` trait — end users don't normally implement this themselves;
+  the blanket impls for `DialectType` and `&Dialect` cover built-in and custom
+  dialects uniformly.
+- `polyglot_sql::transpile_with_by_name` free function — string-keyed variant
+  of the new API, used by the C FFI and Python bindings.
+- **C FFI**: new `polyglot_transpile_with_options(sql, from, to, options_json)`
+  function. `options_json` is a JSON object compatible with `TranspileOptions`,
+  e.g. `{"pretty": true}`.
+
+### Changed
+- **Breaking (Rust API)**: `polyglot_sql::transpile` and
+  `polyglot_sql::transpile_by_name` now apply the full cross-dialect rewrite
+  pipeline (`cross_dialect_normalize`) — matching the WASM / FFI / Python
+  bindings and the playground. Previously these two entry points bypassed
+  source+target-aware normalization, so Rust/Python/C FFI consumers silently
+  received under-transformed SQL (including semantically wrong output for some
+  DuckDB → Trino patterns such as `CAST(x AS JSON)` and `to_timestamp(x)`).
+- `transform_recursive` now recurses into `Expression::CreateView.query`, so
+  cross-dialect transforms apply inside view bodies (e.g.
+  `CREATE VIEW v AS SELECT to_timestamp(x) FROM t`).
+
+### Removed
+- **Breaking (Rust API)**: removed `Dialect::transpile_to`,
+  `Dialect::transpile_to_pretty`, `Dialect::transpile_to_dialect`, and
+  `Dialect::transpile_to_dialect_pretty` — superseded by the unified
+  `Dialect::transpile` / `Dialect::transpile_with` pair.
+  - Migration: `dialect.transpile_to(sql, DialectType::X)` →
+    `dialect.transpile(sql, DialectType::X)`
+  - Migration: `dialect.transpile_to_pretty(sql, DialectType::X)` →
+    `dialect.transpile_with(sql, DialectType::X, TranspileOptions::pretty())`
+  - Migration: `dialect.transpile_to_dialect(sql, &target)` →
+    `dialect.transpile(sql, &target)`
+
 ## [0.1.9] - 2026-02-25
 
 ### Added

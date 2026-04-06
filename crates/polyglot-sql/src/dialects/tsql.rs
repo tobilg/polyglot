@@ -1234,7 +1234,7 @@ mod tests {
     fn transpile_to_tsql(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(sql, DialectType::TSQL)
+            .transpile(sql, DialectType::TSQL)
             .expect("Transpile failed");
         result[0].clone()
     }
@@ -1327,7 +1327,7 @@ mod tests {
         // JSON_QUERY with two args needs ISNULL wrapper when transpiling to TSQL
         let dialect = Dialect::get(DialectType::TSQL);
         let result = dialect
-            .transpile_to(r#"JSON_QUERY(x, '$')"#, DialectType::TSQL)
+            .transpile(r#"JSON_QUERY(x, '$')"#, DialectType::TSQL)
             .expect("transpile failed");
         assert!(
             result[0].contains("ISNULL"),
@@ -1343,7 +1343,7 @@ mod tests {
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let dialect = Dialect::get(DialectType::TSQL);
-                let result = dialect.transpile_to(
+                let result = dialect.transpile(
                     r#"JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'))"#,
                     DialectType::TSQL,
                 ).expect("transpile failed");

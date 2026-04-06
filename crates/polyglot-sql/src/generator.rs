@@ -3372,6 +3372,7 @@ impl Generator {
             // DDL statements
             Expression::CreateTable(ct) => self.generate_create_table(ct),
             Expression::DropTable(dt) => self.generate_drop_table(dt),
+            Expression::Undrop(u) => self.generate_undrop(u),
             Expression::AlterTable(at) => self.generate_alter_table(at),
             Expression::CreateIndex(ci) => self.generate_create_index(ci),
             Expression::DropIndex(di) => self.generate_drop_index(di),
@@ -5032,6 +5033,33 @@ impl Generator {
             }
             self.write_keyword("FOR XML");
             for (i, opt) in select.for_xml.iter().enumerate() {
+                if self.config.pretty {
+                    if i > 0 {
+                        self.write(",");
+                    }
+                    self.write_newline();
+                    self.write_indent();
+                    self.write("  "); // extra indent for options
+                } else {
+                    if i > 0 {
+                        self.write(",");
+                    }
+                    self.write_space();
+                }
+                self.generate_for_xml_option(opt)?;
+            }
+        }
+
+        // FOR JSON clause (T-SQL)
+        if !select.for_json.is_empty() {
+            if self.config.pretty {
+                self.write_newline();
+                self.write_indent();
+            } else {
+                self.write_space();
+            }
+            self.write_keyword("FOR JSON");
+            for (i, opt) in select.for_json.iter().enumerate() {
                 if self.config.pretty {
                     if i > 0 {
                         self.write(",");
@@ -9341,6 +9369,25 @@ impl Generator {
                 self.generate_expression(expression)?;
                 self.write(")");
             }
+            TableConstraint::Default {
+                name,
+                expression,
+                column,
+            } => {
+                if let Some(ref n) = name {
+                    self.write_keyword("CONSTRAINT");
+                    self.write_space();
+                    self.generate_identifier(n)?;
+                    self.write_space();
+                }
+                self.write_keyword("DEFAULT");
+                self.write_space();
+                self.generate_expression(expression)?;
+                self.write_space();
+                self.write_keyword("FOR");
+                self.write_space();
+                self.generate_identifier(column)?;
+            }
             TableConstraint::Index {
                 name,
                 columns,
@@ -9916,6 +9963,19 @@ impl Generator {
         // Restore Athena Hive context
         self.athena_hive_context = saved_athena_hive_context;
 
+        Ok(())
+    }
+
+    fn generate_undrop(&mut self, u: &Undrop) -> Result<()> {
+        self.write_keyword("UNDROP");
+        self.write_space();
+        self.write_keyword(&u.kind);
+        if u.if_exists {
+            self.write_space();
+            self.write_keyword("IF EXISTS");
+        }
+        self.write_space();
+        self.generate_table(&u.name)?;
         Ok(())
     }
 
@@ -12667,6 +12727,10 @@ impl Generator {
                     }
                     self.write(" END");
                 }
+                FunctionBody::RawBlock(text) => {
+                    self.write_newline();
+                    self.write(text);
+                }
                 FunctionBody::DollarQuoted { content, tag } => {
                     self.write_keyword("AS");
                     self.write(" ");
@@ -13002,6 +13066,10 @@ impl Generator {
                         self.write(";");
                     }
                     self.write(" END");
+                }
+                FunctionBody::RawBlock(text) => {
+                    self.write_newline();
+                    self.write(text);
                 }
                 FunctionBody::DollarQuoted { content, tag } => {
                     self.write_keyword("AS");
@@ -19296,6 +19364,12 @@ impl Generator {
                 self.write_space();
                 self.generate_expression(sep)?;
             }
+        }
+        if let Some(ref limit) = f.limit {
+            self.write_space();
+            self.write_keyword("LIMIT");
+            self.write_space();
+            self.generate_expression(limit)?;
         }
         self.write(")");
         if let Some(ref filter) = f.filter {

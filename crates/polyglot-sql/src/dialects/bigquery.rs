@@ -1495,7 +1495,7 @@ mod tests {
     fn transpile_to_bigquery(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(sql, DialectType::BigQuery)
+            .transpile(sql, DialectType::BigQuery)
             .expect("Transpile failed");
         result[0].clone()
     }

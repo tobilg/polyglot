@@ -5856,7 +5856,7 @@ mod tests {
     fn test_explode_to_unnest_presto() {
         let spark = Dialect::get(DialectType::Spark);
         let result = spark
-            .transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::Presto)
+            .transpile("SELECT EXPLODE(x) FROM tbl", DialectType::Presto)
             .unwrap();
         assert_eq!(
             result[0],
@@ -5868,7 +5868,7 @@ mod tests {
     fn test_explode_to_unnest_bigquery() {
         let spark = Dialect::get(DialectType::Spark);
         let result = spark
-            .transpile_to("SELECT EXPLODE(x) FROM tbl", DialectType::BigQuery)
+            .transpile("SELECT EXPLODE(x) FROM tbl", DialectType::BigQuery)
             .unwrap();
         assert_eq!(
             result[0],

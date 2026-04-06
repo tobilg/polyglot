@@ -3,7 +3,8 @@ use polyglot_sql_ffi::{
     polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
     polyglot_free_validation_result, polyglot_generate, polyglot_lineage,
     polyglot_lineage_with_schema, polyglot_optimize, polyglot_parse, polyglot_parse_one,
-    polyglot_source_tables, polyglot_transpile, polyglot_validate, polyglot_version,
+    polyglot_source_tables, polyglot_transpile, polyglot_transpile_with_options,
+    polyglot_validate, polyglot_version,
     PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
@@ -92,6 +93,88 @@ fn test_transpile_null_pointer_input() {
     let (status, _, error) =
         consume_result(polyglot_transpile(ptr::null(), from.as_ptr(), to.as_ptr()));
     assert_eq!(status, 5);
+    assert!(error.is_some());
+}
+
+#[test]
+fn test_transpile_with_options_default() {
+    // Empty options JSON should behave identically to polyglot_transpile.
+    let sql = c("SELECT IFNULL(a, b) FROM t");
+    let from = c("mysql");
+    let to = c("postgres");
+    let opts = c("{}");
+
+    let (status, data, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        opts.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let json = data.expect("missing data");
+    let statements: Vec<String> = serde_json::from_str(&json).expect("invalid JSON");
+    assert_eq!(statements.len(), 1);
+    assert!(statements[0].to_uppercase().contains("COALESCE"));
+    // Default (pretty=false) → single-line output
+    assert!(!statements[0].contains('\n'));
+}
+
+#[test]
+fn test_transpile_with_options_pretty() {
+    // pretty:true should yield multi-line output.
+    let sql = c("SELECT a, b, c, d FROM t UNION SELECT a, b, c, d FROM u");
+    let from = c("postgres");
+    let to = c("postgres");
+    let opts = c(r#"{"pretty": true}"#);
+
+    let (status, data, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        opts.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let json = data.expect("missing data");
+    let statements: Vec<String> = serde_json::from_str(&json).expect("invalid JSON");
+    assert_eq!(statements.len(), 1);
+    // Pretty output should contain newlines
+    assert!(
+        statements[0].contains('\n'),
+        "expected pretty-printed (multi-line) output, got: {}",
+        statements[0]
+    );
+}
+
+#[test]
+fn test_transpile_with_options_invalid_json() {
+    let sql = c("SELECT 1");
+    let from = c("postgres");
+    let to = c("postgres");
+    let opts = c("not-json");
+
+    let (status, _, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        opts.as_ptr(),
+    ));
+    assert_eq!(status, 6); // STATUS_SERIALIZATION_ERROR
+    assert!(error.unwrap_or_default().contains("Invalid transpile options JSON"));
+}
+
+#[test]
+fn test_transpile_with_options_null_options() {
+    let sql = c("SELECT 1");
+    let from = c("postgres");
+    let to = c("postgres");
+
+    let (status, _, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        ptr::null(),
+    ));
+    assert_eq!(status, 5); // STATUS_INVALID_ARGUMENT
     assert!(error.is_some());
 }
 

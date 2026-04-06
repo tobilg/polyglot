@@ -7471,7 +7471,7 @@ mod tests {
     fn transpile_to_duckdb(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(sql, DialectType::DuckDB)
+            .transpile(sql, DialectType::DuckDB)
             .expect("Transpile failed");
         result[0].clone()
     }

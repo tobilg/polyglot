@@ -13,7 +13,7 @@
 //! The primary entry point is [`Dialect::get`], which returns a configured [`Dialect`] instance
 //! for a given [`DialectType`]. From there, callers can [`parse`](Dialect::parse),
 //! [`generate`](Dialect::generate), [`transform`](Dialect::transform), or
-//! [`transpile_to`](Dialect::transpile_to) another dialect in a single call.
+//! [`transpile`](Dialect::transpile) to another dialect in a single call.
 //!
 //! Each concrete dialect (e.g., `PostgresDialect`, `BigQueryDialect`) implements the
 //! [`DialectImpl`] trait, which provides configuration hooks and expression-level transforms.
@@ -2020,7 +2020,7 @@ fn get_custom_dialect_config(name: &str) -> Option<Arc<CustomDialectConfig>> {
 /// let exprs = pg.parse("SELECT id, name FROM users WHERE active")?;
 ///
 /// // Transpile from PostgreSQL to BigQuery
-/// let results = pg.transpile_to("SELECT NOW()", DialectType::BigQuery)?;
+/// let results = pg.transpile("SELECT NOW()", DialectType::BigQuery)?;
 /// assert_eq!(results[0], "SELECT CURRENT_TIMESTAMP()");
 /// ```
 ///
@@ -2035,6 +2035,52 @@ pub struct Dialect {
     generator_config_for_expr: Option<Box<dyn Fn(&Expression) -> GeneratorConfig + Send + Sync>>,
     /// Optional custom preprocessing function (overrides built-in preprocess for custom dialects).
     custom_preprocess: Option<Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
+}
+
+/// Options for [`Dialect::transpile_with`].
+///
+/// Use [`TranspileOptions::default`] for defaults, then tweak the fields you need.
+/// The struct is marked `#[non_exhaustive]` so new fields can be added without
+/// breaking the API.
+///
+/// The struct derives `Serialize`/`Deserialize` using camelCase field names so
+/// it can be round-tripped over JSON bridges (C FFI, WASM) without mapping.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+#[non_exhaustive]
+pub struct TranspileOptions {
+    /// Whether to pretty-print the output SQL.
+    pub pretty: bool,
+}
+
+impl TranspileOptions {
+    /// Construct options with pretty-printing enabled.
+    pub fn pretty() -> Self {
+        Self { pretty: true }
+    }
+}
+
+/// A value that can be used as the target dialect in [`Dialect::transpile`] /
+/// [`Dialect::transpile_with`].
+///
+/// Implemented for [`DialectType`] (built-in dialect enum) and `&Dialect` (any
+/// dialect handle, including custom ones). End users do not normally need to
+/// implement this trait themselves.
+pub trait TranspileTarget {
+    /// Invoke `f` with a reference to the resolved target dialect.
+    fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R;
+}
+
+impl TranspileTarget for DialectType {
+    fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R {
+        f(&Dialect::get(self))
+    }
+}
+
+impl TranspileTarget for &Dialect {
+    fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R {
+        f(self)
+    }
 }
 
 impl Dialect {
@@ -2440,23 +2486,40 @@ impl Dialect {
         }
     }
 
-    /// Transpile SQL from this dialect to another
-    pub fn transpile_to(&self, sql: &str, target: DialectType) -> Result<Vec<String>> {
-        self.transpile_to_inner(sql, target, false)
+    /// Transpile SQL from this dialect to the given target dialect.
+    ///
+    /// The target may be specified as either a built-in [`DialectType`] enum variant
+    /// or as a reference to a [`Dialect`] handle (built-in or custom). Both work:
+    ///
+    /// ```rust,ignore
+    /// let pg = Dialect::get(DialectType::PostgreSQL);
+    /// pg.transpile("SELECT NOW()", DialectType::BigQuery)?;   // enum
+    /// pg.transpile("SELECT NOW()", &custom_dialect)?;         // handle
+    /// ```
+    ///
+    /// For pretty-printing or other options, use [`transpile_with`](Self::transpile_with).
+    pub fn transpile<T: TranspileTarget>(&self, sql: &str, target: T) -> Result<Vec<String>> {
+        self.transpile_with(sql, target, TranspileOptions::default())
     }
 
-    /// Transpile SQL from this dialect to another with pretty printing enabled
-    pub fn transpile_to_pretty(&self, sql: &str, target: DialectType) -> Result<Vec<String>> {
-        self.transpile_to_inner(sql, target, true)
+    /// Transpile SQL with configurable [`TranspileOptions`] (e.g. pretty-printing).
+    pub fn transpile_with<T: TranspileTarget>(
+        &self,
+        sql: &str,
+        target: T,
+        opts: TranspileOptions,
+    ) -> Result<Vec<String>> {
+        target.with_dialect(|td| self.transpile_inner(sql, td, opts.pretty))
     }
 
     #[cfg(not(feature = "transpile"))]
-    fn transpile_to_inner(
+    fn transpile_inner(
         &self,
         sql: &str,
-        target: DialectType,
+        target_dialect: &Dialect,
         pretty: bool,
     ) -> Result<Vec<String>> {
+        let target = target_dialect.dialect_type;
         // Without the transpile feature, only same-dialect or to/from generic is supported
         if self.dialect_type != target
             && self.dialect_type != DialectType::Generic
@@ -2472,7 +2535,6 @@ impl Dialect {
         }
 
         let expressions = self.parse(sql)?;
-        let target_dialect = Dialect::get(target);
         let generic_identity =
             self.dialect_type == DialectType::Generic && target == DialectType::Generic;
 
@@ -2503,14 +2565,14 @@ impl Dialect {
     }
 
     #[cfg(feature = "transpile")]
-    fn transpile_to_inner(
+    fn transpile_inner(
         &self,
         sql: &str,
-        target: DialectType,
+        target_dialect: &Dialect,
         pretty: bool,
     ) -> Result<Vec<String>> {
+        let target = target_dialect.dialect_type;
         let expressions = self.parse(sql)?;
-        let target_dialect = Dialect::get(target);
         let generic_identity =
             self.dialect_type == DialectType::Generic && target == DialectType::Generic;
 
@@ -17915,6 +17977,7 @@ impl Dialect {
                                             order_by: None,
                                             distinct: false,
                                             filter: None,
+                                            limit: None,
                                             inferred_type: None,
                                         }),
                                     )),
@@ -17925,6 +17988,7 @@ impl Dialect {
                                             order_by: None,
                                             distinct: false,
                                             filter: None,
+                                            limit: None,
                                             inferred_type: None,
                                         },
                                     ))),
@@ -21159,6 +21223,7 @@ impl Dialect {
                                                 order_by: Some(order_by),
                                                 distinct,
                                                 filter: None,
+                                                limit: None,
                                                 inferred_type: None,
                                             },
                                         )))
@@ -21172,6 +21237,7 @@ impl Dialect {
                                                 order_by: None,
                                                 distinct,
                                                 filter: None,
+                                                limit: None,
                                                 inferred_type: None,
                                             },
                                         )))
@@ -21223,6 +21289,7 @@ impl Dialect {
                                             order_by: sa.order_by,
                                             distinct: sa.distinct,
                                             filter: sa.filter,
+                                            limit: None,
                                             inferred_type: None,
                                         },
                                     )))
@@ -21236,6 +21303,7 @@ impl Dialect {
                                             order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
                                             distinct: sa.distinct,
                                             filter: sa.filter,
+                                            limit: None,
                                             inferred_type: None,
                                         },
                                     )))
@@ -21450,6 +21518,7 @@ impl Dialect {
                                         order_by: None, // SQLite doesn't support ORDER BY in GROUP_CONCAT
                                         distinct: gc.distinct,
                                         filter: gc.filter,
+                                        limit: None,
                                         inferred_type: None,
                                     },
                                 )))
@@ -35685,7 +35754,7 @@ mod tests {
     fn test_basic_transpile() {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to("SELECT 1", DialectType::PostgreSQL)
+            .transpile("SELECT 1", DialectType::PostgreSQL)
             .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "SELECT 1");
@@ -35696,7 +35765,7 @@ mod tests {
         // NVL should be transformed to IFNULL in MySQL
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to("SELECT NVL(a, b)", DialectType::MySQL)
+            .transpile("SELECT NVL(a, b)", DialectType::MySQL)
             .unwrap();
         assert_eq!(result[0], "SELECT IFNULL(a, b)");
     }
@@ -35708,7 +35777,7 @@ mod tests {
 
         // Step 1: Parse and check what Snowflake produces as intermediate
         let result_sf_sf = snowflake
-            .transpile_to(
+            .transpile(
                 "SELECT PARSE_JSON('{\"fruit\":\"banana\"}'):fruit",
                 DialectType::Snowflake,
             )
@@ -35717,7 +35786,7 @@ mod tests {
 
         // Step 2: DuckDB target
         let result_sf_dk = snowflake
-            .transpile_to(
+            .transpile(
                 "SELECT PARSE_JSON('{\"fruit\":\"banana\"}'):fruit",
                 DialectType::DuckDB,
             )
@@ -35726,7 +35795,7 @@ mod tests {
 
         // Step 3: GET_PATH directly
         let result_gp = snowflake
-            .transpile_to(
+            .transpile(
                 "SELECT GET_PATH(PARSE_JSON('{\"fruit\":\"banana\"}'), 'fruit')",
                 DialectType::DuckDB,
             )
@@ -35739,13 +35808,13 @@ mod tests {
         // IFNULL should be transformed to COALESCE in PostgreSQL
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to("SELECT IFNULL(a, b)", DialectType::PostgreSQL)
+            .transpile("SELECT IFNULL(a, b)", DialectType::PostgreSQL)
             .unwrap();
         assert_eq!(result[0], "SELECT COALESCE(a, b)");
 
         // NVL should also be transformed to COALESCE
         let result = dialect
-            .transpile_to("SELECT NVL(a, b)", DialectType::PostgreSQL)
+            .transpile("SELECT NVL(a, b)", DialectType::PostgreSQL)
             .unwrap();
         assert_eq!(result[0], "SELECT COALESCE(a, b)");
     }
@@ -35755,12 +35824,12 @@ mod tests {
         // Hive CAST should become TRY_CAST for targets that support it
         let hive = Dialect::get(DialectType::Hive);
         let result = hive
-            .transpile_to("CAST(1 AS INT)", DialectType::DuckDB)
+            .transpile("CAST(1 AS INT)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "TRY_CAST(1 AS INT)");
 
         let result = hive
-            .transpile_to("CAST(1 AS INT)", DialectType::Presto)
+            .transpile("CAST(1 AS INT)", DialectType::Presto)
             .unwrap();
         assert_eq!(result[0], "TRY_CAST(1 AS INTEGER)");
     }
@@ -35771,12 +35840,12 @@ mod tests {
         let sql = "CREATE EXTERNAL TABLE `my_table` (`a7` ARRAY<DATE>) ROW FORMAT SERDE 'a' STORED AS INPUTFORMAT 'b' OUTPUTFORMAT 'c' LOCATION 'd' TBLPROPERTIES ('e'='f')";
         let hive = Dialect::get(DialectType::Hive);
 
-        // Test via transpile_to (this works)
-        let result = hive.transpile_to(sql, DialectType::Hive).unwrap();
-        eprintln!("Hive ARRAY via transpile_to: {}", result[0]);
+        // Test via transpile (this works)
+        let result = hive.transpile(sql, DialectType::Hive).unwrap();
+        eprintln!("Hive ARRAY via transpile: {}", result[0]);
         assert!(
             result[0].contains("ARRAY<DATE>"),
-            "transpile_to: Expected ARRAY<DATE>, got: {}",
+            "transpile: Expected ARRAY<DATE>, got: {}",
             result[0]
         );
 
@@ -35799,7 +35868,7 @@ mod tests {
 
         // BETWEEN should be expanded to >= AND <= in DELETE
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "DELETE FROM t WHERE a BETWEEN b AND c",
                 DialectType::StarRocks,
             )
@@ -35808,7 +35877,7 @@ mod tests {
 
         // NOT BETWEEN should be expanded to < OR > in DELETE
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "DELETE FROM t WHERE a NOT BETWEEN b AND c",
                 DialectType::StarRocks,
             )
@@ -35817,7 +35886,7 @@ mod tests {
 
         // BETWEEN in SELECT should NOT be expanded (StarRocks supports it there)
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT * FROM t WHERE a BETWEEN b AND c",
                 DialectType::StarRocks,
             )
@@ -35832,7 +35901,7 @@ mod tests {
     fn test_snowflake_ltrim_rtrim_parse() {
         let sf = Dialect::get(DialectType::Snowflake);
         let sql = "SELECT LTRIM(RTRIM(col)) FROM t1";
-        let result = sf.transpile_to(sql, DialectType::DuckDB);
+        let result = sf.transpile(sql, DialectType::DuckDB);
         match &result {
             Ok(r) => eprintln!("LTRIM/RTRIM result: {}", r[0]),
             Err(e) => eprintln!("LTRIM/RTRIM error: {}", e),
@@ -35848,7 +35917,7 @@ mod tests {
     fn test_duckdb_count_if_parse() {
         let duck = Dialect::get(DialectType::DuckDB);
         let sql = "COUNT_IF(x)";
-        let result = duck.transpile_to(sql, DialectType::DuckDB);
+        let result = duck.transpile(sql, DialectType::DuckDB);
         match &result {
             Ok(r) => eprintln!("COUNT_IF result: {}", r[0]),
             Err(e) => eprintln!("COUNT_IF error: {}", e),
@@ -35864,7 +35933,7 @@ mod tests {
     fn test_tsql_cast_tinyint_parse() {
         let tsql = Dialect::get(DialectType::TSQL);
         let sql = "CAST(X AS TINYINT)";
-        let result = tsql.transpile_to(sql, DialectType::DuckDB);
+        let result = tsql.transpile(sql, DialectType::DuckDB);
         match &result {
             Ok(r) => eprintln!("TSQL CAST TINYINT result: {}", r[0]),
             Err(e) => eprintln!("TSQL CAST TINYINT error: {}", e),
@@ -35880,7 +35949,7 @@ mod tests {
     fn test_pg_hash_bitwise_xor() {
         let dialect = Dialect::get(DialectType::PostgreSQL);
         let result = dialect
-            .transpile_to("x # y", DialectType::PostgreSQL)
+            .transpile("x # y", DialectType::PostgreSQL)
             .unwrap();
         assert_eq!(result[0], "x # y");
     }
@@ -35889,7 +35958,7 @@ mod tests {
     fn test_pg_array_to_duckdb() {
         let dialect = Dialect::get(DialectType::PostgreSQL);
         let result = dialect
-            .transpile_to("SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]", DialectType::DuckDB)
+            .transpile("SELECT ARRAY[1, 2, 3] @> ARRAY[1, 2]", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "SELECT [1, 2, 3] @> [1, 2]");
     }
@@ -35898,7 +35967,7 @@ mod tests {
     fn test_array_remove_bigquery() {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to("ARRAY_REMOVE(the_array, target)", DialectType::BigQuery)
+            .transpile("ARRAY_REMOVE(the_array, target)", DialectType::BigQuery)
             .unwrap();
         assert_eq!(
             result[0],
@@ -35914,7 +35983,7 @@ mod tests {
             .unwrap();
         eprintln!("MAP parsed: {:?}", parsed);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "CAST(MAP('a', '1') AS MAP(TEXT, TEXT))",
                 DialectType::ClickHouse,
             )
@@ -35925,7 +35994,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_presto() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::Presto,
         ).unwrap();
@@ -35936,7 +36005,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_postgres() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::PostgreSQL,
         ).unwrap();
@@ -35949,7 +36018,7 @@ mod tests {
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let dialect = Dialect::get(DialectType::Generic);
-                let result = dialect.transpile_to(
+                let result = dialect.transpile(
                     "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
                     DialectType::Snowflake,
                 ).unwrap();
@@ -35963,7 +36032,7 @@ mod tests {
     #[test]
     fn test_array_length_generate_date_array_snowflake() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT ARRAY_LENGTH(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::Snowflake,
         ).unwrap();
@@ -35973,7 +36042,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_mysql() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::MySQL,
         ).unwrap();
@@ -35983,7 +36052,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_redshift() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::Redshift,
         ).unwrap();
@@ -35993,7 +36062,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_tsql() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
             DialectType::TSQL,
         ).unwrap();
@@ -36004,7 +36073,7 @@ mod tests {
     fn test_struct_colon_syntax() {
         let dialect = Dialect::get(DialectType::Generic);
         // Test without colon first
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "CAST((1, 2, 3, 4) AS STRUCT<a TINYINT, b SMALLINT, c INT, d BIGINT>)",
             DialectType::ClickHouse,
         );
@@ -36013,7 +36082,7 @@ mod tests {
             Err(e) => eprintln!("STRUCT no colon error: {}", e),
         }
         // Now test with colon
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "CAST((1, 2, 3, 4) AS STRUCT<a: TINYINT, b: SMALLINT, c: INT, d: BIGINT>)",
             DialectType::ClickHouse,
         );
@@ -36026,7 +36095,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_cte_wrapped_mysql() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "WITH dates AS (SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))) SELECT * FROM dates",
             DialectType::MySQL,
         ).unwrap();
@@ -36036,7 +36105,7 @@ mod tests {
     #[test]
     fn test_generate_date_array_cte_wrapped_tsql() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to(
+        let result = dialect.transpile(
             "WITH dates AS (SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))) SELECT * FROM dates",
             DialectType::TSQL,
         ).unwrap();
@@ -36048,7 +36117,7 @@ mod tests {
         // Oracle DECODE with all literals should produce simple equality, no IS NULL
         let dialect = Dialect::get(DialectType::Oracle);
         let result = dialect
-            .transpile_to("SELECT decode(1,2,3,4)", DialectType::DuckDB)
+            .transpile("SELECT decode(1,2,3,4)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0], "SELECT CASE WHEN 1 = 2 THEN 3 ELSE 4 END",
@@ -36061,7 +36130,7 @@ mod tests {
         // Oracle DECODE with column vs literal should use simple equality (like sqlglot)
         let dialect = Dialect::get(DialectType::Oracle);
         let result = dialect
-            .transpile_to("SELECT decode(col, 2, 3, 4) FROM t", DialectType::DuckDB)
+            .transpile("SELECT decode(col, 2, 3, 4) FROM t", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0], "SELECT CASE WHEN col = 2 THEN 3 ELSE 4 END FROM t",
@@ -36074,7 +36143,7 @@ mod tests {
         // Oracle DECODE with column vs column should keep null-safe comparison
         let dialect = Dialect::get(DialectType::Oracle);
         let result = dialect
-            .transpile_to("SELECT decode(col, col2, 3, 4) FROM t", DialectType::DuckDB)
+            .transpile("SELECT decode(col, col2, 3, 4) FROM t", DialectType::DuckDB)
             .unwrap();
         assert!(
             result[0].contains("IS NULL"),
@@ -36088,7 +36157,7 @@ mod tests {
         // Oracle DECODE with NULL search should use IS NULL
         let dialect = Dialect::get(DialectType::Oracle);
         let result = dialect
-            .transpile_to("SELECT decode(col, NULL, 3, 4) FROM t", DialectType::DuckDB)
+            .transpile("SELECT decode(col, NULL, 3, 4) FROM t", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0],
@@ -36104,7 +36173,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_2arg() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern')", DialectType::DuckDB)
+            .transpile("SELECT REGEXP_SUBSTR(s, 'pattern')", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
     }
@@ -36113,7 +36182,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_3arg_pos1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern', 1)", DialectType::DuckDB)
+            .transpile("SELECT REGEXP_SUBSTR(s, 'pattern', 1)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "SELECT REGEXP_EXTRACT(s, 'pattern')");
     }
@@ -36122,7 +36191,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_3arg_pos_gt1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT REGEXP_SUBSTR(s, 'pattern', 3)", DialectType::DuckDB)
+            .transpile("SELECT REGEXP_SUBSTR(s, 'pattern', 3)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0],
@@ -36134,7 +36203,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_4arg_occ_gt1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 3)",
                 DialectType::DuckDB,
             )
@@ -36149,7 +36218,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_5arg_e_flag() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e')",
                 DialectType::DuckDB,
             )
@@ -36161,7 +36230,7 @@ mod tests {
     fn test_regexp_substr_snowflake_to_duckdb_6arg_group0() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e', 0)",
                 DialectType::DuckDB,
             )
@@ -36173,7 +36242,7 @@ mod tests {
     fn test_regexp_substr_snowflake_identity_strip_group0() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR(s, 'pattern', 1, 1, 'e', 0)",
                 DialectType::Snowflake,
             )
@@ -36185,7 +36254,7 @@ mod tests {
     fn test_regexp_substr_all_snowflake_to_duckdb_2arg() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR_ALL(s, 'pattern')",
                 DialectType::DuckDB,
             )
@@ -36197,7 +36266,7 @@ mod tests {
     fn test_regexp_substr_all_snowflake_to_duckdb_3arg_pos_gt1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 3)",
                 DialectType::DuckDB,
             )
@@ -36212,7 +36281,7 @@ mod tests {
     fn test_regexp_substr_all_snowflake_to_duckdb_5arg_e_flag() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e')",
                 DialectType::DuckDB,
             )
@@ -36224,7 +36293,7 @@ mod tests {
     fn test_regexp_substr_all_snowflake_to_duckdb_6arg_group0() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e', 0)",
                 DialectType::DuckDB,
             )
@@ -36236,7 +36305,7 @@ mod tests {
     fn test_regexp_substr_all_snowflake_identity_strip_group0() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_SUBSTR_ALL(s, 'pattern', 1, 1, 'e', 0)",
                 DialectType::Snowflake,
             )
@@ -36251,7 +36320,7 @@ mod tests {
     fn test_regexp_count_snowflake_to_duckdb_2arg() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT REGEXP_COUNT(s, 'pattern')", DialectType::DuckDB)
+            .transpile("SELECT REGEXP_COUNT(s, 'pattern')", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0],
@@ -36263,7 +36332,7 @@ mod tests {
     fn test_regexp_count_snowflake_to_duckdb_3arg() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT REGEXP_COUNT(s, 'pattern', 3)", DialectType::DuckDB)
+            .transpile("SELECT REGEXP_COUNT(s, 'pattern', 3)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(
             result[0],
@@ -36275,7 +36344,7 @@ mod tests {
     fn test_regexp_count_snowflake_to_duckdb_4arg_flags() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_COUNT(s, 'pattern', 1, 'i')",
                 DialectType::DuckDB,
             )
@@ -36290,7 +36359,7 @@ mod tests {
     fn test_regexp_count_snowflake_to_duckdb_4arg_flags_literal_string() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_COUNT('Hello World', 'L', 1, 'im')",
                 DialectType::DuckDB,
             )
@@ -36305,7 +36374,7 @@ mod tests {
     fn test_regexp_replace_snowflake_to_duckdb_5arg_pos1_occ1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 1, 1)",
                 DialectType::DuckDB,
             )
@@ -36317,7 +36386,7 @@ mod tests {
     fn test_regexp_replace_snowflake_to_duckdb_5arg_pos_gt1_occ0() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 3, 0)",
                 DialectType::DuckDB,
             )
@@ -36332,7 +36401,7 @@ mod tests {
     fn test_regexp_replace_snowflake_to_duckdb_5arg_pos_gt1_occ1() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_REPLACE(s, 'pattern', 'repl', 3, 1)",
                 DialectType::DuckDB,
             )
@@ -36347,7 +36416,7 @@ mod tests {
     fn test_rlike_snowflake_to_duckdb_2arg() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT RLIKE(a, b)", DialectType::DuckDB)
+            .transpile("SELECT RLIKE(a, b)", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "SELECT REGEXP_FULL_MATCH(a, b)");
     }
@@ -36356,7 +36425,7 @@ mod tests {
     fn test_rlike_snowflake_to_duckdb_3arg_flags() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to("SELECT RLIKE(a, b, 'i')", DialectType::DuckDB)
+            .transpile("SELECT RLIKE(a, b, 'i')", DialectType::DuckDB)
             .unwrap();
         assert_eq!(result[0], "SELECT REGEXP_FULL_MATCH(a, b, 'i')");
     }
@@ -36365,7 +36434,7 @@ mod tests {
     fn test_regexp_extract_all_bigquery_to_snowflake_no_capture() {
         let dialect = Dialect::get(DialectType::BigQuery);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_EXTRACT_ALL(s, 'pattern')",
                 DialectType::Snowflake,
             )
@@ -36377,7 +36446,7 @@ mod tests {
     fn test_regexp_extract_all_bigquery_to_snowflake_with_capture() {
         let dialect = Dialect::get(DialectType::BigQuery);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT REGEXP_EXTRACT_ALL(s, '(a)[0-9]')",
                 DialectType::Snowflake,
             )
@@ -36395,7 +36464,7 @@ mod tests {
             .spawn(|| {
                 let dialect = Dialect::get(DialectType::Snowflake);
                 let result = dialect
-                    .transpile_to("SELECT REGEXP_INSTR(s, 'pattern')", DialectType::DuckDB)
+                    .transpile("SELECT REGEXP_INSTR(s, 'pattern')", DialectType::DuckDB)
                     .unwrap();
                 // Should produce a CASE WHEN expression
                 assert!(
@@ -36421,7 +36490,7 @@ mod tests {
             .spawn(|| {
                 let dialect = Dialect::get(DialectType::Generic);
                 let result = dialect
-                    .transpile_to(
+                    .transpile(
                         "SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))",
                         DialectType::DuckDB,
                     )
@@ -36461,7 +36530,7 @@ mod tests {
     fn test_array_except_generic_to_snowflake() {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))",
                 DialectType::Snowflake,
             )
@@ -36474,7 +36543,7 @@ mod tests {
     fn test_array_except_generic_to_presto() {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))",
                 DialectType::Presto,
             )
@@ -36490,7 +36559,7 @@ mod tests {
             .spawn(|| {
                 let dialect = Dialect::get(DialectType::Snowflake);
                 let result = dialect
-                    .transpile_to("SELECT ARRAY_EXCEPT([1, 2, 3], [2])", DialectType::DuckDB)
+                    .transpile("SELECT ARRAY_EXCEPT([1, 2, 3], [2])", DialectType::DuckDB)
                     .unwrap();
                 eprintln!("ARRAY_EXCEPT Snowflake->DuckDB: {}", result[0]);
                 assert!(
@@ -36512,7 +36581,7 @@ mod tests {
     fn test_array_contains_snowflake_to_snowflake() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT ARRAY_CONTAINS(x, [1, NULL, 3])",
                 DialectType::Snowflake,
             )
@@ -36525,7 +36594,7 @@ mod tests {
     fn test_array_contains_snowflake_to_duckdb() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT ARRAY_CONTAINS(x, [1, NULL, 3])",
                 DialectType::DuckDB,
             )
@@ -36552,7 +36621,7 @@ mod tests {
     fn test_array_distinct_snowflake_to_duckdb() {
         let dialect = Dialect::get(DialectType::Snowflake);
         let result = dialect
-            .transpile_to(
+            .transpile(
                 "SELECT ARRAY_DISTINCT([1, 2, 2, 3, 1])",
                 DialectType::DuckDB,
             )

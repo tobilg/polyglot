@@ -1379,6 +1379,7 @@ pub fn is_ddl(expr: &Expression) -> bool {
         expr,
         Expression::CreateTable(_)
             | Expression::DropTable(_)
+            | Expression::Undrop(_)
             | Expression::AlterTable(_)
             | Expression::CreateIndex(_)
             | Expression::DropIndex(_)
@@ -1394,6 +1395,7 @@ pub fn is_ddl(expr: &Expression) -> bool {
             | Expression::CreateProcedure(_)
             | Expression::DropProcedure(_)
             | Expression::CreateSequence(_)
+            | Expression::CreateSynonym(_)
             | Expression::DropSequence(_)
             | Expression::AlterSequence(_)
             | Expression::CreateTrigger(_)

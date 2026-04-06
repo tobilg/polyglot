@@ -45,7 +45,10 @@ pub use ast_transforms::{
     remove_select_columns, remove_where, rename_columns, rename_tables, replace_by_type,
     replace_nodes, set_distinct, set_limit, set_offset,
 };
-pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
+pub use dialects::{
+    unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType, TranspileOptions,
+    TranspileTarget,
+};
 pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
 pub use expressions::Expression;
 pub use function_catalog::{
@@ -390,23 +393,11 @@ fn format_with_dialect(
 /// );
 /// ```
 pub fn transpile(sql: &str, read: DialectType, write: DialectType) -> Result<Vec<String>> {
-    let read_dialect = Dialect::get(read);
-    let write_dialect = Dialect::get(write);
-    let generic_identity = read == DialectType::Generic && write == DialectType::Generic;
-
-    let expressions = read_dialect.parse(sql)?;
-
-    expressions
-        .into_iter()
-        .map(|expr| {
-            if generic_identity {
-                write_dialect.generate_with_source(&expr, read)
-            } else {
-                let transformed = write_dialect.transform(expr)?;
-                write_dialect.generate_with_source(&transformed, read)
-            }
-        })
-        .collect()
+    // Delegate to Dialect::transpile so that the full cross-dialect rewrite
+    // pipeline (source+target-aware normalization in `cross_dialect_normalize`)
+    // runs here as well. This keeps Rust crate users on the same code path as
+    // the WASM/FFI/Python bindings and the playground.
+    Dialect::get(read).transpile(sql, write)
 }
 
 /// Parse SQL into an AST.
@@ -615,26 +606,23 @@ fn strict_syntax_error(sql: &str, dialect: &Dialect) -> Option<ValidationError> 
 /// # Returns
 /// A vector of transpiled SQL statements, or an error if a dialect name is unknown.
 pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<String>> {
+    transpile_with_by_name(sql, read, write, &TranspileOptions::default())
+}
+
+/// Transpile SQL with configurable [`TranspileOptions`], using string dialect names.
+///
+/// Same as [`transpile_by_name`] but accepts options (e.g., pretty-printing).
+pub fn transpile_with_by_name(
+    sql: &str,
+    read: &str,
+    write: &str,
+    opts: &TranspileOptions,
+) -> Result<Vec<String>> {
     let read_dialect = Dialect::get_by_name(read)
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", read), 0, 0, 0, 0))?;
     let write_dialect = Dialect::get_by_name(write)
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", write), 0, 0, 0, 0))?;
-    let generic_identity = read_dialect.dialect_type() == DialectType::Generic
-        && write_dialect.dialect_type() == DialectType::Generic;
-
-    let expressions = read_dialect.parse(sql)?;
-
-    expressions
-        .into_iter()
-        .map(|expr| {
-            if generic_identity {
-                write_dialect.generate_with_source(&expr, read_dialect.dialect_type())
-            } else {
-                let transformed = write_dialect.transform(expr)?;
-                write_dialect.generate_with_source(&transformed, read_dialect.dialect_type())
-            }
-        })
-        .collect()
+    read_dialect.transpile_with(sql, &write_dialect, opts.clone())
 }
 
 /// Parse SQL into an AST using a string dialect name.
@@ -825,6 +813,68 @@ mod format_tests {
             "Expected transpile error for invalid ternary SQL, got: {:?}",
             transpile_result
         );
+    }
+
+    /// Regression guard: `lib::transpile()` must apply the full cross-dialect
+    /// rewrite pipeline (same as `Dialect::transpile()`). If these two paths
+    /// diverge again, Rust crate users silently get under-transformed SQL that
+    /// differs from what WASM/FFI/Python bindings produce.
+    #[test]
+    fn transpile_applies_cross_dialect_rewrites() {
+        // DuckDB to_timestamp → Trino FROM_UNIXTIME (different input semantics).
+        let out = transpile(
+            "SELECT to_timestamp(col) FROM t",
+            DialectType::DuckDB,
+            DialectType::Trino,
+        )
+        .expect("transpile failed");
+        assert_eq!(out[0], "SELECT FROM_UNIXTIME(col) FROM t");
+
+        // DuckDB CAST(x AS JSON) → Trino JSON_PARSE(x) (different CAST semantics).
+        let out = transpile(
+            "SELECT CAST(col AS JSON) FROM t",
+            DialectType::DuckDB,
+            DialectType::Trino,
+        )
+        .expect("transpile failed");
+        assert_eq!(out[0], "SELECT JSON_PARSE(col) FROM t");
+    }
+
+    /// Regression guard: all three transpile entry points (lib::transpile,
+    /// lib::transpile_by_name, Dialect::transpile) must produce identical
+    /// output. transpile_by_name is the one used by Python and C FFI bindings.
+    #[test]
+    fn transpile_matches_dialect_method() {
+        let cases: &[(DialectType, DialectType, &str, &str, &str)] = &[
+            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
+             "SELECT to_timestamp(col) FROM t"),
+            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
+             "SELECT CAST(col AS JSON) FROM t"),
+            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
+             "SELECT json_valid(col) FROM t"),
+            (DialectType::Snowflake, DialectType::DuckDB, "snowflake", "duckdb",
+             "SELECT DATEDIFF(day, a, b) FROM t"),
+            (DialectType::BigQuery, DialectType::DuckDB, "bigquery", "duckdb",
+             "SELECT DATE_DIFF(a, b, DAY) FROM t"),
+            (DialectType::Generic, DialectType::Generic, "generic", "generic", "SELECT 1"),
+        ];
+        for (read, write, read_name, write_name, sql) in cases {
+            let via_lib = transpile(sql, *read, *write).expect("lib::transpile failed");
+            let via_name = transpile_by_name(sql, read_name, write_name)
+                .expect("lib::transpile_by_name failed");
+            let via_dialect = Dialect::get(*read)
+                .transpile(sql, *write)
+                .expect("Dialect::transpile failed");
+            assert_eq!(
+                via_lib, via_dialect,
+                "lib::transpile / Dialect::transpile diverged for {:?} -> {:?}: {sql}",
+                read, write
+            );
+            assert_eq!(
+                via_name, via_dialect,
+                "lib::transpile_by_name / Dialect::transpile diverged for {read_name} -> {write_name}: {sql}"
+            );
+        }
     }
 
     #[test]

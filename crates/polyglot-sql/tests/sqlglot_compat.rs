@@ -16,7 +16,7 @@ fn roundtrip(sql: &str) -> String {
 /// Helper function to test transpilation between dialects
 fn transpile(sql: &str, from: DialectType, to: DialectType) -> String {
     let source_dialect = Dialect::get(from);
-    let result = source_dialect.transpile_to(sql, to).expect(&format!(
+    let result = source_dialect.transpile(sql, to).expect(&format!(
         "Failed to transpile: {} from {:?} to {:?}",
         sql, from, to
     ));

@@ -544,6 +544,7 @@ pub enum Expression {
     // DDL statements
     CreateTable(Box<CreateTable>),
     DropTable(Box<DropTable>),
+    Undrop(Box<Undrop>),
     AlterTable(Box<AlterTable>),
     CreateIndex(Box<CreateIndex>),
     DropIndex(Box<DropIndex>),
@@ -1149,6 +1150,7 @@ impl Expression {
             // DDL
             | Expression::CreateTable(_)
             | Expression::DropTable(_)
+            | Expression::Undrop(_)
             | Expression::AlterTable(_)
             | Expression::CreateIndex(_)
             | Expression::DropIndex(_)
@@ -1168,6 +1170,7 @@ impl Expression {
             | Expression::CreateProcedure(_)
             | Expression::DropProcedure(_)
             | Expression::CreateSequence(_)
+            | Expression::CreateSynonym(_)
             | Expression::DropSequence(_)
             | Expression::AlterSequence(_)
             | Expression::CreateTrigger(_)
@@ -2188,6 +2191,7 @@ impl Expression {
             Expression::ArraySlice(_) => "array_slice",
             Expression::CreateTable(_) => "create_table",
             Expression::DropTable(_) => "drop_table",
+            Expression::Undrop(_) => "undrop",
             Expression::AlterTable(_) => "alter_table",
             Expression::CreateIndex(_) => "create_index",
             Expression::DropIndex(_) => "drop_index",
@@ -3625,6 +3629,9 @@ pub struct Select {
     /// T-SQL FOR XML clause options (PATH, RAW, AUTO, EXPLICIT, BINARY BASE64, ELEMENTS XSINIL, etc.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub for_xml: Vec<Expression>,
+    /// T-SQL FOR JSON clause options (PATH, AUTO, ROOT, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub for_json: Vec<Expression>,
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
@@ -3683,6 +3690,7 @@ impl Select {
             into: None,
             locks: Vec::new(),
             for_xml: Vec::new(),
+            for_json: Vec::new(),
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -6479,6 +6487,9 @@ pub struct GroupConcatFunc {
     pub order_by: Option<Vec<Ordered>>,
     pub distinct: bool,
     pub filter: Option<Expression>,
+    /// MySQL 8.0.19+: LIMIT n inside GROUP_CONCAT
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<Box<Expression>>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inferred_type: Option<DataType>,
@@ -7770,6 +7781,12 @@ pub enum TableConstraint {
         name: Option<Identifier>,
         expression: Expression,
     },
+    /// TSQL named DEFAULT constraint: CONSTRAINT name DEFAULT value FOR column
+    Default {
+        name: Option<Identifier>,
+        expression: Expression,
+        column: Identifier,
+    },
     /// INDEX / KEY constraint (MySQL)
     Index {
         name: Option<Identifier>,
@@ -7955,6 +7972,19 @@ impl DropTable {
             restrict: false,
         }
     }
+}
+
+/// UNDROP TABLE/SCHEMA/DATABASE statement (Snowflake, ClickHouse)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct Undrop {
+    /// The object kind: "TABLE", "SCHEMA", or "DATABASE"
+    pub kind: String,
+    /// The object name
+    pub name: TableRef,
+    /// IF EXISTS clause
+    #[serde(default)]
+    pub if_exists: bool,
 }
 
 /// ALTER TABLE statement
@@ -9110,6 +9140,8 @@ pub enum FunctionBody {
         content: String,
         tag: Option<String>,
     },
+    /// BEGIN ... END block preserved as raw text (MySQL procedural bodies)
+    RawBlock(String),
 }
 
 /// Function security (DEFINER, INVOKER, or NONE)

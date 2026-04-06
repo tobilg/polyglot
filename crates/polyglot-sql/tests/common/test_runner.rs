@@ -216,11 +216,11 @@ pub fn transpile_test(
 
     let results = if use_pretty {
         source_dialect
-            .transpile_to_pretty(sql, target)
+            .transpile_with(sql, target, polyglot_sql::TranspileOptions::pretty())
             .map_err(|e| format!("Transpile error: {}", e))?
     } else {
         source_dialect
-            .transpile_to(sql, target)
+            .transpile(sql, target)
             .map_err(|e| format!("Transpile error: {}", e))?
     };
 

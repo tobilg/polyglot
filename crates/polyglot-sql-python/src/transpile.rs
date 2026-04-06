@@ -1,6 +1,6 @@
 use crate::errors::map_transpile_error;
 use crate::helpers::{normalize_error_level, resolve_dialect, run_on_large_stack};
-use polyglot_sql::dialects::Dialect;
+use polyglot_sql::dialects::{Dialect, TranspileOptions};
 use pyo3::prelude::*;
 
 #[pyfunction(signature = (sql, read = None, write = None, *, identity = true, error_level = None, pretty = false))]
@@ -26,35 +26,17 @@ pub fn transpile(
     let sql_owned = sql.to_owned();
     let read_owned = read.to_owned();
     let write_owned = write.to_owned();
-    let statements = run_on_large_stack(py, move || {
-        polyglot_sql::transpile_by_name(&sql_owned, &read_owned, &write_owned)
+    run_on_large_stack(py, move || {
+        let read_dialect = Dialect::get_by_name(&read_owned)
+            .expect("dialect existence checked before entering stack");
+        let write_dialect = Dialect::get_by_name(&write_owned)
+            .expect("dialect existence checked before entering stack");
+        let opts = if pretty {
+            TranspileOptions::pretty()
+        } else {
+            TranspileOptions::default()
+        };
+        read_dialect.transpile_with(&sql_owned, &write_dialect, opts)
     })?
-    .map_err(map_transpile_error)?;
-
-    if !pretty {
-        return Ok(statements);
-    }
-
-    py.detach(|| {
-        let dialect =
-            Dialect::get_by_name(write).expect("dialect existence checked before entering detach");
-
-        statements
-            .into_iter()
-            .map(|statement| {
-                let mut parsed = dialect.parse(&statement)?;
-                if parsed.len() != 1 {
-                    return Err(polyglot_sql::Error::parse(
-                        format!("Expected 1 statement, found {}", parsed.len()),
-                        0,
-                        0,
-                        0,
-                        0,
-                    ));
-                }
-                dialect.generate_pretty(&parsed.remove(0))
-            })
-            .collect::<polyglot_sql::Result<Vec<String>>>()
-    })
     .map_err(map_transpile_error)
 }

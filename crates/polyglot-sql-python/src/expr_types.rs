@@ -435,6 +435,7 @@ define_expression_subclasses!(
     ArraySlice,
     CreateTable,
     DropTable,
+    Undrop,
     AlterTable,
     CreateIndex,
     DropIndex,

@@ -11,7 +11,7 @@ use polyglot_sql::dialects::{Dialect, DialectType};
 /// Helper function to test transpilation between dialects
 fn transpile(sql: &str, from: DialectType, to: DialectType) -> String {
     let source_dialect = Dialect::get(from);
-    let result = source_dialect.transpile_to(sql, to).expect(&format!(
+    let result = source_dialect.transpile(sql, to).expect(&format!(
         "Failed to transpile: {} from {:?} to {:?}",
         sql, from, to
     ));
@@ -21,7 +21,7 @@ fn transpile(sql: &str, from: DialectType, to: DialectType) -> String {
 /// Helper to verify transpilation produces valid SQL (doesn't crash)
 fn transpile_succeeds(sql: &str, from: DialectType, to: DialectType) -> bool {
     let source_dialect = Dialect::get(from);
-    source_dialect.transpile_to(sql, to).is_ok()
+    source_dialect.transpile(sql, to).is_ok()
 }
 
 // ============================================================================
@@ -1161,7 +1161,7 @@ mod edge_cases {
 
         for dialect in dialects {
             let source = Dialect::get(DialectType::Generic);
-            let result = source.transpile_to(sql, dialect);
+            let result = source.transpile(sql, dialect);
             // Should either succeed with empty result or error gracefully
             match result {
                 Ok(statements) => {

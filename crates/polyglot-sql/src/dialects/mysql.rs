@@ -1140,7 +1140,7 @@ mod tests {
     fn transpile_to_mysql(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(sql, DialectType::MySQL)
+            .transpile(sql, DialectType::MySQL)
             .expect("Transpile failed");
         result[0].clone()
     }

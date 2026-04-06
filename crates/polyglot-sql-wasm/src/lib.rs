@@ -161,7 +161,7 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
     };
 
     let dialect = Dialect::get(read);
-    match dialect.transpile_to(sql, write) {
+    match dialect.transpile(sql, write) {
         Ok(results) => TranspileResult {
             success: true,
             sql: Some(results),

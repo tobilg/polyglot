@@ -30,6 +30,31 @@ let result = transpile(
 assert_eq!(result[0], "SELECT COALESCE(a, b) FROM t");
 ```
 
+You can also transpile through a `Dialect` handle directly — useful when you
+already hold one (e.g., for custom dialects) or need pretty-printed output:
+
+```rust
+use polyglot_sql::{Dialect, DialectType, TranspileOptions};
+
+let mysql = Dialect::get(DialectType::MySQL);
+
+// Built-in target via DialectType
+let plain = mysql.transpile("SELECT IFNULL(a, b) FROM t", DialectType::Postgres).unwrap();
+
+// Pretty-printed output via TranspileOptions
+let pretty = mysql
+    .transpile_with(
+        "SELECT IFNULL(a, b) FROM t",
+        DialectType::Postgres,
+        TranspileOptions::pretty(),
+    )
+    .unwrap();
+
+// Target a custom (or built-in) Dialect handle directly
+let pg = Dialect::get(DialectType::Postgres);
+let via_handle = mysql.transpile("SELECT IFNULL(a, b) FROM t", &pg).unwrap();
+```
+
 ### Parse + Generate
 
 ```rust

@@ -3899,7 +3899,7 @@ mod tests {
     fn transpile_to_snowflake(sql: &str) -> String {
         let dialect = Dialect::get(DialectType::Generic);
         let result = dialect
-            .transpile_to(sql, DialectType::Snowflake)
+            .transpile(sql, DialectType::Snowflake)
             .expect("Transpile failed");
         result[0].clone()
     }

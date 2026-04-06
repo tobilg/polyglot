@@ -1055,8 +1055,22 @@ impl Parser {
                     ) =>
             {
                 self.skip(); // consume UNDROP
-                self.parse_command()?
-                    .ok_or_else(|| self.parse_error("Failed to parse UNDROP statement"))
+                let kind = if self.match_token(TokenType::Table) {
+                    "TABLE"
+                } else if self.match_token(TokenType::Schema) {
+                    "SCHEMA"
+                } else if self.match_token(TokenType::Database) {
+                    "DATABASE"
+                } else {
+                    return Err(self.parse_error("Expected TABLE, SCHEMA, or DATABASE after UNDROP"));
+                };
+                let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
+                let name = self.parse_table_ref()?;
+                Ok(Expression::Undrop(Box::new(crate::expressions::Undrop {
+                    kind: kind.to_string(),
+                    name,
+                    if_exists,
+                })))
             }
             // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
             TokenType::Var
@@ -1398,7 +1412,26 @@ impl Parser {
         {
             // TOP can have parentheses: TOP (10) or without: TOP 10
             let (amount, parenthesized) = if self.match_token(TokenType::LParen) {
-                let expr = self.parse_expression()?;
+                let expr = if self.check(TokenType::Select) || self.check(TokenType::With) {
+                    let stmt = self.parse_statement()?;
+                    Expression::Subquery(Box::new(Subquery {
+                        this: stmt,
+                        alias: None,
+                        column_aliases: Vec::new(),
+                        order_by: None,
+                        limit: None,
+                        offset: None,
+                        distribute_by: None,
+                        sort_by: None,
+                        cluster_by: None,
+                        lateral: false,
+                        modifiers_inside: false,
+                        trailing_comments: Vec::new(),
+                        inferred_type: None,
+                    }))
+                } else {
+                    self.parse_expression()?
+                };
                 self.expect(TokenType::RParen)?;
                 (expr, true)
             } else {
@@ -1453,7 +1486,26 @@ impl Parser {
             && self.match_token(TokenType::Top)
         {
             let (amount, parenthesized) = if self.match_token(TokenType::LParen) {
-                let expr = self.parse_expression()?;
+                let expr = if self.check(TokenType::Select) || self.check(TokenType::With) {
+                    let stmt = self.parse_statement()?;
+                    Expression::Subquery(Box::new(Subquery {
+                        this: stmt,
+                        alias: None,
+                        column_aliases: Vec::new(),
+                        order_by: None,
+                        limit: None,
+                        offset: None,
+                        distribute_by: None,
+                        sort_by: None,
+                        cluster_by: None,
+                        lateral: false,
+                        modifiers_inside: false,
+                        trailing_comments: Vec::new(),
+                        inferred_type: None,
+                    }))
+                } else {
+                    self.parse_expression()?
+                };
                 self.expect(TokenType::RParen)?;
                 (expr, true)
             } else {
@@ -2050,8 +2102,8 @@ impl Parser {
         // Parse SAMPLE / TABLESAMPLE clause
         let sample = self.parse_sample_clause()?;
 
-        // Parse FOR UPDATE/SHARE locks or FOR XML (T-SQL)
-        let (locks, for_xml) = self.parse_locks_and_for_xml()?;
+        // Parse FOR UPDATE/SHARE locks or FOR XML/JSON (T-SQL)
+        let (locks, for_xml, for_json) = self.parse_locks_and_for_xml()?;
 
         // TSQL: OPTION clause (e.g., OPTION(LABEL = 'foo', HASH JOIN))
         let option = if self.check_identifier("OPTION") && self.check_next(TokenType::LParen) {
@@ -2177,6 +2229,7 @@ impl Parser {
             into,
             locks,
             for_xml,
+            for_json,
             leading_comments,
             post_select_comments,
             kind,
@@ -2455,6 +2508,9 @@ impl Parser {
             }
             Expression::Pivot(ref mut pivot) => {
                 pivot.with = Some(with_clause);
+            }
+            Expression::Merge(ref mut merge) => {
+                merge.with_ = Some(Box::new(Expression::With(Box::new(with_clause))));
             }
             _ => {}
         }
@@ -3160,6 +3216,7 @@ impl Parser {
             into: None,
             locks: Vec::new(),
             for_xml: Vec::new(),
+            for_json: Vec::new(),
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -5324,6 +5381,22 @@ impl Parser {
             }
         }
 
+        // Check for TSQL table hints after alias: t o WITH (NOLOCK), t AS a WITH (TABLOCK)
+        if self.check(TokenType::With) && self.check_next(TokenType::LParen) {
+            if let Expression::Table(ref mut table) = expr {
+                if let Some(hint_expr) = self.parse_table_hints()? {
+                    match hint_expr {
+                        Expression::Tuple(tuple) => {
+                            table.hints = tuple.expressions;
+                        }
+                        other => {
+                            table.hints = vec![other];
+                        }
+                    }
+                }
+            }
+        }
+
         // Check for MySQL index hints after alias: t e USE INDEX (idx), t AS a IGNORE INDEX (idx)
         if self.check_keyword_text("USE")
             || self.check(TokenType::Ignore)
@@ -5358,6 +5431,31 @@ impl Parser {
         } else if self.check(TokenType::Unpivot) && self.is_unpivot_clause_start() {
             self.skip(); // consume UNPIVOT
             expr = self.parse_unpivot(expr)?;
+        }
+        // Handle PIVOT/UNPIVOT alias: PIVOT(...) AS pvt
+        if matches!(&expr, Expression::Pivot(_) | Expression::Unpivot(_)) {
+            if self.match_token(TokenType::As) {
+                let alias = self.expect_identifier_or_alias_keyword_with_quoted()?;
+                match &mut expr {
+                    Expression::Pivot(p) => p.alias = Some(alias),
+                    Expression::Unpivot(u) => u.alias = Some(alias),
+                    _ => {}
+                }
+            } else if !self.check_keyword()
+                && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
+            {
+                let tok = self.advance();
+                let alias = if tok.token_type == TokenType::QuotedIdentifier {
+                    Identifier::quoted(tok.text.clone())
+                } else {
+                    Identifier::new(tok.text.clone())
+                };
+                match &mut expr {
+                    Expression::Pivot(p) => p.alias = Some(alias),
+                    Expression::Unpivot(u) => u.alias = Some(alias),
+                    _ => {}
+                }
+            }
         }
 
         // Check for Redshift AT index clause for array unnesting
@@ -7602,13 +7700,15 @@ impl Parser {
         Ok(SortBy { expressions })
     }
 
-    /// Parse FOR UPDATE/SHARE locking clauses or FOR XML (T-SQL)
+    /// Parse FOR UPDATE/SHARE locking clauses or FOR XML/JSON (T-SQL)
     /// Syntax: FOR UPDATE|SHARE|NO KEY UPDATE|KEY SHARE [OF tables] [NOWAIT|WAIT n|SKIP LOCKED]
     /// Also handles: LOCK IN SHARE MODE (MySQL)
     /// Also handles: FOR XML PATH|RAW|AUTO|EXPLICIT [, options...] (T-SQL)
-    fn parse_locks_and_for_xml(&mut self) -> Result<(Vec<Lock>, Vec<Expression>)> {
+    /// Also handles: FOR JSON PATH|AUTO [, ROOT('name')] [, INCLUDE_NULL_VALUES] [, WITHOUT_ARRAY_WRAPPER] (T-SQL)
+    fn parse_locks_and_for_xml(&mut self) -> Result<(Vec<Lock>, Vec<Expression>, Vec<Expression>)> {
         let mut locks = Vec::new();
         let mut for_xml = Vec::new();
+        let mut for_json = Vec::new();
 
         loop {
             let (update, key) = if self.match_keywords(&[TokenType::For, TokenType::Update]) {
@@ -7625,6 +7725,12 @@ impl Parser {
                 self.skip(); // consume XML
                 for_xml = self.parse_for_xml_options()?;
                 break; // FOR XML is always the last clause
+            } else if self.check(TokenType::For) && self.check_next_identifier("JSON") {
+                // FOR JSON (T-SQL) - parse JSON options
+                self.skip(); // consume FOR
+                self.skip(); // consume JSON
+                for_json = self.parse_for_json_options()?;
+                break; // FOR JSON is always the last clause
             } else if self.check(TokenType::For) && self.check_next_identifier("SHARE") {
                 // FOR SHARE
                 self.skip(); // consume FOR
@@ -7717,7 +7823,7 @@ impl Parser {
             });
         }
 
-        Ok((locks, for_xml))
+        Ok((locks, for_xml, for_json))
     }
 
     /// Parse FOR XML options (T-SQL)
@@ -7799,7 +7905,7 @@ impl Parser {
             }))));
         }
 
-        if self.match_identifier("TYPE") {
+        if self.match_identifier("TYPE") || self.match_token(TokenType::Type) {
             return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
                 this: Box::new(Expression::Var(Box::new(Var {
                     this: "TYPE".to_string(),
@@ -7863,6 +7969,82 @@ impl Parser {
         }
 
         // No more options recognized
+        Ok(None)
+    }
+
+    /// Parse FOR JSON options (T-SQL)
+    /// Syntax: FOR JSON PATH|AUTO [, ROOT('name')] [, INCLUDE_NULL_VALUES] [, WITHOUT_ARRAY_WRAPPER]
+    fn parse_for_json_options(&mut self) -> Result<Vec<Expression>> {
+        let mut options = Vec::new();
+
+        loop {
+            if let Some(opt) = self.parse_for_json_single_option()? {
+                options.push(opt);
+            } else {
+                break;
+            }
+            if !self.match_token(TokenType::Comma) {
+                break;
+            }
+        }
+
+        Ok(options)
+    }
+
+    /// Parse a single FOR JSON option
+    fn parse_for_json_single_option(&mut self) -> Result<Option<Expression>> {
+        if self.match_identifier("PATH") {
+            return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
+                this: Box::new(Expression::Var(Box::new(Var {
+                    this: "PATH".to_string(),
+                }))),
+                expression: None,
+            }))));
+        }
+
+        if self.match_identifier("AUTO") {
+            return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
+                this: Box::new(Expression::Var(Box::new(Var {
+                    this: "AUTO".to_string(),
+                }))),
+                expression: None,
+            }))));
+        }
+
+        if self.match_identifier("ROOT") {
+            let expression = if self.match_token(TokenType::LParen) {
+                let expr = self.parse_string()?;
+                self.expect(TokenType::RParen)?;
+                expr
+            } else {
+                None
+            };
+            return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
+                this: Box::new(Expression::Var(Box::new(Var {
+                    this: "ROOT".to_string(),
+                }))),
+                expression: expression.map(|e| Box::new(e)),
+            }))));
+        }
+
+        if self.match_identifier("INCLUDE_NULL_VALUES") {
+            return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
+                this: Box::new(Expression::Var(Box::new(Var {
+                    this: "INCLUDE_NULL_VALUES".to_string(),
+                }))),
+                expression: None,
+            }))));
+        }
+
+        if self.match_identifier("WITHOUT_ARRAY_WRAPPER") {
+            return Ok(Some(Expression::QueryOption(Box::new(QueryOption {
+                this: Box::new(Expression::Var(Box::new(Var {
+                    this: "WITHOUT_ARRAY_WRAPPER".to_string(),
+                }))),
+                expression: None,
+            }))));
+        }
+
         Ok(None)
     }
 
@@ -15818,6 +16000,16 @@ impl Parser {
                 self.parse_expression()?
             };
             Ok(TableConstraint::Assume { name, expression })
+        } else if self.match_token(TokenType::Default) {
+            // TSQL: CONSTRAINT name DEFAULT value FOR column
+            let expression = self.parse_expression()?;
+            self.expect(TokenType::For)?;
+            let column = self.expect_identifier_with_quoted()?;
+            Ok(TableConstraint::Default {
+                name,
+                expression,
+                column,
+            })
         } else {
             Err(self.parse_error("Expected PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, or EXCLUDE"))
         }
@@ -24291,6 +24483,32 @@ impl Parser {
                     let stmt = self.parse_statement()?;
                     body = Some(FunctionBody::Expression(stmt));
                 }
+            } else if self.check(TokenType::Begin) {
+                // MySQL: BEGIN...END without AS keyword
+                // Collect entire block as raw text since MySQL procedural
+                // constructs (IF/SIGNAL/WHILE/etc.) aren't parseable as statements
+                let start = self.current;
+                self.skip(); // consume BEGIN
+                let mut depth = 1;
+                while !self.is_at_end() && depth > 0 {
+                    if self.check(TokenType::Begin) {
+                        depth += 1;
+                    } else if self.check(TokenType::End) {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    self.skip();
+                }
+                let raw = self.tokens_to_sql(start, self.current);
+                self.expect(TokenType::End)?;
+                // Consume optional label after END (e.g., END myproc)
+                if self.is_identifier_token() || self.check(TokenType::Var) {
+                    self.skip();
+                }
+                body = Some(FunctionBody::RawBlock(format!("{} END", raw)));
+                break;
             } else {
                 break;
             }
@@ -33654,6 +33872,12 @@ impl Parser {
                 } else {
                     None
                 };
+                // Parse optional LIMIT (MySQL 8.0.19+)
+                let limit = if self.match_token(TokenType::Limit) {
+                    Some(Box::new(self.parse_expression()?))
+                } else {
+                    None
+                };
                 self.expect(TokenType::RParen)?;
                 let filter = self.parse_filter_clause()?;
                 Ok(Expression::GroupConcat(Box::new(GroupConcatFunc {
@@ -33662,6 +33886,7 @@ impl Parser {
                     order_by,
                     distinct,
                     filter,
+                    limit,
                     inferred_type: None,
                 })))
             }
@@ -47062,6 +47287,7 @@ impl Parser {
             order_by,
             distinct,
             filter: None,
+            limit: None,
             inferred_type: None,
         }))))
     }
@@ -51142,6 +51368,7 @@ impl Parser {
                 into: None,
                 locks: Vec::new(),
                 for_xml: Vec::new(),
+                for_json: Vec::new(),
                 leading_comments: Vec::new(),
                 post_select_comments: Vec::new(),
                 kind: None,
@@ -51264,6 +51491,7 @@ impl Parser {
                 into: None,
                 locks: Vec::new(),
                 for_xml: Vec::new(),
+                for_json: Vec::new(),
                 leading_comments: Vec::new(),
                 post_select_comments: Vec::new(),
                 kind: None,
@@ -54767,6 +54995,7 @@ impl Parser {
             order_by: None,
             distinct,
             filter: None,
+            limit: None,
             inferred_type: None,
         }))))
     }
@@ -58642,6 +58871,9 @@ mod tests {
         );
     }
 
+
+
+
     fn assert_pivot_roundtrip(sql: &str) {
         let parsed = crate::parse(sql, crate::DialectType::DuckDB);
         assert!(
@@ -59425,14 +59657,14 @@ mod clickhouse_parser_regression_tests {
             Ok(result) => {
                 assert!(!result.is_empty(), "Should parse to at least one statement");
                 // Test transpilation to DuckDB target - should normalize number to quoted string
-                let output_duckdb = d.transpile_to(sql, DialectType::DuckDB).unwrap();
+                let output_duckdb = d.transpile(sql, DialectType::DuckDB).unwrap();
                 assert_eq!(
                     output_duckdb[0],
                     "SELECT CAST('2018-01-01 00:00:00' AS DATE) + INTERVAL '3' DAY",
                     "DuckDB output should have quoted interval value"
                 );
                 // Test transpilation to Hive target
-                let output_hive = d.transpile_to(sql, DialectType::Hive).unwrap();
+                let output_hive = d.transpile(sql, DialectType::Hive).unwrap();
                 assert_eq!(
                     output_hive[0], "SELECT CAST('2018-01-01 00:00:00' AS DATE) + INTERVAL '3' DAY",
                     "Hive output should have quoted interval value"

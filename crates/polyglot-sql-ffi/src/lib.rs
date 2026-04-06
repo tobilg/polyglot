@@ -25,5 +25,5 @@ pub use memory::{polyglot_free_result, polyglot_free_string, polyglot_free_valid
 pub use optimize::polyglot_optimize;
 pub use parse::{polyglot_parse, polyglot_parse_one};
 pub use tokenize::polyglot_tokenize;
-pub use transpile::polyglot_transpile;
+pub use transpile::{polyglot_transpile, polyglot_transpile_with_options};
 pub use validate::polyglot_validate;

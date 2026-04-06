@@ -555,14 +555,14 @@ mod transpile_errors {
 
     fn test_transpile_invalid_sql() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to("SELECT (", DialectType::PostgreSQL);
+        let result = dialect.transpile("SELECT (", DialectType::PostgreSQL);
         assert!(result.is_err(), "Transpiling invalid SQL should fail");
     }
 
     #[test]
     fn test_transpile_empty_input() {
         let dialect = Dialect::get(DialectType::Generic);
-        let result = dialect.transpile_to("", DialectType::PostgreSQL);
+        let result = dialect.transpile("", DialectType::PostgreSQL);
         match result {
             Ok(stmts) => assert!(stmts.is_empty(), "Empty input should transpile to empty"),
             Err(_) => {} // Also acceptable
@@ -572,7 +572,7 @@ mod transpile_errors {
     #[test]
     fn test_transpile_same_dialect() {
         let dialect = Dialect::get(DialectType::PostgreSQL);
-        let result = dialect.transpile_to("SELECT 1", DialectType::PostgreSQL);
+        let result = dialect.transpile("SELECT 1", DialectType::PostgreSQL);
         assert!(result.is_ok(), "Same dialect transpile should work");
         assert_eq!(result.unwrap()[0], "SELECT 1");
     }
