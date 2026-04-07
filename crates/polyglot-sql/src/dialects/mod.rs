@@ -543,11 +543,29 @@ where
 {
     use crate::expressions::BinaryOp;
 
-    // Helper macro to recurse into a single-argument AggFunc-based expression.
+    // Helper macro to recurse into AggFunc-based expressions (this, filter, order_by, having_max, limit).
     macro_rules! recurse_agg {
         ($variant:ident, $f:expr) => {{
             let mut f = $f;
             f.this = transform_recursive(f.this, transform_fn)?;
+            if let Some(filter) = f.filter.take() {
+                f.filter = Some(transform_recursive(filter, transform_fn)?);
+            }
+            for ord in &mut f.order_by {
+                ord.this = transform_recursive(
+                    std::mem::replace(&mut ord.this, Expression::Null(crate::expressions::Null)),
+                    transform_fn,
+                )?;
+            }
+            if let Some((ref mut expr, _)) = f.having_max {
+                *expr = Box::new(transform_recursive(
+                    std::mem::replace(expr.as_mut(), Expression::Null(crate::expressions::Null)),
+                    transform_fn,
+                )?);
+            }
+            if let Some(limit) = f.limit.take() {
+                f.limit = Some(Box::new(transform_recursive(*limit, transform_fn)?));
+            }
             Expression::$variant(f)
         }};
     }
@@ -1590,8 +1608,9 @@ where
             Expression::Filter(f)
         }
 
-        // Aggregate functions (AggFunc-based): recurse into the aggregate argument.
-        // Note: Stddev, StddevSamp, Variance, and ArrayAgg are already handled above.
+        // Aggregate functions (AggFunc-based): recurse into the aggregate argument,
+        // filter, order_by, having_max, and limit.
+        // Stddev, StddevSamp, Variance, and ArrayAgg are handled earlier in this match.
         Expression::Sum(f) => recurse_agg!(Sum, f),
         Expression::Avg(f) => recurse_agg!(Avg, f),
         Expression::Min(f) => recurse_agg!(Min, f),
@@ -1621,6 +1640,9 @@ where
         Expression::Count(mut c) => {
             if let Some(this) = c.this.take() {
                 c.this = Some(transform_recursive(this, transform_fn)?);
+            }
+            if let Some(filter) = c.filter.take() {
+                c.filter = Some(transform_recursive(filter, transform_fn)?);
             }
             Expression::Count(c)
         }
