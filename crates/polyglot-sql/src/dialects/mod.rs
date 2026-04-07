@@ -29880,6 +29880,8 @@ impl Dialect {
                             using_template: None,
                             rollup: None,
                             uuid: None,
+                            with_partition_columns: Vec::new(),
+                            with_connection: None,
                         };
                         return Expression::CreateTable(Box::new(ct));
                     }

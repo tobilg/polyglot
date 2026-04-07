@@ -1618,6 +1618,8 @@ impl SelectBuilder {
             using_template: None,
             rollup: None,
             uuid: None,
+            with_partition_columns: vec![],
+            with_connection: None,
         }))
     }
 
