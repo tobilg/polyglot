@@ -86,9 +86,7 @@ fn transpile_impl(
     }
 
     let result = match options {
-        Some(opts) => {
-            polyglot_sql::transpile_with_by_name(&sql, &from_dialect, &to_dialect, opts)
-        }
+        Some(opts) => polyglot_sql::transpile_with_by_name(&sql, &from_dialect, &to_dialect, opts),
         None => polyglot_sql::transpile_by_name(&sql, &from_dialect, &to_dialect),
     };
 

@@ -31138,8 +31138,12 @@ impl Generator {
                 self.write_space();
             }
         }
-        // Python: INSERT kind expressions source
+        // Python: INSERT [OVERWRITE] kind expressions source
         self.write_keyword("INSERT");
+        if e.overwrite {
+            self.write_space();
+            self.write_keyword("OVERWRITE");
+        }
         self.write_space();
         self.write(&e.kind);
         if self.config.pretty {

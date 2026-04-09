@@ -872,11 +872,16 @@ impl Parser {
                     self.skip(); // consume EXECUTE
                     self.parse_command()?
                         .ok_or_else(|| self.parse_error("Failed to parse EXECUTE statement"))
-                } else if self.peek_nth(1).map(|t| t.text.eq_ignore_ascii_case("IMMEDIATE")) == Some(true) {
+                } else if self
+                    .peek_nth(1)
+                    .map(|t| t.text.eq_ignore_ascii_case("IMMEDIATE"))
+                    == Some(true)
+                {
                     // EXECUTE IMMEDIATE — Snowflake/BigQuery dynamic SQL, treat as raw command
                     self.skip(); // consume EXECUTE
-                    self.parse_command()?
-                        .ok_or_else(|| self.parse_error("Failed to parse EXECUTE IMMEDIATE statement"))
+                    self.parse_command()?.ok_or_else(|| {
+                        self.parse_error("Failed to parse EXECUTE IMMEDIATE statement")
+                    })
                 } else {
                     self.parse_execute()
                 }
@@ -994,6 +999,7 @@ impl Parser {
             }
             // ClickHouse: OPTIMIZE TABLE t [FINAL] [DEDUPLICATE [BY ...]]
             // MySQL: OPTIMIZE [LOCAL|NO_WRITE_TO_BINLOG] TABLE t1 [, t2, ...]
+            // Databricks/Spark: OPTIMIZE t [WHERE ...] [ZORDER BY (...)]
             TokenType::Var
                 if self.peek().text.eq_ignore_ascii_case("OPTIMIZE")
                     && matches!(
@@ -1003,6 +1009,9 @@ impl Parser {
                             | Some(crate::dialects::DialectType::SingleStore)
                             | Some(crate::dialects::DialectType::Doris)
                             | Some(crate::dialects::DialectType::StarRocks)
+                            | Some(crate::dialects::DialectType::Databricks)
+                            | Some(crate::dialects::DialectType::Spark)
+                            | None
                     ) =>
             {
                 self.skip(); // consume OPTIMIZE
@@ -1062,7 +1071,9 @@ impl Parser {
                 } else if self.match_token(TokenType::Database) {
                     "DATABASE"
                 } else {
-                    return Err(self.parse_error("Expected TABLE, SCHEMA, or DATABASE after UNDROP"));
+                    return Err(
+                        self.parse_error("Expected TABLE, SCHEMA, or DATABASE after UNDROP")
+                    );
                 };
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 let name = self.parse_table_ref()?;
@@ -1088,6 +1099,27 @@ impl Parser {
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH") => {
                 self.skip(); // consume DETACH
                 self.parse_attach_detach(false)
+            }
+            // Databricks/Spark: RESTORE TABLE t TO VERSION/TIMESTAMP AS OF x
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("RESTORE") => {
+                self.skip(); // consume RESTORE
+                self.parse_as_command()?
+                    .ok_or_else(|| self.parse_error("Failed to parse RESTORE statement"))
+            }
+            // Databricks/Spark: VACUUM t [RETAIN n HOURS] [DRY RUN]
+            TokenType::Var if self.peek().text.eq_ignore_ascii_case("VACUUM") => {
+                self.skip(); // consume VACUUM
+                self.parse_as_command()?
+                    .ok_or_else(|| self.parse_error("Failed to parse VACUUM statement"))
+            }
+            // Snowflake: LIST @stage / LS @stage
+            TokenType::Var
+                if self.peek().text.eq_ignore_ascii_case("LIST")
+                    || self.peek().text.eq_ignore_ascii_case("LS") =>
+            {
+                self.skip(); // consume LIST/LS
+                self.parse_as_command()?
+                    .ok_or_else(|| self.parse_error("Failed to parse LIST/LS statement"))
             }
             // DuckDB: INSTALL extension [FROM source]
             TokenType::Var if self.peek().text.eq_ignore_ascii_case("INSTALL") => {
@@ -9490,10 +9522,11 @@ impl Parser {
         // Handle OVERWRITE for Hive/Spark: INSERT OVERWRITE TABLE ...
         let overwrite = self.match_token(TokenType::Overwrite);
 
-        // Handle Oracle multi-table INSERT: INSERT ALL/FIRST ...
-        // Must check before OVERWRITE handling since these are mutually exclusive
-        if !overwrite && (self.match_token(TokenType::All) || self.match_token(TokenType::First)) {
-            if let Some(multi_insert) = self.parse_multitable_inserts(leading_comments.clone())? {
+        // Handle multi-table INSERT: INSERT [OVERWRITE] ALL/FIRST ...
+        if self.match_token(TokenType::All) || self.match_token(TokenType::First) {
+            if let Some(multi_insert) =
+                self.parse_multitable_inserts(leading_comments.clone(), overwrite)?
+            {
                 return Ok(multi_insert);
             }
         }
@@ -9646,15 +9679,24 @@ impl Parser {
             // Allow keywords (like TABLE) as table names in INSERT statements
             self.expect_identifier_or_keyword_with_quoted()?
         };
-        // Handle qualified table names like a.b
+        // Handle qualified table names like a.b or a.b.c
         let table = if self.match_token(TokenType::Dot) {
-            let schema = table_name;
-            let name = self.expect_identifier_or_keyword_with_quoted()?;
+            let mut schema = table_name;
+            let mut name = self.expect_identifier_or_keyword_with_quoted()?;
+            // Check for three-part name: catalog.schema.table
+            let catalog = if self.match_token(TokenType::Dot) {
+                let catalog = schema;
+                schema = name;
+                name = self.expect_identifier_or_keyword_with_quoted()?;
+                Some(catalog)
+            } else {
+                None
+            };
             let trailing_comments = self.previous_trailing_comments().to_vec();
             TableRef {
                 name,
                 schema: Some(schema),
-                catalog: None,
+                catalog,
                 alias: None,
                 alias_explicit_as: false,
                 column_aliases: Vec::new(),
@@ -11226,6 +11268,21 @@ impl Parser {
                         crate::expressions::CreateSynonym { name, target },
                     )));
                 }
+                // Databricks/Spark: CREATE [OR REFRESH] STREAMING/LIVE TABLE ...
+                if self.check_identifier("STREAMING") || self.check_identifier("LIVE") {
+                    let start = self.current;
+                    while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                        self.skip();
+                    }
+                    let sql = self.tokens_to_sql(start, self.current);
+                    let mut prefix = String::from("CREATE");
+                    if or_replace {
+                        prefix.push_str(" OR REPLACE");
+                    }
+                    prefix.push(' ');
+                    prefix.push_str(&sql);
+                    return Ok(Expression::Raw(Raw { sql: prefix }));
+                }
                 // Fall back to Raw for unrecognized CREATE targets
                 // (e.g., CREATE WAREHOUSE, CREATE STREAMLIT, CREATE STORAGE INTEGRATION, etc.)
                 {
@@ -11429,6 +11486,20 @@ impl Parser {
                 }
                 result.push(')');
                 Some(Expression::Raw(Raw { sql: result }))
+            } else if self.match_identifier("VERSION") || self.match_identifier("TIMESTAMP") {
+                // Databricks: VERSION AS OF n / TIMESTAMP AS OF t
+                let keyword = self.previous().text.to_ascii_uppercase();
+                self.match_token(TokenType::As); // consume AS
+                self.match_identifier("OF"); // consume OF
+                let token = self.advance();
+                let value = if token.token_type == TokenType::String {
+                    format!("'{}'", token.text.replace('\'', "''"))
+                } else {
+                    token.text.clone()
+                };
+                Some(Expression::Raw(Raw {
+                    sql: format!("{} AS OF {}", keyword, value),
+                }))
             } else {
                 None
             };
@@ -11513,9 +11584,7 @@ impl Parser {
                     // WITH PARTITION COLUMNS (col_name col_type, ...)
                     self.advance(); // consume PARTITION
                     if !self.match_identifier("COLUMNS") {
-                        return Err(self.parse_error(
-                            "Expected COLUMNS after WITH PARTITION",
-                        ));
+                        return Err(self.parse_error("Expected COLUMNS after WITH PARTITION"));
                     }
                     if self.check(TokenType::LParen) {
                         self.advance(); // consume (
@@ -12019,7 +12088,6 @@ impl Parser {
                 })));
             }
         }
-
 
         // For DYNAMIC/ICEBERG/EXTERNAL tables, columns might be optional (use AS SELECT or other syntax)
         // Check if we have a left paren for columns or if we're going straight to options
@@ -13145,6 +13213,8 @@ impl Parser {
                 table_properties.push(cluster_property);
             }
         } else if self.match_keywords(&[TokenType::Cluster, TokenType::By]) {
+            // Handle both: CLUSTER BY c1, c2 and CLUSTER BY (c1, c2)
+            let parens = self.match_token(TokenType::LParen);
             let mut cluster_names = Vec::new();
             loop {
                 let name = self.expect_identifier_or_keyword()?;
@@ -13153,9 +13223,16 @@ impl Parser {
                     break;
                 }
             }
-            table_properties.push(Expression::Raw(Raw {
-                sql: format!("CLUSTER BY {}", cluster_names.join(", ")),
-            }));
+            if parens {
+                self.expect(TokenType::RParen)?;
+            }
+            let inner = cluster_names.join(", ");
+            let sql = if parens {
+                format!("CLUSTER BY ({})", inner)
+            } else {
+                format!("CLUSTER BY {}", inner)
+            };
+            table_properties.push(Expression::Raw(Raw { sql }));
         }
 
         // No-column-defs path: OPTIONS and AS SELECT come after PARTITION BY / CLUSTER BY
@@ -13304,6 +13381,41 @@ impl Parser {
                 } else {
                     break;
                 }
+            }
+        }
+
+        // Snowflake: STAGE_FILE_FORMAT = (...), STAGE_COPY_OPTIONS = (...)
+        while self.check_identifier("STAGE_FILE_FORMAT")
+            || self.check_identifier("STAGE_COPY_OPTIONS")
+        {
+            let key = self.advance().text.to_ascii_uppercase();
+            self.match_token(TokenType::Eq);
+            // Consume the parenthesized options as raw text
+            if self.match_token(TokenType::LParen) {
+                let mut raw = format!("{} = (", key);
+                let mut paren_depth = 1i32;
+                while !self.is_at_end() && paren_depth > 0 {
+                    let token = self.advance();
+                    if token.token_type == TokenType::LParen {
+                        paren_depth += 1;
+                    } else if token.token_type == TokenType::RParen {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            break;
+                        }
+                    }
+                    if token.token_type == TokenType::String {
+                        raw.push_str(&format!("'{}'", token.text));
+                    } else {
+                        raw.push_str(&token.text);
+                    }
+                    // Add space between tokens (but not before closing paren)
+                    if paren_depth > 0 {
+                        raw.push(' ');
+                    }
+                }
+                raw.push(')');
+                table_properties.push(Expression::Raw(Raw { sql: raw }));
             }
         }
 
@@ -17899,7 +18011,7 @@ impl Parser {
                 });
             }
             // ADD ROW ACCESS POLICY name ON (columns) — Snowflake
-            if self.check_identifier("ROW")
+            if self.check(TokenType::Row)
                 && self
                     .peek_nth(1)
                     .map(|t| t.text.eq_ignore_ascii_case("ACCESS"))
@@ -18160,6 +18272,16 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 });
             }
+            // DROP CLUSTERING KEY — Snowflake
+            if self.check_identifier("CLUSTERING")
+                && self.peek_nth(1).map(|t| t.text.eq_ignore_ascii_case("KEY")) == Some(true)
+            {
+                self.skip(); // consume CLUSTERING
+                self.skip(); // consume KEY
+                return Ok(AlterTableAction::Raw {
+                    sql: "DROP CLUSTERING KEY".to_string(),
+                });
+            }
             // DROP SEARCH OPTIMIZATION [ON method(columns), ...] — Snowflake
             if self.check_identifier("SEARCH")
                 && self
@@ -18189,16 +18311,13 @@ impl Parser {
             }
 
             // DROP [ALL] ROW ACCESS POLICY/POLICIES — Snowflake
-            if (self.check_identifier("ROW")
+            if (self.check(TokenType::Row)
                 && self
                     .peek_nth(1)
                     .map(|t| t.text.eq_ignore_ascii_case("ACCESS"))
                     == Some(true))
                 || (self.check_identifier("ALL")
-                    && self
-                        .peek_nth(1)
-                        .map(|t| t.text.eq_ignore_ascii_case("ROW"))
-                        == Some(true))
+                    && self.peek_nth(1).map(|t| t.text.eq_ignore_ascii_case("ROW")) == Some(true))
             {
                 let mut tokens: Vec<(String, TokenType)> =
                     vec![("DROP".to_string(), TokenType::Drop)];
@@ -18795,7 +18914,15 @@ impl Parser {
                     if self.check(TokenType::Comma) {
                         break;
                     }
-                    tokens.push((self.advance().text.clone(), TokenType::Var));
+                    let token = self.advance();
+                    let text = if token.token_type == TokenType::QuotedIdentifier {
+                        format!("\"{}\"", token.text)
+                    } else if token.token_type == TokenType::String {
+                        format!("'{}'", token.text)
+                    } else {
+                        token.text.clone()
+                    };
+                    tokens.push((text, token.token_type));
                 }
                 Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -20239,6 +20366,16 @@ impl Parser {
         {
             self.skip(); // consume HISTORY
             Some("HISTORY".to_string())
+        } else if !extended
+            && !formatted
+            && (self.check(TokenType::Identifier)
+                || self.check(TokenType::Var)
+                || self.check(TokenType::QuotedIdentifier))
+            && self.peek().text.eq_ignore_ascii_case("DETAIL")
+            && self.peek_nth(1).map(|t| t.token_type) != Some(TokenType::Dot)
+        {
+            self.skip(); // consume DETAIL
+            Some("DETAIL".to_string())
         } else {
             None
         };
@@ -20881,13 +21018,15 @@ impl Parser {
                 // Python SQLGlot: SCHEMA_KINDS = {"OBJECTS", "TABLES", "VIEWS", "SEQUENCES", "UNIQUE KEYS", "IMPORTED KEYS"}
                 let table = self.parse_table_ref()?;
                 let inferred_kind = match this.as_str() {
+                    // SHOW SCHEMAS/DATABASES IN x — no scope_kind needed, x is a catalog/database
+                    "SCHEMAS" | "DATABASES" => None,
                     "OBJECTS" | "TABLES" | "VIEWS" | "SEQUENCES" | "UNIQUE KEYS"
-                    | "IMPORTED KEYS" => "SCHEMA",
-                    "PRIMARY KEYS" => "TABLE",
-                    _ => "SCHEMA", // Default to SCHEMA for unknown types
+                    | "IMPORTED KEYS" => Some("SCHEMA"),
+                    "PRIMARY KEYS" => Some("TABLE"),
+                    _ => Some("SCHEMA"), // Default to SCHEMA for unknown types
                 };
                 (
-                    Some(inferred_kind.to_string()),
+                    inferred_kind.map(|s| s.to_string()),
                     Some(Expression::Table(Box::new(table))),
                 )
             };
@@ -21600,6 +21739,11 @@ impl Parser {
             }));
         }
 
+        // Placeholder ? (used by Snowflake Python connector for bind parameters)
+        if self.match_token(TokenType::Placeholder) {
+            return Ok(Expression::Placeholder(Placeholder { index: None }));
+        }
+
         Err(self.parse_error("Expected value for COPY parameter"))
     }
 
@@ -22168,8 +22312,16 @@ impl Parser {
             (source_parts.join(""), false)
         };
 
-        // Parse target stage (@stage_name)
-        let target = self.parse_stage_reference_as_string()?;
+        // Parse target stage (@stage_name, ? placeholder, or quoted '@stage')
+        let target = if self.match_token(TokenType::Placeholder) {
+            Expression::Placeholder(Placeholder { index: None })
+        } else if self.check(TokenType::String) {
+            // Quoted stage: '@SYSTEM$BIND/path'
+            let tok = self.advance();
+            Expression::Literal(Box::new(Literal::String(tok.text.clone())))
+        } else {
+            self.parse_stage_reference_as_string()?
+        };
 
         // Parse optional parameters
         // Note: Some parameter names like OVERWRITE are keywords, so we check for those explicitly
@@ -24551,8 +24703,14 @@ impl Parser {
         // Parse procedure options
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
             if self.match_token(TokenType::Returns) {
-                // RETURNS type (Snowflake)
+                // RETURNS type [NOT NULL] (Snowflake)
                 return_type = Some(self.parse_data_type()?);
+                // Consume optional NOT NULL / NULL constraint on return type
+                if self.match_keywords(&[TokenType::Not, TokenType::Null]) {
+                    // NOT NULL — ignore for now, just consume
+                } else {
+                    self.match_token(TokenType::Null); // optional NULL
+                }
             } else if self.match_identifier("EXECUTE") || self.match_token(TokenType::Execute) {
                 // EXECUTE AS CALLER/OWNER (Snowflake)
                 if self.match_token(TokenType::As) {
@@ -24602,6 +24760,10 @@ impl Parser {
                     // TokenType::String means single-quoted - tokenizer strips quotes
                     let tok = self.advance();
                     body = Some(FunctionBody::StringLiteral(tok.text.clone()));
+                } else if self.check(TokenType::HeredocString) {
+                    // $$...$$  dollar-quoted body (Snowflake/PostgreSQL)
+                    let tok = self.advance();
+                    body = Some(FunctionBody::Block(tok.text.clone()));
                 } else if self.match_token(TokenType::Begin) {
                     // Parse BEGIN ... END block as a list of statements
                     let mut statements = Vec::new();
@@ -30964,6 +31126,20 @@ impl Parser {
                 quoted,
                 string_quoted,
                 expression: None,
+            })));
+        }
+
+        // ?:: placeholder cast (QDColon token = ? + :: fused by tokenizer)
+        if self.match_token(TokenType::QDColon) {
+            let data_type = self.parse_data_type_for_cast()?;
+            return Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Placeholder(Placeholder { index: None }),
+                to: data_type,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: true,
+                format: None,
+                default: None,
+                inferred_type: None,
             })));
         }
 
@@ -38386,6 +38562,21 @@ impl Parser {
                 };
                 Ok(DataType::Custom { name })
             }
+            "TIMESTAMPNTZ" | "TIMESTAMP_NTZ" => {
+                let precision = if self.match_token(TokenType::LParen) {
+                    let p = self.expect_number()? as u32;
+                    self.expect(TokenType::RParen)?;
+                    Some(p)
+                } else {
+                    None
+                };
+                let name = if let Some(p) = precision {
+                    format!("TIMESTAMPNTZ({})", p)
+                } else {
+                    "TIMESTAMPNTZ".to_string()
+                };
+                Ok(DataType::Custom { name })
+            }
             "INTERVAL" => {
                 // Parse optional unit (DAYS, DAY, HOUR, etc.)
                 // Don't consume GENERATED, AS, NOT, NULL, etc. which are column constraints
@@ -39285,6 +39476,21 @@ impl Parser {
                     format!("TIMESTAMPLTZ({})", p)
                 } else {
                     "TIMESTAMPLTZ".to_string()
+                };
+                DataType::Custom { name: dt_name }
+            }
+            "TIMESTAMPNTZ" | "TIMESTAMP_NTZ" => {
+                let precision = if self.match_token(TokenType::LParen) {
+                    let p = self.expect_number()? as u32;
+                    self.expect(TokenType::RParen)?;
+                    Some(p)
+                } else {
+                    None
+                };
+                let dt_name = if let Some(p) = precision {
+                    format!("TIMESTAMPNTZ({})", p)
+                } else {
+                    "TIMESTAMPNTZ".to_string()
                 };
                 DataType::Custom { name: dt_name }
             }
@@ -44195,9 +44401,11 @@ impl Parser {
         // Parse information (any token as var, matching Python's any_token=True)
         let information = if !self.is_at_end() && !self.check(TokenType::RParen) {
             let tok = self.advance();
-            Some(Box::new(Expression::Var(Box::new(crate::expressions::Var {
-                this: tok.text.clone(),
-            }))))
+            Some(Box::new(Expression::Var(Box::new(
+                crate::expressions::Var {
+                    this: tok.text.clone(),
+                },
+            ))))
         } else {
             None
         };
@@ -45738,9 +45946,7 @@ impl Parser {
                 break;
             }
             // Accept comma (TSQL/BigQuery) or semicolon (Snowflake scripting) as separator
-            if self.match_token(TokenType::Comma)
-                || self.match_token(TokenType::Semicolon)
-            {
+            if self.match_token(TokenType::Comma) || self.match_token(TokenType::Semicolon) {
                 // Stop if next token is BEGIN (end of DECLARE block)
                 if self.check(TokenType::Begin) {
                     break;
@@ -49768,62 +49974,74 @@ impl Parser {
                         span: None,
                     }));
                 } else if self.match_token(TokenType::Set) {
-                    // Parse col = value assignments manually
-                    let mut assignments: Vec<Expression> = Vec::new();
-                    loop {
-                        // Parse: column = expression (column can be qualified like x.a)
-                        if let Some(col) = self.parse_id_var()? {
-                            // Handle qualified column references (e.g., x.a = y.b)
-                            let col = if self.match_token(TokenType::Dot) {
-                                // We have a qualified column reference
-                                if let Expression::Identifier(table_ident) = col {
-                                    // Parse the column part after the dot
-                                    if let Some(col_expr) = self.parse_id_var()? {
-                                        if let Expression::Identifier(col_ident) = col_expr {
-                                            Expression::boxed_column(Column {
-                                                name: col_ident,
-                                                table: Some(table_ident),
-                                                join_mark: false,
-                                                trailing_comments: Vec::new(),
-                                                span: None,
-                                                inferred_type: None,
-                                            })
+                    // Spark/Databricks: UPDATE SET * (update all columns)
+                    if self.match_token(TokenType::Star) {
+                        elements.push(Expression::Star(crate::expressions::Star {
+                            table: None,
+                            except: None,
+                            replace: None,
+                            rename: None,
+                            trailing_comments: Vec::new(),
+                            span: None,
+                        }));
+                    } else {
+                        // Parse col = value assignments manually
+                        let mut assignments: Vec<Expression> = Vec::new();
+                        loop {
+                            // Parse: column = expression (column can be qualified like x.a)
+                            if let Some(col) = self.parse_id_var()? {
+                                // Handle qualified column references (e.g., x.a = y.b)
+                                let col = if self.match_token(TokenType::Dot) {
+                                    // We have a qualified column reference
+                                    if let Expression::Identifier(table_ident) = col {
+                                        // Parse the column part after the dot
+                                        if let Some(col_expr) = self.parse_id_var()? {
+                                            if let Expression::Identifier(col_ident) = col_expr {
+                                                Expression::boxed_column(Column {
+                                                    name: col_ident,
+                                                    table: Some(table_ident),
+                                                    join_mark: false,
+                                                    trailing_comments: Vec::new(),
+                                                    span: None,
+                                                    inferred_type: None,
+                                                })
+                                            } else {
+                                                col_expr
+                                            }
                                         } else {
-                                            col_expr
+                                            return Err(
+                                                self.parse_error("Expected column name after dot")
+                                            );
                                         }
                                     } else {
-                                        return Err(
-                                            self.parse_error("Expected column name after dot")
-                                        );
+                                        col
                                     }
                                 } else {
                                     col
+                                };
+                                if self.match_token(TokenType::Eq) {
+                                    let value = self.parse_expression()?;
+                                    // Create assignment as EQ expression
+                                    let assignment = Expression::Eq(Box::new(BinaryOp {
+                                        left: col,
+                                        right: value,
+                                        left_comments: Vec::new(),
+                                        operator_comments: Vec::new(),
+                                        trailing_comments: Vec::new(),
+                                        inferred_type: None,
+                                    }));
+                                    assignments.push(assignment);
                                 }
-                            } else {
-                                col
-                            };
-                            if self.match_token(TokenType::Eq) {
-                                let value = self.parse_expression()?;
-                                // Create assignment as EQ expression
-                                let assignment = Expression::Eq(Box::new(BinaryOp {
-                                    left: col,
-                                    right: value,
-                                    left_comments: Vec::new(),
-                                    operator_comments: Vec::new(),
-                                    trailing_comments: Vec::new(),
-                                    inferred_type: None,
-                                }));
-                                assignments.push(assignment);
+                            }
+                            if !self.match_token(TokenType::Comma) {
+                                break;
                             }
                         }
-                        if !self.match_token(TokenType::Comma) {
-                            break;
+                        if !assignments.is_empty() {
+                            elements.push(Expression::Tuple(Box::new(Tuple {
+                                expressions: assignments,
+                            })));
                         }
-                    }
-                    if !assignments.is_empty() {
-                        elements.push(Expression::Tuple(Box::new(Tuple {
-                            expressions: assignments,
-                        })));
                     }
                 }
 
@@ -49951,6 +50169,7 @@ impl Parser {
     pub fn parse_multitable_inserts(
         &mut self,
         leading_comments: Vec<String>,
+        overwrite: bool,
     ) -> Result<Option<Expression>> {
         // Get kind from previous token (ALL or FIRST)
         let kind = self.previous().text.to_ascii_uppercase();
@@ -50063,6 +50282,7 @@ impl Parser {
                 expressions,
                 source: Some(Box::new(source)),
                 leading_comments,
+                overwrite,
             },
         ))))
     }
@@ -52822,8 +53042,8 @@ impl Parser {
                 _ => None,
             },
             DT::TSQL | DT::Fabric => match upper.as_str() {
-                "DATEDIFF" | "DATEDIFF_BIG" | "DATEADD" | "DATEPART" | "DATE_PART"
-                | "DATENAME" | "DATETRUNC"
+                "DATEDIFF" | "DATEDIFF_BIG" | "DATEADD" | "DATEPART" | "DATE_PART" | "DATENAME"
+                | "DATETRUNC"
                     if !args.is_empty() =>
                 {
                     Some(0)
@@ -58402,10 +58622,7 @@ mod tests {
             ),
         };
 
-        assert_eq!(
-            create.table_modifier.as_deref(),
-            Some("EXTERNAL"),
-        );
+        assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"),);
         assert_eq!(create.columns.len(), 2, "Expected 2 column definitions");
         assert_eq!(create.columns[0].name.name, "id");
         assert_eq!(create.columns[1].name.name, "name");
@@ -58471,12 +58688,10 @@ mod tests {
         assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
         assert_eq!(create.with_partition_columns.len(), 1);
         assert!(create.with_connection.is_some());
-        assert!(
-            create
-                .properties
-                .iter()
-                .any(|p| matches!(p, Expression::OptionsProperty(_))),
-        );
+        assert!(create
+            .properties
+            .iter()
+            .any(|p| matches!(p, Expression::OptionsProperty(_))),);
     }
 
     #[test]
@@ -58539,10 +58754,16 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.as_select.is_some(), "Expected AS SELECT with CTE");
-        assert!(create.table_modifier.is_none(), "Should NOT have EXTERNAL modifier");
+        assert!(
+            create.table_modifier.is_none(),
+            "Should NOT have EXTERNAL modifier"
+        );
     }
 
     #[test]
@@ -58552,9 +58773,15 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
-        assert!(create.as_select.is_some(), "Expected AS SELECT with multiple CTEs");
+        assert!(
+            create.as_select.is_some(),
+            "Expected AS SELECT with multiple CTEs"
+        );
     }
 
     #[test]
@@ -58564,19 +58791,31 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.table_modifier.is_none());
         assert!(
-            create.properties.iter().any(|p| matches!(p, Expression::PartitionByProperty(_))),
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::PartitionByProperty(_))),
             "Expected PARTITION BY"
         );
         assert!(
-            create.properties.iter().any(|p| matches!(p, Expression::ClusterByColumnsProperty(_))),
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::ClusterByColumnsProperty(_))),
             "Expected CLUSTER BY"
         );
         assert!(
-            create.properties.iter().any(|p| matches!(p, Expression::OptionsProperty(_))),
+            create
+                .properties
+                .iter()
+                .any(|p| matches!(p, Expression::OptionsProperty(_))),
             "Expected OPTIONS"
         );
     }
@@ -58588,7 +58827,10 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.or_replace);
         assert!(create.table_modifier.is_none());
@@ -58601,7 +58843,10 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.if_not_exists);
         assert_eq!(create.columns.len(), 2);
@@ -58614,7 +58859,10 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.if_not_exists);
         assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
@@ -58627,7 +58875,10 @@ mod tests {
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.or_replace);
         assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
@@ -58654,11 +58905,18 @@ OPTIONS (
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.if_not_exists);
         assert_eq!(create.table_modifier.as_deref(), Some("EXTERNAL"));
-        assert_eq!(create.with_partition_columns.len(), 5, "Expected 5 partition columns");
+        assert_eq!(
+            create.with_partition_columns.len(),
+            5,
+            "Expected 5 partition columns"
+        );
         assert!(!create.properties.is_empty(), "Expected OPTIONS properties");
     }
 
@@ -58669,10 +58927,17 @@ OPTIONS (
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
         assert!(create.with_connection.is_some(), "Expected WITH CONNECTION");
-        assert_eq!(create.with_partition_columns.len(), 1, "Expected 1 partition column");
+        assert_eq!(
+            create.with_partition_columns.len(),
+            1,
+            "Expected 1 partition column"
+        );
         // Roundtrip: generator always emits PARTITION COLUMNS before CONNECTION
         let generated = crate::generate(&parsed[0], DialectType::BigQuery).unwrap();
         let expected = "CREATE EXTERNAL TABLE t WITH PARTITION COLUMNS (dt DATE) WITH CONNECTION `project.us.my_conn` OPTIONS (format='PARQUET', uris=['gs://bucket/*'])";
@@ -58686,9 +58951,15 @@ OPTIONS (
         let parsed = crate::parse(sql, DialectType::BigQuery).unwrap();
         let create = match &parsed[0] {
             Expression::CreateTable(ct) => ct,
-            other => panic!("Expected CreateTable, got {:?}", std::mem::discriminant(other)),
+            other => panic!(
+                "Expected CreateTable, got {:?}",
+                std::mem::discriminant(other)
+            ),
         };
-        assert!(create.with_partition_columns.is_empty(), "Bare WITH PARTITION COLUMNS should produce empty partition column list");
+        assert!(
+            create.with_partition_columns.is_empty(),
+            "Bare WITH PARTITION COLUMNS should produce empty partition column list"
+        );
         assert!(!create.properties.is_empty(), "Expected OPTIONS");
     }
 
@@ -59341,9 +59612,6 @@ OPTIONS (
             result.err()
         );
     }
-
-
-
 
     fn assert_pivot_roundtrip(sql: &str) {
         let parsed = crate::parse(sql, crate::DialectType::DuckDB);

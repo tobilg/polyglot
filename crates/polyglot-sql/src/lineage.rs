@@ -250,12 +250,13 @@ pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
         // a source in its own body, skip it. Non-recursive CTEs in a recursive WITH
         // block are still expanded.
         if with.recursive {
-            let is_self_referencing = if let Some(body_select) = get_leftmost_select_mut(&mut cte.this) {
-                let body_sources = get_select_sources(body_select);
-                body_sources.iter().any(|s| s.normalized == cte_name)
-            } else {
-                false
-            };
+            let is_self_referencing =
+                if let Some(body_select) = get_leftmost_select_mut(&mut cte.this) {
+                    let body_sources = get_select_sources(body_select);
+                    body_sources.iter().any(|s| s.normalized == cte_name)
+                } else {
+                    false
+                };
             if is_self_referencing {
                 continue;
             }
@@ -332,12 +333,9 @@ fn rewrite_stars_in_select(
         match expr {
             Expression::Star(star) => {
                 let qual = star.table.as_ref();
-                if let Some(expanded) = expand_star_from_sources(
-                    qual,
-                    &sources,
-                    resolved_ctes,
-                    schema,
-                ) {
+                if let Some(expanded) =
+                    expand_star_from_sources(qual, &sources, resolved_ctes, schema)
+                {
                     for (src_alias, col_name) in &expanded {
                         let table_id = Identifier::new(src_alias);
                         new_expressions.push(make_column_expr(col_name, Some(&table_id)));
@@ -350,12 +348,9 @@ fn rewrite_stars_in_select(
             }
             Expression::Column(c) if c.name.name == "*" => {
                 let qual = c.table.as_ref();
-                if let Some(expanded) = expand_star_from_sources(
-                    qual,
-                    &sources,
-                    resolved_ctes,
-                    schema,
-                ) {
+                if let Some(expanded) =
+                    expand_star_from_sources(qual, &sources, resolved_ctes, schema)
+                {
                     for (_src_alias, col_name) in &expanded {
                         // Keep the original table qualifier for qualified stars (table.*)
                         new_expressions.push(make_column_expr(col_name, c.table.as_ref()));
@@ -441,7 +436,10 @@ fn lookup_schema_columns(schema: Option<&dyn Schema>, fq_name: &str) -> Option<V
     if fq_name.is_empty() {
         return None;
     }
-    schema.column_names(fq_name).ok().filter(|cols| !cols.is_empty() && !cols.contains(&"*".to_string()))
+    schema
+        .column_names(fq_name)
+        .ok()
+        .filter(|cols| !cols.is_empty() && !cols.contains(&"*".to_string()))
 }
 
 /// Create a Column expression with the given name and optional table qualifier.
@@ -499,13 +497,21 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 }
                 parts.push(t.name.name.clone());
                 let fq_name = parts.join(".");
-                Some(SourceInfo { alias, normalized, fq_name })
+                Some(SourceInfo {
+                    alias,
+                    normalized,
+                    fq_name,
+                })
             }
             Expression::Subquery(s) => {
                 let alias = s.alias.as_ref()?.name.clone();
                 let normalized = alias.to_lowercase();
                 let fq_name = alias.clone();
-                Some(SourceInfo { alias, normalized, fq_name })
+                Some(SourceInfo {
+                    alias,
+                    normalized,
+                    fq_name,
+                })
             }
             Expression::Paren(p) => extract_source(&p.this),
             _ => None,
@@ -816,9 +822,9 @@ fn resolve_qualified_column(
     // Check if table is a CTE reference — check both the current scope's cte_sources
     // and ancestor CTE scopes (for sibling CTEs in parent WITH clauses).
     let is_cte = scope.cte_sources.contains_key(effective_table)
-        || all_cte_scopes.iter().any(|s| {
-            matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == effective_table)
-        });
+        || all_cte_scopes.iter().any(
+            |s| matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == effective_table),
+        );
     if is_cte {
         if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, effective_table) {
             // Build ancestor CTE scopes from all_cte_scopes for the recursive call
@@ -3261,14 +3267,9 @@ SELECT * FROM orders"#;
         ];
         schema.add_table("stg_orders", &cols, None).unwrap();
 
-        let node = lineage_with_schema(
-            "order_id",
-            &expr,
-            Some(&schema as &dyn Schema),
-            None,
-            false,
-        )
-        .unwrap();
+        let node =
+            lineage_with_schema("order_id", &expr, Some(&schema as &dyn Schema), None, false)
+                .unwrap();
         assert_eq!(node.name, "order_id");
     }
 
@@ -3284,7 +3285,9 @@ SELECT * FROM orders"#;
             ("order_id".to_string(), DataType::Unknown),
             ("customer_id".to_string(), DataType::Unknown),
         ];
-        schema.add_table("db.schema.stg_orders", &cols, None).unwrap();
+        schema
+            .add_table("db.schema.stg_orders", &cols, None)
+            .unwrap();
 
         let node = lineage_with_schema(
             "customer_id",
@@ -3314,14 +3317,8 @@ SELECT * FROM orders"#;
         ];
         schema.add_table("external_table", &cols, None).unwrap();
 
-        let node = lineage_with_schema(
-            "name",
-            &expr,
-            Some(&schema as &dyn Schema),
-            None,
-            false,
-        )
-        .unwrap();
+        let node =
+            lineage_with_schema("name", &expr, Some(&schema as &dyn Schema), None, false).unwrap();
         assert_eq!(node.name, "name");
     }
 
@@ -3345,25 +3342,14 @@ SELECT * FROM orders"#;
         ];
         schema.add_table("stg_orders", &cols, None).unwrap();
 
-        let node = lineage_with_schema(
-            "order_id",
-            &expr,
-            Some(&schema as &dyn Schema),
-            None,
-            false,
-        )
-        .unwrap();
+        let node =
+            lineage_with_schema("order_id", &expr, Some(&schema as &dyn Schema), None, false)
+                .unwrap();
         assert_eq!(node.name, "order_id");
 
         // Also verify the extra column works
-        let extra = lineage_with_schema(
-            "extra",
-            &expr,
-            Some(&schema as &dyn Schema),
-            None,
-            false,
-        )
-        .unwrap();
+        let extra =
+            lineage_with_schema("extra", &expr, Some(&schema as &dyn Schema), None, false).unwrap();
         assert_eq!(extra.name, "extra");
     }
 
@@ -3404,38 +3390,59 @@ SELECT * FROM final_cte"#;
 
         let mut schema = MappingSchema::new();
         let order_cols = vec![
-            ("order_id".to_string(), crate::expressions::DataType::Unknown),
-            ("customer_id".to_string(), crate::expressions::DataType::Unknown),
+            (
+                "order_id".to_string(),
+                crate::expressions::DataType::Unknown,
+            ),
+            (
+                "customer_id".to_string(),
+                crate::expressions::DataType::Unknown,
+            ),
             ("status".to_string(), crate::expressions::DataType::Unknown),
         ];
         let pay_cols = vec![
-            ("payment_id".to_string(), crate::expressions::DataType::Unknown),
-            ("order_id".to_string(), crate::expressions::DataType::Unknown),
+            (
+                "payment_id".to_string(),
+                crate::expressions::DataType::Unknown,
+            ),
+            (
+                "order_id".to_string(),
+                crate::expressions::DataType::Unknown,
+            ),
             ("amount".to_string(), crate::expressions::DataType::Unknown),
         ];
         schema.add_table("stg_orders", &order_cols, None).unwrap();
         schema.add_table("stg_payments", &pay_cols, None).unwrap();
 
         // order_id should trace back to stg_orders
-        let node = lineage_with_schema(
-            "order_id", &expr, Some(&schema as &dyn Schema), None, false,
-        ).unwrap();
+        let node =
+            lineage_with_schema("order_id", &expr, Some(&schema as &dyn Schema), None, false)
+                .unwrap();
         let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
 
         // The leaf should be "stg_orders.order_id" (not just "order_id")
-        let has_table_qualified = all_names.iter().any(|n| n.contains('.') && n.contains("order_id"));
-        assert!(has_table_qualified,
-            "Expected table-qualified leaf like 'stg_orders.order_id', got: {:?}", all_names);
+        let has_table_qualified = all_names
+            .iter()
+            .any(|n| n.contains('.') && n.contains("order_id"));
+        assert!(
+            has_table_qualified,
+            "Expected table-qualified leaf like 'stg_orders.order_id', got: {:?}",
+            all_names
+        );
 
         // amount should trace back to stg_payments
-        let node = lineage_with_schema(
-            "amount", &expr, Some(&schema as &dyn Schema), None, false,
-        ).unwrap();
+        let node = lineage_with_schema("amount", &expr, Some(&schema as &dyn Schema), None, false)
+            .unwrap();
         let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
 
-        let has_table_qualified = all_names.iter().any(|n| n.contains('.') && n.contains("amount"));
-        assert!(has_table_qualified,
-            "Expected table-qualified leaf like 'stg_payments.amount', got: {:?}", all_names);
+        let has_table_qualified = all_names
+            .iter()
+            .any(|n| n.contains('.') && n.contains("amount"));
+        assert!(
+            has_table_qualified,
+            "Expected table-qualified leaf like 'stg_payments.amount', got: {:?}",
+            all_names
+        );
     }
 
     #[test]
@@ -3481,14 +3488,8 @@ FROM import_stg AS base"#;
             )
             .unwrap();
 
-        let node = lineage_with_schema(
-            "item_id",
-            &expr,
-            Some(&schema as &dyn Schema),
-            None,
-            false,
-        )
-        .unwrap();
+        let node = lineage_with_schema("item_id", &expr, Some(&schema as &dyn Schema), None, false)
+            .unwrap();
         let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
         assert!(
             all_names.iter().any(|n| n == "stg_items.item_id"),
@@ -3533,9 +3534,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
     fn test_lineage_unquoted_cte_case_insensitive() {
         // Unquoted CTE names are case-insensitive (both normalized to lowercase).
         // MyCte and MYCTE should match.
-        let expr = parse(
-            "WITH MyCte AS (SELECT id AS col FROM source) SELECT * FROM MYCTE",
-        );
+        let expr = parse("WITH MyCte AS (SELECT id AS col FROM source) SELECT * FROM MYCTE");
         let node = lineage("col", &expr, None, false).unwrap();
         assert_eq!(node.name, "col");
         assert!(
@@ -3547,9 +3546,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
     #[test]
     fn test_lineage_quoted_cte_case_preserved() {
         // Quoted CTE name preserves case. "MyCte" referenced as "MyCte" should match.
-        let expr = parse(
-            r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "MyCte""#,
-        );
+        let expr = parse(r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "MyCte""#);
         let node = lineage("col", &expr, None, false).unwrap();
         assert_eq!(node.name, "col");
         assert!(
@@ -3563,9 +3560,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         // Quoted CTE "MyCte" referenced as "mycte" — case mismatch.
         // sqlglot treats this as a table reference, not a CTE match.
         // Star expansion should NOT resolve through the CTE.
-        let expr = parse(
-            r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "mycte""#,
-        );
+        let expr = parse(r#"WITH "MyCte" AS (SELECT id AS col FROM source) SELECT * FROM "mycte""#);
         // lineage("col", ...) should fail because "mycte" is treated as an external
         // table (not matching CTE "MyCte"), and SELECT * cannot be expanded.
         let result = lineage("col", &expr, None, false);
@@ -3617,9 +3612,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         // This test asserts the CURRENT BUGGY behavior. When the bug is fixed,
         // this test should fail — update the assertion to match correct behavior:
         //   child.source_name should be "" (table ref), not "MyCte" (CTE ref).
-        let expr = parse(
-            r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT col FROM "mycte""#,
-        );
+        let expr = parse(r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT col FROM "mycte""#);
         let node = lineage("col", &expr, None, false).unwrap();
         assert!(!node.downstream.is_empty());
         let child = &node.downstream[0];
@@ -3639,9 +3632,7 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
         //
         // This test asserts the CURRENT BUGGY behavior. When the bug is fixed,
         // this test should fail — update to assert source_name != "MyCte".
-        let expr = parse(
-            r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT "mycte".col FROM "mycte""#,
-        );
+        let expr = parse(r#"WITH "MyCte" AS (SELECT 1 AS col) SELECT "mycte".col FROM "mycte""#);
         let node = lineage("col", &expr, None, false).unwrap();
         assert!(!node.downstream.is_empty());
         let child = &node.downstream[0];

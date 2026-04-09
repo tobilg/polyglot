@@ -10603,6 +10603,9 @@ pub struct MultitableInserts {
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
+    /// OVERWRITE modifier (Snowflake: INSERT OVERWRITE ALL)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub overwrite: bool,
 }
 
 /// OnConflict

@@ -422,6 +422,18 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                     }
                 }
             }
+            Expression::Cache(cache) => {
+                let name = cache.table.name.clone();
+                if !name.is_empty() && !cte_aliases.contains(&name) {
+                    names.push(name);
+                }
+            }
+            Expression::Uncache(uncache) => {
+                let name = uncache.table.name.clone();
+                if !name.is_empty() && !cte_aliases.contains(&name) {
+                    names.push(name);
+                }
+            }
             _ => {}
         }
     }

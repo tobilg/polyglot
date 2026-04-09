@@ -3,9 +3,8 @@ use polyglot_sql_ffi::{
     polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
     polyglot_free_validation_result, polyglot_generate, polyglot_lineage,
     polyglot_lineage_with_schema, polyglot_optimize, polyglot_parse, polyglot_parse_one,
-    polyglot_source_tables, polyglot_transpile, polyglot_transpile_with_options,
-    polyglot_validate, polyglot_version,
-    PolyglotResult, PolyglotValidationResult,
+    polyglot_source_tables, polyglot_transpile, polyglot_transpile_with_options, polyglot_validate,
+    polyglot_version, PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
 use std::ffi::{CStr, CString};
@@ -159,7 +158,9 @@ fn test_transpile_with_options_invalid_json() {
         opts.as_ptr(),
     ));
     assert_eq!(status, 6); // STATUS_SERIALIZATION_ERROR
-    assert!(error.unwrap_or_default().contains("Invalid transpile options JSON"));
+    assert!(error
+        .unwrap_or_default()
+        .contains("Invalid transpile options JSON"));
 }
 
 #[test]

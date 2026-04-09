@@ -1142,9 +1142,7 @@ impl BigQueryDialect {
                 let unit_name = match &unit_expr {
                     Expression::Identifier(id) => id.name.to_uppercase(),
                     Expression::Var(v) => v.this.to_uppercase(),
-                    Expression::Column(col) if col.table.is_none() => {
-                        col.name.name.to_uppercase()
-                    }
+                    Expression::Column(col) if col.table.is_none() => col.name.name.to_uppercase(),
                     _ => "DAY".to_string(),
                 };
                 let unit = match unit_name.as_str() {

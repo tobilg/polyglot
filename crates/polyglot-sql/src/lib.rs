@@ -846,17 +846,48 @@ mod format_tests {
     #[test]
     fn transpile_matches_dialect_method() {
         let cases: &[(DialectType, DialectType, &str, &str, &str)] = &[
-            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
-             "SELECT to_timestamp(col) FROM t"),
-            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
-             "SELECT CAST(col AS JSON) FROM t"),
-            (DialectType::DuckDB, DialectType::Trino, "duckdb", "trino",
-             "SELECT json_valid(col) FROM t"),
-            (DialectType::Snowflake, DialectType::DuckDB, "snowflake", "duckdb",
-             "SELECT DATEDIFF(day, a, b) FROM t"),
-            (DialectType::BigQuery, DialectType::DuckDB, "bigquery", "duckdb",
-             "SELECT DATE_DIFF(a, b, DAY) FROM t"),
-            (DialectType::Generic, DialectType::Generic, "generic", "generic", "SELECT 1"),
+            (
+                DialectType::DuckDB,
+                DialectType::Trino,
+                "duckdb",
+                "trino",
+                "SELECT to_timestamp(col) FROM t",
+            ),
+            (
+                DialectType::DuckDB,
+                DialectType::Trino,
+                "duckdb",
+                "trino",
+                "SELECT CAST(col AS JSON) FROM t",
+            ),
+            (
+                DialectType::DuckDB,
+                DialectType::Trino,
+                "duckdb",
+                "trino",
+                "SELECT json_valid(col) FROM t",
+            ),
+            (
+                DialectType::Snowflake,
+                DialectType::DuckDB,
+                "snowflake",
+                "duckdb",
+                "SELECT DATEDIFF(day, a, b) FROM t",
+            ),
+            (
+                DialectType::BigQuery,
+                DialectType::DuckDB,
+                "bigquery",
+                "duckdb",
+                "SELECT DATE_DIFF(a, b, DAY) FROM t",
+            ),
+            (
+                DialectType::Generic,
+                DialectType::Generic,
+                "generic",
+                "generic",
+                "SELECT 1",
+            ),
         ];
         for (read, write, read_name, write_name, sql) in cases {
             let via_lib = transpile(sql, *read, *write).expect("lib::transpile failed");

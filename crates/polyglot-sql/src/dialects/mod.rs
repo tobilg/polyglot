@@ -4109,7 +4109,7 @@ impl Dialect {
             DuckDBTryCastJsonToTryJsonParse, // DuckDB TRY_CAST(x AS JSON) -> TRY(JSON_PARSE(x)) for Trino/Presto/Athena
             DuckDBJsonFuncToJsonParse, // DuckDB json(x) -> JSON_PARSE(x) for Trino/Presto/Athena
             DuckDBJsonValidToIsJson,   // DuckDB json_valid(x) -> x IS JSON for Trino/Presto/Athena
-            ArraySyntaxConvert,     // ARRAY[x] -> ARRAY(x) for Spark, [x] for BigQuery/DuckDB
+            ArraySyntaxConvert,        // ARRAY[x] -> ARRAY(x) for Spark, [x] for BigQuery/DuckDB
             AtTimeZoneConvert, // AT TIME ZONE -> AT_TIMEZONE (Presto) / FROM_UTC_TIMESTAMP (Spark)
             DayOfWeekConvert,  // DAY_OF_WEEK -> dialect-specific
             MaxByMinByConvert, // MAX_BY/MIN_BY -> argMax/argMin for ClickHouse
@@ -20066,20 +20066,27 @@ impl Dialect {
                                         // DuckDB supports TRUNC(x, decimals) — preserve both args
                                         let mut args = f.args;
                                         // Snowflake fractions_supported: wrap non-INT decimals in CAST(... AS INT)
-                                        if args.len() == 2 && matches!(source, DialectType::Snowflake) {
+                                        if args.len() == 2
+                                            && matches!(source, DialectType::Snowflake)
+                                        {
                                             let decimals = args.remove(1);
                                             let is_int = matches!(&decimals, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(_)))
                                                 || matches!(&decimals, Expression::Cast(c) if matches!(c.to, DataType::Int { .. } | DataType::SmallInt { .. } | DataType::BigInt { .. } | DataType::TinyInt { .. }));
                                             let wrapped = if !is_int {
-                                                Expression::Cast(Box::new(crate::expressions::Cast {
-                                                    this: decimals,
-                                                    to: DataType::Int { length: None, integer_spelling: false },
-                                                    double_colon_syntax: false,
-                                                    trailing_comments: Vec::new(),
-                                                    format: None,
-                                                    default: None,
-                                                    inferred_type: None,
-                                                }))
+                                                Expression::Cast(Box::new(
+                                                    crate::expressions::Cast {
+                                                        this: decimals,
+                                                        to: DataType::Int {
+                                                            length: None,
+                                                            integer_spelling: false,
+                                                        },
+                                                        double_colon_syntax: false,
+                                                        trailing_comments: Vec::new(),
+                                                        format: None,
+                                                        default: None,
+                                                        inferred_type: None,
+                                                    },
+                                                ))
                                             } else {
                                                 decimals
                                             };
@@ -22230,14 +22237,12 @@ impl Dialect {
                     // DuckDB json_valid(x) -> x IS JSON (SQL:2016 predicate) for Trino/Presto/Athena
                     if let Expression::Function(mut f) = e {
                         let arg = f.args.remove(0);
-                        Ok(Expression::IsJson(Box::new(
-                            crate::expressions::IsJson {
-                                this: arg,
-                                json_type: None,
-                                unique_keys: None,
-                                negated: false,
-                            },
-                        )))
+                        Ok(Expression::IsJson(Box::new(crate::expressions::IsJson {
+                            this: arg,
+                            json_type: None,
+                            unique_keys: None,
+                            negated: false,
+                        })))
                     } else {
                         Ok(e)
                     }
@@ -35998,9 +36003,7 @@ mod tests {
     #[test]
     fn test_pg_hash_bitwise_xor() {
         let dialect = Dialect::get(DialectType::PostgreSQL);
-        let result = dialect
-            .transpile("x # y", DialectType::PostgreSQL)
-            .unwrap();
+        let result = dialect.transpile("x # y", DialectType::PostgreSQL).unwrap();
         assert_eq!(result[0], "x # y");
     }
 

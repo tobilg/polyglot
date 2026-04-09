@@ -13,9 +13,9 @@ use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
     AggFunc, Alias, BinaryOp, Case, Cast, CeilFunc, Column, DataType, Expression, Function,
-    Identifier, Interval, IntervalUnit, IntervalUnitSpec, IsNull, JSONPath,
-    JSONPathKey, JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Null, Paren, Struct,
-    Subquery, SubstringFunc, UnaryFunc, UnaryOp, VarArgFunc, WindowFunction,
+    Identifier, Interval, IntervalUnit, IntervalUnitSpec, IsNull, JSONPath, JSONPathKey,
+    JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Null, Paren, Struct, Subquery,
+    SubstringFunc, UnaryFunc, UnaryOp, VarArgFunc, WindowFunction,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
