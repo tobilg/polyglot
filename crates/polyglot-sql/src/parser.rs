@@ -6187,10 +6187,15 @@ impl Parser {
             let arg = if self.check(TokenType::String) {
                 let s = self.advance().text.clone();
                 Expression::Literal(Box::new(Literal::String(s)))
-            } else if self.check(TokenType::Parameter) {
-                // ?-style parameter
-                let var = self.advance().text.clone();
-                Expression::Var(Box::new(crate::expressions::Var { this: var }))
+            } else if self.check(TokenType::Placeholder)
+                || self.check(TokenType::Parameter)
+            {
+                // ? bind parameter — the Snowflake Python connector uses
+                // IDENTIFIER(?) for dynamic table references. The tokenizer
+                // emits TokenType::Parameter for '?'; we map it to a
+                // Placeholder AST node so it roundtrips as a bind parameter.
+                self.skip();
+                Expression::Placeholder(Placeholder { index: None })
             } else if self.check(TokenType::Dollar) {
                 // $foo style variable - Dollar followed by identifier
                 self.skip(); // consume $
@@ -21288,9 +21293,15 @@ impl Parser {
             || self.check(TokenType::String)
             || self.is_stage_reference()
             || self.check(TokenType::LParen)
+            || self.check(TokenType::Parameter)
         {
+            // Handle ? placeholder as source (Snowflake Python connector bind params)
+            if self.check(TokenType::Parameter) {
+                self.skip(); // consume ?
+                files.push(Expression::Placeholder(Placeholder { index: None }));
+            }
             // Check for subquery: FROM (SELECT ...)
-            if self.check(TokenType::LParen) {
+            else if self.check(TokenType::LParen) {
                 // Peek ahead to see if this is a subquery
                 let start = self.current;
                 self.skip(); // consume (
@@ -21333,8 +21344,15 @@ impl Parser {
                     && !self.check(TokenType::Var)
                     && !self.check_keyword()
                     && !self.check(TokenType::QuotedIdentifier)
+                    && !self.check(TokenType::Parameter)
                 {
                     break;
+                }
+                // Handle ? placeholder in file location list
+                if self.check(TokenType::Parameter) {
+                    self.skip();
+                    files.push(Expression::Placeholder(Placeholder { index: None }));
+                    continue;
                 }
                 // For COPY INTO ... FROM table_name, handle dotted table references
                 // If the next token is a Var/Identifier and the one after is a Dot, parse as table reference
@@ -21740,7 +21758,7 @@ impl Parser {
         }
 
         // Placeholder ? (used by Snowflake Python connector for bind parameters)
-        if self.match_token(TokenType::Placeholder) {
+        if self.match_token(TokenType::Parameter) {
             return Ok(Expression::Placeholder(Placeholder { index: None }));
         }
 
@@ -22296,7 +22314,7 @@ impl Parser {
             (self.advance().text.clone(), true)
         } else {
             // Handle file://path syntax (parsed as identifier + colon + etc.)
-            // Stop when we see @ (start of stage reference)
+            // Stop when we see @ (start of stage reference), ? (placeholder), or quoted string
             let mut source_parts = Vec::new();
             while !self.is_at_end() {
                 // Stop if we see @ (DAt token or Var starting with @)
@@ -22306,6 +22324,14 @@ impl Parser {
                 if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
                     break;
                 }
+                // Stop at ? (placeholder for stage destination), quoted string
+                // (e.g., '@SYSTEM$BIND/...'), or semicolon
+                if self.check(TokenType::Parameter)
+                    || self.check(TokenType::String)
+                    || self.check(TokenType::Semicolon)
+                {
+                    break;
+                }
                 let token = self.advance();
                 source_parts.push(token.text.clone());
             }
@@ -22313,7 +22339,7 @@ impl Parser {
         };
 
         // Parse target stage (@stage_name, ? placeholder, or quoted '@stage')
-        let target = if self.match_token(TokenType::Placeholder) {
+        let target = if self.match_token(TokenType::Parameter) {
             Expression::Placeholder(Placeholder { index: None })
         } else if self.check(TokenType::String) {
             // Quoted stage: '@SYSTEM$BIND/path'
@@ -38534,7 +38560,7 @@ impl Parser {
                     })
                 }
             }
-            "TIMESTAMPTZ" => {
+            "TIMESTAMPTZ" | "TIMESTAMP_TZ" => {
                 let precision = if self.match_token(TokenType::LParen) {
                     let p = self.expect_number()? as u32;
                     self.expect(TokenType::RParen)?;
@@ -39451,7 +39477,7 @@ impl Parser {
                     }
                 }
             }
-            "TIMESTAMPTZ" => {
+            "TIMESTAMPTZ" | "TIMESTAMP_TZ" => {
                 let precision = if self.match_token(TokenType::LParen) {
                     let p = self.expect_number()? as u32;
                     self.expect(TokenType::RParen)?;
