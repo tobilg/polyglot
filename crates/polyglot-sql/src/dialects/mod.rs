@@ -541,6 +541,32 @@ pub fn transform_recursive<F>(expr: Expression, transform_fn: &F) -> Result<Expr
 where
     F: Fn(Expression) -> Result<Expression>,
 {
+    // Grow the stack on demand for deeply-nested ASTs (e.g. long chains of
+    // `SELECT * FROM (subquery)`). Without this, recursing through the
+    // ~175-variant match plus the iterator-adapter frames that `collect` emits
+    // can blow even an 8 MB stack at ~100 levels of nesting.
+    //
+    // Red zone is large (1 MB) because each recursion level can consume tens
+    // of KB of stack between this fn and the iterator adapters it drives.
+    //
+    // Gated behind the `stacker` cargo feature so the default build does not
+    // pay for an extra dependency unless the caller actually needs it.
+    #[cfg(feature = "stacker")]
+    {
+        stacker::maybe_grow(1024 * 1024, 4 * 1024 * 1024, move || {
+            transform_recursive_inner(expr, transform_fn)
+        })
+    }
+    #[cfg(not(feature = "stacker"))]
+    {
+        transform_recursive_inner(expr, transform_fn)
+    }
+}
+
+fn transform_recursive_inner<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
+where
+    F: Fn(Expression) -> Result<Expression>,
+{
     use crate::expressions::BinaryOp;
 
     // Helper macro to recurse into AggFunc-based expressions (this, filter, order_by, having_max, limit).

@@ -12,6 +12,11 @@ description = "SQL parsing, validating, formatting, and dialect translation libr
 default = ["all-dialects", "transpile"]
 bindings = ["dep:ts-rs"]
 transpile = []
+# Enables on-demand stack growth (via the `stacker` crate) for the parser's
+# and dialect transformer's recursive descent. Turn this on if you transpile
+# pathologically deep SQL (e.g. thousands of nested subqueries) that can
+# overflow the default thread stack; otherwise it is pure overhead.
+stacker = ["dep:stacker"]
 all-dialects = [
     "dialect-postgresql", "dialect-mysql", "dialect-bigquery",
     "dialect-snowflake", "dialect-duckdb", "dialect-tsql",
@@ -76,6 +81,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 unicode-segmentation = { workspace = true }
+stacker = { version = "0.1", optional = true }
 ts-rs = { version = "12.0", features = ["serde-compat"], optional = true }
 polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.3.2", optional = true, default-features = false }
 

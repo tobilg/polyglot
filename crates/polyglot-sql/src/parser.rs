@@ -699,6 +699,30 @@ impl Parser {
     /// (SELECT, INSERT, CREATE, etc.). Unknown or dialect-specific statements
     /// fall through to a `Command` expression that preserves the raw SQL text.
     pub fn parse_statement(&mut self) -> Result<Expression> {
+        // Grow the stack on demand for deeply-nested queries (e.g. a long
+        // chain of `SELECT * FROM (subquery)`), which trigger the mutual
+        // recursion parse_statement -> parse_select -> parse_from ->
+        // parse_table_expression -> parse_statement and otherwise overflow
+        // even an 8 MB stack.
+        //
+        // Red zone is large (1 MB) because each level through the parser
+        // cycle can consume tens of KB of stack in debug builds.
+        //
+        // Gated behind the `stacker` cargo feature so the default build does
+        // not pay for an extra dependency unless the caller actually needs it.
+        #[cfg(feature = "stacker")]
+        {
+            stacker::maybe_grow(1024 * 1024, 4 * 1024 * 1024, || {
+                self.parse_statement_inner()
+            })
+        }
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.parse_statement_inner()
+        }
+    }
+
+    fn parse_statement_inner(&mut self) -> Result<Expression> {
         // Skip any leading semicolons
         while self.match_token(TokenType::Semicolon) {}
 
