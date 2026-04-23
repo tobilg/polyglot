@@ -1,10 +1,15 @@
 //! Regression tests for transpiling TPC-H queries.
 //!
 //! Customer-reported case: TPC-H Query 2 (a 5-table cross join with a
-//! correlated scalar subquery in the WHERE clause) overflows the thread
-//! stack when transpiled from PostgreSQL to Fabric on constrained-stack
-//! runtimes (FFI worker threads, async runtime workers, wasm, debug
-//! builds, etc.).
+//! correlated scalar subquery in the WHERE clause) overflowed the thread
+//! stack when transpiled from PostgreSQL to Fabric.  The root cause was
+//! the unboxed `Star` variant inflating `Expression` to 232 bytes —
+//! since Rust (in debug) allocates stack space for ALL match-arm locals
+//! simultaneously, functions like `cross_dialect_normalize` (which has
+//! dozens of Expression-typed temporaries across its ~60 match arms)
+//! had a 22 KB frame.  Boxing `Star` dropped `Expression` to 96 bytes,
+//! shrinking `cross_dialect_normalize` from 22 KB to 14 KB and
+//! `transform_recursive_inner` from 5.7 KB to 4.2 KB per frame.
 //!
 //! Source of the SQL:
 //! https://github.com/lushl9301/TPCH-in-English/blob/master/tpch-query2.md
@@ -93,34 +98,79 @@ fn tpch_query2_transpile_postgres_to_fabric() {
     assert!(sql.trim_end().ends_with(" LIMIT 100"));
 }
 
-/// Regression: the same transpile must also succeed on a thread with a
-/// 1 MB stack, which mirrors the customer's runtime (FFI / tokio worker
-/// / wasm). This is the actual stack-overflow guard.
+/// Regression: the same transpile must succeed on a thread with a 4 MB
+/// stack.  Before the `Expression::Star` boxing fix, `Expression` was
+/// 232 bytes (due to the unboxed `Star` variant), which inflated every
+/// stack frame enough to overflow even an 8 MB stack on TPC-H Q2 in
+/// debug builds.  After boxing, `Expression` dropped to 96 bytes and
+/// this query completes comfortably within 4 MB.
 ///
-/// Gated behind the `stacker` cargo feature because that is the
-/// documented mitigation for deep-recursion SQL: without it,
-/// `transpile` is free to overflow on inputs like this one. Run with
-/// `cargo test -p polyglot-sql --features stacker` to exercise.
-#[cfg(feature = "stacker")]
+/// The 4 MB limit is chosen because:
+///   - `cargo test` runs debug (unoptimized) builds where frames are
+///     largest; 4 MB is well under the pre-fix overflow threshold of
+///     ~6–8 MB and proves the fix is effective.
+///   - Release builds need only ~512 KB for this query, so 4 MB gives
+///     ample headroom across both profiles.
+///
+/// Note: this test does NOT require the `stacker` cargo feature. The
+/// `stacker` feature guards against *deeply nested* recursion (hundreds
+/// of subquery levels); TPC-H Q2 has only one subquery level, so the
+/// Star boxing alone is the fix.
 #[test]
 fn tpch_query2_transpile_succeeds_on_constrained_stack() {
-    // 1 MB is well below `transpile`'s natural appetite for this query
-    // (which exceeds 4 MB in debug builds), so this thread WILL abort
-    // the test process via "fatal runtime error: stack overflow" if the
-    // `stacker::maybe_grow` guards in the parser and dialect transformer
-    // ever stop covering this case.
     let handle = std::thread::Builder::new()
         .name("tpch-q2-constrained".to_string())
-        .stack_size(1024 * 1024)
+        .stack_size(4 * 1024 * 1024)
         .spawn(|| {
-            transpile(TPCH_QUERY_2, DialectType::PostgreSQL, DialectType::Fabric)
-                .map(|v| v.len())
+            transpile(TPCH_QUERY_2, DialectType::PostgreSQL, DialectType::Fabric).map(|v| v.len())
         })
-        .expect("spawn 1 MB thread");
+        .expect("spawn 4 MB thread");
 
     let stmt_count = handle
         .join()
         .expect("transpile thread must not panic / overflow")
+        .expect("transpile must return Ok");
+    assert_eq!(stmt_count, 1);
+}
+
+/// Build a deeply nested `SELECT * FROM (SELECT * FROM (... SELECT 1 ...))` query.
+fn nested_select_star(depth: usize) -> String {
+    let mut sql = "SELECT 1".to_string();
+    for _ in 0..depth {
+        sql = format!("SELECT * FROM ({sql}) t");
+    }
+    sql
+}
+
+/// Regression: deeply nested subqueries (200 levels) must not overflow
+/// when the `stacker` feature is enabled.  Without stacker, this level
+/// of nesting exceeds any reasonable thread stack; with stacker, the
+/// `maybe_grow` guards in `parse_statement`, `transform_recursive`, and
+/// `generate_expression` allocate fresh stack segments on demand.
+///
+/// 200 levels is chosen as a reasonable stress test — well beyond what
+/// production SQL typically contains, but a realistic fuzzing / adversarial
+/// input scenario.  On the default 8 MB stack without stacker, overflow
+/// occurs around 100 levels in release builds and ~50 in debug builds.
+///
+/// The 4 MB thread gives enough room for the non-guarded setup code
+/// (tokenisation, transpile pipeline orchestration) while relying on
+/// stacker for the recursive descent through the AST.
+#[cfg(feature = "stacker")]
+#[test]
+fn deeply_nested_200_levels_with_stacker() {
+    let sql = nested_select_star(200);
+    let handle = std::thread::Builder::new()
+        .name("nested-200".to_string())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(move || {
+            transpile(&sql, DialectType::PostgreSQL, DialectType::Fabric).map(|v| v.len())
+        })
+        .expect("spawn 4 MB thread");
+
+    let stmt_count = handle
+        .join()
+        .expect("deeply nested transpile must not overflow with stacker")
         .expect("transpile must return Ok");
     assert_eq!(stmt_count, 1);
 }

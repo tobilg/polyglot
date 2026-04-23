@@ -2439,6 +2439,29 @@ impl Generator {
     }
 
     fn generate_expression(&mut self, expr: &Expression) -> Result<()> {
+        // Guard against deeply-nested ASTs (e.g. long chains of SELECT * FROM
+        // (subquery)).  The ~25 KB debug frame of this function (caused by the
+        // large Expression match) makes deep recursion expensive on the stack.
+        //
+        // Red zone: 4 MB debug, 1 MB release.  Stack segment: 8 MB.
+        #[cfg(feature = "stacker")]
+        {
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || {
+                self.generate_expression_inner(expr)
+            })
+        }
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.generate_expression_inner(expr)
+        }
+    }
+
+    fn generate_expression_inner(&mut self, expr: &Expression) -> Result<()> {
         match expr {
             Expression::Select(select) => self.generate_select(select),
             Expression::Union(union) => self.generate_union(union),

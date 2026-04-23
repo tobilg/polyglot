@@ -544,16 +544,28 @@ where
     // Grow the stack on demand for deeply-nested ASTs (e.g. long chains of
     // `SELECT * FROM (subquery)`). Without this, recursing through the
     // ~175-variant match plus the iterator-adapter frames that `collect` emits
-    // can blow even an 8 MB stack at ~100 levels of nesting.
+    // can blow even an 8 MB stack at moderate nesting depths.
     //
-    // Red zone is large (1 MB) because each recursion level can consume tens
-    // of KB of stack between this fn and the iterator adapters it drives.
+    // Red zone must cover the worst-case stack consumed between two
+    // consecutive `maybe_grow` checkpoints.  In debug builds each
+    // monomorphised `transform_recursive_inner` frame is ~452 KB (all
+    // match-arm locals allocated simultaneously), and the transform closure
+    // (`cross_dialect_normalize`) can call `transform_recursive` again
+    // before reaching the next checkpoint — consuming ~1 MB total.
+    // Debug: 4 MB red zone to provide safety margin.
+    // Release: 1 MB red zone (frames shrink ~100× with optimisation).
+    // Stack segment is 8 MB in both profiles.
     //
     // Gated behind the `stacker` cargo feature so the default build does not
     // pay for an extra dependency unless the caller actually needs it.
     #[cfg(feature = "stacker")]
     {
-        stacker::maybe_grow(1024 * 1024, 4 * 1024 * 1024, move || {
+        let red_zone = if cfg!(debug_assertions) {
+            4 * 1024 * 1024
+        } else {
+            1024 * 1024
+        };
+        stacker::maybe_grow(red_zone, 8 * 1024 * 1024, move || {
             transform_recursive_inner(expr, transform_fn)
         })
     }

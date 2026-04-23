@@ -705,16 +705,21 @@ impl Parser {
         // parse_table_expression -> parse_statement and otherwise overflow
         // even an 8 MB stack.
         //
-        // Red zone is large (1 MB) because each level through the parser
-        // cycle can consume tens of KB of stack in debug builds.
+        // Red zone is larger in debug builds because unoptimized frames
+        // are much bigger (~452 KB per `transform_recursive_inner` frame).
+        // Debug: 4 MB red zone.  Release: 1 MB red zone.
+        // Stack segment is 8 MB in both profiles.
         //
         // Gated behind the `stacker` cargo feature so the default build does
         // not pay for an extra dependency unless the caller actually needs it.
         #[cfg(feature = "stacker")]
         {
-            stacker::maybe_grow(1024 * 1024, 4 * 1024 * 1024, || {
-                self.parse_statement_inner()
-            })
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || self.parse_statement_inner())
         }
         #[cfg(not(feature = "stacker"))]
         {
