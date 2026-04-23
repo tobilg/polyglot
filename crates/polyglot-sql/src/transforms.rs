@@ -787,7 +787,7 @@ fn is_window_expr(expr: &Expression) -> bool {
 ///
 /// Reference: `transforms.py:138-191`
 pub fn eliminate_distinct_on(expr: Expression) -> Result<Expression> {
-    eliminate_distinct_on_for_dialect(expr, None)
+    eliminate_distinct_on_for_dialect(expr, None, None)
 }
 
 /// Eliminate DISTINCT ON with dialect-specific NULL ordering behavior.
@@ -797,6 +797,7 @@ pub fn eliminate_distinct_on(expr: Expression) -> Result<Expression> {
 pub fn eliminate_distinct_on_for_dialect(
     expr: Expression,
     target: Option<DialectType>,
+    source: Option<DialectType>,
 ) -> Result<Expression> {
     use crate::expressions::Case;
 
@@ -811,7 +812,7 @@ pub fn eliminate_distinct_on_for_dialect(
     // Determine NULL ordering mode based on target dialect
     // Oracle/Redshift/Snowflake: NULLS FIRST is default for DESC -> no change needed
     // BigQuery/Spark/Presto/Hive/etc: need explicit NULLS FIRST
-    // MySQL/StarRocks/TSQL: no NULLS FIRST syntax -> use CASE WHEN IS NULL
+    // MySQL/TSQL: no NULLS FIRST syntax -> use CASE WHEN IS NULL
     enum NullsMode {
         None,       // Default NULLS FIRST behavior (Oracle, Redshift, Snowflake)
         NullsFirst, // Add explicit NULLS FIRST (BigQuery, Spark, Presto, Hive, etc.)
@@ -820,12 +821,18 @@ pub fn eliminate_distinct_on_for_dialect(
 
     let nulls_mode = match target {
         Some(DialectType::MySQL)
-        | Some(DialectType::StarRocks)
         | Some(DialectType::SingleStore)
         | Some(DialectType::TSQL)
         | Some(DialectType::Fabric) => NullsMode::CaseExpr,
-        Some(DialectType::Oracle) | Some(DialectType::Redshift) | Some(DialectType::Snowflake) => {
-            NullsMode::None
+        Some(DialectType::Oracle)
+        | Some(DialectType::Redshift)
+        | Some(DialectType::Snowflake) => NullsMode::None,
+        Some(DialectType::StarRocks) => {
+            if matches!(source, Some(DialectType::Redshift)) {
+                NullsMode::CaseExpr
+            } else {
+                NullsMode::None
+            }
         }
         // All other dialects that don't support DISTINCT ON: use NULLS FIRST
         _ => NullsMode::NullsFirst,

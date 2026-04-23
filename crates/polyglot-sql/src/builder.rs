@@ -803,6 +803,7 @@ pub fn delete(table_name: &str) -> DeleteBuilder {
     DeleteBuilder {
         delete: Delete {
             table: builder_table_ref(table_name),
+            hint: None,
             on_cluster: None,
             alias: None,
             alias_explicit_as: false,
@@ -894,6 +895,7 @@ pub fn update(table_name: &str) -> UpdateBuilder {
     UpdateBuilder {
         update: Update {
             table: builder_table_ref(table_name),
+            hint: None,
             extra_tables: Vec::new(),
             table_joins: Vec::new(),
             set: Vec::new(),

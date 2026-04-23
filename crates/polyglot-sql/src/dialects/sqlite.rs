@@ -130,6 +130,14 @@ impl DialectImpl for SQLiteDialect {
                 ))))
             }
 
+            // Normalize single-argument PRAGMAs to assignment syntax.
+            Expression::Pragma(mut p) => {
+                if p.value.is_some() || p.args.len() == 1 {
+                    p.use_assignment_syntax = true;
+                }
+                Ok(Expression::Pragma(p))
+            }
+
             // Generic function transformations
             Expression::Function(f) => self.transform_function(*f),
 

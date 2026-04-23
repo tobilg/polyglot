@@ -4294,6 +4294,8 @@ pub struct OutputClause {
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Update {
     pub table: TableRef,
+    #[serde(default)]
+    pub hint: Option<Hint>,
     /// Additional tables for multi-table UPDATE (MySQL syntax)
     #[serde(default)]
     pub extra_tables: Vec<TableRef>,
@@ -4334,6 +4336,8 @@ pub struct Update {
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Delete {
     pub table: TableRef,
+    #[serde(default)]
+    pub hint: Option<Hint>,
     /// ClickHouse: ON CLUSTER clause for distributed DDL
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_cluster: Option<OnCluster>,
@@ -7524,6 +7528,9 @@ pub struct ColumnDef {
     /// MySQL: ON UPDATE expression (e.g., ON UPDATE CURRENT_TIMESTAMP)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_update: Option<Expression>,
+    /// MySQL: column VISIBLE/INVISIBLE modifier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
     /// Named constraint for UNIQUE (e.g., CONSTRAINT must_be_different UNIQUE)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_constraint_name: Option<String>,
@@ -7593,6 +7600,7 @@ impl ColumnDef {
             unsigned: false,
             zerofill: false,
             on_update: None,
+            visible: None,
             unique_constraint_name: None,
             not_null_constraint_name: None,
             primary_key_constraint_name: None,
@@ -8396,6 +8404,9 @@ pub struct CreateView {
     /// Snowflake: COMMENT = 'text'
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub comment: Option<String>,
+    /// Snowflake: WITH ROW ACCESS POLICY ... clause
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub row_access_policy: Option<String>,
     /// Snowflake: TAG (name='value', ...)
     #[serde(default)]
     pub tags: Vec<(String, String)>,
@@ -8454,6 +8465,7 @@ impl CreateView {
             locking_access: None,
             copy_grants: false,
             comment: None,
+            row_access_policy: None,
             tags: Vec::new(),
             options: Vec::new(),
             build: None,
@@ -8667,6 +8679,9 @@ pub struct Pragma {
     pub value: Option<Expression>,
     /// Optional arguments for function-style pragmas (PRAGMA name(arg))
     pub args: Vec<Expression>,
+    /// Whether this pragma should be generated using assignment syntax.
+    #[serde(default)]
+    pub use_assignment_syntax: bool,
 }
 
 /// A privilege with optional column list for GRANT/REVOKE
@@ -9035,12 +9050,24 @@ pub struct CreateFunction {
     /// Original order of function properties (SET, AS, LANGUAGE, etc.)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub property_order: Vec<FunctionPropertyKind>,
+    /// Hive: USING JAR|FILE|ARCHIVE '...'
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub using_resources: Vec<FunctionUsingResource>,
     /// Databricks: ENVIRONMENT (dependencies = '...', environment_version = '...')
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<Expression>,
     /// HANDLER 'handler_function' clause (Databricks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handler: Option<String>,
+    /// True when the HANDLER clause used Snowflake-style `HANDLER = 'fn'`
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub handler_uses_eq: bool,
+    /// Snowflake: RUNTIME_VERSION='3.11'
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_version: Option<String>,
+    /// Snowflake: PACKAGES=('pkg1', 'pkg2')
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packages: Option<Vec<String>>,
     /// PARAMETER STYLE clause (e.g., PANDAS for Databricks)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parameter_style: Option<String>,
@@ -9086,6 +9113,8 @@ pub enum FunctionPropertyKind {
     Set,
     /// AS body
     As,
+    /// Hive: USING JAR|FILE|ARCHIVE ...
+    Using,
     /// LANGUAGE clause
     Language,
     /// IMMUTABLE/VOLATILE/STABLE (determinism)
@@ -9102,8 +9131,20 @@ pub enum FunctionPropertyKind {
     Environment,
     /// HANDLER clause (Databricks)
     Handler,
+    /// Snowflake: RUNTIME_VERSION='...'
+    RuntimeVersion,
+    /// Snowflake: PACKAGES=(...)
+    Packages,
     /// PARAMETER STYLE clause (Databricks)
     ParameterStyle,
+}
+
+/// Hive CREATE FUNCTION resource in a USING clause
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct FunctionUsingResource {
+    pub kind: String,
+    pub uri: String,
 }
 
 /// Function parameter
@@ -9189,8 +9230,12 @@ impl CreateFunction {
             options: Vec::new(),
             is_table_function: false,
             property_order: Vec::new(),
+            using_resources: Vec::new(),
             environment: Vec::new(),
             handler: None,
+            handler_uses_eq: false,
+            runtime_version: None,
+            packages: None,
             parameter_style: None,
         }
     }

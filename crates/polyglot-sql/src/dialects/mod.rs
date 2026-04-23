@@ -2506,6 +2506,13 @@ impl Dialect {
             DialectType::StarRocks => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::expand_between_in_delete(expr)?;
+                let expr =
+                    transforms::eliminate_distinct_on_for_dialect(
+                        expr,
+                        Some(DialectType::StarRocks),
+                        Some(DialectType::StarRocks),
+                    )?;
+                let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
                 Ok(expr)
             }
             // DataFusion supports QUALIFY and semi/anti joins natively
@@ -2990,8 +2997,11 @@ impl Dialect {
                 // Eliminate DISTINCT ON with target-dialect awareness
                 // This must happen after source transform (which may produce DISTINCT ON)
                 // and before target transform, with knowledge of the target dialect's NULL ordering behavior
-                let normalized =
-                    crate::transforms::eliminate_distinct_on_for_dialect(normalized, Some(target))?;
+                let normalized = crate::transforms::eliminate_distinct_on_for_dialect(
+                    normalized,
+                    Some(target),
+                    Some(self.dialect_type),
+                )?;
 
                 // GENERATE_DATE_ARRAY in UNNEST -> Snowflake ARRAY_GENERATE_RANGE + DATEADD
                 let normalized = if matches!(target, DialectType::Snowflake) {
@@ -4106,6 +4116,7 @@ impl Dialect {
             JsonExtractScalarToGetJsonObject, // JSON_EXTRACT_SCALAR -> GET_JSON_OBJECT for Hive/Spark
             JsonQueryValueConvert, // JsonQuery/JsonValue -> target-specific (ISNULL wrapper for TSQL, GET_JSON_OBJECT for Spark, etc.)
             JsonLiteralToJsonParse, // JSON 'x' -> JSON_PARSE('x') for Presto, PARSE_JSON for Snowflake; also DuckDB CAST(x AS JSON)
+            DuckDBCastJsonToVariant, // DuckDB CAST(x AS JSON) -> CAST(x AS VARIANT) for Snowflake
             DuckDBTryCastJsonToTryJsonParse, // DuckDB TRY_CAST(x AS JSON) -> TRY(JSON_PARSE(x)) for Trino/Presto/Athena
             DuckDBJsonFuncToJsonParse, // DuckDB json(x) -> JSON_PARSE(x) for Trino/Presto/Athena
             DuckDBJsonValidToIsJson,   // DuckDB json_valid(x) -> x IS JSON for Trino/Presto/Athena
@@ -6284,6 +6295,7 @@ impl Dialect {
                                 | "JSON_KEYS"
                                 | "WEEKOFYEAR"
                                 | "CONCAT_WS"
+                                | "TRY_DIVIDE"
                                 | "ARRAY_SLICE"
                                 | "ARRAY_PREPEND"
                                 | "ARRAY_REMOVE"
@@ -6688,6 +6700,11 @@ impl Dialect {
                             // CAST(x AS TIMESTAMP WITH TIME ZONE) -> CAST(x AS TIMESTAMP) for Hive/Spark/BigQuery
                             Action::CastTimestampStripTz
                         } else if matches!(&c.to, DataType::Json)
+                            && matches!(source, DialectType::DuckDB)
+                            && matches!(target, DialectType::Snowflake)
+                        {
+                            Action::DuckDBCastJsonToVariant
+                        } else if matches!(&c.to, DataType::Json)
                             && matches!(&c.this, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_)))
                             && matches!(
                                 target,
@@ -6802,6 +6819,17 @@ impl Dialect {
                         } else {
                             Action::None
                         }
+                    }
+                    Expression::JSONArray(ref ja)
+                        if matches!(target, DialectType::Snowflake)
+                            && ja.null_handling.is_none()
+                            && ja.return_type.is_none()
+                            && ja.strict.is_none() =>
+                    {
+                        Action::GenericFunctionNormalize
+                    }
+                    Expression::JsonArray(_) if matches!(target, DialectType::Snowflake) => {
+                        Action::GenericFunctionNormalize
                     }
                     // For DuckDB: DATE_TRUNC should preserve the input type
                     Expression::DateTrunc(_) | Expression::TimestampTrunc(_) => {
@@ -7152,6 +7180,7 @@ impl Dialect {
                             Action::None
                         }
                     }
+                    Expression::CombinedParameterizedAgg(_) => Action::GenericFunctionNormalize,
                     // GROUP_CONCAT -> STRING_AGG for PostgreSQL/Presto/etc.
                     // Also handles GROUP_CONCAT normalization for MySQL/SQLite targets
                     Expression::GroupConcat(_) => Action::GroupConcatConvert,
@@ -9690,7 +9719,12 @@ impl Dialect {
                         )));
                         let div_expr = Expression::Div(Box::new(BinaryOp::new(x_ref, y_ref)));
 
-                        if matches!(target, DialectType::Presto | DialectType::Trino) {
+                        if matches!(target, DialectType::Spark | DialectType::Databricks) {
+                            Ok(Expression::Function(Box::new(Function::new(
+                                "TRY_DIVIDE".to_string(),
+                                vec![x, y],
+                            ))))
+                        } else if matches!(target, DialectType::Presto | DialectType::Trino) {
                             // Presto/Trino: IF(y <> 0, CAST(x AS DOUBLE) / y, NULL)
                             let cast_x = Expression::Cast(Box::new(Cast {
                                 this: match &x {
@@ -18056,6 +18090,97 @@ impl Dialect {
                                     _ => Ok(Expression::Function(f)),
                                 }
                             }
+                            "TRY_DIVIDE" if f.args.len() == 2 => {
+                                let mut args = f.args;
+                                let x = args.remove(0);
+                                let y = args.remove(0);
+                                match target {
+                                    DialectType::Spark | DialectType::Databricks => {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "TRY_DIVIDE".to_string(),
+                                            vec![x, y],
+                                        ))))
+                                    }
+                                    DialectType::Snowflake => {
+                                        let y_ref = match &y {
+                                            Expression::Column(_)
+                                            | Expression::Literal(_)
+                                            | Expression::Identifier(_) => y.clone(),
+                                            _ => Expression::Paren(Box::new(Paren {
+                                                this: y.clone(),
+                                                trailing_comments: vec![],
+                                            })),
+                                        };
+                                        let x_ref = match &x {
+                                            Expression::Column(_)
+                                            | Expression::Literal(_)
+                                            | Expression::Identifier(_) => x.clone(),
+                                            _ => Expression::Paren(Box::new(Paren {
+                                                this: x.clone(),
+                                                trailing_comments: vec![],
+                                            })),
+                                        };
+                                        let condition = Expression::Neq(Box::new(
+                                            crate::expressions::BinaryOp::new(
+                                                y_ref.clone(),
+                                                Expression::number(0),
+                                            ),
+                                        ));
+                                        let div_expr = Expression::Div(Box::new(
+                                            crate::expressions::BinaryOp::new(x_ref, y_ref),
+                                        ));
+                                        Ok(Expression::IfFunc(Box::new(
+                                            crate::expressions::IfFunc {
+                                                condition,
+                                                true_value: div_expr,
+                                                false_value: Some(Expression::Null(Null)),
+                                                original_name: Some("IFF".to_string()),
+                                                inferred_type: None,
+                                            },
+                                        )))
+                                    }
+                                    DialectType::DuckDB => {
+                                        let y_ref = match &y {
+                                            Expression::Column(_)
+                                            | Expression::Literal(_)
+                                            | Expression::Identifier(_) => y.clone(),
+                                            _ => Expression::Paren(Box::new(Paren {
+                                                this: y.clone(),
+                                                trailing_comments: vec![],
+                                            })),
+                                        };
+                                        let x_ref = match &x {
+                                            Expression::Column(_)
+                                            | Expression::Literal(_)
+                                            | Expression::Identifier(_) => x.clone(),
+                                            _ => Expression::Paren(Box::new(Paren {
+                                                this: x.clone(),
+                                                trailing_comments: vec![],
+                                            })),
+                                        };
+                                        let condition = Expression::Neq(Box::new(
+                                            crate::expressions::BinaryOp::new(
+                                                y_ref.clone(),
+                                                Expression::number(0),
+                                            ),
+                                        ));
+                                        let div_expr = Expression::Div(Box::new(
+                                            crate::expressions::BinaryOp::new(x_ref, y_ref),
+                                        ));
+                                        Ok(Expression::Case(Box::new(Case {
+                                            operand: None,
+                                            whens: vec![(condition, div_expr)],
+                                            else_: Some(Expression::Null(Null)),
+                                            comments: Vec::new(),
+                                            inferred_type: None,
+                                        })))
+                                    }
+                                    _ => Ok(Expression::Function(Box::new(Function::new(
+                                        "TRY_DIVIDE".to_string(),
+                                        vec![x, y],
+                                    )))),
+                                }
+                            }
                             // JSON_ARRAYAGG -> JSON_AGG for PostgreSQL
                             "JSON_ARRAYAGG" => match target {
                                 DialectType::PostgreSQL => {
@@ -19533,6 +19658,42 @@ impl Dialect {
                                         new_args,
                                     ))))
                                 }
+                                DialectType::DuckDB => {
+                                    let args = f.args;
+                                    let mut null_checks = args.iter().cloned().map(|arg| {
+                                        Expression::IsNull(Box::new(crate::expressions::IsNull {
+                                            this: arg,
+                                            not: false,
+                                            postfix_form: false,
+                                        }))
+                                    });
+                                    let first_null_check = null_checks
+                                        .next()
+                                        .expect("CONCAT_WS with >= 2 args must yield a null check");
+                                    let null_check =
+                                        null_checks.fold(first_null_check, |left, right| {
+                                            Expression::Or(Box::new(BinaryOp {
+                                                left,
+                                                right,
+                                                left_comments: Vec::new(),
+                                                operator_comments: Vec::new(),
+                                                trailing_comments: Vec::new(),
+                                                inferred_type: None,
+                                            }))
+                                        });
+                                    Ok(Expression::Case(Box::new(Case {
+                                        operand: None,
+                                        whens: vec![(null_check, Expression::Null(Null))],
+                                        else_: Some(Expression::Function(Box::new(
+                                            Function::new(
+                                                "CONCAT_WS".to_string(),
+                                                args,
+                                            ),
+                                        ))),
+                                        comments: vec![],
+                                        inferred_type: None,
+                                    })))
+                                }
                                 _ => Ok(Expression::Function(f)),
                             },
                             // ARRAY_SLICE(x, start, end) -> SLICE(x, start, end) for Presto/Trino/Databricks, arraySlice for ClickHouse
@@ -19997,10 +20158,32 @@ impl Dialect {
                                         let upper_b = Expression::Upper(Box::new(
                                             crate::expressions::UnaryFunc::new(b),
                                         ));
-                                        Ok(Expression::Function(Box::new(Function::new(
-                                            "JARO_WINKLER_SIMILARITY".to_string(),
-                                            vec![upper_a, upper_b],
-                                        ))))
+                                        let score = Expression::Function(Box::new(
+                                            Function::new(
+                                                "JARO_WINKLER_SIMILARITY".to_string(),
+                                                vec![upper_a, upper_b],
+                                            ),
+                                        ));
+                                        let scaled = Expression::Mul(Box::new(BinaryOp {
+                                            left: score,
+                                            right: Expression::number(100),
+                                            left_comments: Vec::new(),
+                                            operator_comments: Vec::new(),
+                                            trailing_comments: Vec::new(),
+                                            inferred_type: None,
+                                        }));
+                                        Ok(Expression::Cast(Box::new(Cast {
+                                            this: scaled,
+                                            to: DataType::Int {
+                                                length: None,
+                                                integer_spelling: false,
+                                            },
+                                            trailing_comments: Vec::new(),
+                                            double_colon_syntax: false,
+                                            format: None,
+                                            default: None,
+                                            inferred_type: None,
+                                        })))
                                     }
                                     _ => Ok(Expression::Function(Box::new(Function::new(
                                         "JAROWINKLER_SIMILARITY".to_string(),
@@ -20617,9 +20800,13 @@ impl Dialect {
                             }
                             // ARRAY_CONSTRUCT(args) -> Expression::Array for all targets
                             "ARRAY_CONSTRUCT" => {
-                                Ok(Expression::Array(Box::new(crate::expressions::Array {
-                                    expressions: f.args,
-                                })))
+                                if matches!(target, DialectType::Snowflake) {
+                                    Ok(Expression::Function(f))
+                                } else {
+                                    Ok(Expression::Array(Box::new(crate::expressions::Array {
+                                        expressions: f.args,
+                                    })))
+                                }
                             }
                             // ARRAY(args) function -> Expression::Array for DuckDB/Snowflake/Presto/Trino/Athena
                             "ARRAY"
@@ -20695,6 +20882,92 @@ impl Dialect {
                                 )))
                             }
                             _ => Ok(Expression::JSONArrayAgg(ja)),
+                        }
+                    } else if let Expression::JSONArray(ja) = e {
+                        match target {
+                            DialectType::Snowflake
+                                if ja.null_handling.is_none()
+                                    && ja.return_type.is_none()
+                                    && ja.strict.is_none() =>
+                            {
+                                let array_construct =
+                                    Expression::ArrayFunc(Box::new(
+                                        crate::expressions::ArrayConstructor {
+                                            expressions: ja.expressions,
+                                            bracket_notation: false,
+                                            use_list_keyword: false,
+                                        },
+                                    ));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "TO_VARIANT".to_string(),
+                                    vec![array_construct],
+                                ))))
+                            }
+                            _ => Ok(Expression::JSONArray(ja)),
+                        }
+                    } else if let Expression::JsonArray(f) = e {
+                        match target {
+                            DialectType::Snowflake => {
+                                let array_construct =
+                                    Expression::ArrayFunc(Box::new(
+                                        crate::expressions::ArrayConstructor {
+                                            expressions: f.expressions,
+                                            bracket_notation: false,
+                                            use_list_keyword: false,
+                                        },
+                                    ));
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "TO_VARIANT".to_string(),
+                                    vec![array_construct],
+                                ))))
+                            }
+                            _ => Ok(Expression::JsonArray(f)),
+                        }
+                    } else if let Expression::CombinedParameterizedAgg(cpa) = e {
+                        let function_name = match cpa.this.as_ref() {
+                            Expression::Identifier(ident) => Some(ident.name.as_str()),
+                            _ => None,
+                        };
+                        match function_name {
+                            Some(name)
+                                if name.eq_ignore_ascii_case("groupConcat")
+                                    && cpa.expressions.len() == 1 =>
+                            {
+                                match target {
+                                    DialectType::MySQL | DialectType::SingleStore => {
+                                        let this = cpa.expressions[0].clone();
+                                        let separator = cpa.params.first().cloned();
+                                        Ok(Expression::GroupConcat(Box::new(
+                                            crate::expressions::GroupConcatFunc {
+                                                this,
+                                                separator,
+                                                order_by: None,
+                                                distinct: false,
+                                                filter: None,
+                                                limit: None,
+                                                inferred_type: None,
+                                            },
+                                        )))
+                                    }
+                                    DialectType::DuckDB => Ok(Expression::ListAgg(Box::new(
+                                        {
+                                            let this = cpa.expressions[0].clone();
+                                            let separator = cpa.params.first().cloned();
+                                            crate::expressions::ListAggFunc {
+                                                this,
+                                                separator,
+                                                on_overflow: None,
+                                                order_by: None,
+                                                distinct: false,
+                                                filter: None,
+                                                inferred_type: None,
+                                            }
+                                        },
+                                    ))),
+                                    _ => Ok(Expression::CombinedParameterizedAgg(cpa)),
+                                }
+                            }
+                            _ => Ok(Expression::CombinedParameterizedAgg(cpa)),
                         }
                     } else if let Expression::ToNumber(tn) = e {
                         // TO_NUMBER(x) with no format/precision/scale -> CAST(x AS DOUBLE)
@@ -22199,6 +22472,24 @@ impl Dialect {
                             func_name.to_string(),
                             vec![c.this],
                         ))))
+                    } else {
+                        Ok(e)
+                    }
+                }
+
+                Action::DuckDBCastJsonToVariant => {
+                    if let Expression::Cast(c) = e {
+                        Ok(Expression::Cast(Box::new(Cast {
+                            this: c.this,
+                            to: DataType::Custom {
+                                name: "VARIANT".to_string(),
+                            },
+                            trailing_comments: c.trailing_comments,
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: None,
+                        })))
                     } else {
                         Ok(e)
                     }
@@ -31842,6 +32133,12 @@ impl Dialect {
                 )));
 
                 match target {
+                    DialectType::Spark | DialectType::Databricks => {
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "TRY_DIVIDE".to_string(),
+                            vec![x, y],
+                        ))))
+                    }
                     DialectType::DuckDB | DialectType::PostgreSQL => {
                         // CASE WHEN y <> 0 THEN x / y ELSE NULL END
                         let result_div = if matches!(target, DialectType::PostgreSQL) {

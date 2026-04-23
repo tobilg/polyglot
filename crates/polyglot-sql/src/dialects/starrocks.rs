@@ -5,7 +5,10 @@
 
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
-use crate::expressions::{AggFunc, Case, Cast, Expression, Function, Lateral, VarArgFunc};
+use crate::expressions::{
+    AggFunc, Case, Cast, Expression, Function, Interval, IntervalUnit, IntervalUnitSpec,
+    Lateral, VarArgFunc,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -140,6 +143,16 @@ impl DialectImpl for StarRocksDialect {
 }
 
 impl StarRocksDialect {
+    fn wrap_day_interval(expr: Expression) -> Expression {
+        Expression::Interval(Box::new(Interval {
+            this: Some(expr),
+            unit: Some(IntervalUnitSpec::Simple {
+                unit: IntervalUnit::Day,
+                use_plural: false,
+            }),
+        }))
+    }
+
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
         match name_upper.as_str() {
@@ -226,6 +239,44 @@ impl StarRocksDialect {
 
             // DATE_TRUNC is native in StarRocks
             "DATE_TRUNC" => Ok(Expression::Function(Box::new(f))),
+
+            // StarRocks normalizes MySQL-style day shorthand to INTERVAL syntax.
+            "DATE_ADD" if f.args.len() == 2 && !matches!(f.args[1], Expression::Interval(_)) => {
+                let mut args = f.args;
+                let date = args.remove(0);
+                let days = args.remove(0);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_ADD".to_string(),
+                    vec![date, Self::wrap_day_interval(days)],
+                ))))
+            }
+            "DATE_SUB" if f.args.len() == 2 && !matches!(f.args[1], Expression::Interval(_)) => {
+                let mut args = f.args;
+                let date = args.remove(0);
+                let days = args.remove(0);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_SUB".to_string(),
+                    vec![date, Self::wrap_day_interval(days)],
+                ))))
+            }
+            "ADDDATE" if f.args.len() == 2 && !matches!(f.args[1], Expression::Interval(_)) => {
+                let mut args = f.args;
+                let date = args.remove(0);
+                let days = args.remove(0);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_ADD".to_string(),
+                    vec![date, Self::wrap_day_interval(days)],
+                ))))
+            }
+            "SUBDATE" if f.args.len() == 2 && !matches!(f.args[1], Expression::Interval(_)) => {
+                let mut args = f.args;
+                let date = args.remove(0);
+                let days = args.remove(0);
+                Ok(Expression::Function(Box::new(Function::new(
+                    "DATE_SUB".to_string(),
+                    vec![date, Self::wrap_day_interval(days)],
+                ))))
+            }
 
             // ARRAY_AGG is native in StarRocks
             "ARRAY_AGG" => Ok(Expression::Function(Box::new(f))),

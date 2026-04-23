@@ -434,6 +434,10 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                     names.push(name);
                 }
             }
+            Expression::CreateSynonym(synonym) => {
+                push_table_ref_name(&synonym.name, &cte_aliases, &mut names);
+                push_table_ref_name(&synonym.target, &cte_aliases, &mut names);
+            }
             _ => {}
         }
     }

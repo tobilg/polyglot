@@ -4690,13 +4690,25 @@ impl Parser {
             self.config.dialect,
             Some(crate::dialects::DialectType::BigQuery)
         ) && self.check(TokenType::For)
-            && self.current + 1 < self.tokens.len()
-            && self.tokens[self.current + 1]
-                .text
-                .eq_ignore_ascii_case("SYSTEM_TIME")
+            && ((self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1]
+                    .text
+                    .eq_ignore_ascii_case("SYSTEM_TIME"))
+                || (self.current + 2 < self.tokens.len()
+                    && self.tokens[self.current + 1]
+                        .text
+                        .eq_ignore_ascii_case("SYSTEM")
+                    && self.tokens[self.current + 2]
+                        .text
+                        .eq_ignore_ascii_case("TIME")))
         {
             self.skip(); // consume FOR
-            self.skip(); // consume SYSTEM_TIME
+            if self.check_keyword_text("SYSTEM_TIME") {
+                self.skip(); // consume SYSTEM_TIME
+            } else {
+                self.skip(); // consume SYSTEM
+                self.skip(); // consume TIME
+            }
             let system_time_str = if self.match_token(TokenType::As) {
                 // AS OF expr
                 if self.check_keyword_text("OF") {
@@ -5586,13 +5598,25 @@ impl Parser {
         // BigQuery: FOR SYSTEM_TIME AS OF after alias
         // e.g., FROM foo AS t0 FOR SYSTEM_TIME AS OF '2026-01-01'
         if self.check(TokenType::For)
-            && self.current + 1 < self.tokens.len()
-            && self.tokens[self.current + 1]
-                .text
-                .eq_ignore_ascii_case("SYSTEM_TIME")
+            && ((self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1]
+                    .text
+                    .eq_ignore_ascii_case("SYSTEM_TIME"))
+                || (self.current + 2 < self.tokens.len()
+                    && self.tokens[self.current + 1]
+                        .text
+                        .eq_ignore_ascii_case("SYSTEM")
+                    && self.tokens[self.current + 2]
+                        .text
+                        .eq_ignore_ascii_case("TIME")))
         {
             self.skip(); // consume FOR
-            self.skip(); // consume SYSTEM_TIME
+            if self.check_keyword_text("SYSTEM_TIME") {
+                self.skip(); // consume SYSTEM_TIME
+            } else {
+                self.skip(); // consume SYSTEM
+                self.skip(); // consume TIME
+            }
             if self.match_token(TokenType::As) && self.check_keyword_text("OF") {
                 self.skip(); // consume OF
                 let start = self.current;
@@ -10453,6 +10477,11 @@ impl Parser {
     fn parse_update(&mut self) -> Result<Expression> {
         let update_token = self.expect(TokenType::Update)?;
         let leading_comments = update_token.comments;
+        let hint = if self.check(TokenType::Hint) {
+            Some(self.parse_hint()?)
+        } else {
+            None
+        };
 
         // TSQL: UPDATE STATISTICS table_name - parse as Command
         if self.check_identifier("STATISTICS") {
@@ -10727,6 +10756,7 @@ impl Parser {
 
         Ok(Expression::Update(Box::new(Update {
             table,
+            hint,
             extra_tables,
             table_joins,
             set,
@@ -10755,6 +10785,11 @@ impl Parser {
     fn parse_delete(&mut self) -> Result<Expression> {
         let delete_token = self.expect(TokenType::Delete)?;
         let leading_comments = delete_token.comments;
+        let hint = if self.check(TokenType::Hint) {
+            Some(self.parse_hint()?)
+        } else {
+            None
+        };
 
         // Check if FROM is present. If not, this is MySQL multi-table: DELETE t1, t2 FROM ...
         // or TSQL: DELETE x OUTPUT x.a FROM z
@@ -11003,6 +11038,7 @@ impl Parser {
 
         Ok(Expression::Delete(Box::new(Delete {
             table,
+            hint,
             on_cluster,
             alias,
             alias_explicit_as,
@@ -12473,7 +12509,8 @@ impl Parser {
             } else {
                 false
             };
-            if is_system_versioning {
+            let is_row_access_policy = self.check_text_seq(&["ROW", "ACCESS", "POLICY"]);
+            if is_system_versioning || is_row_access_policy {
                 // Retreat back before WITH, let parse_post_table_properties handle it
                 self.current = saved;
                 Vec::new()
@@ -14506,6 +14543,10 @@ impl Parser {
                 let expr = self.parse_unary()?;
                 col_def.on_update = Some(expr);
                 col_def.constraint_order.push(ConstraintType::OnUpdate);
+            } else if self.match_identifier("VISIBLE") {
+                col_def.visible = Some(true);
+            } else if self.match_identifier("INVISIBLE") {
+                col_def.visible = Some(false);
             } else if self.match_identifier("ENCODE") {
                 // Redshift: ENCODE encoding_type (e.g., ZSTD, DELTA, LZO, etc.)
                 let encoding = self.expect_identifier_or_keyword()?;
@@ -15387,7 +15428,8 @@ impl Parser {
         loop {
             // ROW FORMAT SERDE 'class' [WITH SERDEPROPERTIES (...)]
             // ROW FORMAT DELIMITED [FIELDS TERMINATED BY ...] [...]
-            if self.match_token(TokenType::Row) {
+            if self.check(TokenType::Row) && self.check_next(TokenType::Format) {
+                self.skip();
                 if let Some(row_format) = self.parse_row()? {
                     properties.push(row_format);
                     continue;
@@ -15693,10 +15735,63 @@ impl Parser {
         Ok(properties)
     }
 
+    fn parse_snowflake_row_access_policy_clause(&mut self) -> Option<String> {
+        let saved = self.current;
+        let _ = self.match_token(TokenType::With);
+        if !self.match_text_seq(&["ROW", "ACCESS", "POLICY"]) {
+            self.current = saved;
+            return None;
+        }
+
+        let body_start = self.current;
+        let mut depth = 0usize;
+        while !self.is_at_end() {
+            if depth == 0
+                && (self.check(TokenType::As)
+                    || self.check(TokenType::Comment)
+                    || self.check(TokenType::Semicolon)
+                    || self.check_identifier("TAG")
+                    || self.check_identifier("OPTIONS")
+                    || self.check_identifier("BUILD")
+                    || self.check_text_seq(&["AUTO", "REFRESH"])
+                    || self.check_text_seq(&["COPY", "GRANTS"])
+                    || self.check_identifier("SECURITY")
+                    || self.check(TokenType::Refresh))
+            {
+                break;
+            }
+
+            if self.check(TokenType::LParen) {
+                depth += 1;
+            } else if self.check(TokenType::RParen) && depth > 0 {
+                depth -= 1;
+            }
+            self.skip();
+        }
+
+        let body = self.tokens_to_sql(body_start, self.current);
+        Some(if body.is_empty() {
+            "ROW ACCESS POLICY".to_string()
+        } else {
+            format!("ROW ACCESS POLICY {}", body)
+        })
+    }
+
     /// Parse table-level properties that appear after the closing paren of column definitions.
     /// Currently handles TSQL WITH(SYSTEM_VERSIONING=ON(...)).
     fn parse_post_table_properties(&mut self) -> Result<Vec<Expression>> {
         let mut properties = Vec::new();
+
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            if let Some(clause) = self.parse_snowflake_row_access_policy_clause() {
+                properties.push(Expression::Raw(Raw {
+                    sql: format!("WITH {}", clause),
+                }));
+            }
+        }
 
         // Doris/StarRocks: UNIQUE KEY (cols) or DUPLICATE KEY (cols) after column definitions
         // These are table key properties that define the distribution/sort key
@@ -16669,6 +16764,7 @@ impl Parser {
 
         // Snowflake: COPY GRANTS (before column list)
         let copy_grants = self.match_text_seq(&["COPY", "GRANTS"]);
+        let mut row_access_policy = self.parse_snowflake_row_access_policy_clause();
 
         // For materialized views, column definitions can include data types: (c1 INT, c2 INT)
         // This applies to Doris, ClickHouse, and potentially other dialects
@@ -16714,6 +16810,9 @@ impl Parser {
 
         // Snowflake: COPY GRANTS can also appear after column list
         let copy_grants = copy_grants || self.match_text_seq(&["COPY", "GRANTS"]);
+        if row_access_policy.is_none() {
+            row_access_policy = self.parse_snowflake_row_access_policy_clause();
+        }
 
         // Presto/Trino/StarRocks: SECURITY DEFINER/INVOKER/NONE (after view name, before AS)
         // MySQL also allows SQL SECURITY DEFINER/INVOKER after the view name
@@ -16922,6 +17021,7 @@ impl Parser {
                 locking_access: None,
                 copy_grants,
                 comment: view_comment,
+                row_access_policy,
                 tags,
                 options,
                 build,
@@ -17001,6 +17101,7 @@ impl Parser {
             locking_access,
             copy_grants,
             comment: view_comment,
+            row_access_policy,
             tags,
             options,
             build,
@@ -18478,7 +18579,14 @@ impl Parser {
                 })
             }
         } else if self.match_token(TokenType::Rename) {
-            if self.match_token(TokenType::Column) {
+            if self.match_token(TokenType::Index) || self.match_token(TokenType::Key) {
+                let old_name = self.expect_identifier_or_keyword_with_quoted()?;
+                self.expect(TokenType::To)?;
+                let new_name = self.expect_identifier_or_keyword_with_quoted()?;
+                Ok(AlterTableAction::Raw {
+                    sql: format!("RENAME INDEX {} TO {}", old_name.name, new_name.name),
+                })
+            } else if self.match_token(TokenType::Column) {
                 // RENAME COLUMN [IF EXISTS] old TO new
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 let mut old_name = self.expect_identifier_or_safe_keyword_with_quoted()?;
@@ -19008,6 +19116,13 @@ impl Parser {
                 .collect();
             self.expect(TokenType::RParen)?;
             Ok(AlterTableAction::ClusterBy { expressions })
+        } else if self.match_token(TokenType::AutoIncrement) {
+            self.expect(TokenType::Eq)?;
+            let start = self.current;
+            self.parse_expression()?;
+            Ok(AlterTableAction::Raw {
+                sql: format!("AUTO_INCREMENT={}", self.tokens_to_sql(start, self.current)),
+            })
         } else if self.match_token(TokenType::Replace) {
             // ClickHouse: REPLACE PARTITION expr FROM table
             if self.match_token(TokenType::Partition) {
@@ -19865,25 +19980,46 @@ impl Parser {
         };
 
         // Check for assignment or function call
-        let (value, args) = if self.match_token(TokenType::Eq) {
+        let (value, args, use_assignment_syntax) = if self.match_token(TokenType::Eq) {
             // PRAGMA name = value
-            let val = self.parse_expression()?;
-            (Some(val), Vec::new())
+            let val = if self.match_token(TokenType::On) || self.match_identifier("ON") {
+                Expression::Var(Box::new(Var {
+                    this: "on".to_string(),
+                }))
+            } else if self.match_identifier("OFF") {
+                Expression::Var(Box::new(Var {
+                    this: "off".to_string(),
+                }))
+            } else {
+                self.parse_expression()?
+            };
+            (Some(val), Vec::new(), true)
         } else if self.match_token(TokenType::LParen) {
             // PRAGMA name(args...)
             let mut arguments = Vec::new();
             if !self.check(TokenType::RParen) {
                 loop {
-                    arguments.push(self.parse_expression()?);
+                    let arg = if self.match_token(TokenType::On) || self.match_identifier("ON") {
+                        Expression::Var(Box::new(Var {
+                            this: "on".to_string(),
+                        }))
+                    } else if self.match_identifier("OFF") {
+                        Expression::Var(Box::new(Var {
+                            this: "off".to_string(),
+                        }))
+                    } else {
+                        self.parse_expression()?
+                    };
+                    arguments.push(arg);
                     if !self.match_token(TokenType::Comma) {
                         break;
                     }
                 }
             }
             self.expect(TokenType::RParen)?;
-            (None, arguments)
+            (None, arguments, false)
         } else {
-            (None, Vec::new())
+            (None, Vec::new(), false)
         };
 
         Ok(Expression::Pragma(Box::new(Pragma {
@@ -19891,6 +20027,7 @@ impl Parser {
             name,
             value,
             args,
+            use_assignment_syntax,
         })))
     }
 
@@ -24121,9 +24258,13 @@ impl Parser {
         let mut body = None;
         let mut set_options: Vec<FunctionSetOption> = Vec::new();
         let mut property_order: Vec<FunctionPropertyKind> = Vec::new();
+        let mut using_resources: Vec<FunctionUsingResource> = Vec::new();
         let mut options: Vec<Expression> = Vec::new();
         let mut environment: Vec<Expression> = Vec::new();
         let mut handler: Option<String> = None;
+        let mut handler_uses_eq = false;
+        let mut runtime_version: Option<String> = None;
+        let mut packages: Option<Vec<String>> = None;
         let mut parameter_style: Option<String> = None;
 
         // Parse function options
@@ -24321,6 +24462,19 @@ impl Parser {
                     self.parse_expression()?
                 };
                 body = Some(FunctionBody::Return(expr));
+            } else if self.match_token(TokenType::Using) {
+                while self.match_identifier("JAR")
+                    || self.match_identifier("FILE")
+                    || self.match_identifier("ARCHIVE")
+                {
+                    let kind = self.previous().text.to_ascii_uppercase();
+                    let uri = self.expect_string()?;
+                    using_resources.push(FunctionUsingResource { kind, uri });
+                    let _ = self.match_token(TokenType::Comma);
+                }
+                if !property_order.contains(&FunctionPropertyKind::Using) {
+                    property_order.push(FunctionPropertyKind::Using);
+                }
             } else if self.match_identifier("EXTERNAL") {
                 self.match_identifier("NAME");
                 let ext_name = if self.check(TokenType::String) {
@@ -24346,12 +24500,50 @@ impl Parser {
                 }
             } else if self.match_identifier("HANDLER") {
                 // Databricks: HANDLER 'handler_function'
+                handler_uses_eq = self.match_token(TokenType::Eq);
                 if self.check(TokenType::String) {
                     let tok = self.advance();
                     handler = Some(tok.text.clone());
                 }
                 if !property_order.contains(&FunctionPropertyKind::Handler) {
                     property_order.push(FunctionPropertyKind::Handler);
+                }
+            } else if self.match_identifier("RUNTIME_VERSION") {
+                let _ = self.match_token(TokenType::Eq);
+                if self.check(TokenType::String)
+                    || self.check(TokenType::Number)
+                    || self.is_identifier_or_keyword_token()
+                {
+                    runtime_version = Some(self.advance().text.clone());
+                }
+                if !property_order.contains(&FunctionPropertyKind::RuntimeVersion) {
+                    property_order.push(FunctionPropertyKind::RuntimeVersion);
+                }
+            } else if self.match_identifier("PACKAGES") {
+                let _ = self.match_token(TokenType::Eq);
+                let mut parsed_packages = Vec::new();
+                if self.match_token(TokenType::LParen) {
+                    while !self.is_at_end() && !self.check(TokenType::RParen) {
+                        if self.check(TokenType::String)
+                            || self.check(TokenType::Identifier)
+                            || self.check(TokenType::Var)
+                            || self.check(TokenType::Number)
+                            || self.check_keyword()
+                        {
+                            parsed_packages.push(self.advance().text.clone());
+                        } else {
+                            break;
+                        }
+
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenType::RParen)?;
+                }
+                packages = Some(parsed_packages);
+                if !property_order.contains(&FunctionPropertyKind::Packages) {
+                    property_order.push(FunctionPropertyKind::Packages);
                 }
             } else if self.match_text_seq(&["PARAMETER", "STYLE"]) {
                 // Databricks: PARAMETER STYLE PANDAS
@@ -24420,8 +24612,12 @@ impl Parser {
             options,
             is_table_function,
             property_order,
+            using_resources,
             environment,
             handler,
+            handler_uses_eq,
+            runtime_version,
+            packages,
             parameter_style,
         })))
     }
@@ -24810,7 +25006,12 @@ impl Parser {
                     let stmt = self.parse_statement()?;
                     body = Some(FunctionBody::Expression(stmt));
                 }
-            } else if self.check(TokenType::Begin) {
+            } else if self.check(TokenType::Begin)
+                && matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::MySQL)
+                )
+            {
                 // MySQL: BEGIN...END without AS keyword
                 // Collect entire block as raw text since MySQL procedural
                 // constructs (IF/SIGNAL/WHILE/etc.) aren't parseable as statements
@@ -24821,9 +25022,26 @@ impl Parser {
                     if self.check(TokenType::Begin) {
                         depth += 1;
                     } else if self.check(TokenType::End) {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
+                        // Check if this END is a structured control-flow END marker
+                        // (END IF, END WHILE, END LOOP, END CASE, END REPEAT, END FOR),
+                        // which should NOT decrement the BEGIN/END counter.
+                        let is_structured_end = self
+                            .peek_nth(1)
+                            .map(|t| {
+                                matches!(
+                                    t.token_type,
+                                    TokenType::If | TokenType::Case | TokenType::For
+                                ) || matches!(
+                                    t.text.to_ascii_uppercase().as_str(),
+                                    "IF" | "WHILE" | "LOOP" | "REPEAT" | "CASE" | "FOR"
+                                )
+                            })
+                            .unwrap_or(false);
+                        if !is_structured_end {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
                         }
                     }
                     self.skip();
@@ -30684,7 +30902,7 @@ impl Parser {
                     let args = if self.check(TokenType::RParen) {
                         Vec::new()
                     } else {
-                        self.parse_expression_list()?
+                        self.parse_function_arguments()?
                     };
                     self.expect(TokenType::RParen)?;
                     let method_call = Expression::MethodCall(Box::new(MethodCall {
@@ -36538,7 +36756,7 @@ impl Parser {
                         let args = if self.check(TokenType::RParen) {
                             Vec::new()
                         } else {
-                            self.parse_expression_list()?
+                            self.parse_function_arguments()?
                         };
                         self.expect(TokenType::RParen)?;
                         // Create a method call expression (DotAccess with function call)
@@ -47102,8 +47320,37 @@ impl Parser {
         }
 
         loop {
+            let is_table_or_model_arg = !self.is_at_end()
+                && (self.check(TokenType::Table) || self.peek().text.eq_ignore_ascii_case("MODEL"));
+
             // Try to parse expression with optional alias
-            if let Some(expr) = self.parse_assignment()? {
+            let expr = if is_table_or_model_arg {
+                let prefix = self.peek().text.to_ascii_uppercase();
+                let saved_pos = self.current;
+                self.skip(); // consume TABLE or MODEL
+
+                if !self.is_at_end()
+                    && !self.check(TokenType::FArrow)
+                    && !self.check(TokenType::ColonEq)
+                {
+                    if let Some(table_expr) = self.parse_table_parts()? {
+                        Some(Expression::TableArgument(Box::new(TableArgument {
+                            prefix,
+                            this: table_expr,
+                        })))
+                    } else {
+                        self.current = saved_pos;
+                        self.parse_assignment()?
+                    }
+                } else {
+                    self.current = saved_pos;
+                    self.parse_assignment()?
+                }
+            } else {
+                self.parse_assignment()?
+            };
+
+            if let Some(expr) = expr {
                 // Handle explicit AS alias inside function args (e.g. `tuple(1 AS "a", 2 AS "b")`)
                 if self.match_token(TokenType::As) {
                     let alias_token = self.advance();
@@ -49976,6 +50223,12 @@ impl Parser {
                     })));
                 }
 
+                if self.match_token(TokenType::Where) {
+                    elements.push(Expression::Where(Box::new(crate::expressions::Where {
+                        this: self.parse_expression()?,
+                    })));
+                }
+
                 if elements.len() == 1 {
                     elements[0].clone()
                 } else {
@@ -50071,6 +50324,12 @@ impl Parser {
                     }
                 }
 
+                if self.match_token(TokenType::Where) {
+                    elements.push(Expression::Where(Box::new(crate::expressions::Where {
+                        this: self.parse_expression()?,
+                    })));
+                }
+
                 if elements.len() == 1 {
                     elements[0].clone()
                 } else {
@@ -50080,9 +50339,23 @@ impl Parser {
                 }
             } else if self.match_token(TokenType::Delete) {
                 // DELETE action
-                Expression::Var(Box::new(Var {
+                let mut elements = vec![Expression::Var(Box::new(Var {
                     this: "DELETE".to_string(),
-                }))
+                }))];
+
+                if self.match_token(TokenType::Where) {
+                    elements.push(Expression::Where(Box::new(crate::expressions::Where {
+                        this: self.parse_expression()?,
+                    })));
+                }
+
+                if elements.len() == 1 {
+                    elements[0].clone()
+                } else {
+                    Expression::Tuple(Box::new(Tuple {
+                        expressions: elements,
+                    }))
+                }
             } else if self.match_identifier("DO") {
                 // DO NOTHING action (PostgreSQL)
                 if self.match_identifier("NOTHING") {

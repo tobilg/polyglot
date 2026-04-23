@@ -869,6 +869,7 @@ mod reserved_keywords {
         set.remove("grant");
         set.remove("key");
         set.remove("index");
+        set.remove("offset");
         set.remove("values");
         set.remove("table");
         set
@@ -4127,9 +4128,14 @@ impl Generator {
                 self.write_space();
                 self.write_keyword("TOP");
                 if top.parenthesized {
-                    self.write(" (");
-                    self.generate_expression(&top.this)?;
-                    self.write(")");
+                    if matches!(&top.this, Expression::Subquery(_) | Expression::Paren(_)) {
+                        self.write_space();
+                        self.generate_expression(&top.this)?;
+                    } else {
+                        self.write(" (");
+                        self.generate_expression(&top.this)?;
+                        self.write(")");
+                    }
                 } else {
                     self.write_space();
                     self.generate_expression(&top.this)?;
@@ -7171,6 +7177,9 @@ impl Generator {
         }
 
         self.write_keyword("UPDATE");
+        if let Some(hint) = &update.hint {
+            self.generate_hint(hint)?;
+        }
         self.write_space();
         self.generate_table(&update.table)?;
 
@@ -7355,6 +7364,9 @@ impl Generator {
         if !delete.tables.is_empty() && !delete.tables_from_using {
             // DELETE t1[, t2] [OUTPUT ...] FROM ... syntax (tables before FROM)
             self.write_keyword("DELETE");
+            if let Some(hint) = &delete.hint {
+                self.generate_hint(hint)?;
+            }
             self.write_space();
             for (i, tbl) in delete.tables.iter().enumerate() {
                 if i > 0 {
@@ -7372,7 +7384,12 @@ impl Generator {
             self.generate_table(&delete.table)?;
         } else if !delete.tables.is_empty() && delete.tables_from_using {
             // DELETE FROM t1, t2 USING ... syntax (tables after FROM)
-            self.write_keyword("DELETE FROM");
+            self.write_keyword("DELETE");
+            if let Some(hint) = &delete.hint {
+                self.generate_hint(hint)?;
+            }
+            self.write_space();
+            self.write_keyword("FROM");
             self.write_space();
             for (i, tbl) in delete.tables.iter().enumerate() {
                 if i > 0 {
@@ -7383,10 +7400,18 @@ impl Generator {
         } else if delete.no_from && matches!(self.config.dialect, Some(DialectType::BigQuery)) {
             // BigQuery-style DELETE without FROM keyword
             self.write_keyword("DELETE");
+            if let Some(hint) = &delete.hint {
+                self.generate_hint(hint)?;
+            }
             self.write_space();
             self.generate_table(&delete.table)?;
         } else {
-            self.write_keyword("DELETE FROM");
+            self.write_keyword("DELETE");
+            if let Some(hint) = &delete.hint {
+                self.generate_hint(hint)?;
+            }
+            self.write_space();
+            self.write_keyword("FROM");
             self.write_space();
             self.generate_table(&delete.table)?;
         }
@@ -9128,6 +9153,15 @@ impl Generator {
             self.write("(");
             self.write(codec);
             self.write(")");
+        }
+
+        if let Some(visible) = col.visible {
+            self.write_space();
+            if visible {
+                self.write_keyword("VISIBLE");
+            } else {
+                self.write_keyword("INVISIBLE");
+            }
         }
 
         // ClickHouse: EPHEMERAL [expr]
@@ -11181,6 +11215,13 @@ impl Generator {
             }
         }
 
+        if let Some(ref row_access_policy) = cv.row_access_policy {
+            self.write_space();
+            self.write_keyword("WITH");
+            self.write_space();
+            self.write(row_access_policy);
+        }
+
         // Snowflake: COMMENT = 'text'
         if let Some(ref comment) = cv.comment {
             self.write_space();
@@ -11541,9 +11582,13 @@ impl Generator {
         self.generate_identifier(&p.name)?;
 
         // Value assignment or function call
-        if let Some(value) = &p.value {
+        if p.use_assignment_syntax {
             self.write(" = ");
-            self.generate_expression(value)?;
+            if let Some(value) = &p.value {
+                self.generate_expression(value)?;
+            } else if let Some(arg) = p.args.first() {
+                self.generate_expression(arg)?;
+            }
         } else if !p.args.is_empty() {
             self.write("(");
             for (i, arg) in p.args.iter().enumerate() {
@@ -12485,6 +12530,9 @@ impl Generator {
                     FunctionPropertyKind::As => {
                         self.generate_function_body(cf)?;
                     }
+                    FunctionPropertyKind::Using => {
+                        self.generate_function_using_resources(cf)?;
+                    }
                     FunctionPropertyKind::Language => {
                         if !cf.language_first {
                             // Only output here if not already output above
@@ -12537,10 +12585,39 @@ impl Generator {
                         if let Some(ref h) = cf.handler {
                             self.write_space();
                             self.write_keyword("HANDLER");
-                            self.write_space();
+                            if cf.handler_uses_eq {
+                                self.write(" = ");
+                            } else {
+                                self.write_space();
+                            }
                             self.write("'");
                             self.write(h);
                             self.write("'");
+                        }
+                    }
+                    FunctionPropertyKind::RuntimeVersion => {
+                        if let Some(ref runtime_version) = cf.runtime_version {
+                            self.write_space();
+                            self.write_keyword("RUNTIME_VERSION");
+                            self.write("='");
+                            self.write(runtime_version);
+                            self.write("'");
+                        }
+                    }
+                    FunctionPropertyKind::Packages => {
+                        if let Some(ref packages) = cf.packages {
+                            self.write_space();
+                            self.write_keyword("PACKAGES");
+                            self.write("=(");
+                            for (i, package) in packages.iter().enumerate() {
+                                if i > 0 {
+                                    self.write(", ");
+                                }
+                                self.write("'");
+                                self.write(package);
+                                self.write("'");
+                            }
+                            self.write(")");
                         }
                     }
                     FunctionPropertyKind::ParameterStyle => {
@@ -12627,7 +12704,44 @@ impl Generator {
                 self.generate_environment_clause(&cf.environment)?;
             }
 
+            if let Some(ref h) = cf.handler {
+                self.write_space();
+                self.write_keyword("HANDLER");
+                if cf.handler_uses_eq {
+                    self.write(" = ");
+                } else {
+                    self.write_space();
+                }
+                self.write("'");
+                self.write(h);
+                self.write("'");
+            }
+
+            if let Some(ref runtime_version) = cf.runtime_version {
+                self.write_space();
+                self.write_keyword("RUNTIME_VERSION");
+                self.write("='");
+                self.write(runtime_version);
+                self.write("'");
+            }
+
+            if let Some(ref packages) = cf.packages {
+                self.write_space();
+                self.write_keyword("PACKAGES");
+                self.write("=(");
+                for (i, package) in packages.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write("'");
+                    self.write(package);
+                    self.write("'");
+                }
+                self.write(")");
+            }
+
             self.generate_function_body(cf)?;
+            self.generate_function_using_resources(cf)?;
         }
 
         Ok(())
@@ -12654,6 +12768,22 @@ impl Generator {
                     self.write_keyword("FROM CURRENT");
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn generate_function_using_resources(&mut self, cf: &CreateFunction) -> Result<()> {
+        if cf.using_resources.is_empty() {
+            return Ok(());
+        }
+
+        self.write_space();
+        self.write_keyword("USING");
+        for resource in &cf.using_resources {
+            self.write_space();
+            self.write_keyword(&resource.kind);
+            self.write_space();
+            self.generate_string_literal(&resource.uri)?;
         }
         Ok(())
     }
@@ -16944,6 +17074,34 @@ impl Generator {
             return Ok(());
         }
 
+        // Snowflake fixtures expect TO_VARIANT applied to arrays to keep ARRAY_CONSTRUCT(...)
+        // rather than bracket-array syntax.
+        if matches!(self.config.dialect, Some(DialectType::Snowflake))
+            && func.name.eq_ignore_ascii_case("TO_VARIANT")
+            && func.args.len() == 1
+        {
+            let array_expressions = match &func.args[0] {
+                Expression::ArrayFunc(arr) => Some(&arr.expressions),
+                Expression::Array(arr) => Some(&arr.expressions),
+                _ => None,
+            };
+            if let Some(expressions) = array_expressions {
+                self.write_keyword("TO_VARIANT");
+                self.write("(");
+                self.write_keyword("ARRAY_CONSTRUCT");
+                self.write("(");
+                for (i, arg) in expressions.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(arg)?;
+                }
+                self.write(")");
+                self.write(")");
+                return Ok(());
+            }
+        }
+
         // STRUCT function: BigQuery STRUCT('Alice' AS name, 85 AS score) -> dialect-specific
         if func.name.eq_ignore_ascii_case("STRUCT")
             && !matches!(
@@ -17176,6 +17334,27 @@ impl Generator {
             self.write_space();
             self.generate_expression(&func.args[1])?;
             self.write(")");
+            return Ok(());
+        }
+
+        // PostgreSQL: DATE_ADD(date, INTERVAL '...') / DATE_SUB(...) -> infix interval arithmetic.
+        if self.config.dialect == Some(DialectType::PostgreSQL)
+            && matches!(
+                func.name.to_ascii_uppercase().as_str(),
+                "DATE_ADD" | "DATE_SUB"
+            )
+            && func.args.len() == 2
+            && matches!(func.args[1], Expression::Interval(_))
+        {
+            self.generate_expression(&func.args[0])?;
+            self.write_space();
+            if func.name.eq_ignore_ascii_case("DATE_SUB") {
+                self.write("-");
+            } else {
+                self.write("+");
+            }
+            self.write_space();
+            self.generate_expression(&func.args[1])?;
             return Ok(());
         }
 
@@ -18880,6 +19059,24 @@ impl Generator {
             self.write(", ");
             self.generate_expression(&f.this)?;
             self.write(")");
+        } else if matches!(self.config.dialect, Some(DialectType::PostgreSQL)) {
+            self.generate_expression(&f.this)?;
+            self.write_space();
+            if name.eq_ignore_ascii_case("DATE_SUB") {
+                self.write("-");
+            } else {
+                self.write("+");
+            }
+            self.write_space();
+            self.write_keyword("INTERVAL");
+            self.write_space();
+            self.write("'");
+            let mut interval_gen = Generator::with_arc_config(self.config.clone());
+            let interval_sql = interval_gen.generate(&f.interval)?;
+            self.write(&interval_sql);
+            self.write(" ");
+            self.write_simple_interval_unit(&f.unit, false);
+            self.write("'");
         } else {
             self.write_keyword(name);
             self.write("(");
@@ -30841,12 +31038,30 @@ impl Generator {
         // MERGE INTO target USING source ON condition WHEN ...
         // DuckDB variant: MERGE INTO target USING source USING (key_columns) WHEN ...
         if let Some(with_) = &e.with_ {
-            self.generate_expression(with_)?;
-            self.write_space();
+            if let Expression::With(with_clause) = with_.as_ref() {
+                self.generate_with(with_clause)?;
+                self.write_space();
+            } else {
+                self.generate_expression(with_)?;
+                self.write_space();
+            }
         }
         self.write_keyword("MERGE INTO");
         self.write_space();
-        self.generate_expression(&e.this)?;
+        if matches!(
+            self.config.dialect,
+            Some(crate::DialectType::Oracle)
+        ) {
+            if let Expression::Alias(alias) = e.this.as_ref() {
+                self.generate_expression(&alias.this)?;
+                self.write_space();
+                self.generate_identifier(&alias.alias)?;
+            } else {
+                self.generate_expression(&e.this)?;
+            }
+        } else {
+            self.generate_expression(&e.this)?;
+        }
 
         // USING clause - newline before in pretty mode
         if self.config.pretty {
@@ -36051,21 +36266,41 @@ impl Generator {
         }
         self.write("(");
         self.generate_expression(&e.this)?;
-        if let Some(format) = &e.format {
-            self.write(", ");
-            self.generate_expression(format)?;
-        }
-        if let Some(nlsparam) = &e.nlsparam {
-            self.write(", ");
-            self.generate_expression(nlsparam)?;
-        }
-        if let Some(precision) = &e.precision {
-            self.write(", ");
-            self.generate_expression(precision)?;
-        }
-        if let Some(scale) = &e.scale {
-            self.write(", ");
-            self.generate_expression(scale)?;
+        let precision_is_snowflake_default = e.precision.is_none()
+            || matches!(
+                e.precision.as_deref(),
+                Some(Expression::Literal(lit))
+                    if matches!(lit.as_ref(), Literal::Number(n) if n == "0")
+            );
+        let is_snowflake_default_precision = matches!(
+            self.config.dialect,
+            Some(DialectType::Snowflake)
+        ) && e.nlsparam.is_none()
+            && e.scale.is_none()
+            && matches!(
+                e.format.as_deref(),
+                Some(Expression::Literal(lit))
+                    if matches!(lit.as_ref(), Literal::Number(n) if n == "38")
+            )
+            && precision_is_snowflake_default;
+
+        if !is_snowflake_default_precision {
+            if let Some(format) = &e.format {
+                self.write(", ");
+                self.generate_expression(format)?;
+            }
+            if let Some(nlsparam) = &e.nlsparam {
+                self.write(", ");
+                self.generate_expression(nlsparam)?;
+            }
+            if let Some(precision) = &e.precision {
+                self.write(", ");
+                self.generate_expression(precision)?;
+            }
+            if let Some(scale) = &e.scale {
+                self.write(", ");
+                self.generate_expression(scale)?;
+            }
         }
         self.write(")");
         Ok(())
@@ -37209,6 +37444,10 @@ impl Generator {
                         // Spark: INSERT * (insert all columns)
                         if elements.len() > 1 && matches!(&elements[1], Expression::Star(_)) {
                             self.write(" *");
+                            if let Some(Expression::Where(w)) = elements.get(2) {
+                                self.write_space();
+                                self.generate_where(w)?;
+                            }
                         } else {
                             let mut values_idx = 1;
                             // Check if second element is column list (Tuple)
@@ -37238,8 +37477,11 @@ impl Generator {
                                     }
                                 }
                             }
+                            let mut next_idx = values_idx;
                             // Generate VALUES clause
-                            if values_idx < elements.len() {
+                            if values_idx < elements.len()
+                                && !matches!(&elements[values_idx], Expression::Where(_))
+                            {
                                 // Check if it's INSERT ROW (BigQuery) — no VALUES keyword needed
                                 let is_row = matches!(&elements[values_idx], Expression::Var(v) if v.this == "ROW");
                                 if !is_row {
@@ -37259,6 +37501,11 @@ impl Generator {
                                 } else {
                                     self.generate_expression(&elements[values_idx])?;
                                 }
+                                next_idx += 1;
+                            }
+                            if let Some(Expression::Where(w)) = elements.get(next_idx) {
+                                self.write_space();
+                                self.generate_where(w)?;
                             }
                         } // close else for INSERT * check
                     }
@@ -37267,6 +37514,10 @@ impl Generator {
                         // Spark: UPDATE * (update all columns)
                         if elements.len() > 1 && matches!(&elements[1], Expression::Star(_)) {
                             self.write(" *");
+                            if let Some(Expression::Where(w)) = elements.get(2) {
+                                self.write_space();
+                                self.generate_where(w)?;
+                            }
                         } else if elements.len() > 1 {
                             self.write_space();
                             self.write_keyword("SET");
@@ -37302,6 +37553,17 @@ impl Generator {
                             if self.config.pretty {
                                 self.indent_level -= 1;
                             }
+                            if let Some(Expression::Where(w)) = elements.get(2) {
+                                self.write_space();
+                                self.generate_where(w)?;
+                            }
+                        }
+                    }
+                    Expression::Var(v) if v.this == "DELETE" => {
+                        self.write_keyword("DELETE");
+                        if let Some(Expression::Where(w)) = elements.get(1) {
+                            self.write_space();
+                            self.generate_where(w)?;
                         }
                     }
                     _ => {
