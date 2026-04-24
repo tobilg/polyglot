@@ -824,9 +824,9 @@ pub fn eliminate_distinct_on_for_dialect(
         | Some(DialectType::SingleStore)
         | Some(DialectType::TSQL)
         | Some(DialectType::Fabric) => NullsMode::CaseExpr,
-        Some(DialectType::Oracle)
-        | Some(DialectType::Redshift)
-        | Some(DialectType::Snowflake) => NullsMode::None,
+        Some(DialectType::Oracle) | Some(DialectType::Redshift) | Some(DialectType::Snowflake) => {
+            NullsMode::None
+        }
         Some(DialectType::StarRocks) => {
             if matches!(source, Some(DialectType::Redshift)) {
                 NullsMode::CaseExpr

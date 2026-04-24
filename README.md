@@ -20,6 +20,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **Fluent builder API** for constructing queries programmatically
 - **Validation** with syntax, semantic, and schema-aware checks
 - **AST visitor** utilities for walking, transforming, and analyzing queries
+- **Stack-safety hardening** on native targets via default-on `stacker`
 - **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
 - **Python bindings** powered by PyO3 (`polyglot-sql` on PyPI)
 
@@ -153,6 +154,25 @@ const raw = format_sql_with_options(
 const result = JSON.parse(raw);
 ```
 
+## Stack Safety
+
+On native Rust builds, `polyglot-sql` enables the optional `stacker` feature by default. This adds stack-growth protection around the deepest parser / generator / transpile entry points so pathological or heavily nested SQL is less likely to abort the process with a stack overflow.
+
+Important scope notes:
+
+- Rust, C FFI, and Python native builds inherit this by default.
+- WASM does **not** use `stacker`; `polyglot-sql-wasm` depends on the core crate with `default-features = false`.
+- A few paths still use explicitly larger thread stacks as defense-in-depth for very deep workloads, especially some test harnesses, the Python worker thread, and the `bench_json` example.
+
+If you want to disable `stacker` for a native Rust build, turn off default features and opt back into the ones you need:
+
+```toml
+[dependencies]
+polyglot-sql = { version = "0.3.3", default-features = false, features = ["all-dialects", "transpile"] }
+```
+
+That can reduce overhead slightly on trusted inputs, but you lose the default stack-growth protection for deeply nested SQL.
+
 ## Project Structure
 
 ```
@@ -248,6 +268,7 @@ Optional dialect function catalogs are provided via `crates/polyglot-sql-functio
 
 - Crate README: [`crates/polyglot-sql-function-catalogs/README.md`](crates/polyglot-sql-function-catalogs/README.md)
 - Core feature flags:
+  - `stacker` (enabled by default on native `polyglot-sql` builds)
   - `function-catalog-clickhouse`
   - `function-catalog-duckdb`
   - `function-catalog-all-dialects`

@@ -429,63 +429,39 @@ mod unicode_tests {
 mod nesting_tests {
     use super::*;
 
-    fn run_with_large_stack<F>(f: F)
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(f)
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     #[test]
     fn test_deeply_nested_parentheses() {
-        // Run in a thread with a larger stack to avoid stack overflow
-        // during recursive parse and Drop of nested Expression structures.
-        run_with_large_stack(|| {
-            let sql = "SELECT ((((((((1 + 2))))))))";
-            let result = Parser::parse_sql(sql);
-            assert!(result.is_ok(), "Deeply nested parentheses should parse");
-        });
+        let sql = "SELECT ((((((((1 + 2))))))))";
+        let result = Parser::parse_sql(sql);
+        assert!(result.is_ok(), "Deeply nested parentheses should parse");
     }
 
     #[test]
     fn test_nested_subqueries() {
-        run_with_large_stack(|| {
-            let sql = "SELECT * FROM (SELECT * FROM (SELECT * FROM users))";
-            let result = Parser::parse_sql(sql);
-            assert!(result.is_ok(), "Nested subqueries should parse");
-        });
+        let sql = "SELECT * FROM (SELECT * FROM (SELECT * FROM users))";
+        let result = Parser::parse_sql(sql);
+        assert!(result.is_ok(), "Nested subqueries should parse");
     }
 
     #[test]
     fn test_nested_case_expressions() {
-        run_with_large_stack(|| {
-            let sql = "SELECT CASE WHEN a THEN CASE WHEN b THEN 1 ELSE 2 END ELSE 3 END";
-            let result = Parser::parse_sql(sql);
-            assert!(result.is_ok(), "Nested CASE should parse");
-        });
+        let sql = "SELECT CASE WHEN a THEN CASE WHEN b THEN 1 ELSE 2 END ELSE 3 END";
+        let result = Parser::parse_sql(sql);
+        assert!(result.is_ok(), "Nested CASE should parse");
     }
 
     #[test]
     fn test_deeply_nested_function_calls() {
-        run_with_large_stack(|| {
-            let sql = "SELECT UPPER(LOWER(TRIM(UPPER(LOWER(name)))))";
-            let result = Parser::parse_sql(sql);
-            assert!(result.is_ok(), "Nested functions should parse");
-        });
+        let sql = "SELECT UPPER(LOWER(TRIM(UPPER(LOWER(name)))))";
+        let result = Parser::parse_sql(sql);
+        assert!(result.is_ok(), "Nested functions should parse");
     }
 
     #[test]
     fn test_complex_nested_expression() {
-        run_with_large_stack(|| {
-            let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
-            let result = Parser::parse_sql(sql);
-            assert!(result.is_ok(), "Complex nested math should parse");
-        });
+        let sql = "SELECT (1 + (2 * (3 - (4 / (5 + 6)))))";
+        let result = Parser::parse_sql(sql);
+        assert!(result.is_ok(), "Complex nested math should parse");
     }
 }
 

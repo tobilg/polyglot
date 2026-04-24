@@ -529,6 +529,20 @@ pub struct ParserConfig {
     pub dialect: Option<crate::dialects::DialectType>,
 }
 
+struct SelectBodyHead {
+    leading_comments: Vec<String>,
+    post_select_comments: Vec<String>,
+    hint: Option<Hint>,
+    top: Option<Top>,
+    distinct: bool,
+    distinct_on: Option<Vec<Expression>>,
+    kind: Option<String>,
+    operation_modifiers: Vec<String>,
+    expressions: Vec<Expression>,
+    exclude: Option<Vec<Expression>>,
+    into: Option<SelectInto>,
+}
+
 impl Parser {
     /// Create a new parser from a pre-tokenized token stream with default configuration.
     ///
@@ -699,6 +713,40 @@ impl Parser {
     /// (SELECT, INSERT, CREATE, etc.). Unknown or dialect-specific statements
     /// fall through to a `Command` expression that preserves the raw SQL text.
     pub fn parse_statement(&mut self) -> Result<Expression> {
+        #[cfg(feature = "stacker")]
+        {
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || self.parse_statement_inner())
+        }
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.parse_statement_inner()
+        }
+    }
+
+    fn parse_statement_inner(&mut self) -> Result<Expression> {
+        // Skip any leading semicolons
+        while self.match_token(TokenType::Semicolon) {}
+
+        if self.is_at_end() {
+            return Err(self.parse_error("Unexpected end of input"));
+        }
+
+        match self.peek().token_type {
+            TokenType::Select => self.parse_select(),
+            TokenType::With => self.parse_with(),
+            TokenType::From => self.parse_from_first_query(),
+            TokenType::Hint => self.parse_statement_with_leading_hint(),
+            TokenType::LParen => self.parse_parenthesized_statement_or_expression(),
+            _ => self.parse_statement_slow(),
+        }
+    }
+
+    fn parse_statement_slow(&mut self) -> Result<Expression> {
         // Skip any leading semicolons
         while self.match_token(TokenType::Semicolon) {}
 
@@ -1413,6 +1461,146 @@ impl Parser {
         }
     }
 
+    fn parse_statement_with_leading_hint(&mut self) -> Result<Expression> {
+        let hint_token = self.advance();
+        let hint_text = hint_token.text.clone();
+        let comment = format!("/* + {} */", hint_text.trim());
+
+        let mut stmt = self.parse_statement()?;
+
+        match &mut stmt {
+            Expression::Select(select) => {
+                select.leading_comments.insert(0, comment);
+            }
+            Expression::Insert(insert) => {
+                insert.leading_comments.insert(0, comment);
+            }
+            Expression::Update(update) => {
+                update.leading_comments.insert(0, comment);
+            }
+            Expression::Delete(delete) => {
+                delete.leading_comments.insert(0, comment);
+            }
+            Expression::CreateTable(ct) => {
+                ct.leading_comments.insert(0, comment);
+            }
+            _ => {}
+        }
+
+        Ok(stmt)
+    }
+
+    fn parse_parenthesized_statement_or_expression(&mut self) -> Result<Expression> {
+        let next_is_explain = self.current + 1 < self.tokens.len()
+            && self.tokens[self.current + 1].token_type == TokenType::Var
+            && self.tokens[self.current + 1]
+                .text
+                .eq_ignore_ascii_case("EXPLAIN");
+
+        if self.check_next(TokenType::Select)
+            || self.check_next(TokenType::With)
+            || self.check_next(TokenType::Pivot)
+            || self.check_next(TokenType::Unpivot)
+            || self.check_next(TokenType::From)
+            || next_is_explain
+        {
+            self.skip(); // consume (
+            let inner = self.parse_statement()?;
+            self.expect(TokenType::RParen)?;
+            let subquery = Expression::Subquery(Box::new(Subquery {
+                this: inner,
+                alias: None,
+                column_aliases: Vec::new(),
+                order_by: None,
+                limit: None,
+                offset: None,
+                distribute_by: None,
+                sort_by: None,
+                cluster_by: None,
+                lateral: false,
+                modifiers_inside: false,
+                trailing_comments: Vec::new(),
+                inferred_type: None,
+            }));
+            let result = self.parse_set_operation(subquery)?;
+            self.parse_query_modifiers(result)
+        } else if self.check_next(TokenType::LParen) {
+            self.skip(); // consume (
+            let inner = self.parse_statement()?;
+            let result = self.parse_set_operation(inner)?;
+            self.expect(TokenType::RParen)?;
+            let subquery = Expression::Subquery(Box::new(Subquery {
+                this: result,
+                alias: None,
+                column_aliases: Vec::new(),
+                order_by: None,
+                limit: None,
+                offset: None,
+                distribute_by: None,
+                sort_by: None,
+                cluster_by: None,
+                lateral: false,
+                modifiers_inside: false,
+                trailing_comments: Vec::new(),
+                inferred_type: None,
+            }));
+            let result = self.parse_set_operation(subquery)?;
+            let pre_alias_comments = self.previous_trailing_comments().to_vec();
+            if self.match_token(TokenType::As) {
+                let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                let trailing_comments = self.previous_trailing_comments().to_vec();
+                Ok(Expression::Alias(Box::new(Alias {
+                    this: result,
+                    alias,
+                    column_aliases: Vec::new(),
+                    pre_alias_comments,
+                    trailing_comments,
+                    inferred_type: None,
+                })))
+            } else {
+                self.parse_query_modifiers(result)
+            }
+        } else {
+            let expr = self.parse_expression()?;
+            let pre_alias_comments = self.previous_trailing_comments().to_vec();
+            if self.match_token(TokenType::As) {
+                if self.match_token(TokenType::LParen) {
+                    let mut column_aliases = Vec::new();
+                    loop {
+                        let col_alias = self.expect_identifier_or_keyword_with_quoted()?;
+                        column_aliases.push(col_alias);
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenType::RParen)?;
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    Ok(Expression::Alias(Box::new(Alias {
+                        this: expr,
+                        alias: Identifier::empty(),
+                        column_aliases,
+                        pre_alias_comments,
+                        trailing_comments,
+                        inferred_type: None,
+                    })))
+                } else {
+                    let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    Ok(Expression::Alias(Box::new(Alias {
+                        this: expr,
+                        alias,
+                        column_aliases: Vec::new(),
+                        pre_alias_comments,
+                        trailing_comments,
+                        inferred_type: None,
+                    })))
+                }
+            } else {
+                Ok(expr)
+            }
+        }
+    }
+
     /// Parse a SELECT statement
     fn parse_select(&mut self) -> Result<Expression> {
         let result = self.parse_select_body()?;
@@ -1420,10 +1608,8 @@ impl Parser {
         self.parse_set_operation(result)
     }
 
-    /// Parse a SELECT statement body without consuming trailing set operations.
-    /// Used by `parse_select_or_paren_select` to avoid mutual recursion with
-    /// `parse_set_operation`, which handles set-op chaining iteratively.
-    fn parse_select_body(&mut self) -> Result<Expression> {
+    #[inline(never)]
+    fn parse_select_body_head(&mut self) -> Result<Box<SelectBodyHead>> {
         // Capture the SELECT token to get its comments
         let select_token = self.expect(TokenType::Select)?;
         let leading_comments = select_token.comments;
@@ -1490,7 +1676,6 @@ impl Parser {
             ) && self.match_token(TokenType::Unique));
         let (distinct, distinct_on) = if is_distinct_token {
             if self.match_token(TokenType::On) {
-                // DISTINCT ON (expr, ...)
                 self.expect(TokenType::LParen)?;
                 let exprs = self.parse_expression_list()?;
                 self.expect(TokenType::RParen)?;
@@ -1499,11 +1684,9 @@ impl Parser {
                 (true, None)
             }
         } else if self.check_identifier("DISTINCTROW") {
-            // MySQL DISTINCTROW - equivalent to DISTINCT
             self.skip();
             (true, None)
         } else {
-            // Only consume ALL if it's the SELECT ALL modifier, not if it's a column reference like "all.count"
             if self.check(TokenType::All) && !self.check_next(TokenType::Dot) {
                 self.skip();
             }
@@ -1511,7 +1694,6 @@ impl Parser {
         };
 
         // TSQL: SELECT DISTINCT TOP n - TOP can come after DISTINCT
-        // If no TOP was parsed before DISTINCT, check for TOP after DISTINCT
         let top = if top.is_none()
             && self.check(TokenType::Top)
             && !self.check_next(TokenType::Dot)
@@ -1555,9 +1737,6 @@ impl Parser {
             top
         };
 
-        // Parse MySQL operation modifiers (HIGH_PRIORITY, STRAIGHT_JOIN, SQL_CALC_FOUND_ROWS, etc.)
-        // These appear after DISTINCT/ALL and before the projections
-        // Only apply for MySQL-family dialects - other dialects treat these as identifiers
         let mut operation_modifiers = Vec::new();
         let is_mysql_dialect = matches!(
             self.config.dialect,
@@ -1595,14 +1774,12 @@ impl Parser {
             }
         }
 
-        // Parse BigQuery SELECT AS STRUCT / SELECT AS VALUE
         let kind = if self.match_token(TokenType::As) {
             if self.match_identifier("STRUCT") {
                 Some("STRUCT".to_string())
             } else if self.match_identifier("VALUE") {
                 Some("VALUE".to_string())
             } else {
-                // Not AS STRUCT/VALUE, backtrack the AS token
                 self.current -= 1;
                 None
             }
@@ -1610,39 +1787,22 @@ impl Parser {
             None
         };
 
-        // Parse select expressions
         let mut expressions = self.parse_select_expressions()?;
 
-        // Redshift: EXCLUDE clause at the end of the projection list
-        // e.g., SELECT *, 4 AS col4 EXCLUDE (col2, col3) FROM ...
-        // e.g., SELECT col1, *, col2 EXCLUDE(col3) FROM ...
-        // e.g., SELECT *, 4 AS col4 EXCLUDE col2, col3 FROM ...
-        // In Python sqlglot, this is handled by overriding _parse_projections in the Redshift parser.
-        // The EXCLUDE clause is separate from * EXCLUDE — it applies to the entire projection list.
         let exclude = if matches!(
             self.config.dialect,
             Some(crate::dialects::DialectType::Redshift)
         ) {
-            // Check if previous token was EXCLUDE (parsed as implicit alias).
-            // e.g., SELECT *, 4 AS col4 EXCLUDE col2, col3 FROM ...
-            //   → "col4 EXCLUDE" was parsed as (col4 aliased-as EXCLUDE), then "col2" as next projection
-            //   → We need to strip the EXCLUDE alias from the last projection and retreat
-            // Also handle: EXCLUDE was consumed as a bare column name if no AS was present
             let mut retreat_for_exclude = false;
             if let Some(last_expr) = expressions.last() {
-                // Case: "4 AS col4 EXCLUDE" without parens — parsed as separate column "EXCLUDE"
-                // Actually with the comma break, this won't happen. But "col2 EXCLUDE(col3)" might.
                 match last_expr {
                     Expression::Alias(alias)
                         if alias.alias.name.eq_ignore_ascii_case("EXCLUDE") =>
                     {
-                        // The last expression is "something AS EXCLUDE" or implicit alias EXCLUDE
-                        // Strip the alias and check if EXCLUDE is followed by paren or identifier
                         if self.check(TokenType::LParen)
                             || self.is_identifier_token()
                             || self.is_safe_keyword_as_identifier()
                         {
-                            // Strip the EXCLUDE alias from the last expression
                             let stripped = alias.this.clone();
                             if let Some(last) = expressions.last_mut() {
                                 *last = stripped;
@@ -1656,12 +1816,10 @@ impl Parser {
 
             if retreat_for_exclude || self.check(TokenType::Exclude) {
                 if !retreat_for_exclude {
-                    self.skip(); // consume EXCLUDE
+                    self.skip();
                 }
-                // Parse EXCLUDE columns - with or without parens
                 let mut exclude_cols = Vec::new();
                 if self.match_token(TokenType::LParen) {
-                    // Parenthesized list: EXCLUDE (col1, col2, ...)
                     loop {
                         let col_expr = self.parse_expression()?;
                         exclude_cols.push(col_expr);
@@ -1671,8 +1829,6 @@ impl Parser {
                     }
                     self.match_token(TokenType::RParen);
                 } else {
-                    // Non-parenthesized: EXCLUDE col1, col2, ...
-                    // Parse comma-separated identifiers until FROM or other clause boundary
                     loop {
                         if self.is_at_end()
                             || self.check(TokenType::From)
@@ -1701,11 +1857,7 @@ impl Parser {
             None
         };
 
-        // Parse INTO clause (SELECT ... INTO [TEMPORARY|UNLOGGED] table_name)
-        // Also handles Oracle PL/SQL: BULK COLLECT INTO v1, v2, ...
         let into = if self.match_text_seq(&["BULK", "COLLECT", "INTO"]) {
-            // Oracle PL/SQL: BULK COLLECT INTO var1, var2, ...
-            // Parse target variables as a comma-separated list
             let mut target_expressions = vec![self.parse_expression()?];
             while self.match_token(TokenType::Comma) {
                 target_expressions.push(self.parse_expression()?);
@@ -1719,8 +1871,6 @@ impl Parser {
                     expressions: Vec::new(),
                 })
             } else {
-                // Multiple targets - use first as `this` and rest as `expressions`
-                // Actually, to match Python sqlglot behavior, store all in expressions
                 Some(SelectInto {
                     this: Expression::Null(Null),
                     temporary: false,
@@ -1730,13 +1880,9 @@ impl Parser {
                 })
             }
         } else if self.match_token(TokenType::Into) {
-            // Check for TEMPORARY/TEMP/UNLOGGED keyword (PostgreSQL)
             let temporary = self.match_token(TokenType::Temporary) || self.match_identifier("TEMP");
             let unlogged = !temporary && self.match_identifier("UNLOGGED");
-            // Parse first target (table name or PL/SQL variable)
             let table_name = self.parse_table_ref()?;
-            // Oracle PL/SQL: SELECT ... INTO var1, var2, ... FROM ...
-            // If followed by comma, parse additional target variables
             if self.match_token(TokenType::Comma) {
                 let mut target_expressions = vec![Expression::Table(Box::new(table_name))];
                 target_expressions.push(self.parse_expression()?);
@@ -1762,6 +1908,27 @@ impl Parser {
         } else {
             None
         };
+
+        Ok(Box::new(SelectBodyHead {
+            leading_comments,
+            post_select_comments,
+            hint,
+            top,
+            distinct,
+            distinct_on,
+            kind,
+            operation_modifiers,
+            expressions,
+            exclude,
+            into,
+        }))
+    }
+
+    /// Parse a SELECT statement body without consuming trailing set operations.
+    /// Used by `parse_select_or_paren_select` to avoid mutual recursion with
+    /// `parse_set_operation`, which handles set-op chaining iteratively.
+    fn parse_select_body(&mut self) -> Result<Expression> {
+        let head = self.parse_select_body_head()?;
 
         // Parse FROM clause
         let from = if self.match_token(TokenType::From) {
@@ -2137,98 +2304,22 @@ impl Parser {
         // Parse FOR UPDATE/SHARE locks or FOR XML/JSON (T-SQL)
         let (locks, for_xml, for_json) = self.parse_locks_and_for_xml()?;
 
-        // TSQL: OPTION clause (e.g., OPTION(LABEL = 'foo', HASH JOIN))
-        let option = if self.check_identifier("OPTION") && self.check_next(TokenType::LParen) {
-            self.skip(); // consume OPTION
-            self.skip(); // consume (
-            let mut content = String::from("OPTION(");
-            let mut depth = 1;
-            while !self.is_at_end() && depth > 0 {
-                let tok = self.advance();
-                if tok.token_type == TokenType::LParen {
-                    depth += 1;
-                } else if tok.token_type == TokenType::RParen {
-                    depth -= 1;
-                }
-                if depth > 0 {
-                    if tok.token_type == TokenType::String {
-                        if content.len() > 7 && !content.ends_with('(') && !content.ends_with(' ') {
-                            content.push(' ');
-                        }
-                        content.push('\'');
-                        content.push_str(&tok.text.replace('\'', "''"));
-                        content.push('\'');
-                    } else if tok.token_type == TokenType::Eq {
-                        content.push_str(" = ");
-                    } else if tok.token_type == TokenType::Comma {
-                        content.push_str(", ");
-                    } else {
-                        if content.len() > 7 && !content.ends_with('(') && !content.ends_with(' ') {
-                            content.push(' ');
-                        }
-                        content.push_str(&tok.text);
-                    }
-                }
-            }
-            content.push(')');
-            Some(content)
-        } else {
-            None
-        };
+        let option = self.parse_select_option_clause();
+        let (settings, format) = self.parse_clickhouse_select_settings_and_format()?;
 
-        // ClickHouse: SETTINGS and FORMAT clauses after LIMIT/OFFSET/FETCH
-        let (settings, format) = if matches!(
-            self.config.dialect,
-            Some(crate::dialects::DialectType::ClickHouse)
-        ) {
-            let mut settings: Option<Vec<Expression>> = None;
-            let mut format: Option<Expression> = None;
-
-            loop {
-                if settings.is_none() && self.match_token(TokenType::Settings) {
-                    let mut settings_exprs = Vec::new();
-                    loop {
-                        settings_exprs.push(self.parse_expression()?);
-                        if !self.match_token(TokenType::Comma) {
-                            break;
-                        }
-                    }
-                    settings = Some(settings_exprs);
-                    continue;
-                }
-
-                if format.is_none() && self.match_token(TokenType::Format) {
-                    // ClickHouse: FORMAT Null is valid (Null is a keyword token, not an identifier)
-                    let ident = if self.check(TokenType::Null) {
-                        let text = self.advance().text;
-                        Identifier::new(text)
-                    } else {
-                        self.expect_identifier_or_keyword_with_quoted()?
-                    };
-                    format = Some(Expression::Identifier(ident));
-                    // ClickHouse: FORMAT <name> may be followed by inline data
-                    // (CSV rows, JSON objects, etc.) — consume to semicolon
-                    if matches!(
-                        self.config.dialect,
-                        Some(crate::dialects::DialectType::ClickHouse)
-                    ) && !self.is_at_end()
-                        && !self.check(TokenType::Semicolon)
-                        && !self.check(TokenType::Settings)
-                    {
-                        while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                            self.skip();
-                        }
-                    }
-                    continue;
-                }
-
-                break;
-            }
-
-            (settings, format)
-        } else {
-            (None, None)
-        };
+        let SelectBodyHead {
+            leading_comments,
+            post_select_comments,
+            hint,
+            top,
+            distinct,
+            distinct_on,
+            kind,
+            operation_modifiers,
+            expressions,
+            exclude,
+            into,
+        } = *head;
 
         let select = Select {
             expressions,
@@ -2272,6 +2363,97 @@ impl Parser {
         };
 
         Ok(Expression::Select(Box::new(select)))
+    }
+
+    fn parse_select_option_clause(&mut self) -> Option<String> {
+        if !(self.check_identifier("OPTION") && self.check_next(TokenType::LParen)) {
+            return None;
+        }
+
+        self.skip(); // consume OPTION
+        self.skip(); // consume (
+        let mut content = String::from("OPTION(");
+        let mut depth = 1;
+        while !self.is_at_end() && depth > 0 {
+            let tok = self.advance();
+            if tok.token_type == TokenType::LParen {
+                depth += 1;
+            } else if tok.token_type == TokenType::RParen {
+                depth -= 1;
+            }
+            if depth > 0 {
+                if tok.token_type == TokenType::String {
+                    if content.len() > 7 && !content.ends_with('(') && !content.ends_with(' ') {
+                        content.push(' ');
+                    }
+                    content.push('\'');
+                    content.push_str(&tok.text.replace('\'', "''"));
+                    content.push('\'');
+                } else if tok.token_type == TokenType::Eq {
+                    content.push_str(" = ");
+                } else if tok.token_type == TokenType::Comma {
+                    content.push_str(", ");
+                } else {
+                    if content.len() > 7 && !content.ends_with('(') && !content.ends_with(' ') {
+                        content.push(' ');
+                    }
+                    content.push_str(&tok.text);
+                }
+            }
+        }
+        content.push(')');
+        Some(content)
+    }
+
+    fn parse_clickhouse_select_settings_and_format(
+        &mut self,
+    ) -> Result<(Option<Vec<Expression>>, Option<Expression>)> {
+        if !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) {
+            return Ok((None, None));
+        }
+
+        let mut settings: Option<Vec<Expression>> = None;
+        let mut format: Option<Expression> = None;
+
+        loop {
+            if settings.is_none() && self.match_token(TokenType::Settings) {
+                let mut settings_exprs = Vec::new();
+                loop {
+                    settings_exprs.push(self.parse_expression()?);
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                settings = Some(settings_exprs);
+                continue;
+            }
+
+            if format.is_none() && self.match_token(TokenType::Format) {
+                let ident = if self.check(TokenType::Null) {
+                    let text = self.advance().text;
+                    Identifier::new(text)
+                } else {
+                    self.expect_identifier_or_keyword_with_quoted()?
+                };
+                format = Some(Expression::Identifier(ident));
+                if !self.is_at_end()
+                    && !self.check(TokenType::Semicolon)
+                    && !self.check(TokenType::Settings)
+                {
+                    while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+                        self.skip();
+                    }
+                }
+                continue;
+            }
+
+            break;
+        }
+
+        Ok((settings, format))
     }
 
     /// Parse a WITH clause (CTEs)
@@ -3363,7 +3545,44 @@ impl Parser {
             return self.parse_redshift_unpivot_table();
         }
 
-        let mut expr = if self.check(TokenType::Values) && self.check_next(TokenType::LParen) {
+        let expr = if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.check(TokenType::LParen)
+            && (self.check_next(TokenType::Select)
+                || self.check_next(TokenType::With)
+                || self.check_next(TokenType::From))
+        {
+            // ClickHouse's parser corpus contains very deep FROM (SELECT ...) nesting.
+            // Keep the recursive path narrow and let the shared alias / modifier logic
+            // below handle everything after the closing `)`.
+            self.expect(TokenType::LParen)?;
+            let query = self.parse_statement()?;
+            self.expect(TokenType::RParen)?;
+            Expression::Subquery(Box::new(Subquery {
+                this: query,
+                alias: None,
+                column_aliases: Vec::new(),
+                order_by: None,
+                limit: None,
+                offset: None,
+                distribute_by: None,
+                sort_by: None,
+                cluster_by: None,
+                lateral: false,
+                modifiers_inside: false,
+                trailing_comments: self.previous_trailing_comments().to_vec(),
+                inferred_type: None,
+            }))
+        } else {
+            self.parse_table_expression_primary()?
+        };
+        self.parse_table_expression_tail(expr, has_only)
+    }
+
+    #[inline(never)]
+    fn parse_table_expression_primary(&mut self) -> Result<Expression> {
+        let expr = if self.check(TokenType::Values) && self.check_next(TokenType::LParen) {
             // VALUES as table expression: FROM (VALUES ...)
             // In ClickHouse, bare `values` without ( is a table name
             self.parse_values()?
@@ -4652,6 +4871,15 @@ impl Parser {
             )));
         };
 
+        Ok(expr)
+    }
+
+    #[inline(never)]
+    fn parse_table_expression_tail(
+        &mut self,
+        mut expr: Expression,
+        has_only: bool,
+    ) -> Result<Expression> {
         // Postgres supports a wildcard (table) suffix operator, which is a no-op in this context.
         // e.g., FROM t1* means "include inherited tables". Matches Python sqlglot behavior.
         self.match_token(TokenType::Star);
@@ -6211,9 +6439,7 @@ impl Parser {
             let arg = if self.check(TokenType::String) {
                 let s = self.advance().text.clone();
                 Expression::Literal(Box::new(Literal::String(s)))
-            } else if self.check(TokenType::Placeholder)
-                || self.check(TokenType::Parameter)
-            {
+            } else if self.check(TokenType::Placeholder) || self.check(TokenType::Parameter) {
                 // ? bind parameter — the Snowflake Python connector uses
                 // IDENTIFIER(?) for dynamic table references. The tokenizer
                 // emits TokenType::Parameter for '?'; we map it to a
@@ -28706,6 +28932,1019 @@ impl Parser {
         )
     }
 
+    fn maybe_parse_clickhouse_array_alias(&mut self, expr: Expression) -> Result<Expression> {
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.check(TokenType::As)
+            && !self.check_next(TokenType::RBracket)
+        {
+            self.skip(); // consume AS
+            let alias = self.expect_identifier()?;
+            Ok(Expression::Alias(Box::new(Alias::new(
+                expr,
+                Identifier::new(alias),
+            ))))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    fn build_bracket_array(expressions: Vec<Expression>) -> Expression {
+        Expression::ArrayFunc(Box::new(ArrayConstructor {
+            expressions,
+            bracket_notation: true,
+            use_list_keyword: false,
+        }))
+    }
+
+    fn parse_bracket_array_literal(&mut self) -> Result<Expression> {
+        struct ArrayFrame {
+            expressions: Vec<Expression>,
+        }
+
+        let mut frames = vec![ArrayFrame {
+            expressions: Vec::new(),
+        }];
+        let mut completed_expr: Option<Expression> = None;
+
+        loop {
+            if let Some(expr) = completed_expr.take() {
+                let expr = self.maybe_parse_clickhouse_array_alias(expr)?;
+                let expr = self.maybe_parse_subscript(expr)?;
+                if let Some(frame) = frames.last_mut() {
+                    frame.expressions.push(expr);
+                } else {
+                    return Err(self.parse_error("Unbalanced array literal"));
+                }
+
+                if self.match_token(TokenType::Comma) {
+                    continue;
+                }
+
+                self.expect(TokenType::RBracket)?;
+                let frame = frames
+                    .pop()
+                    .ok_or_else(|| self.parse_error("Unbalanced array literal"))?;
+                let array_expr = Self::build_bracket_array(frame.expressions);
+
+                if frames.is_empty() {
+                    return self.maybe_parse_subscript(array_expr);
+                }
+
+                completed_expr = Some(array_expr);
+                continue;
+            }
+
+            if self.match_token(TokenType::RBracket) {
+                let frame = frames
+                    .pop()
+                    .ok_or_else(|| self.parse_error("Unbalanced array literal"))?;
+                let array_expr = Self::build_bracket_array(frame.expressions);
+
+                if frames.is_empty() {
+                    return self.maybe_parse_subscript(array_expr);
+                }
+
+                completed_expr = Some(array_expr);
+                continue;
+            }
+
+            if self.match_token(TokenType::LBracket) {
+                frames.push(ArrayFrame {
+                    expressions: Vec::new(),
+                });
+                continue;
+            }
+
+            let expr = self.parse_expression()?;
+
+            if frames
+                .last()
+                .is_some_and(|frame| frame.expressions.is_empty())
+                && self.match_token(TokenType::For)
+            {
+                let loop_var = self.parse_primary()?;
+
+                let position = if self.match_token(TokenType::Comma) {
+                    Some(self.parse_primary()?)
+                } else {
+                    None
+                };
+
+                if !self.match_token(TokenType::In) {
+                    return Err(self.parse_error("Expected IN in comprehension"));
+                }
+
+                let iterator = self.parse_expression()?;
+                let condition = if self.match_token(TokenType::If) {
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+
+                self.expect(TokenType::RBracket)?;
+
+                let comprehension = Expression::Comprehension(Box::new(Comprehension {
+                    this: Box::new(expr),
+                    expression: Box::new(loop_var),
+                    position: position.map(Box::new),
+                    iterator: Some(Box::new(iterator)),
+                    condition: condition.map(Box::new),
+                }));
+
+                if frames.len() == 1 {
+                    return Ok(comprehension);
+                }
+
+                let frame = frames
+                    .pop()
+                    .ok_or_else(|| self.parse_error("Unbalanced array comprehension"))?;
+                debug_assert!(frame.expressions.is_empty());
+                completed_expr = Some(comprehension);
+                continue;
+            }
+
+            completed_expr = Some(expr);
+        }
+    }
+
+    fn parse_parenthesized_primary(&mut self, lparen_comments: Vec<String>) -> Result<Expression> {
+        // Empty parens () — could be empty tuple or zero-param lambda () -> body
+        if self.check(TokenType::RParen) {
+            self.skip(); // consume )
+                         // Check for lambda: () -> body
+            if self.match_token(TokenType::Arrow) || self.match_token(TokenType::FArrow) {
+                let body = self.parse_expression()?;
+                return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                    parameters: Vec::new(),
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                })));
+            }
+            // Otherwise empty tuple
+            return self.maybe_parse_subscript(Expression::Tuple(Box::new(Tuple {
+                expressions: Vec::new(),
+            })));
+        }
+
+        // Check if this is a VALUES expression inside parens: (VALUES ...)
+        if self.check(TokenType::Values) {
+            let values = self.parse_values()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(Expression::Subquery(Box::new(Subquery {
+                this: values,
+                alias: None,
+                column_aliases: Vec::new(),
+                order_by: None,
+                limit: None,
+                offset: None,
+                distribute_by: None,
+                sort_by: None,
+                cluster_by: None,
+                lateral: false,
+                modifiers_inside: false,
+                trailing_comments: self.previous_trailing_comments().to_vec(),
+                inferred_type: None,
+            })));
+        }
+
+        // Check if this is a subquery (SELECT, WITH, DuckDB FROM-first, or ClickHouse EXPLAIN)
+        let is_explain_subquery = self.check(TokenType::Var)
+            && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+            && self.peek_nth(1).map_or(false, |t| {
+                matches!(
+                    t.token_type,
+                    TokenType::Select
+                        | TokenType::Insert
+                        | TokenType::Create
+                        | TokenType::Alter
+                        | TokenType::Drop
+                        | TokenType::Set
+                        | TokenType::System
+                        | TokenType::Table
+                ) || matches!(
+                    t.text.to_ascii_uppercase().as_str(),
+                    "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY"
+                ) || (t.token_type == TokenType::Var
+                    && self
+                        .peek_nth(2)
+                        .map_or(false, |t2| t2.token_type == TokenType::Eq))
+            });
+        // ClickHouse: (from, to, ...) -> body is a tuple-lambda with keyword params
+        // Detect pattern: (keyword/ident, keyword/ident, ...) ->
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) {
+            let mut look = self.current;
+            let mut is_tuple_lambda = true;
+            let mut param_count = 0;
+            loop {
+                if look >= self.tokens.len() {
+                    is_tuple_lambda = false;
+                    break;
+                }
+                let tt = self.tokens[look].token_type;
+                if tt == TokenType::Identifier
+                    || tt == TokenType::Var
+                    || tt == TokenType::QuotedIdentifier
+                    || tt.is_keyword()
+                {
+                    param_count += 1;
+                    look += 1;
+                } else {
+                    is_tuple_lambda = false;
+                    break;
+                }
+                if look >= self.tokens.len() {
+                    is_tuple_lambda = false;
+                    break;
+                }
+                if self.tokens[look].token_type == TokenType::Comma {
+                    look += 1;
+                } else if self.tokens[look].token_type == TokenType::RParen {
+                    look += 1;
+                    break;
+                } else {
+                    is_tuple_lambda = false;
+                    break;
+                }
+            }
+            if is_tuple_lambda
+                && param_count >= 1
+                && look < self.tokens.len()
+                && self.tokens[look].token_type == TokenType::Arrow
+            {
+                let mut params = Vec::new();
+                loop {
+                    let tok = self.advance();
+                    params.push(Identifier::new(tok.text));
+                    if self.match_token(TokenType::Comma) {
+                        continue;
+                    }
+                    break;
+                }
+                self.expect(TokenType::RParen)?;
+                self.expect(TokenType::Arrow)?;
+                let body = self.parse_expression()?;
+                return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                    parameters: params,
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                })));
+            }
+        }
+        if self.check(TokenType::Select)
+            || self.check(TokenType::With)
+            || self.check(TokenType::From)
+            || is_explain_subquery
+        {
+            let query = self.parse_statement()?;
+
+            let limit = if self.match_token(TokenType::Limit) {
+                Some(Limit {
+                    this: self.parse_expression()?,
+                    percent: false,
+                    comments: Vec::new(),
+                })
+            } else {
+                None
+            };
+            let offset = if self.match_token(TokenType::Offset) {
+                Some(Offset {
+                    this: self.parse_expression()?,
+                    rows: None,
+                })
+            } else {
+                None
+            };
+
+            self.expect(TokenType::RParen)?;
+
+            let subquery = if limit.is_some() || offset.is_some() {
+                Expression::Subquery(Box::new(Subquery {
+                    this: query,
+                    alias: None,
+                    column_aliases: Vec::new(),
+                    order_by: None,
+                    limit,
+                    offset,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    lateral: false,
+                    modifiers_inside: true,
+                    trailing_comments: self.previous_trailing_comments().to_vec(),
+                    inferred_type: None,
+                }))
+            } else {
+                Expression::Subquery(Box::new(Subquery {
+                    this: query,
+                    alias: None,
+                    column_aliases: Vec::new(),
+                    order_by: None,
+                    limit: None,
+                    offset: None,
+                    distribute_by: None,
+                    sort_by: None,
+                    cluster_by: None,
+                    lateral: false,
+                    modifiers_inside: false,
+                    trailing_comments: self.previous_trailing_comments().to_vec(),
+                    inferred_type: None,
+                }))
+            };
+
+            let set_result = self.parse_set_operation(subquery)?;
+            let had_set_operation = matches!(
+                &set_result,
+                Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_)
+            );
+
+            let result = if had_set_operation {
+                let order_by = if self.check(TokenType::Order) {
+                    self.expect(TokenType::Order)?;
+                    self.expect(TokenType::By)?;
+                    Some(self.parse_order_by()?)
+                } else {
+                    None
+                };
+                let limit_after = if self.match_token(TokenType::Limit) {
+                    Some(Limit {
+                        this: self.parse_expression()?,
+                        percent: false,
+                        comments: Vec::new(),
+                    })
+                } else {
+                    None
+                };
+                let offset_after = if self.match_token(TokenType::Offset) {
+                    Some(Offset {
+                        this: self.parse_expression()?,
+                        rows: None,
+                    })
+                } else {
+                    None
+                };
+
+                if order_by.is_some() || limit_after.is_some() || offset_after.is_some() {
+                    Expression::Subquery(Box::new(Subquery {
+                        this: set_result,
+                        alias: None,
+                        column_aliases: Vec::new(),
+                        order_by,
+                        limit: limit_after,
+                        offset: offset_after,
+                        lateral: false,
+                        modifiers_inside: false,
+                        trailing_comments: Vec::new(),
+                        distribute_by: None,
+                        sort_by: None,
+                        cluster_by: None,
+                        inferred_type: None,
+                    }))
+                } else {
+                    set_result
+                }
+            } else {
+                set_result
+            };
+            return self.maybe_parse_subscript(result);
+        }
+
+        if self.check(TokenType::LParen) {
+            let expr = self.parse_expression()?;
+
+            let first_expr = if self.match_token(TokenType::As) {
+                let alias = self.expect_identifier_or_alias_keyword_with_quoted()?;
+                Expression::Alias(Box::new(Alias::new(expr, alias)))
+            } else {
+                expr
+            };
+
+            if self.match_token(TokenType::Comma) {
+                let mut expressions = vec![first_expr];
+                loop {
+                    if self.check(TokenType::RParen) {
+                        break;
+                    }
+                    let elem = self.parse_expression()?;
+                    let elem = if self.match_token(TokenType::As) {
+                        let alias = self.expect_identifier_or_keyword()?;
+                        Expression::Alias(Box::new(Alias::new(elem, Identifier::new(alias))))
+                    } else {
+                        elem
+                    };
+                    expressions.push(elem);
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenType::RParen)?;
+                let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
+                return self.maybe_parse_subscript(tuple_expr);
+            }
+
+            let result = first_expr;
+
+            self.expect(TokenType::RParen)?;
+            let mut nested_paren_comments = lparen_comments.clone();
+            nested_paren_comments.extend_from_slice(self.previous_trailing_comments());
+            if self.check(TokenType::Union)
+                || self.check(TokenType::Intersect)
+                || self.check(TokenType::Except)
+            {
+                if let Expression::Subquery(subq) = &result {
+                    let set_result = self.parse_set_operation(subq.this.clone())?;
+
+                    let order_by = if self.check(TokenType::Order) {
+                        self.expect(TokenType::Order)?;
+                        self.expect(TokenType::By)?;
+                        Some(self.parse_order_by()?)
+                    } else {
+                        None
+                    };
+                    let limit = if self.match_token(TokenType::Limit) {
+                        Some(Limit {
+                            this: self.parse_expression()?,
+                            percent: false,
+                            comments: Vec::new(),
+                        })
+                    } else {
+                        None
+                    };
+                    let offset = if self.match_token(TokenType::Offset) {
+                        Some(Offset {
+                            this: self.parse_expression()?,
+                            rows: None,
+                        })
+                    } else {
+                        None
+                    };
+
+                    return Ok(Expression::Subquery(Box::new(Subquery {
+                        this: set_result,
+                        alias: None,
+                        column_aliases: Vec::new(),
+                        order_by,
+                        limit,
+                        offset,
+                        lateral: false,
+                        modifiers_inside: false,
+                        trailing_comments: Vec::new(),
+                        distribute_by: None,
+                        sort_by: None,
+                        cluster_by: None,
+                        inferred_type: None,
+                    })));
+                }
+            }
+            return self.maybe_parse_over(Expression::Paren(Box::new(Paren {
+                this: result,
+                trailing_comments: nested_paren_comments,
+            })));
+        }
+
+        let expr = self.parse_expression()?;
+
+        let first_expr = if self.match_token(TokenType::As) {
+            let alias = self.expect_identifier_or_keyword_with_quoted()?;
+            Expression::Alias(Box::new(Alias::new(expr, alias)))
+        } else {
+            expr
+        };
+
+        if self.match_token(TokenType::Comma) {
+            let mut expressions = vec![first_expr];
+            if self.check(TokenType::RParen) {
+                self.skip();
+                let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
+                return self.maybe_parse_subscript(tuple_expr);
+            }
+
+            loop {
+                let elem = self.parse_expression()?;
+                let elem_with_alias = if self.match_token(TokenType::As) {
+                    let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                    Expression::Alias(Box::new(Alias::new(elem, alias)))
+                } else {
+                    elem
+                };
+                expressions.push(elem_with_alias);
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+                if self.check(TokenType::RParen) {
+                    break;
+                }
+            }
+
+            self.expect(TokenType::RParen)?;
+
+            if self.match_token(TokenType::Arrow) {
+                let parameters = expressions
+                    .into_iter()
+                    .filter_map(|e| {
+                        if let Expression::Column(c) = e {
+                            Some(c.name)
+                        } else if let Expression::Identifier(id) = e {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let body = self.parse_expression()?;
+                return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                    parameters,
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                })));
+            }
+
+            let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
+            let result = if self.check(TokenType::As) {
+                let after_as = self.current + 1;
+                let after_ident = self.current + 2;
+                let is_type_constructor = after_ident < self.tokens.len()
+                    && (self.tokens[after_as].token_type == TokenType::Identifier
+                        || self.tokens[after_as].token_type == TokenType::Var
+                        || self.tokens[after_as].token_type == TokenType::Nullable
+                        || self.tokens[after_as].token_type == TokenType::Struct
+                        || self.tokens[after_as].token_type == TokenType::Array)
+                    && (self.tokens[after_ident].token_type == TokenType::LParen
+                        || self.tokens[after_ident].token_type == TokenType::Lt);
+                let is_cast_type = after_ident < self.tokens.len()
+                    && (self.tokens[after_as].token_type == TokenType::Identifier
+                        || self.tokens[after_as].token_type == TokenType::Var
+                        || self.tokens[after_as].token_type.is_keyword())
+                    && self.tokens[after_ident].token_type == TokenType::RParen;
+                if is_type_constructor || is_cast_type {
+                    tuple_expr
+                } else {
+                    self.skip();
+                    let alias = self.expect_identifier()?;
+                    Expression::Alias(Box::new(Alias::new(tuple_expr, Identifier::new(alias))))
+                }
+            } else {
+                tuple_expr
+            };
+
+            return self.maybe_parse_subscript(result);
+        }
+
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.match_token(TokenType::Arrow)
+        {
+            let parameters = if let Expression::Column(c) = first_expr {
+                vec![c.name]
+            } else if let Expression::Identifier(id) = first_expr {
+                vec![id]
+            } else {
+                return Err(self.parse_error("Expected identifier as lambda parameter"));
+            };
+            let body = self.parse_expression()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(Expression::Paren(Box::new(Paren {
+                this: Expression::Lambda(Box::new(LambdaExpr {
+                    parameters,
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                })),
+                trailing_comments: Vec::new(),
+            })));
+        }
+
+        self.expect(TokenType::RParen)?;
+        let mut paren_comments = lparen_comments.clone();
+        paren_comments.extend_from_slice(self.previous_trailing_comments());
+
+        if self.match_token(TokenType::Arrow) {
+            let parameters = if let Expression::Column(c) = first_expr {
+                vec![c.name]
+            } else if let Expression::Identifier(id) = first_expr {
+                vec![id]
+            } else {
+                return Err(self.parse_error("Expected identifier as lambda parameter"));
+            };
+            let body = self.parse_expression()?;
+            return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                parameters,
+                body,
+                colon: false,
+                parameter_types: Vec::new(),
+            })));
+        }
+
+        self.maybe_parse_over(Expression::Paren(Box::new(Paren {
+            this: first_expr,
+            trailing_comments: paren_comments,
+        })))
+    }
+
+    fn parse_identifier_primary(&mut self) -> Result<Expression> {
+        // Check for no-paren functions like CURRENT_TIMESTAMP, CURRENT_DATE, etc.
+        // These should be parsed as functions even without parentheses
+        let upper_name = self.peek().text.to_ascii_uppercase();
+        if !self.check_next(TokenType::LParen)
+            && !self.check_next(TokenType::Dot)
+            && crate::function_registry::is_no_paren_function_name_upper(upper_name.as_str())
+            && !(matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && upper_name.as_str() == "CURRENT_TIMESTAMP")
+        {
+            let token = self.advance();
+            let func = Expression::Function(Box::new(Function {
+                name: token.text.clone(),
+                args: Vec::new(),
+                distinct: false,
+                trailing_comments: Vec::new(),
+                use_bracket_syntax: false,
+                no_parens: true,
+                quoted: false,
+                span: None,
+                inferred_type: None,
+            }));
+            return self.maybe_parse_subscript(func);
+        }
+
+        let ident = self.expect_identifier_with_quoted()?;
+        let name = ident.name.clone();
+        let quoted = ident.quoted;
+
+        let is_teradata_format_phrase = matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Teradata)
+        ) && self.check(TokenType::LParen)
+            && self.check_next(TokenType::Format);
+        if !is_teradata_format_phrase && self.match_token(TokenType::LParen) {
+            let upper_name = name.to_ascii_uppercase();
+            let canonical_upper_name =
+                crate::function_registry::canonical_typed_function_name_upper(&upper_name);
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && Self::is_clickhouse_simple_function_chain_name(canonical_upper_name)
+            {
+                let func_expr = self.parse_clickhouse_simple_function_chain(name, quoted)?;
+                return self.maybe_parse_over(func_expr);
+            }
+            let func_expr = self.parse_typed_function(&name, &upper_name, quoted)?;
+            let func_expr = self.maybe_parse_clickhouse_parameterized_agg(func_expr)?;
+            return self.maybe_parse_over(func_expr);
+        }
+
+        if self.match_token(TokenType::Dot) {
+            if self.match_token(TokenType::Star) {
+                let star = self.parse_star_modifiers(Some(ident))?;
+                let mut star_expr = Expression::Star(star);
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::ClickHouse)
+                ) {
+                    loop {
+                        if self.check(TokenType::Apply) {
+                            self.skip();
+                            let apply_expr = if self.match_token(TokenType::LParen) {
+                                let e = self.parse_expression()?;
+                                self.expect(TokenType::RParen)?;
+                                e
+                            } else {
+                                self.parse_expression()?
+                            };
+                            star_expr = Expression::Apply(Box::new(crate::expressions::Apply {
+                                this: Box::new(star_expr),
+                                expression: Box::new(apply_expr),
+                            }));
+                        } else if self.check(TokenType::Except) || self.check(TokenType::Exclude) {
+                            self.skip();
+                            self.match_identifier("STRICT");
+                            if self.match_token(TokenType::LParen) {
+                                loop {
+                                    if self.check(TokenType::RParen) {
+                                        break;
+                                    }
+                                    let _ = self.parse_expression()?;
+                                    if !self.match_token(TokenType::Comma) {
+                                        break;
+                                    }
+                                }
+                                self.expect(TokenType::RParen)?;
+                            } else if self.is_identifier_token()
+                                || self.is_safe_keyword_as_identifier()
+                            {
+                                let _ = self.parse_expression()?;
+                            }
+                        } else if self.check(TokenType::Replace) {
+                            self.skip();
+                            self.match_identifier("STRICT");
+                            if self.match_token(TokenType::LParen) {
+                                loop {
+                                    if self.check(TokenType::RParen) {
+                                        break;
+                                    }
+                                    let _ = self.parse_expression()?;
+                                    if self.match_token(TokenType::As) {
+                                        if self.is_identifier_token()
+                                            || self.is_safe_keyword_as_identifier()
+                                        {
+                                            self.skip();
+                                        }
+                                    }
+                                    if !self.match_token(TokenType::Comma) {
+                                        break;
+                                    }
+                                }
+                                self.expect(TokenType::RParen)?;
+                            } else {
+                                let _ = self.parse_expression()?;
+                                if self.match_token(TokenType::As) {
+                                    if self.is_identifier_token()
+                                        || self.is_safe_keyword_as_identifier()
+                                    {
+                                        self.skip();
+                                    }
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                return Ok(star_expr);
+            }
+            if self.check(TokenType::Number) {
+                let field_name = self.advance().text;
+                let col_expr = Expression::Dot(Box::new(DotAccess {
+                    this: Expression::boxed_column(Column {
+                        name: ident,
+                        table: None,
+                        join_mark: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                        inferred_type: None,
+                    }),
+                    field: Identifier::new(field_name),
+                }));
+                return self.maybe_parse_subscript(col_expr);
+            }
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && self.check(TokenType::Dash)
+                && self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1].token_type == TokenType::Number
+            {
+                self.skip();
+                let num = self.advance().text;
+                let field_name = format!("-{}", num);
+                let col_expr = Expression::Dot(Box::new(DotAccess {
+                    this: Expression::boxed_column(Column {
+                        name: ident,
+                        table: None,
+                        join_mark: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                        inferred_type: None,
+                    }),
+                    field: Identifier::new(field_name),
+                }));
+                return self.maybe_parse_subscript(col_expr);
+            }
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::ClickHouse)
+            ) && self.check(TokenType::Caret)
+            {
+                self.skip();
+                let mut field_name = "^".to_string();
+                if self.check(TokenType::Identifier)
+                    || self.check(TokenType::Var)
+                    || self.check_keyword()
+                {
+                    field_name.push_str(&self.advance().text);
+                }
+                let col_expr = Expression::Dot(Box::new(DotAccess {
+                    this: Expression::boxed_column(Column {
+                        name: ident,
+                        table: None,
+                        join_mark: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                        inferred_type: None,
+                    }),
+                    field: Identifier::new(field_name),
+                }));
+                return self.maybe_parse_subscript(col_expr);
+            }
+            let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
+
+            if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
+                let saved_pos = self.current;
+                if self.match_token(TokenType::LParen)
+                    && self.match_token(TokenType::Plus)
+                    && self.match_token(TokenType::RParen)
+                {
+                    let trailing_comments = self.previous_trailing_comments().to_vec();
+                    let col = Expression::boxed_column(Column {
+                        name: col_ident,
+                        table: Some(ident),
+                        join_mark: true,
+                        trailing_comments,
+                        span: None,
+                        inferred_type: None,
+                    });
+                    return self.maybe_parse_subscript(col);
+                } else {
+                    self.current = saved_pos;
+                }
+            }
+
+            if self.check(TokenType::LParen) {
+                self.skip();
+                let args = if self.check(TokenType::RParen) {
+                    Vec::new()
+                } else {
+                    self.parse_function_arguments()?
+                };
+                self.expect(TokenType::RParen)?;
+                let method_call = Expression::MethodCall(Box::new(MethodCall {
+                    this: Expression::boxed_column(Column {
+                        name: ident.clone(),
+                        table: None,
+                        join_mark: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                        inferred_type: None,
+                    }),
+                    method: col_ident,
+                    args,
+                }));
+                return self.maybe_parse_subscript(method_call);
+            }
+
+            let trailing_comments = self.previous_trailing_comments().to_vec();
+            let col = Expression::boxed_column(Column {
+                name: col_ident,
+                table: Some(ident),
+                join_mark: false,
+                trailing_comments,
+                span: None,
+                inferred_type: None,
+            });
+            return self.maybe_parse_subscript(col);
+        }
+
+        if !quoted
+            && matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Oracle) | None
+            )
+        {
+            if let Some(pseudocolumn_type) = PseudocolumnType::from_str(&name) {
+                return Ok(Expression::Pseudocolumn(Pseudocolumn {
+                    kind: pseudocolumn_type,
+                }));
+            }
+        }
+
+        if self.check(TokenType::Arrow)
+            && !self
+                .peek_nth(1)
+                .map_or(false, |t| t.token_type == TokenType::String)
+        {
+            self.skip();
+            let body = self.parse_expression()?;
+            return Ok(Expression::Lambda(Box::new(LambdaExpr {
+                parameters: vec![ident],
+                body,
+                colon: false,
+                parameter_types: Vec::new(),
+            })));
+        }
+
+        let trailing_comments = self.previous_trailing_comments().to_vec();
+        let col = Expression::boxed_column(Column {
+            name: ident,
+            table: None,
+            join_mark: false,
+            trailing_comments,
+            span: None,
+            inferred_type: None,
+        });
+        self.maybe_parse_subscript(col)
+    }
+
+    fn is_clickhouse_simple_function_chain_name(canonical_upper_name: &str) -> bool {
+        matches!(
+            canonical_upper_name,
+            "BITOR"
+                | "BITAND"
+                | "BITXOR"
+                | "BIT_OR"
+                | "BIT_AND"
+                | "BIT_XOR"
+                | "BITSHIFTLEFT"
+                | "BITSHIFTRIGHT"
+        )
+    }
+
+    fn parse_clickhouse_simple_function_chain(
+        &mut self,
+        name: String,
+        quoted: bool,
+    ) -> Result<Expression> {
+        struct FunctionFrame {
+            name: String,
+            quoted: bool,
+            args: Vec<Expression>,
+        }
+
+        let mut frames = vec![FunctionFrame {
+            name,
+            quoted,
+            args: Vec::new(),
+        }];
+        let mut completed_arg: Option<Expression> = None;
+
+        loop {
+            if let Some(arg) = completed_arg.take() {
+                if let Some(frame) = frames.last_mut() {
+                    frame.args.push(arg);
+                } else {
+                    return Err(self.parse_error("Unbalanced function call chain"));
+                }
+
+                if self.match_token(TokenType::Comma) {
+                    continue;
+                }
+
+                self.expect(TokenType::RParen)?;
+                let frame = frames
+                    .pop()
+                    .ok_or_else(|| self.parse_error("Unbalanced function call chain"))?;
+                let mut func = Function::new(frame.name, frame.args);
+                func.quoted = frame.quoted;
+                let expr = Expression::Function(Box::new(func));
+
+                if frames.is_empty() {
+                    return Ok(expr);
+                }
+
+                completed_arg = Some(expr);
+                continue;
+            }
+
+            if self.check(TokenType::RParen) {
+                self.skip();
+                let frame = frames
+                    .pop()
+                    .ok_or_else(|| self.parse_error("Unbalanced function call chain"))?;
+                let mut func = Function::new(frame.name, frame.args);
+                func.quoted = frame.quoted;
+                let expr = Expression::Function(Box::new(func));
+
+                if frames.is_empty() {
+                    return Ok(expr);
+                }
+
+                completed_arg = Some(expr);
+                continue;
+            }
+
+            let saved_pos = self.current;
+            if self.is_identifier_token() {
+                let ident = self.expect_identifier_with_quoted()?;
+                let upper_name = ident.name.to_ascii_uppercase();
+                let canonical_upper_name =
+                    crate::function_registry::canonical_typed_function_name_upper(&upper_name);
+
+                if self.match_token(TokenType::LParen)
+                    && Self::is_clickhouse_simple_function_chain_name(canonical_upper_name)
+                {
+                    frames.push(FunctionFrame {
+                        name: ident.name,
+                        quoted: ident.quoted,
+                        args: Vec::new(),
+                    });
+                    continue;
+                }
+
+                self.current = saved_pos;
+            }
+
+            completed_arg = Some(self.parse_single_function_argument()?);
+        }
+    }
+
     /// Parse primary expressions
     fn parse_primary(&mut self) -> Result<Expression> {
         // Handle APPROXIMATE COUNT(DISTINCT expr) - Redshift syntax
@@ -28819,100 +30058,7 @@ impl Parser {
 
         // Array literal: [1, 2, 3] or comprehension: [expr FOR var IN iterator]
         if self.match_token(TokenType::LBracket) {
-            // Parse empty array: []
-            if self.match_token(TokenType::RBracket) {
-                return Ok(Expression::ArrayFunc(Box::new(ArrayConstructor {
-                    expressions: Vec::new(),
-                    bracket_notation: true,
-                    use_list_keyword: false,
-                })));
-            }
-
-            // Parse first expression
-            let first_expr = self.parse_expression()?;
-
-            // Check for comprehension syntax: [expr FOR var IN iterator [IF condition]]
-            if self.match_token(TokenType::For) {
-                // Parse loop variable - typically a simple identifier like 'x'
-                let loop_var = self.parse_primary()?;
-
-                // Parse optional position (second variable after comma)
-                let position = if self.match_token(TokenType::Comma) {
-                    Some(self.parse_primary()?)
-                } else {
-                    None
-                };
-
-                // Expect IN keyword
-                if !self.match_token(TokenType::In) {
-                    return Err(self.parse_error("Expected IN in comprehension"));
-                }
-
-                // Parse iterator expression
-                let iterator = self.parse_expression()?;
-
-                // Parse optional condition after IF
-                let condition = if self.match_token(TokenType::If) {
-                    Some(self.parse_expression()?)
-                } else {
-                    None
-                };
-
-                // Expect closing bracket
-                self.expect(TokenType::RBracket)?;
-
-                // Return Comprehension
-                return Ok(Expression::Comprehension(Box::new(Comprehension {
-                    this: Box::new(first_expr),
-                    expression: Box::new(loop_var),
-                    position: position.map(Box::new),
-                    iterator: Some(Box::new(iterator)),
-                    condition: condition.map(Box::new),
-                })));
-            }
-
-            // Regular array - continue parsing elements
-            // ClickHouse allows AS aliases in array: [1 AS a, 2 AS b]
-            let first_expr = if matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::ClickHouse)
-            ) && self.check(TokenType::As)
-                && !self.check_next(TokenType::RBracket)
-            {
-                self.skip(); // consume AS
-                let alias = self.expect_identifier()?;
-                Expression::Alias(Box::new(Alias::new(first_expr, Identifier::new(alias))))
-            } else {
-                first_expr
-            };
-            let mut expressions = vec![first_expr];
-            while self.match_token(TokenType::Comma) {
-                // Handle trailing comma
-                if self.check(TokenType::RBracket) {
-                    break;
-                }
-                let expr = self.parse_expression()?;
-                // ClickHouse: handle AS alias on array elements
-                let expr = if matches!(
-                    self.config.dialect,
-                    Some(crate::dialects::DialectType::ClickHouse)
-                ) && self.check(TokenType::As)
-                    && !self.check_next(TokenType::RBracket)
-                {
-                    self.skip(); // consume AS
-                    let alias = self.expect_identifier()?;
-                    Expression::Alias(Box::new(Alias::new(expr, Identifier::new(alias))))
-                } else {
-                    expr
-                };
-                expressions.push(expr);
-            }
-            self.expect(TokenType::RBracket)?;
-            return self.maybe_parse_subscript(Expression::ArrayFunc(Box::new(ArrayConstructor {
-                expressions,
-                bracket_notation: true,
-                use_list_keyword: false,
-            })));
+            return self.parse_bracket_array_literal();
         }
 
         // Map/Struct literal with curly braces: {'a': 1, 'b': 2}
@@ -29093,524 +30239,8 @@ impl Parser {
 
         // Parenthesized expression or subquery
         if self.match_token(TokenType::LParen) {
-            // Capture comments from the ( token (e.g., "(/* comment */ 1)")
             let lparen_comments = self.previous_trailing_comments().to_vec();
-
-            // Empty parens () — could be empty tuple or zero-param lambda () -> body
-            if self.check(TokenType::RParen) {
-                self.skip(); // consume )
-                             // Check for lambda: () -> body
-                if self.match_token(TokenType::Arrow) || self.match_token(TokenType::FArrow) {
-                    let body = self.parse_expression()?;
-                    return Ok(Expression::Lambda(Box::new(LambdaExpr {
-                        parameters: Vec::new(),
-                        body,
-                        colon: false,
-                        parameter_types: Vec::new(),
-                    })));
-                }
-                // Otherwise empty tuple
-                return self.maybe_parse_subscript(Expression::Tuple(Box::new(Tuple {
-                    expressions: Vec::new(),
-                })));
-            }
-
-            // Check if this is a VALUES expression inside parens: (VALUES ...)
-            if self.check(TokenType::Values) {
-                let values = self.parse_values()?;
-                self.expect(TokenType::RParen)?;
-                return Ok(Expression::Subquery(Box::new(Subquery {
-                    this: values,
-                    alias: None,
-                    column_aliases: Vec::new(),
-                    order_by: None,
-                    limit: None,
-                    offset: None,
-                    distribute_by: None,
-                    sort_by: None,
-                    cluster_by: None,
-                    lateral: false,
-                    modifiers_inside: false,
-                    trailing_comments: self.previous_trailing_comments().to_vec(),
-                    inferred_type: None,
-                })));
-            }
-
-            // Check if this is a subquery (SELECT, WITH, DuckDB FROM-first, or ClickHouse EXPLAIN)
-            let is_explain_subquery = self.check(TokenType::Var)
-                && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
-                && self.peek_nth(1).map_or(false, |t| {
-                    // EXPLAIN followed by statement/style keywords is a subquery
-                    matches!(
-                        t.token_type,
-                        TokenType::Select
-                            | TokenType::Insert
-                            | TokenType::Create
-                            | TokenType::Alter
-                            | TokenType::Drop
-                            | TokenType::Set
-                            | TokenType::System
-                            | TokenType::Table
-                    ) || matches!(
-                        t.text.to_ascii_uppercase().as_str(),
-                        "SYNTAX" | "AST" | "PLAN" | "PIPELINE" | "ESTIMATE" | "CURRENT" | "QUERY"
-                    ) || (t.token_type == TokenType::Var
-                        && self
-                            .peek_nth(2)
-                            .map_or(false, |t2| t2.token_type == TokenType::Eq))
-                });
-            // ClickHouse: (from, to, ...) -> body is a tuple-lambda with keyword params
-            // Detect pattern: (keyword/ident, keyword/ident, ...) ->
-            if matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::ClickHouse)
-            ) {
-                let mut look = self.current;
-                let mut is_tuple_lambda = true;
-                let mut param_count = 0;
-                loop {
-                    if look >= self.tokens.len() {
-                        is_tuple_lambda = false;
-                        break;
-                    }
-                    let tt = self.tokens[look].token_type;
-                    if tt == TokenType::Identifier
-                        || tt == TokenType::Var
-                        || tt == TokenType::QuotedIdentifier
-                        || tt.is_keyword()
-                    {
-                        param_count += 1;
-                        look += 1;
-                    } else {
-                        is_tuple_lambda = false;
-                        break;
-                    }
-                    if look >= self.tokens.len() {
-                        is_tuple_lambda = false;
-                        break;
-                    }
-                    if self.tokens[look].token_type == TokenType::Comma {
-                        look += 1;
-                    } else if self.tokens[look].token_type == TokenType::RParen {
-                        look += 1;
-                        break;
-                    } else {
-                        is_tuple_lambda = false;
-                        break;
-                    }
-                }
-                if is_tuple_lambda
-                    && param_count >= 1
-                    && look < self.tokens.len()
-                    && self.tokens[look].token_type == TokenType::Arrow
-                {
-                    // Parse as lambda: consume params
-                    let mut params = Vec::new();
-                    loop {
-                        let tok = self.advance();
-                        params.push(Identifier::new(tok.text));
-                        if self.match_token(TokenType::Comma) {
-                            continue;
-                        }
-                        break;
-                    }
-                    self.expect(TokenType::RParen)?;
-                    self.expect(TokenType::Arrow)?;
-                    let body = self.parse_expression()?;
-                    return Ok(Expression::Lambda(Box::new(LambdaExpr {
-                        parameters: params,
-                        body,
-                        colon: false,
-                        parameter_types: Vec::new(),
-                    })));
-                }
-            }
-            if self.check(TokenType::Select)
-                || self.check(TokenType::With)
-                || self.check(TokenType::From)
-                || is_explain_subquery
-            {
-                let query = self.parse_statement()?;
-
-                // Parse LIMIT/OFFSET that may appear after set operations INSIDE the parentheses
-                // e.g., (SELECT 1 EXCEPT (SELECT 2) LIMIT 1)
-                let limit = if self.match_token(TokenType::Limit) {
-                    Some(Limit {
-                        this: self.parse_expression()?,
-                        percent: false,
-                        comments: Vec::new(),
-                    })
-                } else {
-                    None
-                };
-                let offset = if self.match_token(TokenType::Offset) {
-                    Some(Offset {
-                        this: self.parse_expression()?,
-                        rows: None,
-                    })
-                } else {
-                    None
-                };
-
-                self.expect(TokenType::RParen)?;
-
-                // Wrap in Subquery to preserve parentheses in set operations
-                let subquery = if limit.is_some() || offset.is_some() {
-                    // If we have limit/offset INSIDE the parens, set modifiers_inside = true
-                    Expression::Subquery(Box::new(Subquery {
-                        this: query,
-                        alias: None,
-                        column_aliases: Vec::new(),
-                        order_by: None,
-                        limit,
-                        offset,
-                        distribute_by: None,
-                        sort_by: None,
-                        cluster_by: None,
-                        lateral: false,
-                        modifiers_inside: true,
-                        trailing_comments: self.previous_trailing_comments().to_vec(),
-                        inferred_type: None,
-                    }))
-                } else {
-                    Expression::Subquery(Box::new(Subquery {
-                        this: query,
-                        alias: None,
-                        column_aliases: Vec::new(),
-                        order_by: None,
-                        limit: None,
-                        offset: None,
-                        distribute_by: None,
-                        sort_by: None,
-                        cluster_by: None,
-                        lateral: false,
-                        modifiers_inside: false,
-                        trailing_comments: self.previous_trailing_comments().to_vec(),
-                        inferred_type: None,
-                    }))
-                };
-
-                // Check for set operations after the subquery (e.g., (SELECT 1) UNION (SELECT 2))
-                let set_result = self.parse_set_operation(subquery)?;
-
-                // Only parse ORDER BY/LIMIT/OFFSET after set operations if there WAS a set operation
-                // (for cases like ((SELECT 0) UNION (SELECT 1) ORDER BY 1 OFFSET 1))
-                // If there's no set operation, we should NOT consume these - they belong to outer context
-                let had_set_operation = matches!(
-                    &set_result,
-                    Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_)
-                );
-
-                let result = if had_set_operation {
-                    let order_by = if self.check(TokenType::Order) {
-                        self.expect(TokenType::Order)?;
-                        self.expect(TokenType::By)?;
-                        Some(self.parse_order_by()?)
-                    } else {
-                        None
-                    };
-                    let limit_after = if self.match_token(TokenType::Limit) {
-                        Some(Limit {
-                            this: self.parse_expression()?,
-                            percent: false,
-                            comments: Vec::new(),
-                        })
-                    } else {
-                        None
-                    };
-                    let offset_after = if self.match_token(TokenType::Offset) {
-                        Some(Offset {
-                            this: self.parse_expression()?,
-                            rows: None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    // If we have any modifiers, wrap in a Subquery with the modifiers OUTSIDE the paren
-                    if order_by.is_some() || limit_after.is_some() || offset_after.is_some() {
-                        Expression::Subquery(Box::new(Subquery {
-                            this: set_result,
-                            alias: None,
-                            column_aliases: Vec::new(),
-                            order_by,
-                            limit: limit_after,
-                            offset: offset_after,
-                            lateral: false,
-                            modifiers_inside: false,
-                            trailing_comments: Vec::new(),
-                            distribute_by: None,
-                            sort_by: None,
-                            cluster_by: None,
-                            inferred_type: None,
-                        }))
-                    } else {
-                        set_result
-                    }
-                } else {
-                    set_result
-                };
-                // Allow postfix operators on subquery expressions (e.g., (SELECT 1, 2).1 for tuple element access)
-                return self.maybe_parse_subscript(result);
-            }
-
-            // Check if this starts with another paren that might be a subquery
-            // e.g., ((SELECT 1))
-            if self.check(TokenType::LParen) {
-                let expr = self.parse_expression()?;
-
-                // Handle aliasing of expression inside outer parens (e.g., ((a, b) AS c))
-                let first_expr = if self.match_token(TokenType::As) {
-                    let alias = self.expect_identifier_or_alias_keyword_with_quoted()?;
-                    Expression::Alias(Box::new(Alias::new(expr, alias)))
-                } else {
-                    expr
-                };
-
-                // Check for tuple of tuples: ((1, 2), (3, 4))
-                // Also handles ClickHouse: ((SELECT 1) AS x, (SELECT 2) AS y)
-                if self.match_token(TokenType::Comma) {
-                    let mut expressions = vec![first_expr];
-                    loop {
-                        if self.check(TokenType::RParen) {
-                            break;
-                        } // trailing comma
-                        let elem = self.parse_expression()?;
-                        // Handle AS alias after each element (ClickHouse tuple CTE pattern)
-                        let elem = if self.match_token(TokenType::As) {
-                            let alias = self.expect_identifier_or_keyword()?;
-                            Expression::Alias(Box::new(Alias::new(elem, Identifier::new(alias))))
-                        } else {
-                            elem
-                        };
-                        expressions.push(elem);
-                        if !self.match_token(TokenType::Comma) {
-                            break;
-                        }
-                    }
-                    self.expect(TokenType::RParen)?;
-                    let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
-                    return self.maybe_parse_subscript(tuple_expr);
-                }
-
-                let result = first_expr;
-
-                self.expect(TokenType::RParen)?;
-                let mut nested_paren_comments = lparen_comments.clone();
-                nested_paren_comments.extend_from_slice(self.previous_trailing_comments());
-                // Check for set operations after parenthesized expression
-                if self.check(TokenType::Union)
-                    || self.check(TokenType::Intersect)
-                    || self.check(TokenType::Except)
-                {
-                    // This is a set operation - need to handle specially
-                    if let Expression::Subquery(subq) = &result {
-                        let set_result = self.parse_set_operation(subq.this.clone())?;
-
-                        // Parse ORDER BY/LIMIT/OFFSET after set operations
-                        let order_by = if self.check(TokenType::Order) {
-                            self.expect(TokenType::Order)?;
-                            self.expect(TokenType::By)?;
-                            Some(self.parse_order_by()?)
-                        } else {
-                            None
-                        };
-                        let limit = if self.match_token(TokenType::Limit) {
-                            Some(Limit {
-                                this: self.parse_expression()?,
-                                percent: false,
-                                comments: Vec::new(),
-                            })
-                        } else {
-                            None
-                        };
-                        let offset = if self.match_token(TokenType::Offset) {
-                            Some(Offset {
-                                this: self.parse_expression()?,
-                                rows: None,
-                            })
-                        } else {
-                            None
-                        };
-
-                        return Ok(Expression::Subquery(Box::new(Subquery {
-                            this: set_result,
-                            alias: None,
-                            column_aliases: Vec::new(),
-                            order_by,
-                            limit,
-                            offset,
-                            lateral: false,
-                            modifiers_inside: false,
-                            trailing_comments: Vec::new(),
-                            distribute_by: None,
-                            sort_by: None,
-                            cluster_by: None,
-                            inferred_type: None,
-                        })));
-                    }
-                }
-                return self.maybe_parse_over(Expression::Paren(Box::new(Paren {
-                    this: result,
-                    trailing_comments: nested_paren_comments,
-                })));
-            }
-
-            let expr = self.parse_expression()?;
-
-            // Check for AS alias on the first element (e.g., (x AS y, ...))
-            let first_expr = if self.match_token(TokenType::As) {
-                let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                Expression::Alias(Box::new(Alias::new(expr, alias)))
-            } else {
-                expr
-            };
-
-            // Check for tuple (multiple expressions separated by commas)
-            if self.match_token(TokenType::Comma) {
-                let mut expressions = vec![first_expr];
-                // ClickHouse: trailing comma creates single-element tuple, e.g., (1,)
-                if self.check(TokenType::RParen) {
-                    self.skip(); // consume )
-                    let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
-                    return self.maybe_parse_subscript(tuple_expr);
-                }
-                // Parse remaining tuple elements, each can have AS alias
-                loop {
-                    let elem = self.parse_expression()?;
-                    let elem_with_alias = if self.match_token(TokenType::As) {
-                        let alias = self.expect_identifier_or_keyword_with_quoted()?;
-                        Expression::Alias(Box::new(Alias::new(elem, alias)))
-                    } else {
-                        elem
-                    };
-                    expressions.push(elem_with_alias);
-                    if !self.match_token(TokenType::Comma) {
-                        break;
-                    }
-                    // ClickHouse: trailing comma in multi-element tuple, e.g., (1, 2,)
-                    if self.check(TokenType::RParen) {
-                        break;
-                    }
-                }
-
-                self.expect(TokenType::RParen)?;
-
-                // Check for lambda expression: (a, b) -> body
-                if self.match_token(TokenType::Arrow) {
-                    let parameters = expressions
-                        .into_iter()
-                        .filter_map(|e| {
-                            if let Expression::Column(c) = e {
-                                Some(c.name)
-                            } else if let Expression::Identifier(id) = e {
-                                Some(id)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    let body = self.parse_expression()?;
-                    return Ok(Expression::Lambda(Box::new(LambdaExpr {
-                        parameters,
-                        body,
-                        colon: false,
-                        parameter_types: Vec::new(),
-                    })));
-                }
-
-                // Check for optional alias on the whole tuple
-                // But NOT when AS is followed by a type constructor like Tuple(a Int8, ...)
-                // or STRUCT<a TINYINT, ...> which would be part of a CAST expression: CAST((1, 2) AS Tuple(a Int8, b Int16))
-                // Also NOT when AS is followed by a type name then ) like: CAST((1, 2) AS String)
-                let tuple_expr = Expression::Tuple(Box::new(Tuple { expressions }));
-                let result = if self.check(TokenType::As) {
-                    // Look ahead: AS + type_keyword + ( or < → likely a type, not an alias
-                    let after_as = self.current + 1;
-                    let after_ident = self.current + 2;
-                    let is_type_constructor = after_ident < self.tokens.len()
-                        && (self.tokens[after_as].token_type == TokenType::Identifier
-                            || self.tokens[after_as].token_type == TokenType::Var
-                            || self.tokens[after_as].token_type == TokenType::Nullable
-                            || self.tokens[after_as].token_type == TokenType::Struct
-                            || self.tokens[after_as].token_type == TokenType::Array)
-                        && (self.tokens[after_ident].token_type == TokenType::LParen
-                            || self.tokens[after_ident].token_type == TokenType::Lt);
-                    // Check if AS is followed by identifier/keyword then ), indicating CAST(tuple AS Type)
-                    let is_cast_type = after_ident < self.tokens.len()
-                        && (self.tokens[after_as].token_type == TokenType::Identifier
-                            || self.tokens[after_as].token_type == TokenType::Var
-                            || self.tokens[after_as].token_type.is_keyword())
-                        && self.tokens[after_ident].token_type == TokenType::RParen;
-                    if is_type_constructor || is_cast_type {
-                        tuple_expr
-                    } else {
-                        self.skip(); // consume AS
-                        let alias = self.expect_identifier()?;
-                        Expression::Alias(Box::new(Alias::new(tuple_expr, Identifier::new(alias))))
-                    }
-                } else {
-                    tuple_expr
-                };
-
-                // Allow postfix operators on tuple expressions (e.g., ('a', 'b').1 for tuple element access)
-                return self.maybe_parse_subscript(result);
-            }
-
-            // ClickHouse: (x -> body) — lambda inside parentheses
-            if matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::ClickHouse)
-            ) && self.match_token(TokenType::Arrow)
-            {
-                let parameters = if let Expression::Column(c) = first_expr {
-                    vec![c.name]
-                } else if let Expression::Identifier(id) = first_expr {
-                    vec![id]
-                } else {
-                    return Err(self.parse_error("Expected identifier as lambda parameter"));
-                };
-                let body = self.parse_expression()?;
-                self.expect(TokenType::RParen)?;
-                return Ok(Expression::Paren(Box::new(Paren {
-                    this: Expression::Lambda(Box::new(LambdaExpr {
-                        parameters,
-                        body,
-                        colon: false,
-                        parameter_types: Vec::new(),
-                    })),
-                    trailing_comments: Vec::new(),
-                })));
-            }
-
-            self.expect(TokenType::RParen)?;
-            // Combine comments from ( and ) tokens
-            let mut paren_comments = lparen_comments.clone();
-            paren_comments.extend_from_slice(self.previous_trailing_comments());
-
-            // Check for lambda expression: (x) -> body or single identifier case
-            if self.match_token(TokenType::Arrow) {
-                // first_expr should be a single identifier for the parameter
-                let parameters = if let Expression::Column(c) = first_expr {
-                    vec![c.name]
-                } else if let Expression::Identifier(id) = first_expr {
-                    vec![id]
-                } else {
-                    return Err(self.parse_error("Expected identifier as lambda parameter"));
-                };
-                let body = self.parse_expression()?;
-                return Ok(Expression::Lambda(Box::new(LambdaExpr {
-                    parameters,
-                    body,
-                    colon: false,
-                    parameter_types: Vec::new(),
-                })));
-            }
-
-            return self.maybe_parse_over(Expression::Paren(Box::new(Paren {
-                this: first_expr,
-                trailing_comments: paren_comments,
-            })));
+            return self.parse_parenthesized_primary(lparen_comments);
         }
 
         // NULL
@@ -30673,310 +31303,7 @@ impl Parser {
 
         // Identifier, Column, or Function
         if self.is_identifier_token() {
-            // Check for no-paren functions like CURRENT_TIMESTAMP, CURRENT_DATE, etc.
-            // These should be parsed as functions even without parentheses
-            let upper_name = self.peek().text.to_ascii_uppercase();
-            if !self.check_next(TokenType::LParen)
-                && !self.check_next(TokenType::Dot)
-                && crate::function_registry::is_no_paren_function_name_upper(upper_name.as_str())
-                && !(matches!(
-                    self.config.dialect,
-                    Some(crate::dialects::DialectType::ClickHouse)
-                ) && upper_name.as_str() == "CURRENT_TIMESTAMP")
-            {
-                let token = self.advance();
-                let func = Expression::Function(Box::new(Function {
-                    name: token.text.clone(), // Preserve original case; generator handles normalization
-                    args: Vec::new(),
-                    distinct: false,
-                    trailing_comments: Vec::new(),
-                    use_bracket_syntax: false,
-                    no_parens: true, // These functions were called without parentheses
-                    quoted: false,
-                    span: None,
-                    inferred_type: None,
-                }));
-                return self.maybe_parse_subscript(func);
-            }
-
-            let ident = self.expect_identifier_with_quoted()?;
-            let name = ident.name.clone();
-            let quoted = ident.quoted;
-
-            // Check for function call (skip Teradata FORMAT phrase)
-            let is_teradata_format_phrase = matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::Teradata)
-            ) && self.check(TokenType::LParen)
-                && self.check_next(TokenType::Format);
-            if !is_teradata_format_phrase && self.match_token(TokenType::LParen) {
-                let upper_name = name.to_ascii_uppercase();
-                let func_expr = self.parse_typed_function(&name, &upper_name, quoted)?;
-                let func_expr = self.maybe_parse_clickhouse_parameterized_agg(func_expr)?;
-                // Check for OVER clause (window function)
-                return self.maybe_parse_over(func_expr);
-            }
-
-            // Check for qualified name (table.column or table.method())
-            if self.match_token(TokenType::Dot) {
-                if self.match_token(TokenType::Star) {
-                    // table.* with potential modifiers
-                    let star = self.parse_star_modifiers(Some(ident))?;
-                    let mut star_expr = Expression::Star(star);
-                    // ClickHouse: a.* APPLY(func) EXCEPT(col) REPLACE(expr AS col) in any order
-                    if matches!(
-                        self.config.dialect,
-                        Some(crate::dialects::DialectType::ClickHouse)
-                    ) {
-                        loop {
-                            if self.check(TokenType::Apply) {
-                                self.skip();
-                                let apply_expr = if self.match_token(TokenType::LParen) {
-                                    let e = self.parse_expression()?;
-                                    self.expect(TokenType::RParen)?;
-                                    e
-                                } else {
-                                    self.parse_expression()?
-                                };
-                                star_expr =
-                                    Expression::Apply(Box::new(crate::expressions::Apply {
-                                        this: Box::new(star_expr),
-                                        expression: Box::new(apply_expr),
-                                    }));
-                            } else if self.check(TokenType::Except)
-                                || self.check(TokenType::Exclude)
-                            {
-                                self.skip();
-                                self.match_identifier("STRICT");
-                                if self.match_token(TokenType::LParen) {
-                                    loop {
-                                        if self.check(TokenType::RParen) {
-                                            break;
-                                        }
-                                        let _ = self.parse_expression()?;
-                                        if !self.match_token(TokenType::Comma) {
-                                            break;
-                                        }
-                                    }
-                                    self.expect(TokenType::RParen)?;
-                                } else if self.is_identifier_token()
-                                    || self.is_safe_keyword_as_identifier()
-                                {
-                                    let _ = self.parse_expression()?;
-                                }
-                            } else if self.check(TokenType::Replace) {
-                                self.skip();
-                                self.match_identifier("STRICT");
-                                if self.match_token(TokenType::LParen) {
-                                    loop {
-                                        if self.check(TokenType::RParen) {
-                                            break;
-                                        }
-                                        let _ = self.parse_expression()?;
-                                        if self.match_token(TokenType::As) {
-                                            if self.is_identifier_token()
-                                                || self.is_safe_keyword_as_identifier()
-                                            {
-                                                self.skip();
-                                            }
-                                        }
-                                        if !self.match_token(TokenType::Comma) {
-                                            break;
-                                        }
-                                    }
-                                    self.expect(TokenType::RParen)?;
-                                } else {
-                                    let _ = self.parse_expression()?;
-                                    if self.match_token(TokenType::As) {
-                                        if self.is_identifier_token()
-                                            || self.is_safe_keyword_as_identifier()
-                                        {
-                                            self.skip();
-                                        }
-                                    }
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    return Ok(star_expr);
-                }
-                // Handle numeric field access: a.1, t.2 (ClickHouse tuple field access)
-                // Also handle negative: a.-1 (ClickHouse negative tuple index)
-                if self.check(TokenType::Number) {
-                    let field_name = self.advance().text;
-                    let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::boxed_column(Column {
-                            name: ident,
-                            table: None,
-                            join_mark: false,
-                            trailing_comments: Vec::new(),
-                            span: None,
-                            inferred_type: None,
-                        }),
-                        field: Identifier::new(field_name),
-                    }));
-                    return self.maybe_parse_subscript(col_expr);
-                }
-                if matches!(
-                    self.config.dialect,
-                    Some(crate::dialects::DialectType::ClickHouse)
-                ) && self.check(TokenType::Dash)
-                    && self.current + 1 < self.tokens.len()
-                    && self.tokens[self.current + 1].token_type == TokenType::Number
-                {
-                    self.skip(); // consume -
-                    let num = self.advance().text;
-                    let field_name = format!("-{}", num);
-                    let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::boxed_column(Column {
-                            name: ident,
-                            table: None,
-                            join_mark: false,
-                            trailing_comments: Vec::new(),
-                            span: None,
-                            inferred_type: None,
-                        }),
-                        field: Identifier::new(field_name),
-                    }));
-                    return self.maybe_parse_subscript(col_expr);
-                }
-                // ClickHouse: json.^path — the ^ prefix means "get all nested subcolumns"
-                if matches!(
-                    self.config.dialect,
-                    Some(crate::dialects::DialectType::ClickHouse)
-                ) && self.check(TokenType::Caret)
-                {
-                    self.skip(); // consume ^
-                    let mut field_name = "^".to_string();
-                    if self.check(TokenType::Identifier)
-                        || self.check(TokenType::Var)
-                        || self.check_keyword()
-                    {
-                        field_name.push_str(&self.advance().text);
-                    }
-                    let col_expr = Expression::Dot(Box::new(DotAccess {
-                        this: Expression::boxed_column(Column {
-                            name: ident,
-                            table: None,
-                            join_mark: false,
-                            trailing_comments: Vec::new(),
-                            span: None,
-                            inferred_type: None,
-                        }),
-                        field: Identifier::new(field_name),
-                    }));
-                    return self.maybe_parse_subscript(col_expr);
-                }
-                // Allow keywords as column names (e.g., a.filter, x.update)
-                let col_ident = self.expect_identifier_or_keyword_with_quoted()?;
-
-                // Handle Oracle/Redshift outer join marker (+) BEFORE checking for method call
-                // This is critical: (+) looks like a method call but is actually a join marker
-                if self.check(TokenType::LParen) && self.check_next(TokenType::Plus) {
-                    let saved_pos = self.current;
-                    if self.match_token(TokenType::LParen)
-                        && self.match_token(TokenType::Plus)
-                        && self.match_token(TokenType::RParen)
-                    {
-                        let trailing_comments = self.previous_trailing_comments().to_vec();
-                        let col = Expression::boxed_column(Column {
-                            name: col_ident,
-                            table: Some(ident),
-                            join_mark: true,
-                            trailing_comments,
-                            span: None,
-                            inferred_type: None,
-                        });
-                        return self.maybe_parse_subscript(col);
-                    } else {
-                        self.current = saved_pos;
-                    }
-                }
-
-                // Check if this is a method call (column followed by parentheses)
-                if self.check(TokenType::LParen) {
-                    // This is a method call like table.EXTRACT() or obj.INT()
-                    self.skip(); // consume (
-                    let args = if self.check(TokenType::RParen) {
-                        Vec::new()
-                    } else {
-                        self.parse_function_arguments()?
-                    };
-                    self.expect(TokenType::RParen)?;
-                    let method_call = Expression::MethodCall(Box::new(MethodCall {
-                        this: Expression::boxed_column(Column {
-                            name: ident.clone(),
-                            table: None,
-                            join_mark: false,
-                            trailing_comments: Vec::new(),
-                            span: None,
-                            inferred_type: None,
-                        }),
-                        method: col_ident,
-                        args,
-                    }));
-                    return self.maybe_parse_subscript(method_call);
-                }
-
-                // Capture trailing comments from the column name token
-                let trailing_comments = self.previous_trailing_comments().to_vec();
-                let col = Expression::boxed_column(Column {
-                    name: col_ident,
-                    table: Some(ident),
-                    join_mark: false,
-                    trailing_comments,
-                    span: None,
-                    inferred_type: None,
-                });
-                return self.maybe_parse_subscript(col);
-            }
-
-            // Check for Oracle pseudocolumns (ROWNUM, ROWID, LEVEL, SYSDATE, etc.)
-            // Oracle pseudocolumns (LEVEL, ROWNUM, ROWID, SYSDATE, etc.)
-            // Only recognize in Oracle and generic dialect — other dialects treat these as regular identifiers
-            if !quoted
-                && matches!(
-                    self.config.dialect,
-                    Some(crate::dialects::DialectType::Oracle) | None
-                )
-            {
-                if let Some(pseudocolumn_type) = PseudocolumnType::from_str(&name) {
-                    return Ok(Expression::Pseudocolumn(Pseudocolumn {
-                        kind: pseudocolumn_type,
-                    }));
-                }
-            }
-
-            // Check for lambda expression: x -> body
-            // But NOT if followed by a string literal (that's JSON extract: col -> '$.path')
-            if self.check(TokenType::Arrow)
-                && !self
-                    .peek_nth(1)
-                    .map_or(false, |t| t.token_type == TokenType::String)
-            {
-                self.skip(); // consume the Arrow token
-                let body = self.parse_expression()?;
-                return Ok(Expression::Lambda(Box::new(LambdaExpr {
-                    parameters: vec![ident],
-                    body,
-                    colon: false,
-                    parameter_types: Vec::new(),
-                })));
-            }
-
-            // Capture trailing comments from the identifier token
-            let trailing_comments = self.previous_trailing_comments().to_vec();
-            let col = Expression::boxed_column(Column {
-                name: ident,
-                table: None,
-                join_mark: false,
-                trailing_comments,
-                span: None,
-                inferred_type: None,
-            });
-            return self.maybe_parse_subscript(col);
+            return self.parse_identifier_primary();
         }
 
         // Exasol-style IF expression: IF condition THEN true_value ELSE false_value ENDIF
@@ -33764,6 +34091,19 @@ impl Parser {
         upper_name: &str,
         quoted: bool,
     ) -> Result<Expression> {
+        // ClickHouse bitOr/bitAnd/bitXor are scalar functions, not aggregate-family calls.
+        // Routing them directly to the generic parser avoids aggregate-specific recursion
+        // and matches the syntax used throughout the ClickHouse parser corpus.
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && matches!(
+            upper_name,
+            "BITOR" | "BITAND" | "BITXOR" | "BITSHIFTLEFT" | "BITSHIFTRIGHT"
+        ) {
+            return self.parse_generic_function(name, quoted);
+        }
+
         let canonical_upper_name =
             crate::function_registry::canonical_typed_function_name_upper(upper_name);
 
@@ -35672,6 +36012,183 @@ impl Parser {
         Ok(self.maybe_clickhouse_alias(expr))
     }
 
+    fn parse_single_function_argument(&mut self) -> Result<Expression> {
+        let is_table_or_model_arg = if !self.is_at_end() {
+            self.check(TokenType::Table) || self.peek().text.eq_ignore_ascii_case("MODEL")
+        } else {
+            false
+        };
+        let arg = if is_table_or_model_arg {
+            let prefix = self.peek().text.to_ascii_uppercase();
+            let saved_pos = self.current;
+            self.skip();
+
+            if !self.is_at_end()
+                && !self.check(TokenType::FArrow)
+                && !self.check(TokenType::ColonEq)
+            {
+                if let Some(table_expr) = self.parse_table_parts()? {
+                    Expression::TableArgument(Box::new(TableArgument {
+                        prefix,
+                        this: table_expr,
+                    }))
+                } else {
+                    self.current = saved_pos;
+                    self.parse_expression()?
+                }
+            } else {
+                self.current = saved_pos;
+                if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+                    let ident_token = self.advance();
+                    let ident_name = ident_token.text.clone();
+                    if self.match_token(TokenType::FArrow) {
+                        let value = self.parse_expression()?;
+                        Expression::NamedArgument(Box::new(NamedArgument {
+                            name: Identifier::new(ident_name),
+                            value,
+                            separator: NamedArgSeparator::DArrow,
+                        }))
+                    } else if self.match_token(TokenType::ColonEq) {
+                        let value = self.parse_expression()?;
+                        Expression::NamedArgument(Box::new(NamedArgument {
+                            name: Identifier::new(ident_name),
+                            value,
+                            separator: NamedArgSeparator::ColonEq,
+                        }))
+                    } else {
+                        self.current = saved_pos;
+                        self.parse_expression()?
+                    }
+                } else {
+                    self.parse_expression()?
+                }
+            }
+        } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+            let saved_pos = self.current;
+            let ident_token = self.advance();
+            let ident_name = ident_token.text.clone();
+
+            if ident_name.eq_ignore_ascii_case("VARIADIC")
+                && matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::PostgreSQL)
+                        | Some(crate::dialects::DialectType::Redshift)
+                )
+            {
+                self.current = saved_pos;
+                self.parse_expression()?
+            } else if !self.is_at_end()
+                && self.is_type_keyword()
+                && !self.check(TokenType::FArrow)
+                && !self.check(TokenType::ColonEq)
+            {
+                let type_annotation = self.parse_data_type()?;
+
+                if self.match_token(TokenType::Arrow) {
+                    let body = self.parse_expression()?;
+                    Expression::Lambda(Box::new(LambdaExpr {
+                        parameters: vec![Identifier::new(ident_name)],
+                        body,
+                        colon: false,
+                        parameter_types: vec![Some(type_annotation)],
+                    }))
+                } else {
+                    self.current = saved_pos;
+                    self.parse_expression()?
+                }
+            } else if self.match_token(TokenType::Arrow) {
+                let body = self.parse_expression()?;
+                Expression::Lambda(Box::new(LambdaExpr {
+                    parameters: vec![Identifier::new(ident_name)],
+                    body,
+                    colon: false,
+                    parameter_types: Vec::new(),
+                }))
+            } else if self.match_token(TokenType::FArrow) {
+                let value = self.parse_expression()?;
+                Expression::NamedArgument(Box::new(NamedArgument {
+                    name: Identifier::new(ident_name),
+                    value,
+                    separator: NamedArgSeparator::DArrow,
+                }))
+            } else if self.match_token(TokenType::ColonEq) {
+                let value = self.parse_expression()?;
+                Expression::NamedArgument(Box::new(NamedArgument {
+                    name: Identifier::new(ident_name),
+                    value,
+                    separator: NamedArgSeparator::ColonEq,
+                }))
+            } else {
+                self.current = saved_pos;
+                self.parse_expression()?
+            }
+        } else {
+            self.parse_expression()?
+        };
+
+        let arg = if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) && self.check(TokenType::As)
+            && !self.check_next(TokenType::RParen)
+            && !self.check_next(TokenType::Comma)
+        {
+            let next_idx = self.current + 1;
+            let after_alias_idx = self.current + 2;
+            let is_alias_token = next_idx < self.tokens.len()
+                && (matches!(
+                    self.tokens[next_idx].token_type,
+                    TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
+                ) || self.tokens[next_idx].token_type.is_keyword());
+            let is_alias = is_alias_token
+                && after_alias_idx < self.tokens.len()
+                && matches!(
+                    self.tokens[after_alias_idx].token_type,
+                    TokenType::RParen | TokenType::Comma
+                );
+            if is_alias {
+                self.skip();
+                let alias_token = self.advance();
+                let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
+                    let mut ident = Identifier::new(alias_token.text.clone());
+                    ident.quoted = true;
+                    ident
+                } else {
+                    Identifier::new(alias_token.text.clone())
+                };
+                Expression::Alias(Box::new(crate::expressions::Alias {
+                    this: arg,
+                    alias: alias_name,
+                    column_aliases: Vec::new(),
+                    pre_alias_comments: Vec::new(),
+                    trailing_comments: Vec::new(),
+                    inferred_type: None,
+                }))
+            } else {
+                arg
+            }
+        } else {
+            arg
+        };
+
+        let arg = self.try_clickhouse_implicit_alias(arg);
+
+        let trailing_comments = self.previous_trailing_comments().to_vec();
+        if trailing_comments.is_empty() {
+            Ok(arg)
+        } else {
+            Ok(match &arg {
+                Expression::Literal(_) | Expression::Boolean(_) | Expression::Null(_) => {
+                    Expression::Annotated(Box::new(Annotated {
+                        this: arg,
+                        trailing_comments,
+                    }))
+                }
+                _ => arg,
+            })
+        }
+    }
+
     /// Parse function arguments, handling named arguments (name => value, name := value)
     /// and TABLE/MODEL prefixed arguments (BigQuery)
     fn parse_function_arguments(&mut self) -> Result<Vec<Expression>> {
@@ -35706,217 +36223,7 @@ impl Parser {
                 continue;
             }
 
-            // Check for TABLE ref or MODEL ref as function argument (BigQuery)
-            // e.g., GAP_FILL(TABLE device_data, ...) or ML.PREDICT(MODEL mydataset.mymodel, ...)
-            let is_table_or_model_arg = if !self.is_at_end() {
-                self.check(TokenType::Table) || self.peek().text.eq_ignore_ascii_case("MODEL")
-            } else {
-                false
-            };
-            let arg = if is_table_or_model_arg {
-                let prefix = self.peek().text.to_ascii_uppercase();
-                let saved_pos = self.current;
-                self.skip(); // consume TABLE or MODEL
-
-                // Only treat as TABLE/MODEL argument if followed by an identifier (table name),
-                // not by => (which would be a named arg like "table => value")
-                if !self.is_at_end()
-                    && !self.check(TokenType::FArrow)
-                    && !self.check(TokenType::ColonEq)
-                {
-                    // Parse the table/model reference (supports dotted names like dataset.table)
-                    if let Some(table_expr) = self.parse_table_parts()? {
-                        Expression::TableArgument(Box::new(TableArgument {
-                            prefix,
-                            this: table_expr,
-                        }))
-                    } else {
-                        // Failed to parse table parts, backtrack and treat as regular expression
-                        self.current = saved_pos;
-                        self.parse_expression()?
-                    }
-                } else {
-                    // TABLE/MODEL followed by => or :=, backtrack and handle as named arg
-                    self.current = saved_pos;
-                    if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                        let ident_token = self.advance();
-                        let ident_name = ident_token.text.clone();
-                        if self.match_token(TokenType::FArrow) {
-                            let value = self.parse_expression()?;
-                            Expression::NamedArgument(Box::new(NamedArgument {
-                                name: Identifier::new(ident_name),
-                                value,
-                                separator: NamedArgSeparator::DArrow,
-                            }))
-                        } else if self.match_token(TokenType::ColonEq) {
-                            let value = self.parse_expression()?;
-                            Expression::NamedArgument(Box::new(NamedArgument {
-                                name: Identifier::new(ident_name),
-                                value,
-                                separator: NamedArgSeparator::ColonEq,
-                            }))
-                        } else {
-                            self.current = saved_pos;
-                            self.parse_expression()?
-                        }
-                    } else {
-                        self.parse_expression()?
-                    }
-                }
-            } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                // Try to parse:
-                // 1. Named argument: identifier => value or identifier := value
-                // 2. Snowflake lambda with type: identifier type -> body (e.g., a int -> a + 1)
-                // Save position to backtrack if not a named argument
-                let saved_pos = self.current;
-
-                // Try to get identifier
-                let ident_token = self.advance();
-                let ident_name = ident_token.text.clone();
-
-                // PostgreSQL/Redshift VARIADIC keyword: backtrack and let parse_expression handle it
-                // VARIADIC ARRAY[...] must not be misinterpreted as a lambda with type annotation
-                if ident_name.eq_ignore_ascii_case("VARIADIC")
-                    && matches!(
-                        self.config.dialect,
-                        Some(crate::dialects::DialectType::PostgreSQL)
-                            | Some(crate::dialects::DialectType::Redshift)
-                    )
-                {
-                    self.current = saved_pos;
-                    self.parse_expression()?
-                }
-                // Check for Snowflake lambda with type annotation: a int -> body
-                // Look ahead to see if we have a type token followed by ->
-                else if !self.is_at_end()
-                    && self.is_type_keyword()
-                    && !self.check(TokenType::FArrow)
-                    && !self.check(TokenType::ColonEq)
-                {
-                    // Parse type annotation
-                    let type_annotation = self.parse_data_type()?;
-
-                    // Check for arrow
-                    if self.match_token(TokenType::Arrow) {
-                        // This is a Snowflake lambda: param type -> body
-                        let body = self.parse_expression()?;
-                        Expression::Lambda(Box::new(LambdaExpr {
-                            parameters: vec![Identifier::new(ident_name)],
-                            body,
-                            colon: false,
-                            parameter_types: vec![Some(type_annotation)],
-                        }))
-                    } else {
-                        // Not a lambda, backtrack and parse as regular expression
-                        self.current = saved_pos;
-                        self.parse_expression()?
-                    }
-                }
-                // ClickHouse: simple lambda without type annotation: ident -> body
-                else if self.match_token(TokenType::Arrow) {
-                    let body = self.parse_expression()?;
-                    Expression::Lambda(Box::new(LambdaExpr {
-                        parameters: vec![Identifier::new(ident_name)],
-                        body,
-                        colon: false,
-                        parameter_types: Vec::new(),
-                    }))
-                }
-                // Check for named argument separator (=> is FArrow)
-                else if self.match_token(TokenType::FArrow) {
-                    // name => value
-                    let value = self.parse_expression()?;
-                    Expression::NamedArgument(Box::new(NamedArgument {
-                        name: Identifier::new(ident_name),
-                        value,
-                        separator: NamedArgSeparator::DArrow,
-                    }))
-                } else if self.match_token(TokenType::ColonEq) {
-                    // name := value
-                    let value = self.parse_expression()?;
-                    Expression::NamedArgument(Box::new(NamedArgument {
-                        name: Identifier::new(ident_name),
-                        value,
-                        separator: NamedArgSeparator::ColonEq,
-                    }))
-                } else {
-                    // Not a named argument, backtrack and parse as regular expression
-                    self.current = saved_pos;
-                    self.parse_expression()?
-                }
-            } else {
-                // Regular expression
-                self.parse_expression()?
-            };
-
-            // Handle AS alias inside function arguments (e.g. ClickHouse: arrayJoin([1,2,3] AS src))
-            let arg = if matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::ClickHouse)
-            ) && self.check(TokenType::As)
-                && !self.check_next(TokenType::RParen)
-                && !self.check_next(TokenType::Comma)
-            {
-                // Look ahead: AS followed by identifier/keyword, then ) or , means it's an alias
-                let next_idx = self.current + 1;
-                let after_alias_idx = self.current + 2;
-                let is_alias_token = next_idx < self.tokens.len()
-                    && (matches!(
-                        self.tokens[next_idx].token_type,
-                        TokenType::Identifier | TokenType::Var | TokenType::QuotedIdentifier
-                    ) || self.tokens[next_idx].token_type.is_keyword());
-                // Ensure the token AFTER the alias is ) or , (function arg boundary)
-                let is_alias = is_alias_token
-                    && after_alias_idx < self.tokens.len()
-                    && matches!(
-                        self.tokens[after_alias_idx].token_type,
-                        TokenType::RParen | TokenType::Comma
-                    );
-                if is_alias {
-                    self.skip(); // consume AS
-                    let alias_token = self.advance();
-                    let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
-                        let mut ident = Identifier::new(alias_token.text.clone());
-                        ident.quoted = true;
-                        ident
-                    } else {
-                        Identifier::new(alias_token.text.clone())
-                    };
-                    Expression::Alias(Box::new(crate::expressions::Alias {
-                        this: arg,
-                        alias: alias_name,
-                        column_aliases: Vec::new(),
-                        pre_alias_comments: Vec::new(),
-                        trailing_comments: Vec::new(),
-                        inferred_type: None,
-                    }))
-                } else {
-                    arg
-                }
-            } else {
-                arg
-            };
-
-            // ClickHouse: implicit alias without AS keyword: func(expr identifier, ...)
-            let arg = self.try_clickhouse_implicit_alias(arg);
-
-            // Handle trailing comments
-            let trailing_comments = self.previous_trailing_comments().to_vec();
-            let arg = if trailing_comments.is_empty() {
-                arg
-            } else {
-                match &arg {
-                    Expression::Literal(_) | Expression::Boolean(_) | Expression::Null(_) => {
-                        Expression::Annotated(Box::new(Annotated {
-                            this: arg,
-                            trailing_comments,
-                        }))
-                    }
-                    _ => arg,
-                }
-            };
-
-            args.push(arg);
+            args.push(self.parse_single_function_argument()?);
 
             if !self.match_token(TokenType::Comma) {
                 break;
@@ -55746,18 +56053,23 @@ impl Parser {
         // Try to parse identifier
         if self.check(TokenType::Identifier)
             || self.check(TokenType::QuotedIdentifier)
+            || self.check(TokenType::Var)
             || is_keyword_alias
         {
             if is_keyword_alias
                 && !self.check(TokenType::Identifier)
                 && !self.check(TokenType::QuotedIdentifier)
+                && !self.check(TokenType::Var)
             {
                 let token = self.advance();
                 return Ok(Some(Identifier::new(token.text)));
             }
-            if let Some(Expression::Identifier(id)) = self.parse_identifier()? {
-                return Ok(Some(id));
+            let token = self.advance();
+            let mut alias = Identifier::new(token.text);
+            if token.token_type == TokenType::QuotedIdentifier {
+                alias.quoted = true;
             }
+            return Ok(Some(alias));
         } else if explicit_as {
             // AS was present but no identifier follows - this is an error
             return Err(self.parse_error("Expected identifier after AS"));
@@ -60134,36 +60446,21 @@ OPTIONS (
     fn test_duckdb_struct_enum_union_row_types() {
         use crate::DialectType;
 
-        // Helper to test roundtrip with DuckDB dialect - runs in a thread with larger stack
         fn check(sql: &str, expected: Option<&str>) {
-            let sql = sql.to_string();
-            let expected = expected.map(|s| s.to_string());
-            let result = std::thread::Builder::new()
-                .stack_size(16 * 1024 * 1024) // 16MB stack
-                .spawn(move || {
-                    let expected_out = expected.as_deref().unwrap_or(&sql);
-                    let parsed = crate::parse(&sql, DialectType::DuckDB);
-                    assert!(
-                        parsed.is_ok(),
-                        "Failed to parse: {} - {:?}",
-                        sql,
-                        parsed.err()
-                    );
-                    let stmts = parsed.unwrap();
-                    assert!(!stmts.is_empty(), "No statements parsed: {}", sql);
-                    let generated = crate::generate(&stmts[0], DialectType::DuckDB);
-                    assert!(
-                        generated.is_ok(),
-                        "Failed to generate: {} - {:?}",
-                        sql,
-                        generated.err()
-                    );
-                    let result = generated.unwrap();
-                    assert_eq!(result.trim(), expected_out, "Mismatch for: {}", sql);
-                })
-                .expect("Failed to spawn test thread")
-                .join();
-            assert!(result.is_ok(), "Test thread panicked");
+            let expected_out = expected.unwrap_or(sql);
+            let parsed = crate::parse(sql, DialectType::DuckDB);
+            assert!(parsed.is_ok(), "Failed to parse: {} - {:?}", sql, parsed.err());
+            let stmts = parsed.unwrap();
+            assert!(!stmts.is_empty(), "No statements parsed: {}", sql);
+            let generated = crate::generate(&stmts[0], DialectType::DuckDB);
+            assert!(
+                generated.is_ok(),
+                "Failed to generate: {} - {:?}",
+                sql,
+                generated.err()
+            );
+            let result = generated.unwrap();
+            assert_eq!(result.trim(), expected_out, "Mismatch for: {}", sql);
         }
 
         // UNION type

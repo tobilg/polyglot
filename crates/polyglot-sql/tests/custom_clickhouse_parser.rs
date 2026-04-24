@@ -1,11 +1,12 @@
 //! ClickHouse test suite parser tests.
 //!
 //! Parses all .sql files from the ClickHouse test suite and asserts zero failures.
-//! Run with: RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+//! Run with: cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
 
 use polyglot_sql::DialectType;
 use std::fs;
 use std::path::PathBuf;
+use std::thread;
 
 /// Files to skip because they contain non-SQL content (KQL, intentionally invalid SQL,
 /// ClickHouse-specific syntax not in scope, special test harness files, etc.)
@@ -60,80 +61,107 @@ const SKIP_FILES: &[&str] = &[
     "03800_assume_not_null_coalesce_if_null_monotonicity_key_condition.sql",
 ];
 
+const DEFAULT_CLICKHOUSE_TEST_STACK_BYTES: usize = 32 * 1024 * 1024;
+
 #[test]
 fn test_clickhouse_parser_all() {
-    let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../external-projects/clickhouse/tests/queries/0_stateless");
+    run_with_large_stack(clickhouse_test_stack_bytes(), || {
+        let test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../external-projects/clickhouse/tests/queries/0_stateless");
 
-    let mut sql_files: Vec<_> = fs::read_dir(&test_dir)
-        .expect("Failed to read ClickHouse test directory")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |ext| ext == "sql"))
-        .collect();
-    sql_files.sort();
+        let mut sql_files: Vec<_> = fs::read_dir(&test_dir)
+            .expect("Failed to read ClickHouse test directory")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "sql"))
+            .collect();
+        sql_files.sort();
 
-    let total = sql_files.len();
-    let mut parsed = 0;
-    let mut failed = 0;
-    let mut skipped = 0;
-    let mut failures: Vec<(String, String)> = Vec::new();
+        let total = sql_files.len();
+        let mut parsed = 0;
+        let mut failed = 0;
+        let mut skipped = 0;
+        let mut failures: Vec<(String, String)> = Vec::new();
 
-    for path in &sql_files {
-        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+        for path in &sql_files {
+            let filename = path.file_name().unwrap().to_string_lossy().to_string();
 
-        // Skip known non-SQL or out-of-scope files
-        if SKIP_FILES.contains(&filename.as_str()) {
-            skipped += 1;
-            continue;
-        }
-
-        // Read file, skip if not valid UTF-8
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => {
+            // Skip known non-SQL or out-of-scope files
+            if SKIP_FILES.contains(&filename.as_str()) {
                 skipped += 1;
                 continue;
             }
-        };
 
-        // Skip empty files
-        let trimmed = content.trim();
-        if trimmed.is_empty() {
-            skipped += 1;
-            continue;
-        }
+            // Read file, skip if not valid UTF-8
+            let content = match fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
 
-        // Try to parse
-        match polyglot_sql::parse(trimmed, DialectType::ClickHouse) {
-            Ok(_) => {
-                parsed += 1;
+            // Skip empty files
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                skipped += 1;
+                continue;
             }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                failures.push((filename, err_msg));
-                failed += 1;
+
+            // Try to parse
+            match polyglot_sql::parse(trimmed, DialectType::ClickHouse) {
+                Ok(_) => {
+                    parsed += 1;
+                }
+                Err(e) => {
+                    let err_msg = format!("{}", e);
+                    failures.push((filename, err_msg));
+                    failed += 1;
+                }
             }
         }
-    }
 
-    println!("\n=== ClickHouse Test Suite Parsing Results ===");
-    println!("Total .sql files: {}", total);
-    println!("Skipped (non-UTF8/empty/out-of-scope): {}", skipped);
-    println!("Parsed successfully: {}", parsed);
-    println!("Failed: {}", failed);
+        println!("\n=== ClickHouse Test Suite Parsing Results ===");
+        println!("Total .sql files: {}", total);
+        println!("Skipped (non-UTF8/empty/out-of-scope): {}", skipped);
+        println!("Parsed successfully: {}", parsed);
+        println!("Failed: {}", failed);
 
-    if !failures.is_empty() {
-        println!("\n=== Failures ===");
-        for (file, err) in &failures {
-            println!("  {} => {}", file, err);
+        if !failures.is_empty() {
+            println!("\n=== Failures ===");
+            for (file, err) in &failures {
+                println!("  {} => {}", file, err);
+            }
         }
-    }
 
-    assert!(
-        failures.is_empty(),
-        "{} out of {} ClickHouse .sql files failed to parse",
-        failed,
-        total - skipped
-    );
+        assert!(
+            failures.is_empty(),
+            "{} out of {} ClickHouse .sql files failed to parse",
+            failed,
+            total - skipped
+        );
+    });
+}
+
+fn clickhouse_test_stack_bytes() -> usize {
+    std::env::var("POLYGLOT_SQL_CLICKHOUSE_TEST_STACK")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_CLICKHOUSE_TEST_STACK_BYTES)
+}
+
+fn run_with_large_stack<F>(stack_size: usize, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let handle = thread::Builder::new()
+        .name("clickhouse-parser-test".to_string())
+        .stack_size(stack_size)
+        .spawn(f)
+        .expect("Failed to spawn ClickHouse parser test thread");
+
+    match handle.join() {
+        Ok(()) => {}
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }

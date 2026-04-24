@@ -9,9 +9,13 @@ documentation.workspace = true
 description = "SQL parsing, validating, formatting, and dialect translation library"
 
 [features]
-default = ["all-dialects", "transpile"]
+default = ["all-dialects", "transpile", "stacker"]
 bindings = ["dep:ts-rs"]
 transpile = []
+# Default-on for native builds so direct Rust users and the FFI/Python bindings
+# inherit stack-growth protection automatically. WASM opts out via
+# `default-features = false` in its dependency declaration.
+stacker = ["dep:stacker"]
 all-dialects = [
     "dialect-postgresql", "dialect-mysql", "dialect-bigquery",
     "dialect-snowflake", "dialect-duckdb", "dialect-tsql",
@@ -76,6 +80,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 unicode-segmentation = { workspace = true }
+stacker = { version = "0.1", optional = true }
 ts-rs = { version = "12.0", features = ["serde-compat"], optional = true }
 polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.3.3", optional = true, default-features = false }
 

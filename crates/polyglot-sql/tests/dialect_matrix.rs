@@ -1199,35 +1199,28 @@ mod edge_cases {
 
     #[test]
     fn test_nested_functions() {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let sql = "SELECT UPPER(LOWER(TRIM(name)))";
+        let sql = "SELECT UPPER(LOWER(TRIM(name)))";
 
-                let dialects = [
-                    DialectType::PostgreSQL,
-                    DialectType::MySQL,
-                    DialectType::BigQuery,
-                    DialectType::Snowflake,
-                    DialectType::DuckDB,
-                    DialectType::TSQL,
-                ];
+        let dialects = [
+            DialectType::PostgreSQL,
+            DialectType::MySQL,
+            DialectType::BigQuery,
+            DialectType::Snowflake,
+            DialectType::DuckDB,
+            DialectType::TSQL,
+        ];
 
-                for dialect in dialects {
-                    let result = transpile(sql, DialectType::Generic, dialect);
-                    assert!(
-                        result.to_uppercase().contains("UPPER")
-                            && result.to_uppercase().contains("LOWER")
-                            && result.to_uppercase().contains("TRIM"),
-                        "{:?} should preserve nested functions: got {}",
-                        dialect,
-                        result
-                    );
-                }
-            })
-            .unwrap()
-            .join()
-            .unwrap();
+        for dialect in dialects {
+            let result = transpile(sql, DialectType::Generic, dialect);
+            assert!(
+                result.to_uppercase().contains("UPPER")
+                    && result.to_uppercase().contains("LOWER")
+                    && result.to_uppercase().contains("TRIM"),
+                "{:?} should preserve nested functions: got {}",
+                dialect,
+                result
+            );
+        }
     }
 }
 

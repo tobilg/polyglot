@@ -516,28 +516,1152 @@ fn duckdb_to_bigquery_format(fmt: &str) -> String {
     result
 }
 
+#[derive(Debug)]
+enum TransformTask {
+    Visit(Expression),
+    Finish(FinishTask),
+}
+
+#[derive(Debug)]
+enum FinishTask {
+    Unary(Expression),
+    Binary(Expression),
+    CastLike(Expression),
+    List(Expression, usize),
+    From(crate::expressions::From, usize),
+    Select(SelectFrame),
+    SetOp(Expression),
+}
+
+#[derive(Debug)]
+struct SelectFrame {
+    select: Box<crate::expressions::Select>,
+    expr_count: usize,
+    from_present: bool,
+    where_present: bool,
+    group_by_count: usize,
+    having_present: bool,
+    qualify_present: bool,
+}
+
+fn transform_pop_result(results: &mut Vec<Expression>) -> Result<Expression> {
+    results
+        .pop()
+        .ok_or_else(|| crate::error::Error::Internal("transform stack underflow".to_string()))
+}
+
+fn transform_pop_results(results: &mut Vec<Expression>, count: usize) -> Result<Vec<Expression>> {
+    if results.len() < count {
+        return Err(crate::error::Error::Internal(
+            "transform result stack underflow".to_string(),
+        ));
+    }
+    Ok(results.split_off(results.len() - count))
+}
+
 /// Applies a transform function bottom-up through an entire expression tree.
 ///
-/// This is the core tree-rewriting engine used by the dialect system. It performs
-/// a post-order (children-first) traversal: for each node, all children are recursively
-/// transformed before the node itself is passed to `transform_fn`. This bottom-up
-/// strategy means that when `transform_fn` sees a node, its children have already
-/// been rewritten, which simplifies pattern matching on sub-expressions.
-///
-/// The function handles all expression variants including SELECT clauses (FROM, WHERE,
-/// GROUP BY, HAVING, ORDER BY, QUALIFY, WITH/CTEs, WINDOW), binary operators,
-/// function calls, CASE expressions, date/time functions, and more.
-///
-/// # Arguments
-///
-/// * `expr` - The root expression to transform (consumed).
-/// * `transform_fn` - A closure that receives each expression node (after its children
-///   have been transformed) and returns a possibly-rewritten expression.
-///
-/// # Errors
-///
-/// Returns an error if `transform_fn` returns an error for any node.
+/// The public entrypoint uses an explicit task stack for the recursion-heavy shapes
+/// that dominate deeply nested SQL (nested SELECT/FROM/SUBQUERY chains, set-operation
+/// trees, and common binary/unary expression chains). Less common shapes currently
+/// reuse the reference recursive implementation so semantics stay identical while
+/// the hot path avoids stack growth.
 pub fn transform_recursive<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
+where
+    F: Fn(Expression) -> Result<Expression>,
+{
+    #[cfg(feature = "stacker")]
+    {
+        let red_zone = if cfg!(debug_assertions) {
+            4 * 1024 * 1024
+        } else {
+            1024 * 1024
+        };
+        stacker::maybe_grow(red_zone, 8 * 1024 * 1024, move || {
+            transform_recursive_inner(expr, transform_fn)
+        })
+    }
+    #[cfg(not(feature = "stacker"))]
+    {
+        transform_recursive_inner(expr, transform_fn)
+    }
+}
+
+fn transform_recursive_inner<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
+where
+    F: Fn(Expression) -> Result<Expression>,
+{
+    let mut tasks = vec![TransformTask::Visit(expr)];
+    let mut results = Vec::new();
+
+    while let Some(task) = tasks.pop() {
+        match task {
+            TransformTask::Visit(expr) => {
+                if matches!(
+                    &expr,
+                    Expression::Literal(_)
+                        | Expression::Boolean(_)
+                        | Expression::Null(_)
+                        | Expression::Identifier(_)
+                        | Expression::Star(_)
+                        | Expression::Parameter(_)
+                        | Expression::Placeholder(_)
+                        | Expression::SessionParameter(_)
+                ) {
+                    results.push(transform_fn(expr)?);
+                    continue;
+                }
+
+                match expr {
+                    Expression::Alias(mut alias) => {
+                        let child = std::mem::replace(&mut alias.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(Expression::Alias(
+                            alias,
+                        ))));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Paren(mut paren) => {
+                        let child = std::mem::replace(&mut paren.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(Expression::Paren(
+                            paren,
+                        ))));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Not(mut not) => {
+                        let child = std::mem::replace(&mut not.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(Expression::Not(
+                            not,
+                        ))));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Neg(mut neg) => {
+                        let child = std::mem::replace(&mut neg.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(Expression::Neg(
+                            neg,
+                        ))));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::IsNull(mut expr) => {
+                        let child = std::mem::replace(&mut expr.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::IsNull(expr),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::IsTrue(mut expr) => {
+                        let child = std::mem::replace(&mut expr.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::IsTrue(expr),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::IsFalse(mut expr) => {
+                        let child = std::mem::replace(&mut expr.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::IsFalse(expr),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Subquery(mut subquery) => {
+                        let child = std::mem::replace(&mut subquery.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::Subquery(subquery),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Exists(mut exists) => {
+                        let child = std::mem::replace(&mut exists.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::Exists(exists),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::TableArgument(mut arg) => {
+                        let child = std::mem::replace(&mut arg.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Unary(
+                            Expression::TableArgument(arg),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::And(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::And(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Or(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Or(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Add(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Add(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Sub(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Sub(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Mul(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Mul(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Div(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Div(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Eq(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Eq(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Lt(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Lt(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Gt(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Gt(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Neq(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Neq(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Lte(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Lte(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Gte(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Gte(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Mod(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Mod(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Concat(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::Concat(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::BitwiseAnd(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::BitwiseAnd(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::BitwiseOr(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::BitwiseOr(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::BitwiseXor(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::BitwiseXor(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Is(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Is(
+                            op,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::MemberOf(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::MemberOf(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::ArrayContainsAll(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::ArrayContainsAll(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::ArrayContainedBy(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::ArrayContainedBy(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::ArrayOverlaps(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::ArrayOverlaps(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::TsMatch(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::TsMatch(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Adjacent(mut op) => {
+                        let right = std::mem::replace(&mut op.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut op.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::Adjacent(op),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Like(mut like) => {
+                        let right = std::mem::replace(&mut like.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut like.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(Expression::Like(
+                            like,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::ILike(mut like) => {
+                        let right = std::mem::replace(&mut like.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut like.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::Binary(
+                            Expression::ILike(like),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Cast(mut cast) => {
+                        let child = std::mem::replace(&mut cast.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::CastLike(
+                            Expression::Cast(cast),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::TryCast(mut cast) => {
+                        let child = std::mem::replace(&mut cast.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::CastLike(
+                            Expression::TryCast(cast),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::SafeCast(mut cast) => {
+                        let child = std::mem::replace(&mut cast.this, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::CastLike(
+                            Expression::SafeCast(cast),
+                        )));
+                        tasks.push(TransformTask::Visit(child));
+                    }
+                    Expression::Function(mut function) => {
+                        let args = std::mem::take(&mut function.args);
+                        let count = args.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Function(function),
+                            count,
+                        )));
+                        for child in args.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Array(mut array) => {
+                        let expressions = std::mem::take(&mut array.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Array(array),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Tuple(mut tuple) => {
+                        let expressions = std::mem::take(&mut tuple.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Tuple(tuple),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::ArrayFunc(mut array) => {
+                        let expressions = std::mem::take(&mut array.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::ArrayFunc(array),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Coalesce(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Coalesce(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Greatest(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Greatest(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Least(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::Least(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::ArrayConcat(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::ArrayConcat(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::ArrayIntersect(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::ArrayIntersect(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::ArrayZip(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::ArrayZip(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::MapConcat(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::MapConcat(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::JsonArray(mut func) => {
+                        let expressions = std::mem::take(&mut func.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::List(
+                            Expression::JsonArray(func),
+                            count,
+                        )));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::From(mut from) => {
+                        let expressions = std::mem::take(&mut from.expressions);
+                        let count = expressions.len();
+                        tasks.push(TransformTask::Finish(FinishTask::From(*from, count)));
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Select(mut select) => {
+                        let expressions = std::mem::take(&mut select.expressions);
+                        let expr_count = expressions.len();
+
+                        let from_info = select.from.take().map(|mut from| {
+                            let children = std::mem::take(&mut from.expressions);
+                            (from, children)
+                        });
+                        let from_present = from_info.is_some();
+
+                        let where_child = select.where_clause.as_mut().map(|where_clause| {
+                            std::mem::replace(&mut where_clause.this, Expression::Null(Null))
+                        });
+                        let where_present = where_child.is_some();
+
+                        let group_expressions = select
+                            .group_by
+                            .as_mut()
+                            .map(|group_by| std::mem::take(&mut group_by.expressions))
+                            .unwrap_or_default();
+                        let group_by_count = group_expressions.len();
+
+                        let having_child = select.having.as_mut().map(|having| {
+                            std::mem::replace(&mut having.this, Expression::Null(Null))
+                        });
+                        let having_present = having_child.is_some();
+
+                        let qualify_child = select.qualify.as_mut().map(|qualify| {
+                            std::mem::replace(&mut qualify.this, Expression::Null(Null))
+                        });
+                        let qualify_present = qualify_child.is_some();
+
+                        tasks.push(TransformTask::Finish(FinishTask::Select(SelectFrame {
+                            select,
+                            expr_count,
+                            from_present,
+                            where_present,
+                            group_by_count,
+                            having_present,
+                            qualify_present,
+                        })));
+
+                        if let Some(child) = qualify_child {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                        if let Some(child) = having_child {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                        for child in group_expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                        if let Some(child) = where_child {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                        if let Some((from, children)) = from_info {
+                            tasks.push(TransformTask::Finish(FinishTask::From(
+                                from,
+                                children.len(),
+                            )));
+                            for child in children.into_iter().rev() {
+                                tasks.push(TransformTask::Visit(child));
+                            }
+                        }
+                        for child in expressions.into_iter().rev() {
+                            tasks.push(TransformTask::Visit(child));
+                        }
+                    }
+                    Expression::Union(mut union) => {
+                        let right = std::mem::replace(&mut union.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut union.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::SetOp(Expression::Union(
+                            union,
+                        ))));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Intersect(mut intersect) => {
+                        let right = std::mem::replace(&mut intersect.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut intersect.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::SetOp(
+                            Expression::Intersect(intersect),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    Expression::Except(mut except) => {
+                        let right = std::mem::replace(&mut except.right, Expression::Null(Null));
+                        let left = std::mem::replace(&mut except.left, Expression::Null(Null));
+                        tasks.push(TransformTask::Finish(FinishTask::SetOp(
+                            Expression::Except(except),
+                        )));
+                        tasks.push(TransformTask::Visit(right));
+                        tasks.push(TransformTask::Visit(left));
+                    }
+                    other => {
+                        results.push(transform_recursive_reference(other, transform_fn)?);
+                    }
+                }
+            }
+            TransformTask::Finish(finish) => match finish {
+                FinishTask::Unary(expr) => {
+                    let child = transform_pop_result(&mut results)?;
+                    let rebuilt = match expr {
+                        Expression::Alias(mut alias) => {
+                            alias.this = child;
+                            Expression::Alias(alias)
+                        }
+                        Expression::Paren(mut paren) => {
+                            paren.this = child;
+                            Expression::Paren(paren)
+                        }
+                        Expression::Not(mut not) => {
+                            not.this = child;
+                            Expression::Not(not)
+                        }
+                        Expression::Neg(mut neg) => {
+                            neg.this = child;
+                            Expression::Neg(neg)
+                        }
+                        Expression::IsNull(mut expr) => {
+                            expr.this = child;
+                            Expression::IsNull(expr)
+                        }
+                        Expression::IsTrue(mut expr) => {
+                            expr.this = child;
+                            Expression::IsTrue(expr)
+                        }
+                        Expression::IsFalse(mut expr) => {
+                            expr.this = child;
+                            Expression::IsFalse(expr)
+                        }
+                        Expression::Subquery(mut subquery) => {
+                            subquery.this = child;
+                            Expression::Subquery(subquery)
+                        }
+                        Expression::Exists(mut exists) => {
+                            exists.this = child;
+                            Expression::Exists(exists)
+                        }
+                        Expression::TableArgument(mut arg) => {
+                            arg.this = child;
+                            Expression::TableArgument(arg)
+                        }
+                        _ => {
+                            return Err(crate::error::Error::Internal(
+                                "unexpected unary transform task".to_string(),
+                            ));
+                        }
+                    };
+                    results.push(transform_fn(rebuilt)?);
+                }
+                FinishTask::Binary(expr) => {
+                    let mut children = transform_pop_results(&mut results, 2)?.into_iter();
+                    let left = children.next().expect("left child");
+                    let right = children.next().expect("right child");
+                    let rebuilt = match expr {
+                        Expression::And(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::And(op)
+                        }
+                        Expression::Or(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Or(op)
+                        }
+                        Expression::Add(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Add(op)
+                        }
+                        Expression::Sub(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Sub(op)
+                        }
+                        Expression::Mul(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Mul(op)
+                        }
+                        Expression::Div(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Div(op)
+                        }
+                        Expression::Eq(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Eq(op)
+                        }
+                        Expression::Lt(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Lt(op)
+                        }
+                        Expression::Gt(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Gt(op)
+                        }
+                        Expression::Neq(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Neq(op)
+                        }
+                        Expression::Lte(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Lte(op)
+                        }
+                        Expression::Gte(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Gte(op)
+                        }
+                        Expression::Mod(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Mod(op)
+                        }
+                        Expression::Concat(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Concat(op)
+                        }
+                        Expression::BitwiseAnd(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::BitwiseAnd(op)
+                        }
+                        Expression::BitwiseOr(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::BitwiseOr(op)
+                        }
+                        Expression::BitwiseXor(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::BitwiseXor(op)
+                        }
+                        Expression::Is(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Is(op)
+                        }
+                        Expression::MemberOf(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::MemberOf(op)
+                        }
+                        Expression::ArrayContainsAll(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::ArrayContainsAll(op)
+                        }
+                        Expression::ArrayContainedBy(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::ArrayContainedBy(op)
+                        }
+                        Expression::ArrayOverlaps(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::ArrayOverlaps(op)
+                        }
+                        Expression::TsMatch(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::TsMatch(op)
+                        }
+                        Expression::Adjacent(mut op) => {
+                            op.left = left;
+                            op.right = right;
+                            Expression::Adjacent(op)
+                        }
+                        Expression::Like(mut like) => {
+                            like.left = left;
+                            like.right = right;
+                            Expression::Like(like)
+                        }
+                        Expression::ILike(mut like) => {
+                            like.left = left;
+                            like.right = right;
+                            Expression::ILike(like)
+                        }
+                        _ => {
+                            return Err(crate::error::Error::Internal(
+                                "unexpected binary transform task".to_string(),
+                            ));
+                        }
+                    };
+                    results.push(transform_fn(rebuilt)?);
+                }
+                FinishTask::CastLike(expr) => {
+                    let child = transform_pop_result(&mut results)?;
+                    let rebuilt = match expr {
+                        Expression::Cast(mut cast) => {
+                            cast.this = child;
+                            cast.to = transform_data_type_recursive(cast.to, transform_fn)?;
+                            Expression::Cast(cast)
+                        }
+                        Expression::TryCast(mut cast) => {
+                            cast.this = child;
+                            cast.to = transform_data_type_recursive(cast.to, transform_fn)?;
+                            Expression::TryCast(cast)
+                        }
+                        Expression::SafeCast(mut cast) => {
+                            cast.this = child;
+                            cast.to = transform_data_type_recursive(cast.to, transform_fn)?;
+                            Expression::SafeCast(cast)
+                        }
+                        _ => {
+                            return Err(crate::error::Error::Internal(
+                                "unexpected cast transform task".to_string(),
+                            ));
+                        }
+                    };
+                    results.push(transform_fn(rebuilt)?);
+                }
+                FinishTask::List(expr, count) => {
+                    let children = transform_pop_results(&mut results, count)?;
+                    let rebuilt = match expr {
+                        Expression::Function(mut function) => {
+                            function.args = children;
+                            Expression::Function(function)
+                        }
+                        Expression::Array(mut array) => {
+                            array.expressions = children;
+                            Expression::Array(array)
+                        }
+                        Expression::Tuple(mut tuple) => {
+                            tuple.expressions = children;
+                            Expression::Tuple(tuple)
+                        }
+                        Expression::ArrayFunc(mut array) => {
+                            array.expressions = children;
+                            Expression::ArrayFunc(array)
+                        }
+                        Expression::Coalesce(mut func) => {
+                            func.expressions = children;
+                            Expression::Coalesce(func)
+                        }
+                        Expression::Greatest(mut func) => {
+                            func.expressions = children;
+                            Expression::Greatest(func)
+                        }
+                        Expression::Least(mut func) => {
+                            func.expressions = children;
+                            Expression::Least(func)
+                        }
+                        Expression::ArrayConcat(mut func) => {
+                            func.expressions = children;
+                            Expression::ArrayConcat(func)
+                        }
+                        Expression::ArrayIntersect(mut func) => {
+                            func.expressions = children;
+                            Expression::ArrayIntersect(func)
+                        }
+                        Expression::ArrayZip(mut func) => {
+                            func.expressions = children;
+                            Expression::ArrayZip(func)
+                        }
+                        Expression::MapConcat(mut func) => {
+                            func.expressions = children;
+                            Expression::MapConcat(func)
+                        }
+                        Expression::JsonArray(mut func) => {
+                            func.expressions = children;
+                            Expression::JsonArray(func)
+                        }
+                        _ => {
+                            return Err(crate::error::Error::Internal(
+                                "unexpected list transform task".to_string(),
+                            ));
+                        }
+                    };
+                    results.push(transform_fn(rebuilt)?);
+                }
+                FinishTask::From(mut from, count) => {
+                    from.expressions = transform_pop_results(&mut results, count)?;
+                    results.push(transform_fn(Expression::From(Box::new(from)))?);
+                }
+                FinishTask::Select(frame) => {
+                    let mut select = *frame.select;
+
+                    if frame.qualify_present {
+                        if let Some(ref mut qualify) = select.qualify {
+                            qualify.this = transform_pop_result(&mut results)?;
+                        }
+                    }
+                    if frame.having_present {
+                        if let Some(ref mut having) = select.having {
+                            having.this = transform_pop_result(&mut results)?;
+                        }
+                    }
+                    if frame.group_by_count > 0 {
+                        if let Some(ref mut group_by) = select.group_by {
+                            group_by.expressions =
+                                transform_pop_results(&mut results, frame.group_by_count)?;
+                        }
+                    }
+                    if frame.where_present {
+                        if let Some(ref mut where_clause) = select.where_clause {
+                            where_clause.this = transform_pop_result(&mut results)?;
+                        }
+                    }
+                    if frame.from_present {
+                        match transform_pop_result(&mut results)? {
+                            Expression::From(from) => {
+                                select.from = Some(*from);
+                            }
+                            _ => {
+                                return Err(crate::error::Error::Internal(
+                                    "expected FROM expression result".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    select.expressions = transform_pop_results(&mut results, frame.expr_count)?;
+
+                    select.joins = select
+                        .joins
+                        .into_iter()
+                        .map(|mut join| {
+                            join.this = transform_recursive(join.this, transform_fn)?;
+                            if let Some(on) = join.on.take() {
+                                join.on = Some(transform_recursive(on, transform_fn)?);
+                            }
+                            match transform_fn(Expression::Join(Box::new(join)))? {
+                                Expression::Join(j) => Ok(*j),
+                                _ => Err(crate::error::Error::parse(
+                                    "Join transformation returned non-join expression",
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                )),
+                            }
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+
+                    select.lateral_views = select
+                        .lateral_views
+                        .into_iter()
+                        .map(|mut lv| {
+                            lv.this = transform_recursive(lv.this, transform_fn)?;
+                            Ok(lv)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+
+                    if let Some(mut with) = select.with.take() {
+                        with.ctes = with
+                            .ctes
+                            .into_iter()
+                            .map(|mut cte| {
+                                let original = cte.this.clone();
+                                cte.this =
+                                    transform_recursive(cte.this, transform_fn).unwrap_or(original);
+                                cte
+                            })
+                            .collect();
+                        select.with = Some(with);
+                    }
+
+                    if let Some(mut order) = select.order_by.take() {
+                        order.expressions = order
+                            .expressions
+                            .into_iter()
+                            .map(|o| {
+                                let mut o = o;
+                                let original = o.this.clone();
+                                o.this =
+                                    transform_recursive(o.this, transform_fn).unwrap_or(original);
+                                match transform_fn(Expression::Ordered(Box::new(o.clone()))) {
+                                    Ok(Expression::Ordered(transformed)) => *transformed,
+                                    Ok(_) | Err(_) => o,
+                                }
+                            })
+                            .collect();
+                        select.order_by = Some(order);
+                    }
+
+                    if let Some(ref mut windows) = select.windows {
+                        for nw in windows.iter_mut() {
+                            nw.spec.order_by = std::mem::take(&mut nw.spec.order_by)
+                                .into_iter()
+                                .map(|o| {
+                                    let mut o = o;
+                                    let original = o.this.clone();
+                                    o.this = transform_recursive(o.this, transform_fn)
+                                        .unwrap_or(original);
+                                    match transform_fn(Expression::Ordered(Box::new(o.clone()))) {
+                                        Ok(Expression::Ordered(transformed)) => *transformed,
+                                        Ok(_) | Err(_) => o,
+                                    }
+                                })
+                                .collect();
+                        }
+                    }
+
+                    results.push(transform_fn(Expression::Select(Box::new(select)))?);
+                }
+                FinishTask::SetOp(expr) => {
+                    let mut children = transform_pop_results(&mut results, 2)?.into_iter();
+                    let left = children.next().expect("left child");
+                    let right = children.next().expect("right child");
+
+                    let rebuilt = match expr {
+                        Expression::Union(mut union) => {
+                            union.left = left;
+                            union.right = right;
+                            if let Some(mut with) = union.with.take() {
+                                with.ctes = with
+                                    .ctes
+                                    .into_iter()
+                                    .map(|mut cte| {
+                                        let original = cte.this.clone();
+                                        cte.this = transform_recursive(cte.this, transform_fn)
+                                            .unwrap_or(original);
+                                        cte
+                                    })
+                                    .collect();
+                                union.with = Some(with);
+                            }
+                            Expression::Union(union)
+                        }
+                        Expression::Intersect(mut intersect) => {
+                            intersect.left = left;
+                            intersect.right = right;
+                            if let Some(mut with) = intersect.with.take() {
+                                with.ctes = with
+                                    .ctes
+                                    .into_iter()
+                                    .map(|mut cte| {
+                                        let original = cte.this.clone();
+                                        cte.this = transform_recursive(cte.this, transform_fn)
+                                            .unwrap_or(original);
+                                        cte
+                                    })
+                                    .collect();
+                                intersect.with = Some(with);
+                            }
+                            Expression::Intersect(intersect)
+                        }
+                        Expression::Except(mut except) => {
+                            except.left = left;
+                            except.right = right;
+                            if let Some(mut with) = except.with.take() {
+                                with.ctes = with
+                                    .ctes
+                                    .into_iter()
+                                    .map(|mut cte| {
+                                        let original = cte.this.clone();
+                                        cte.this = transform_recursive(cte.this, transform_fn)
+                                            .unwrap_or(original);
+                                        cte
+                                    })
+                                    .collect();
+                                except.with = Some(with);
+                            }
+                            Expression::Except(except)
+                        }
+                        _ => {
+                            return Err(crate::error::Error::Internal(
+                                "unexpected set-op transform task".to_string(),
+                            ));
+                        }
+                    };
+                    results.push(transform_fn(rebuilt)?);
+                }
+            },
+        }
+    }
+
+    match results.len() {
+        1 => Ok(results.pop().expect("single transform result")),
+        _ => Err(crate::error::Error::Internal(
+            "unexpected transform result stack size".to_string(),
+        )),
+    }
+}
+
+fn transform_recursive_reference<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
 where
     F: Fn(Expression) -> Result<Expression>,
 {
@@ -2506,12 +3630,11 @@ impl Dialect {
             DialectType::StarRocks => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::expand_between_in_delete(expr)?;
-                let expr =
-                    transforms::eliminate_distinct_on_for_dialect(
-                        expr,
-                        Some(DialectType::StarRocks),
-                        Some(DialectType::StarRocks),
-                    )?;
+                let expr = transforms::eliminate_distinct_on_for_dialect(
+                    expr,
+                    Some(DialectType::StarRocks),
+                    Some(DialectType::StarRocks),
+                )?;
                 let expr = transforms::unnest_generate_date_array_using_recursive_cte(expr)?;
                 Ok(expr)
             }
@@ -19684,12 +20807,10 @@ impl Dialect {
                                     Ok(Expression::Case(Box::new(Case {
                                         operand: None,
                                         whens: vec![(null_check, Expression::Null(Null))],
-                                        else_: Some(Expression::Function(Box::new(
-                                            Function::new(
-                                                "CONCAT_WS".to_string(),
-                                                args,
-                                            ),
-                                        ))),
+                                        else_: Some(Expression::Function(Box::new(Function::new(
+                                            "CONCAT_WS".to_string(),
+                                            args,
+                                        )))),
                                         comments: vec![],
                                         inferred_type: None,
                                     })))
@@ -20158,12 +21279,10 @@ impl Dialect {
                                         let upper_b = Expression::Upper(Box::new(
                                             crate::expressions::UnaryFunc::new(b),
                                         ));
-                                        let score = Expression::Function(Box::new(
-                                            Function::new(
-                                                "JARO_WINKLER_SIMILARITY".to_string(),
-                                                vec![upper_a, upper_b],
-                                            ),
-                                        ));
+                                        let score = Expression::Function(Box::new(Function::new(
+                                            "JARO_WINKLER_SIMILARITY".to_string(),
+                                            vec![upper_a, upper_b],
+                                        )));
                                         let scaled = Expression::Mul(Box::new(BinaryOp {
                                             left: score,
                                             right: Expression::number(100),
@@ -20890,14 +22009,13 @@ impl Dialect {
                                     && ja.return_type.is_none()
                                     && ja.strict.is_none() =>
                             {
-                                let array_construct =
-                                    Expression::ArrayFunc(Box::new(
-                                        crate::expressions::ArrayConstructor {
-                                            expressions: ja.expressions,
-                                            bracket_notation: false,
-                                            use_list_keyword: false,
-                                        },
-                                    ));
+                                let array_construct = Expression::ArrayFunc(Box::new(
+                                    crate::expressions::ArrayConstructor {
+                                        expressions: ja.expressions,
+                                        bracket_notation: false,
+                                        use_list_keyword: false,
+                                    },
+                                ));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "TO_VARIANT".to_string(),
                                     vec![array_construct],
@@ -20908,14 +22026,13 @@ impl Dialect {
                     } else if let Expression::JsonArray(f) = e {
                         match target {
                             DialectType::Snowflake => {
-                                let array_construct =
-                                    Expression::ArrayFunc(Box::new(
-                                        crate::expressions::ArrayConstructor {
-                                            expressions: f.expressions,
-                                            bracket_notation: false,
-                                            use_list_keyword: false,
-                                        },
-                                    ));
+                                let array_construct = Expression::ArrayFunc(Box::new(
+                                    crate::expressions::ArrayConstructor {
+                                        expressions: f.expressions,
+                                        bracket_notation: false,
+                                        use_list_keyword: false,
+                                    },
+                                ));
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "TO_VARIANT".to_string(),
                                     vec![array_construct],
@@ -20949,21 +22066,19 @@ impl Dialect {
                                             },
                                         )))
                                     }
-                                    DialectType::DuckDB => Ok(Expression::ListAgg(Box::new(
-                                        {
-                                            let this = cpa.expressions[0].clone();
-                                            let separator = cpa.params.first().cloned();
-                                            crate::expressions::ListAggFunc {
-                                                this,
-                                                separator,
-                                                on_overflow: None,
-                                                order_by: None,
-                                                distinct: false,
-                                                filter: None,
-                                                inferred_type: None,
-                                            }
-                                        },
-                                    ))),
+                                    DialectType::DuckDB => Ok(Expression::ListAgg(Box::new({
+                                        let this = cpa.expressions[0].clone();
+                                        let separator = cpa.params.first().cloned();
+                                        crate::expressions::ListAggFunc {
+                                            this,
+                                            separator,
+                                            on_overflow: None,
+                                            order_by: None,
+                                            distinct: false,
+                                            filter: None,
+                                            inferred_type: None,
+                                        }
+                                    }))),
                                     _ => Ok(Expression::CombinedParameterizedAgg(cpa)),
                                 }
                             }
@@ -32133,12 +33248,9 @@ impl Dialect {
                 )));
 
                 match target {
-                    DialectType::Spark | DialectType::Databricks => {
-                        Ok(Expression::Function(Box::new(Function::new(
-                            "TRY_DIVIDE".to_string(),
-                            vec![x, y],
-                        ))))
-                    }
+                    DialectType::Spark | DialectType::Databricks => Ok(Expression::Function(
+                        Box::new(Function::new("TRY_DIVIDE".to_string(), vec![x, y])),
+                    )),
                     DialectType::DuckDB | DialectType::PostgreSQL => {
                         // CASE WHEN y <> 0 THEN x / y ELSE NULL END
                         let result_div = if matches!(target, DialectType::PostgreSQL) {
@@ -36364,19 +37476,14 @@ mod tests {
 
     #[test]
     fn test_generate_date_array_snowflake() {
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let dialect = Dialect::get(DialectType::Generic);
-                let result = dialect.transpile(
-                    "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
-                    DialectType::Snowflake,
-                ).unwrap();
-                eprintln!("GDA -> Snowflake: {}", result[0]);
-            })
-            .unwrap()
-            .join()
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect
+            .transpile(
+                "SELECT * FROM UNNEST(GENERATE_DATE_ARRAY(DATE '2020-01-01', DATE '2020-02-01', INTERVAL 1 WEEK))",
+                DialectType::Snowflake,
+            )
             .unwrap();
+        eprintln!("GDA -> Snowflake: {}", result[0]);
     }
 
     #[test]
@@ -36809,71 +37916,53 @@ mod tests {
 
     #[test]
     fn test_regexp_instr_snowflake_to_duckdb_2arg() {
-        let handle = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let dialect = Dialect::get(DialectType::Snowflake);
-                let result = dialect
-                    .transpile("SELECT REGEXP_INSTR(s, 'pattern')", DialectType::DuckDB)
-                    .unwrap();
-                // Should produce a CASE WHEN expression
-                assert!(
-                    result[0].contains("CASE WHEN"),
-                    "Expected CASE WHEN in result: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("LIST_SUM"),
-                    "Expected LIST_SUM in result: {}",
-                    result[0]
-                );
-            })
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile("SELECT REGEXP_INSTR(s, 'pattern')", DialectType::DuckDB)
             .unwrap();
-        handle.join().unwrap();
+        assert!(
+            result[0].contains("CASE WHEN"),
+            "Expected CASE WHEN in result: {}",
+            result[0]
+        );
+        assert!(
+            result[0].contains("LIST_SUM"),
+            "Expected LIST_SUM in result: {}",
+            result[0]
+        );
     }
 
     #[test]
     fn test_array_except_generic_to_duckdb() {
-        // Use larger stack to avoid overflow from deeply nested expression Drop
-        let handle = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let dialect = Dialect::get(DialectType::Generic);
-                let result = dialect
-                    .transpile(
-                        "SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))",
-                        DialectType::DuckDB,
-                    )
-                    .unwrap();
-                eprintln!("ARRAY_EXCEPT Generic->DuckDB: {}", result[0]);
-                assert!(
-                    result[0].contains("CASE WHEN"),
-                    "Expected CASE WHEN: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("LIST_FILTER"),
-                    "Expected LIST_FILTER: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("LIST_DISTINCT"),
-                    "Expected LIST_DISTINCT: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("IS NOT DISTINCT FROM"),
-                    "Expected IS NOT DISTINCT FROM: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("= 0"),
-                    "Expected = 0 filter: {}",
-                    result[0]
-                );
-            })
+        let dialect = Dialect::get(DialectType::Generic);
+        let result = dialect
+            .transpile(
+                "SELECT ARRAY_EXCEPT(ARRAY(1, 2, 3), ARRAY(2))",
+                DialectType::DuckDB,
+            )
             .unwrap();
-        handle.join().unwrap();
+        eprintln!("ARRAY_EXCEPT Generic->DuckDB: {}", result[0]);
+        assert!(
+            result[0].contains("CASE WHEN"),
+            "Expected CASE WHEN: {}",
+            result[0]
+        );
+        assert!(
+            result[0].contains("LIST_FILTER"),
+            "Expected LIST_FILTER: {}",
+            result[0]
+        );
+        assert!(
+            result[0].contains("LIST_DISTINCT"),
+            "Expected LIST_DISTINCT: {}",
+            result[0]
+        );
+        assert!(
+            result[0].contains("IS NOT DISTINCT FROM"),
+            "Expected IS NOT DISTINCT FROM: {}",
+            result[0]
+        );
+        assert!(result[0].contains("= 0"), "Expected = 0 filter: {}", result[0]);
     }
 
     #[test]
@@ -36904,27 +37993,21 @@ mod tests {
 
     #[test]
     fn test_array_except_snowflake_to_duckdb() {
-        let handle = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let dialect = Dialect::get(DialectType::Snowflake);
-                let result = dialect
-                    .transpile("SELECT ARRAY_EXCEPT([1, 2, 3], [2])", DialectType::DuckDB)
-                    .unwrap();
-                eprintln!("ARRAY_EXCEPT Snowflake->DuckDB: {}", result[0]);
-                assert!(
-                    result[0].contains("CASE WHEN"),
-                    "Expected CASE WHEN: {}",
-                    result[0]
-                );
-                assert!(
-                    result[0].contains("LIST_TRANSFORM"),
-                    "Expected LIST_TRANSFORM: {}",
-                    result[0]
-                );
-            })
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let result = dialect
+            .transpile("SELECT ARRAY_EXCEPT([1, 2, 3], [2])", DialectType::DuckDB)
             .unwrap();
-        handle.join().unwrap();
+        eprintln!("ARRAY_EXCEPT Snowflake->DuckDB: {}", result[0]);
+        assert!(
+            result[0].contains("CASE WHEN"),
+            "Expected CASE WHEN: {}",
+            result[0]
+        );
+        assert!(
+            result[0].contains("LIST_TRANSFORM"),
+            "Expected LIST_TRANSFORM: {}",
+            result[0]
+        );
     }
 
     #[test]

@@ -6,8 +6,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, Case, Cast, Expression, Function, Interval, IntervalUnit, IntervalUnitSpec,
-    VarArgFunc,
+    AggFunc, Case, Cast, Expression, Function, Interval, IntervalUnit, IntervalUnitSpec, VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;

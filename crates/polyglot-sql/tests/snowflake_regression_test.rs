@@ -20,28 +20,44 @@ fn parse_and_generate(sql: &str) -> String {
 fn test_snowflake_timestamp_tz_cast_precision() {
     let sql = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMP_TZ(9)"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "TIMESTAMP_TZ(9) cast failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TIMESTAMP_TZ(9) cast failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_snowflake_timestamp_ntz_cast_precision() {
     let sql = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMP_NTZ(9)"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "TIMESTAMP_NTZ(9) cast failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TIMESTAMP_NTZ(9) cast failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_snowflake_timestamp_ltz_cast_precision() {
     let sql = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMP_LTZ(9)"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "TIMESTAMP_LTZ(9) cast failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TIMESTAMP_LTZ(9) cast failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_snowflake_timestamptz_no_underscore_precision() {
     let sql = r#"SELECT '2024-01-01'::TIMESTAMPTZ(6)"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "TIMESTAMPTZ(6) cast failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TIMESTAMPTZ(6) cast failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -50,7 +66,11 @@ fn test_snowflake_timestamp_tz_in_insert() {
         SELECT seq4() + 0, '1987-01-30 23:59:59.123456789'::TIMESTAMP_TZ(9)
         FROM TABLE(GENERATOR(ROWCOUNT => 10000))"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "TIMESTAMP_TZ(9) in INSERT failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "TIMESTAMP_TZ(9) in INSERT failed: {:?}",
+        result.err()
+    );
 }
 
 // Roundtrip: verify the generated SQL re-parses correctly
@@ -58,15 +78,24 @@ fn test_snowflake_timestamp_tz_in_insert() {
 fn test_snowflake_timestamp_cast_roundtrip() {
     let sql = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMP_TZ(9)"#;
     let gen = parse_and_generate(sql);
-    assert_eq!(gen, "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPTZ(9))");
+    assert_eq!(
+        gen,
+        "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPTZ(9))"
+    );
 
     let sql2 = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMP_NTZ(9)"#;
     let gen2 = parse_and_generate(sql2);
-    assert_eq!(gen2, "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPNTZ(9))");
+    assert_eq!(
+        gen2,
+        "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPNTZ(9))"
+    );
 
     let sql3 = r#"SELECT '1987-01-30 23:59:59.123456789'::TIMESTAMPLTZ(9)"#;
     let gen3 = parse_and_generate(sql3);
-    assert_eq!(gen3, "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPLTZ(9))");
+    assert_eq!(
+        gen3,
+        "SELECT CAST('1987-01-30 23:59:59.123456789' AS TIMESTAMPLTZ(9))"
+    );
 }
 
 // =====================================================================
@@ -77,21 +106,33 @@ fn test_snowflake_timestamp_cast_roundtrip() {
 fn test_snowflake_put_file_to_stage() {
     let sql = "PUT 'file:///tmp/file0.txt' @my_stage parallel=4 source_compression=auto_detect";
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "PUT with quoted file URI failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "PUT with quoted file URI failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_snowflake_put_file_with_placeholder() {
     let sql = "PUT file:///tmp/data.csv ?";
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "PUT with ? placeholder failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "PUT with ? placeholder failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_snowflake_put_quoted_stage() {
     let sql = "PUT 'file:///tmp/data.csv' '@SYSTEM$BIND/1234/0/data_0_0_0.snappy.parquet' OVERWRITE=TRUE AUTO_COMPRESS=FALSE SOURCE_COMPRESSION=NONE";
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "PUT with quoted stage failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "PUT with quoted stage failed: {:?}",
+        result.err()
+    );
 }
 
 // Minimal PUT with just source and ? target
@@ -99,7 +140,11 @@ fn test_snowflake_put_quoted_stage() {
 fn test_snowflake_put_minimal_placeholder() {
     let sql = "PUT 'file:///tmp/f.csv' ?";
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "PUT minimal with ? failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "PUT minimal with ? failed: {:?}",
+        result.err()
+    );
 }
 
 // PUT roundtrip
@@ -109,7 +154,11 @@ fn test_snowflake_put_roundtrip() {
     let gen = parse_and_generate(sql);
     // Verify the generated SQL re-parses
     let result = parse_one(&gen, DialectType::Snowflake);
-    assert!(result.is_ok(), "PUT roundtrip failed to re-parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "PUT roundtrip failed to re-parse: {:?}",
+        result.err()
+    );
 }
 
 // =====================================================================
@@ -120,7 +169,11 @@ fn test_snowflake_put_roundtrip() {
 fn test_snowflake_copy_placeholder_target() {
     let sql = r#"COPY INTO "DB"."SCHEMA"."TABLE" FROM ? FILE_FORMAT = (TYPE = CSV)"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "COPY INTO with ? source failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "COPY INTO with ? source failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -141,7 +194,11 @@ fn test_snowflake_copy_into_with_use_logical_type() {
         FILE_FORMAT=(TYPE=PARQUET USE_VECTORIZED_SCANNER=False
         COMPRESSION=auto USE_LOGICAL_TYPE = TRUE) PURGE=TRUE ON_ERROR=?"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "USE_LOGICAL_TYPE failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "USE_LOGICAL_TYPE failed: {:?}",
+        result.err()
+    );
 }
 
 // Reversed parameter order: ON_ERROR before PURGE
@@ -151,7 +208,11 @@ fn test_snowflake_copy_reversed_param_order() {
         FROM (SELECT $1:"A" FROM '@"STG"')
         FILE_FORMAT=(TYPE=PARQUET COMPRESSION=auto) ON_ERROR=? PURGE=TRUE"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "COPY reversed param order failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "COPY reversed param order failed: {:?}",
+        result.err()
+    );
 }
 
 // Minimal COPY with ? source
@@ -159,7 +220,11 @@ fn test_snowflake_copy_reversed_param_order() {
 fn test_snowflake_copy_minimal_placeholder() {
     let sql = r#"COPY INTO "T" FROM ?"#;
     let result = parse_one(sql, DialectType::Snowflake);
-    assert!(result.is_ok(), "COPY minimal with ? source failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "COPY minimal with ? source failed: {:?}",
+        result.err()
+    );
 }
 
 // COPY roundtrip
@@ -168,9 +233,12 @@ fn test_snowflake_copy_roundtrip() {
     let sql = r#"COPY INTO "DB"."SCHEMA"."TABLE" FROM ? FILE_FORMAT = (TYPE = CSV)"#;
     let gen = parse_and_generate(sql);
     let result = parse_one(&gen, DialectType::Snowflake);
-    assert!(result.is_ok(), "COPY roundtrip failed to re-parse: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "COPY roundtrip failed to re-parse: {:?}",
+        result.err()
+    );
 }
-
 
 // =====================================================================
 // Category 5: INSERT OVERWRITE ALL
@@ -196,7 +264,8 @@ fn issue_164_cat1_placeholder_bind_params() {
 
 #[test]
 fn issue_164_cat2_put_placeholder_stage() {
-    let sql = "PUT 'file:///var/folders/temp/file0.txt' ? parallel=4 source_compression=auto_detect";
+    let sql =
+        "PUT 'file:///var/folders/temp/file0.txt' ? parallel=4 source_compression=auto_detect";
     let result = parse_one(sql, DialectType::Snowflake);
     assert!(result.is_ok(), "Issue #164 Cat2 failed: {:?}", result.err());
 }
@@ -225,7 +294,10 @@ fn issue_164_cat5_name_percent_known_limitation() {
     let result = parse_one(sql, DialectType::Snowflake);
     // Expected to fail — unquoted identifiers with % are not valid SQL.
     // The connector should quote these as "name%" instead.
-    assert!(result.is_err(), "name% should fail to parse (known limitation)");
+    assert!(
+        result.is_err(),
+        "name% should fail to parse (known limitation)"
+    );
 }
 
 // =====================================================================

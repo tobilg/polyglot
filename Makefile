@@ -188,7 +188,7 @@ test-rust-dialect:
 
 # Run transpilation tests
 test-rust-transpile:
-	RUST_MIN_STACK=16777216 cargo test -p polyglot-sql sqlglot_transpilation -- --nocapture
+	cargo test -p polyglot-sql sqlglot_transpilation -- --nocapture
 
 # Run pretty-printing tests (24 tests)
 test-rust-pretty:
@@ -225,16 +225,16 @@ test-rust-verify:
 	@cargo test --test sqlglot_parser test_sqlglot_parser_all -p polyglot-sql -- --nocapture
 	@echo ""
 	@echo "=== Pretty-print tests ==="
-	@RUST_MIN_STACK=16777216 cargo test --test sqlglot_pretty test_sqlglot_pretty_all -p polyglot-sql --release -- --nocapture
+	@cargo test --test sqlglot_pretty test_sqlglot_pretty_all -p polyglot-sql --release -- --nocapture
 	@echo ""
 	@echo "=== Custom dialect tests ==="
 	@cargo test --test custom_dialect_tests -p polyglot-sql -- --nocapture
 	@echo ""
 	@echo "=== ClickHouse parser tests ==="
-	@RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+	@cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
 	@echo ""
 	@echo "=== ClickHouse coverage tests ==="
-	@RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
+	@cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 	@echo ""
 	@echo "=== FFI tests ==="
 	@cargo test -p polyglot-sql-ffi -- --nocapture
@@ -289,11 +289,11 @@ test-ffi:
 
 # Run ClickHouse parser tests
 test-rust-clickhouse-parser:
-	RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
+	cargo test --test custom_clickhouse_parser -p polyglot-sql --release -- --nocapture
 
 # Run ClickHouse coverage tests (report-only, failures expected)
 test-rust-clickhouse-coverage:
-	RUST_MIN_STACK=16777216 cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
+	cargo test --test custom_clickhouse_coverage -p polyglot-sql --release -- --nocapture
 
 # =============================================================================
 # Full Comparison (Reference Implementation)

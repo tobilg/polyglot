@@ -1338,20 +1338,14 @@ mod tests {
 
     #[test]
     fn test_json_query_isnull_wrapper_nested() {
-        // Run in a thread with larger stack to avoid stack overflow
-        std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let dialect = Dialect::get(DialectType::TSQL);
-                let result = dialect.transpile(
-                    r#"JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'))"#,
-                    DialectType::TSQL,
-                ).expect("transpile failed");
-                let expected = r#"ISNULL(JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'), JSON_VALUE(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'))"#;
-                assert_eq!(result[0], expected, "JSON_QUERY should be wrapped with ISNULL");
-            })
-            .expect("Failed to spawn test thread")
-            .join()
-            .expect("Test thread panicked");
+        let dialect = Dialect::get(DialectType::TSQL);
+        let result = dialect
+            .transpile(
+                r#"JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'))"#,
+                DialectType::TSQL,
+            )
+            .expect("transpile failed");
+        let expected = r#"ISNULL(JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'), JSON_VALUE(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'))"#;
+        assert_eq!(result[0], expected, "JSON_QUERY should be wrapped with ISNULL");
     }
 }

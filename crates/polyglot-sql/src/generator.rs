@@ -2440,6 +2440,24 @@ impl Generator {
     }
 
     fn generate_expression(&mut self, expr: &Expression) -> Result<()> {
+        #[cfg(feature = "stacker")]
+        {
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || {
+                self.generate_expression_inner(expr)
+            })
+        }
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.generate_expression_inner(expr)
+        }
+    }
+
+    fn generate_expression_inner(&mut self, expr: &Expression) -> Result<()> {
         match expr {
             Expression::Select(select) => self.generate_select(select),
             Expression::Union(union) => self.generate_union(union),
@@ -31048,10 +31066,7 @@ impl Generator {
         }
         self.write_keyword("MERGE INTO");
         self.write_space();
-        if matches!(
-            self.config.dialect,
-            Some(crate::DialectType::Oracle)
-        ) {
+        if matches!(self.config.dialect, Some(crate::DialectType::Oracle)) {
             if let Expression::Alias(alias) = e.this.as_ref() {
                 self.generate_expression(&alias.this)?;
                 self.write_space();
@@ -36272,17 +36287,16 @@ impl Generator {
                 Some(Expression::Literal(lit))
                     if matches!(lit.as_ref(), Literal::Number(n) if n == "0")
             );
-        let is_snowflake_default_precision = matches!(
-            self.config.dialect,
-            Some(DialectType::Snowflake)
-        ) && e.nlsparam.is_none()
-            && e.scale.is_none()
-            && matches!(
-                e.format.as_deref(),
-                Some(Expression::Literal(lit))
-                    if matches!(lit.as_ref(), Literal::Number(n) if n == "38")
-            )
-            && precision_is_snowflake_default;
+        let is_snowflake_default_precision =
+            matches!(self.config.dialect, Some(DialectType::Snowflake))
+                && e.nlsparam.is_none()
+                && e.scale.is_none()
+                && matches!(
+                    e.format.as_deref(),
+                    Some(Expression::Literal(lit))
+                        if matches!(lit.as_ref(), Literal::Number(n) if n == "38")
+                )
+                && precision_is_snowflake_default;
 
         if !is_snowflake_default_precision {
             if let Some(format) = &e.format {
