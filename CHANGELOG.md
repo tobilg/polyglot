@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.3] - 2026-04-24
+
+### Added
+- Native stack-growth support for deep parser/transform paths via the default
+  `stacker` feature, while keeping WASM builds stacker-free.
+- Stack-focused regression coverage for deeply nested transpilation and
+  ClickHouse/Snowflake parser edge cases.
+
+### Changed
+- Refactored recursive parser/transform hot paths to reduce per-level stack
+  usage and remove unnecessary manually enlarged test/runtime stacks.
+- Updated ClickHouse and sqlglot verification fixtures for the current
+  transpilation behavior.
+- Documented stack-size behavior, default native safety settings, and WASM/FFI
+  integration notes in the README.
+
+### Fixed
+- Snowflake Python connector query parsing failures involving empty argument
+  lists, optional ODBC call wrappers, and connector-specific SQL forms.
+- Deep transpilation/normalization stack handling for large generated queries
+  without relying on oversized worker-thread stacks by default.
+
 ## [0.3.0] - 2026-04-06
 
 ### Added
@@ -122,7 +144,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/tobilg/polyglot/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/tobilg/polyglot/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/tobilg/polyglot/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/tobilg/polyglot/compare/v0.1.9...v0.3.0
 [0.1.9]: https://github.com/tobilg/polyglot/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/tobilg/polyglot/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/tobilg/polyglot/compare/v0.1.6...v0.1.7
