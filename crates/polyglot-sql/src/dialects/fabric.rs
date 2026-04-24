@@ -42,6 +42,7 @@ impl DialectImpl for FabricDialect {
             identifier_quote: '[',
             identifier_quote_style: IdentifierQuoteStyle::BRACKET,
             dialect: Some(DialectType::Fabric),
+            null_ordering_supported: false,
             ..Default::default()
         }
     }

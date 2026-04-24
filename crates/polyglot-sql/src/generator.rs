@@ -3141,8 +3141,31 @@ impl Generator {
 
             Expression::And(op) => self.generate_connector_op(op, ConnectorOperator::And),
             Expression::Or(op) => self.generate_connector_op(op, ConnectorOperator::Or),
-            Expression::Add(op) => self.generate_binary_op(op, "+"),
-            Expression::Sub(op) => self.generate_binary_op(op, "-"),
+            Expression::Add(op) => {
+                use crate::dialects::DialectType;
+                if matches!(
+                    self.config.dialect,
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                ) {
+                    if let Expression::Interval(interval) = &op.right {
+                        return self
+                            .generate_tsql_date_add_from_interval(&op.left, interval, false);
+                    }
+                }
+                self.generate_binary_op(op, "+")
+            }
+            Expression::Sub(op) => {
+                use crate::dialects::DialectType;
+                if matches!(
+                    self.config.dialect,
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                ) {
+                    if let Expression::Interval(interval) = &op.right {
+                        return self.generate_tsql_date_add_from_interval(&op.left, interval, true);
+                    }
+                }
+                self.generate_binary_op(op, "-")
+            }
             Expression::Mul(op) => self.generate_binary_op(op, "*"),
             Expression::Div(op) => self.generate_binary_op(op, "/"),
             Expression::IntDiv(f) => {
@@ -4118,8 +4141,10 @@ impl Generator {
         // For SQL Server, convert LIMIT to TOP (structural transformation)
         // But only when there's no OFFSET (otherwise use OFFSET/FETCH syntax)
         // TOP clause (SQL Server style - before DISTINCT)
-        let use_top_from_limit = matches!(self.config.dialect, Some(DialectType::TSQL))
-            && select.top.is_none()
+        let use_top_from_limit = matches!(
+            self.config.dialect,
+            Some(DialectType::TSQL) | Some(DialectType::Fabric)
+        ) && select.top.is_none()
             && select.limit.is_some()
             && select.offset.is_none(); // Don't use TOP when there's OFFSET
 
@@ -4692,7 +4717,10 @@ impl Generator {
             // Standard LIMIT clause (skip for SQL Server - we use TOP or OFFSET/FETCH instead)
             if let Some(limit) = &select.limit {
                 // SQL Server uses TOP (no OFFSET) or OFFSET/FETCH (with OFFSET) instead of LIMIT
-                if !matches!(self.config.dialect, Some(DialectType::TSQL)) {
+                if !matches!(
+                    self.config.dialect,
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                ) {
                     if self.config.pretty {
                         self.write_newline();
                         self.write_indent();
@@ -14665,8 +14693,8 @@ impl Generator {
         use crate::dialects::DialectType;
 
         match self.config.dialect {
-            // SQL Server uses CONVERT or CAST
-            Some(DialectType::TSQL) => {
+            // SQL Server / Fabric use CONVERT or CAST
+            Some(DialectType::TSQL) | Some(DialectType::Fabric) => {
                 self.write("CAST('");
                 self.write(d);
                 self.write("' AS DATE)");
@@ -18574,10 +18602,14 @@ impl Generator {
         self.generate_expression(&f.this)?;
         // PostgreSQL always uses FROM/FOR syntax
         let force_from_for = matches!(self.config.dialect, Some(DialectType::PostgreSQL));
-        // Spark/Hive use comma syntax, not FROM/FOR syntax
+        // Spark/Hive/TSQL/Fabric use comma syntax, not FROM/FOR syntax
         let use_comma_syntax = matches!(
             self.config.dialect,
-            Some(DialectType::Spark) | Some(DialectType::Hive) | Some(DialectType::Databricks)
+            Some(DialectType::Spark)
+                | Some(DialectType::Hive)
+                | Some(DialectType::Databricks)
+                | Some(DialectType::TSQL)
+                | Some(DialectType::Fabric)
         );
         if (f.from_for_syntax || force_from_for) && !use_comma_syntax {
             // SQL standard syntax: SUBSTRING(str FROM pos FOR len)
@@ -19039,6 +19071,67 @@ impl Generator {
         self.write_keyword("AT TIME ZONE");
         self.write_space();
         self.generate_expression(&f.zone)?;
+        Ok(())
+    }
+
+    /// For TSQL/Fabric: transform `date ± INTERVAL 'n' UNIT` → `DATEADD(UNIT, ±n, date)`.
+    fn generate_tsql_date_add_from_interval(
+        &mut self,
+        date_expr: &Expression,
+        interval: &Interval,
+        negate: bool,
+    ) -> Result<()> {
+        use crate::expressions::{IntervalUnitSpec, Literal};
+
+        let Some(IntervalUnitSpec::Simple { unit, .. }) = &interval.unit else {
+            // Unsupported interval unit spec — fall back to standard infix
+            self.generate_expression(date_expr)?;
+            self.write(if negate { " - " } else { " + " });
+            self.write_keyword("INTERVAL");
+            self.write(" ");
+            if let Some(ref val) = interval.this {
+                self.generate_expression(val)?;
+            }
+            if let Some(ref unit_spec) = interval.unit {
+                self.write(" ");
+                self.write_interval_unit_spec(unit_spec)?;
+            }
+            return Ok(());
+        };
+
+        let unit_str = self.interval_unit_str(unit, false);
+        self.write_keyword("DATEADD");
+        self.write("(");
+        self.write_keyword(unit_str);
+        self.write(", ");
+        // Emit interval value: strip quotes from string literals like '90' → 90
+        if let Some(ref val) = interval.this {
+            let simple = match val {
+                Expression::Literal(lit) => match lit.as_ref() {
+                    Literal::String(s) => Some(s.as_str()),
+                    Literal::Number(n) => Some(n.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(v) = simple {
+                if negate {
+                    self.write("-");
+                }
+                self.write(v);
+            } else if negate {
+                self.write("-(");
+                self.generate_expression(val)?;
+                self.write(")");
+            } else {
+                self.generate_expression(val)?;
+            }
+        } else {
+            self.write("0");
+        }
+        self.write(", ");
+        self.generate_expression(date_expr)?;
+        self.write(")");
         Ok(())
     }
 
@@ -22834,56 +22927,60 @@ impl Generator {
             self.write_keyword("ASC");
         }
         if let Some(nulls_first) = ordered.nulls_first {
-            // Determine if we should skip outputting NULLS FIRST/LAST when it's the default
-            // for the dialect. Different dialects have different NULL ordering defaults:
-            //
-            // nulls_are_large (Oracle, Postgres, Snowflake, etc.):
-            //   - ASC: NULLS LAST is default (omit NULLS LAST for ASC)
-            //   - DESC: NULLS FIRST is default (omit NULLS FIRST for DESC)
-            //
-            // nulls_are_small (Spark, Hive, BigQuery, most others):
-            //   - ASC: NULLS FIRST is default
-            //   - DESC: NULLS LAST is default
-            //
-            // nulls_are_last (DuckDB, Presto, Trino, Dremio, etc.):
-            //   - NULLS LAST is always the default regardless of sort direction
-            let is_asc = !ordered.desc;
-            let is_nulls_are_large = matches!(
-                self.config.dialect,
-                Some(DialectType::Oracle)
-                    | Some(DialectType::PostgreSQL)
-                    | Some(DialectType::Redshift)
-                    | Some(DialectType::Snowflake)
-            );
-            let is_nulls_are_last = matches!(
-                self.config.dialect,
-                Some(DialectType::Dremio)
-                    | Some(DialectType::DuckDB)
-                    | Some(DialectType::Presto)
-                    | Some(DialectType::Trino)
-                    | Some(DialectType::Athena)
-                    | Some(DialectType::ClickHouse)
-                    | Some(DialectType::Drill)
-                    | Some(DialectType::Exasol)
-            );
-
-            // Check if the NULLS ordering matches the default for this dialect
-            let is_default_nulls = if is_nulls_are_large {
-                // For nulls_are_large: ASC + NULLS LAST or DESC + NULLS FIRST is default
-                (is_asc && !nulls_first) || (!is_asc && nulls_first)
-            } else if is_nulls_are_last {
-                // For nulls_are_last: NULLS LAST is always default
-                !nulls_first
+            if !self.config.null_ordering_supported {
+                // Dialect does not support NULLS FIRST/LAST syntax — skip entirely
             } else {
-                false
-            };
+                // Determine if we should skip outputting NULLS FIRST/LAST when it's the default
+                // for the dialect. Different dialects have different NULL ordering defaults:
+                //
+                // nulls_are_large (Oracle, Postgres, Snowflake, etc.):
+                //   - ASC: NULLS LAST is default (omit NULLS LAST for ASC)
+                //   - DESC: NULLS FIRST is default (omit NULLS FIRST for DESC)
+                //
+                // nulls_are_small (Spark, Hive, BigQuery, most others):
+                //   - ASC: NULLS FIRST is default
+                //   - DESC: NULLS LAST is default
+                //
+                // nulls_are_last (DuckDB, Presto, Trino, Dremio, etc.):
+                //   - NULLS LAST is always the default regardless of sort direction
+                let is_asc = !ordered.desc;
+                let is_nulls_are_large = matches!(
+                    self.config.dialect,
+                    Some(DialectType::Oracle)
+                        | Some(DialectType::PostgreSQL)
+                        | Some(DialectType::Redshift)
+                        | Some(DialectType::Snowflake)
+                );
+                let is_nulls_are_last = matches!(
+                    self.config.dialect,
+                    Some(DialectType::Dremio)
+                        | Some(DialectType::DuckDB)
+                        | Some(DialectType::Presto)
+                        | Some(DialectType::Trino)
+                        | Some(DialectType::Athena)
+                        | Some(DialectType::ClickHouse)
+                        | Some(DialectType::Drill)
+                        | Some(DialectType::Exasol)
+                );
 
-            if !is_default_nulls {
-                self.write_space();
-                self.write_keyword("NULLS");
-                self.write_space();
-                self.write_keyword(if nulls_first { "FIRST" } else { "LAST" });
-            }
+                // Check if the NULLS ordering matches the default for this dialect
+                let is_default_nulls = if is_nulls_are_large {
+                    // For nulls_are_large: ASC + NULLS LAST or DESC + NULLS FIRST is default
+                    (is_asc && !nulls_first) || (!is_asc && nulls_first)
+                } else if is_nulls_are_last {
+                    // For nulls_are_last: NULLS LAST is always default
+                    !nulls_first
+                } else {
+                    false
+                };
+
+                if !is_default_nulls {
+                    self.write_space();
+                    self.write_keyword("NULLS");
+                    self.write_space();
+                    self.write_keyword(if nulls_first { "FIRST" } else { "LAST" });
+                }
+            } // end null_ordering_supported else
         }
         // WITH FILL clause (ClickHouse)
         if let Some(ref with_fill) = ordered.with_fill {
