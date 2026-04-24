@@ -39890,7 +39890,7 @@ impl Parser {
                 };
                 DataType::Double { precision, scale }
             }
-            "CHARACTER" | "CHAR" | "NCHAR" => {
+            "BPCHAR" | "CHARACTER" | "CHAR" | "NCHAR" => {
                 // Handle CHARACTER VARYING / CHAR VARYING
                 if self.match_identifier("VARYING") {
                     let length = if self.match_token(TokenType::LParen) {
