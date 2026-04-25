@@ -23191,11 +23191,20 @@ impl Dialect {
                             crate::expressions::UnaryFunc::new(arg),
                         ))),
                         DialectType::PostgreSQL | DialectType::Redshift => {
-                            // PostgreSQL ARRAY_LENGTH requires dimension arg
-                            Ok(Expression::Function(Box::new(Function::new(
-                                "ARRAY_LENGTH".to_string(),
-                                vec![arg, Expression::number(1)],
-                            ))))
+                            // BigQuery ARRAY_LENGTH is 1-arg and maps directly to PostgreSQL ARRAY_LENGTH(arr)
+                            // Other sources (CARDINALITY, ARRAY_SIZE etc.) need the dimension arg
+                            if matches!(source, DialectType::BigQuery) && matches!(e, Expression::ArrayLength(_)) {
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "ARRAY_LENGTH".to_string(),
+                                    vec![arg],
+                                ))))
+                            } else {
+                                // PostgreSQL ARRAY_LENGTH requires dimension arg
+                                Ok(Expression::Function(Box::new(Function::new(
+                                    "ARRAY_LENGTH".to_string(),
+                                    vec![arg, Expression::number(1)],
+                                ))))
+                            }
                         }
                         DialectType::Snowflake => Ok(Expression::ArraySize(Box::new(
                             crate::expressions::UnaryFunc::new(arg),
