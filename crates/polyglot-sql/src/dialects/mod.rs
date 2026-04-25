@@ -16905,38 +16905,11 @@ impl Dialect {
                                         )))
                                     }
                                     DialectType::PostgreSQL => {
-                                        // Cast string literal date to TIMESTAMP
-                                        let arg2 = if matches!(
-                                            &arg2,
-                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
-                                        ) {
-                                            Expression::Cast(Box::new(Cast {
-                                                this: arg2,
-                                                to: DataType::Timestamp {
-                                                    precision: None,
-                                                    timezone: false,
-                                                },
-                                                trailing_comments: Vec::new(),
-                                                double_colon_syntax: false,
-                                                format: None,
-                                                default: None,
-                                                inferred_type: None,
-                                            }))
-                                        } else {
-                                            arg2
-                                        };
-                                        let interval = Expression::Interval(Box::new(
-                                            crate::expressions::Interval {
-                                                this: Some(Expression::string(&format!(
-                                                    "{} {}",
-                                                    Self::expr_to_string_static(&arg1),
-                                                    unit_str
-                                                ))),
-                                                unit: None,
-                                            },
-                                        ));
+                                        // DATEADD(unit, count, date) -> date + count
+                                        // PostgreSQL supports date + integer (days) and timestamp + integer (seconds),
+                                        // matching SQLGlot's transpilation behavior.
                                         Ok(Expression::Add(Box::new(
-                                            crate::expressions::BinaryOp::new(arg2, interval),
+                                            crate::expressions::BinaryOp::new(arg2, arg1),
                                         )))
                                     }
                                     DialectType::BigQuery => {
