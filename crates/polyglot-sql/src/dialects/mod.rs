@@ -16905,11 +16905,44 @@ impl Dialect {
                                         )))
                                     }
                                     DialectType::PostgreSQL => {
-                                        // DATEADD(unit, count, date) -> date + count
-                                        // PostgreSQL supports date + integer (days) and timestamp + integer (seconds),
-                                        // matching SQLGlot's transpilation behavior.
+                                        // TSQL/Fabric: DATEADD(unit, n, col) -> col + n (SQLGlot compat)
+                                        if matches!(source, DialectType::TSQL | DialectType::Fabric) {
+                                            return Ok(Expression::Add(Box::new(
+                                                crate::expressions::BinaryOp::new(arg2, arg1),
+                                            )));
+                                        }
+                                        // Other sources: cast string literal to TIMESTAMP then add INTERVAL
+                                        let arg2 = if matches!(
+                                            &arg2,
+                                            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_))
+                                        ) {
+                                            Expression::Cast(Box::new(Cast {
+                                                this: arg2,
+                                                to: DataType::Timestamp {
+                                                    precision: None,
+                                                    timezone: false,
+                                                },
+                                                trailing_comments: Vec::new(),
+                                                double_colon_syntax: false,
+                                                format: None,
+                                                default: None,
+                                                inferred_type: None,
+                                            }))
+                                        } else {
+                                            arg2
+                                        };
+                                        let interval = Expression::Interval(Box::new(
+                                            crate::expressions::Interval {
+                                                this: Some(Expression::string(&format!(
+                                                    "{} {}",
+                                                    Self::expr_to_string_static(&arg1),
+                                                    unit_str
+                                                ))),
+                                                unit: None,
+                                            },
+                                        ));
                                         Ok(Expression::Add(Box::new(
-                                            crate::expressions::BinaryOp::new(arg2, arg1),
+                                            crate::expressions::BinaryOp::new(arg2, interval),
                                         )))
                                     }
                                     DialectType::BigQuery => {
@@ -23191,15 +23224,15 @@ impl Dialect {
                             crate::expressions::UnaryFunc::new(arg),
                         ))),
                         DialectType::PostgreSQL | DialectType::Redshift => {
-                            // BigQuery ARRAY_LENGTH is 1-arg and maps directly to PostgreSQL ARRAY_LENGTH(arr)
-                            // Other sources (CARDINALITY, ARRAY_SIZE etc.) need the dimension arg
+                            // BigQuery ARRAY_LENGTH is 1-arg and semantically equivalent to PostgreSQL ARRAY_LENGTH(arr)
+                            // Other sources need the dimension argument
                             if matches!(source, DialectType::BigQuery) && matches!(e, Expression::ArrayLength(_)) {
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "ARRAY_LENGTH".to_string(),
                                     vec![arg],
                                 ))))
                             } else {
-                                // PostgreSQL ARRAY_LENGTH requires dimension arg
+                                // PostgreSQL ARRAY_LENGTH requires dimension arg (default 1)
                                 Ok(Expression::Function(Box::new(Function::new(
                                     "ARRAY_LENGTH".to_string(),
                                     vec![arg, Expression::number(1)],
