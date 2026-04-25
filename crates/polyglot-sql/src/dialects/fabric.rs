@@ -16,7 +16,9 @@
 
 use super::{DialectImpl, DialectType, TSQLDialect};
 use crate::error::Result;
-use crate::expressions::{BinaryOp, Cast, DataType, Expression, Function, Identifier, Literal};
+use crate::expressions::{
+    BinaryOp, Cast, DataType, Expression, Function, Identifier, In, Literal, QuantifiedOp,
+};
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -282,6 +284,34 @@ impl DialectImpl for FabricDialect {
                 )));
 
                 return Ok(dateadd);
+            }
+        }
+
+        // Convert `col = ANY(ARRAY[v1, v2, ...])` or `col = ANY((v1, v2, ...))` to
+        // `col IN (v1, v2, ...)`.  PG's pg_get_querydef emits ScalarArrayOpExpr in
+        // both of these forms; Fabric/TSQL requires IN instead.
+        if let Expression::Any(ref q) = expr {
+            if matches!(&q.op, Some(QuantifiedOp::Eq)) {
+                let values: Option<Vec<Expression>> = match &q.subquery {
+                    // ARRAY[v1, v2, ...] — bracket constructor form
+                    Expression::ArrayFunc(a) => Some(a.expressions.clone()),
+                    // ARRAY(v1, v2, ...) — bare Array node
+                    Expression::Array(a) => Some(a.expressions.clone()),
+                    // (v1, v2, ...) — parenthesised tuple form
+                    Expression::Tuple(t) => Some(t.expressions.clone()),
+                    _ => None,
+                };
+                if let Some(expressions) = values {
+                    return Ok(Expression::In(Box::new(In {
+                        this: q.this.clone(),
+                        expressions,
+                        query: None,
+                        not: false,
+                        global: false,
+                        unnest: None,
+                        is_field: false,
+                    })));
+                }
             }
         }
 
