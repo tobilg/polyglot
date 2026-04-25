@@ -91,6 +91,18 @@ impl DialectImpl for TSQLDialect {
     }
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
+        // Transform column data types in DDL (transform_recursive skips them by design).
+        if let Expression::CreateTable(mut ct) = expr {
+            for col in &mut ct.columns {
+                if let Ok(Expression::DataType(new_dt)) =
+                    self.transform_data_type(col.data_type.clone())
+                {
+                    col.data_type = new_dt;
+                }
+            }
+            return Ok(Expression::CreateTable(ct));
+        }
+
         match expr {
             // ===== SELECT a = 1 → SELECT 1 AS a =====
             // In T-SQL, `SELECT a = expr` is equivalent to `SELECT expr AS a`
@@ -637,7 +649,7 @@ impl DialectImpl for TSQLDialect {
 
 impl TSQLDialect {
     /// Transform data types according to T-SQL TYPE_MAPPING
-    fn transform_data_type(&self, dt: crate::expressions::DataType) -> Result<Expression> {
+    pub(super) fn transform_data_type(&self, dt: crate::expressions::DataType) -> Result<Expression> {
         use crate::expressions::DataType;
         let transformed = match dt {
             // BOOLEAN -> BIT
@@ -669,10 +681,47 @@ impl TSQLDialect {
             DataType::Uuid => DataType::Custom {
                 name: "UNIQUEIDENTIFIER".to_string(),
             },
+            // Normalise custom type names that have PostgreSQL aliases
+            DataType::Custom { ref name } => {
+                let upper = name.trim().to_uppercase();
+                let (base_name, precision, _scale) =
+                    Self::parse_type_precision_and_scale(&upper);
+                match base_name.as_str() {
+                    // BPCHAR is PostgreSQL's blank-padded CHAR alias — map to CHAR
+                    "BPCHAR" => {
+                        if let Some(len) = precision {
+                            DataType::Char { length: Some(len) }
+                        } else {
+                            DataType::Char { length: None }
+                        }
+                    }
+                    _ => dt,
+                }
+            }
             // Keep all other types as-is
             other => other,
         };
         Ok(Expression::DataType(transformed))
+    }
+
+    /// Parse a type name that may embed precision/scale: `"TYPENAME(n, m)"` → `("TYPENAME", Some(n), Some(m))`.
+    pub(super) fn parse_type_precision_and_scale(
+        name: &str,
+    ) -> (String, Option<u32>, Option<u32>) {
+        if let Some(paren_pos) = name.find('(') {
+            let base = name[..paren_pos].to_string();
+            let rest = &name[paren_pos + 1..];
+            if let Some(close_pos) = rest.find(')') {
+                let args = &rest[..close_pos];
+                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
+                let precision = parts.first().and_then(|s| s.parse::<u32>().ok());
+                let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
+                return (base, precision, scale);
+            }
+            (base, None, None)
+        } else {
+            (name.to_string(), None, None)
+        }
     }
 
     fn transform_function(&self, f: Function) -> Result<Expression> {
