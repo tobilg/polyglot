@@ -158,7 +158,7 @@ pub use trino::TrinoDialect;
 pub use tsql::TSQLDialect;
 
 use crate::error::Result;
-use crate::expressions::{Expression, FunctionBody, Null};
+use crate::expressions::{Expression, Function, FunctionBody, Identifier, Null};
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
 use crate::tokens::{Token, Tokenizer, TokenizerConfig};
@@ -9067,6 +9067,11 @@ impl Dialect {
             match action {
                 Action::None => {
                     // Handle inline transforms that don't need a dedicated action
+                    if matches!(target, DialectType::TSQL | DialectType::Fabric) {
+                        if let Some(rewritten) = Self::rewrite_tsql_interval_arithmetic(&e) {
+                            return Ok(rewritten);
+                        }
+                    }
 
                     // BETWEEN SYMMETRIC/ASYMMETRIC expansion for non-PostgreSQL/Dremio targets
                     if let Expression::Between(ref b) = e {
@@ -31897,7 +31902,9 @@ impl Dialect {
                                 // Return just the numeric part as value and parsed unit
                                 return (
                                     Expression::Literal(Box::new(
-                                        crate::expressions::Literal::String(parts[0].to_string()),
+                                        crate::expressions::Literal::String(
+                                            parts[0].trim().to_string(),
+                                        ),
                                     )),
                                     parsed_unit,
                                 );
@@ -31916,6 +31923,88 @@ impl Dialect {
         } else {
             // Not an interval - pass through
             (interval_expr.clone(), crate::expressions::IntervalUnit::Day)
+        }
+    }
+
+    fn rewrite_tsql_interval_arithmetic(expr: &Expression) -> Option<Expression> {
+        match expr {
+            Expression::Add(op) => {
+                let Expression::Interval(_) = &op.right else {
+                    return None;
+                };
+                Some(Self::build_tsql_dateadd_from_interval(
+                    op.left.clone(),
+                    &op.right,
+                    false,
+                ))
+            }
+            Expression::Sub(op) => {
+                let Expression::Interval(_) = &op.right else {
+                    return None;
+                };
+                Some(Self::build_tsql_dateadd_from_interval(
+                    op.left.clone(),
+                    &op.right,
+                    true,
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn build_tsql_dateadd_from_interval(
+        date: Expression,
+        interval: &Expression,
+        subtract: bool,
+    ) -> Expression {
+        let (value, unit) = Self::extract_interval_parts(interval);
+        let unit = Self::interval_unit_to_string(&unit);
+        let amount = Self::tsql_dateadd_amount(value, subtract);
+
+        Expression::Function(Box::new(Function::new(
+            "DATEADD".to_string(),
+            vec![Expression::Identifier(Identifier::new(unit)), amount, date],
+        )))
+    }
+
+    fn tsql_dateadd_amount(value: Expression, negate: bool) -> Expression {
+        use crate::expressions::UnaryOp;
+
+        fn numeric_literal_value(value: &Expression) -> Option<&str> {
+            match value {
+                Expression::Literal(lit) => match lit.as_ref() {
+                    crate::expressions::Literal::Number(n)
+                    | crate::expressions::Literal::String(n) => Some(n.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        if let Some(n) = numeric_literal_value(&value) {
+            if let Ok(parsed) = n.parse::<f64>() {
+                let normalized = if negate { -parsed } else { parsed };
+                let rendered = if normalized.fract() == 0.0 {
+                    format!("{}", normalized as i64)
+                } else {
+                    normalized.to_string()
+                };
+                return Expression::Literal(Box::new(crate::expressions::Literal::Number(
+                    rendered,
+                )));
+            }
+        }
+
+        if !negate {
+            return value;
+        }
+
+        match value {
+            Expression::Neg(op) => op.this,
+            other => Expression::Neg(Box::new(UnaryOp {
+                this: other,
+                inferred_type: None,
+            })),
         }
     }
 
@@ -37962,7 +38051,11 @@ mod tests {
             "Expected IS NOT DISTINCT FROM: {}",
             result[0]
         );
-        assert!(result[0].contains("= 0"), "Expected = 0 filter: {}", result[0]);
+        assert!(
+            result[0].contains("= 0"),
+            "Expected = 0 filter: {}",
+            result[0]
+        );
     }
 
     #[test]

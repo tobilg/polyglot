@@ -24,6 +24,90 @@ fn transpile_succeeds(sql: &str, from: DialectType, to: DialectType) -> bool {
     source_dialect.transpile(sql, to).is_ok()
 }
 
+mod fabric_regressions {
+    use super::*;
+
+    #[test]
+    fn test_postgres_to_fabric_tpch_syntax() {
+        assert_eq!(
+            transpile(
+                "SELECT DATE '1998-12-01'",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT CAST('1998-12-01' AS DATE)"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT SUBSTRING(c_phone FROM 1 FOR 2)",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT SUBSTRING(c_phone, 1, 2)"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT * FROM lineitem LIMIT 10",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT TOP 10 * FROM lineitem"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT * FROM lineitem ORDER BY shipdate NULLS FIRST",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT * FROM lineitem ORDER BY shipdate"
+        );
+    }
+
+    #[test]
+    fn test_postgres_to_fabric_interval_arithmetic() {
+        assert_eq!(
+            transpile(
+                "SELECT DATE '1998-12-01' + INTERVAL '90' DAY",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT DATEADD(DAY, 90, CAST('1998-12-01' AS DATE))"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT shipdate - INTERVAL '3' DAY FROM lineitem",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT DATEADD(DAY, -3, shipdate) FROM lineitem"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT shipdate - INTERVAL '-3' DAY FROM lineitem",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT DATEADD(DAY, 3, shipdate) FROM lineitem"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT shipdate + INTERVAL '1 day' FROM lineitem",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT DATEADD(DAY, 1, shipdate) FROM lineitem"
+        );
+        assert_eq!(
+            transpile(
+                "SELECT shipdate + INTERVAL n DAY FROM lineitem",
+                DialectType::PostgreSQL,
+                DialectType::Fabric
+            ),
+            "SELECT DATEADD(DAY, n, shipdate) FROM lineitem"
+        );
+    }
+}
+
 // ============================================================================
 // Basic SELECT Transpilation Tests
 // ============================================================================
