@@ -64,7 +64,14 @@ impl DialectImpl for FabricDialect {
                     }
                     _ => {}
                 }
-                // Also transform column data types through Fabric's type mappings
+                // Also transform column data types through Fabric's type mappings.
+                // Apply TSQL normalisation first (e.g. BPCHAR → Char), then Fabric-specific.
+                let tsql = TSQLDialect;
+                if let Ok(Expression::DataType(tsql_dt)) =
+                    tsql.transform_data_type(col.data_type.clone())
+                {
+                    col.data_type = tsql_dt;
+                }
                 if let Expression::DataType(new_dt) =
                     self.transform_fabric_data_type(col.data_type.clone())?
                 {
@@ -362,7 +369,8 @@ impl FabricDialect {
                 let upper = name.to_uppercase();
 
                 // Parse out precision and scale if present: "TYPENAME(n)" or "TYPENAME(n, m)"
-                let (base_name, precision, scale) = Self::parse_type_precision_and_scale(&upper);
+                let (base_name, precision, scale) =
+                    TSQLDialect::parse_type_precision_and_scale(&upper);
 
                 match base_name.as_str() {
                     // DATETIME -> DATETIME2(6)
@@ -517,26 +525,6 @@ impl FabricDialect {
             Some(p) if p > max => max,
             Some(p) => p,
             None => max, // Default to max if not specified
-        }
-    }
-
-    /// Parse type name and optional precision/scale from strings like "DATETIME2(7)" or "NUMERIC(10, 2)"
-    fn parse_type_precision_and_scale(name: &str) -> (String, Option<u32>, Option<u32>) {
-        if let Some(paren_pos) = name.find('(') {
-            let base = name[..paren_pos].to_string();
-            let rest = &name[paren_pos + 1..];
-            if let Some(close_pos) = rest.find(')') {
-                let args = &rest[..close_pos];
-                let parts: Vec<&str> = args.split(',').map(|s| s.trim()).collect();
-
-                let precision = parts.first().and_then(|s| s.parse::<u32>().ok());
-                let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
-
-                return (base, precision, scale);
-            }
-            (base, None, None)
-        } else {
-            (name.to_string(), None, None)
         }
     }
 }
