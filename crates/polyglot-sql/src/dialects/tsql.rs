@@ -13,8 +13,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    Alias, Cast, Cte, DataType, Expression, Function, Identifier, Join, JoinKind, LikeOp, Literal,
-    Null, StringAggFunc, Subquery, UnaryFunc,
+    Alias, Cast, Cte, DataType, Expression, Function, Identifier, In, Join, JoinKind, LikeOp,
+    Literal, Null, QuantifiedOp, StringAggFunc, Subquery, UnaryFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -640,6 +640,47 @@ impl DialectImpl for TSQLDialect {
                 "JSON_VALUE".to_string(),
                 vec![f.this, f.path],
             )))),
+
+            // Convert `col = ANY(ARRAY[v1, v2, ...])` or `col = ANY((v1, v2, ...))` to
+            // `col IN (v1, v2, ...)`. PG's pg_get_querydef emits ScalarArrayOpExpr in
+            // both forms; T-SQL/Fabric requires IN instead.
+            // An empty array produces an always-false predicate (1 = 0) because
+            // `col IN ()` is invalid T-SQL.
+            Expression::Any(ref q) if matches!(&q.op, Some(QuantifiedOp::Eq)) => {
+                let values: Option<Vec<Expression>> = match &q.subquery {
+                    // ARRAY[v1, v2, ...] — bracket constructor form
+                    Expression::ArrayFunc(a) => Some(a.expressions.clone()),
+                    // ARRAY(v1, v2, ...) — bare Array node
+                    Expression::Array(a) => Some(a.expressions.clone()),
+                    // (v1, v2, ...) — parenthesised tuple form
+                    Expression::Tuple(t) => Some(t.expressions.clone()),
+                    _ => None,
+                };
+                match values {
+                    // Empty array: `= ANY(ARRAY[])` is always false
+                    Some(exprs) if exprs.is_empty() => Ok(Expression::Eq(
+                        Box::new(crate::expressions::BinaryOp {
+                            left: Expression::Literal(Box::new(Literal::Number("1".to_string()))),
+                            right: Expression::Literal(Box::new(Literal::Number("0".to_string()))),
+                            left_comments: Vec::new(),
+                            operator_comments: Vec::new(),
+                            trailing_comments: Vec::new(),
+                            inferred_type: None,
+                        }),
+                    )),
+                    Some(expressions) => Ok(Expression::In(Box::new(In {
+                        this: q.this.clone(),
+                        expressions,
+                        query: None,
+                        not: false,
+                        global: false,
+                        unnest: None,
+                        is_field: false,
+                    }))),
+                    // Subquery form — leave unchanged
+                    None => Ok(expr.clone()),
+                }
+            }
 
             // Pass through everything else
             _ => Ok(expr),
