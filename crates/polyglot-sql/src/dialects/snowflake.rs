@@ -3922,6 +3922,37 @@ mod tests {
     }
 
     #[test]
+    fn test_snowflake_scripting_cursor_declare_block_roundtrip() {
+        let sql = "DECLARE
+  emp CURSOR FOR SELECT salary FROM employees;
+BEGIN
+  RETURN 1;
+END";
+
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let ast = dialect.parse(sql).expect("Parse failed");
+        let output = dialect.generate(&ast[0]).expect("Generate failed");
+
+        assert_eq!(output, sql);
+    }
+
+    #[test]
+    fn test_snowflake_scripting_cursor_return_table_roundtrip() {
+        let sql = "DECLARE
+  c1 CURSOR FOR SELECT * FROM invoices;
+BEGIN
+  OPEN c1;
+  RETURN TABLE(RESULTSET_FROM_CURSOR(c1));
+END";
+
+        let dialect = Dialect::get(DialectType::Snowflake);
+        let ast = dialect.parse(sql).expect("Parse failed");
+        let output = dialect.generate(&ast[0]).expect("Generate failed");
+
+        assert_eq!(output, sql);
+    }
+
+    #[test]
     fn test_group_concat_to_listagg() {
         let result = transpile_to_snowflake("SELECT GROUP_CONCAT(name)");
         assert!(

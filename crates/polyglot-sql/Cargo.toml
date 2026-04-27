@@ -82,7 +82,7 @@ thiserror = { workspace = true }
 unicode-segmentation = { workspace = true }
 stacker = { version = "0.1", optional = true }
 ts-rs = { version = "12.0", features = ["serde-compat"], optional = true }
-polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.3.3", optional = true, default-features = false }
+polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.3.4", optional = true, default-features = false }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

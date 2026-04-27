@@ -37,6 +37,12 @@ impl DialectImpl for DatabricksDialect {
         config
             .keywords
             .insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("REPAIR".to_string(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("MSCK".to_string(), crate::tokens::TokenType::Command);
         // Databricks numeric literal suffixes (same as Hive/Spark)
         config
             .numeric_literals
@@ -1008,5 +1014,105 @@ mod tests {
             output, expected,
             "FROM_UTC_TIMESTAMP with existing CAST failed"
         );
+    }
+
+    #[test]
+    fn test_deep_clone_version_as_of() {
+        let sql = "CREATE TABLE events_clone DEEP CLONE events VERSION AS OF 5";
+        let d = Dialect::get(DialectType::Databricks);
+        let ast = d.parse(sql).expect("Parse failed");
+        let output = d.generate(&ast[0]).expect("Generate failed");
+
+        assert_eq!(output, sql);
+    }
+
+    #[test]
+    fn test_deep_clone_timestamp_as_of() {
+        let sql = "CREATE TABLE events_clone DEEP CLONE events TIMESTAMP AS OF '2024-01-01'";
+        let d = Dialect::get(DialectType::Databricks);
+        let ast = d.parse(sql).expect("Parse failed");
+        let output = d.generate(&ast[0]).expect("Generate failed");
+
+        assert_eq!(output, sql);
+    }
+
+    #[test]
+    fn test_shallow_clone_still_roundtrips() {
+        let sql = "CREATE TABLE events_clone SHALLOW CLONE events";
+        let d = Dialect::get(DialectType::Databricks);
+        let ast = d.parse(sql).expect("Parse failed");
+        let output = d.generate(&ast[0]).expect("Generate failed");
+
+        assert_eq!(output, sql);
+    }
+
+    #[test]
+    fn test_repair_table_commands_roundtrip() {
+        let d = Dialect::get(DialectType::Databricks);
+        let cases = [
+            "REPAIR TABLE events",
+            "MSCK REPAIR TABLE events",
+            "REPAIR TABLE events ADD PARTITIONS",
+            "REPAIR TABLE events DROP PARTITIONS",
+            "REPAIR TABLE events SYNC PARTITIONS",
+            "REPAIR TABLE events SYNC METADATA",
+        ];
+
+        for sql in cases {
+            let ast = d.parse(sql).expect("Parse failed");
+            let output = d.generate(&ast[0]).expect("Generate failed");
+            assert_eq!(output, sql);
+        }
+    }
+
+    #[test]
+    fn test_apply_changes_commands_roundtrip() {
+        let d = Dialect::get(DialectType::Databricks);
+        let cases = [
+            "APPLY CHANGES INTO silver.orders FROM STREAM(bronze.orders) KEYS (id) SEQUENCE BY ts",
+            "APPLY CHANGES INTO LIVE.silver_orders FROM STREAM(LIVE.bronze_orders) KEYS (id) IGNORE NULL UPDATES SEQUENCE BY ts",
+            "APPLY CHANGES INTO LIVE.silver_orders FROM STREAM(LIVE.bronze_orders) KEYS (id) APPLY AS DELETE WHEN operation = 'DELETE' SEQUENCE BY ts COLUMNS * EXCEPT (operation) STORED AS SCD TYPE 1",
+            "APPLY CHANGES INTO LIVE.silver_orders FROM STREAM(LIVE.bronze_orders) KEYS (id) SEQUENCE BY ts STORED AS SCD TYPE 2 TRACK HISTORY ON * EXCEPT (updated_at)",
+            "AUTO CDC INTO silver.orders FROM STREAM(bronze.orders) KEYS (id) SEQUENCE BY ts",
+            "CREATE FLOW apply_cdc AS AUTO CDC INTO silver.orders FROM STREAM(bronze.orders) KEYS (id) SEQUENCE BY ts",
+        ];
+
+        for sql in cases {
+            let ast = d.parse(sql).expect("Parse failed");
+            let output = d.generate(&ast[0]).expect("Generate failed");
+            assert_eq!(output, sql);
+        }
+    }
+
+    #[test]
+    fn test_generate_symlink_format_manifest_roundtrip() {
+        let d = Dialect::get(DialectType::Databricks);
+        let cases = [
+            "GENERATE symlink_format_manifest FOR TABLE events",
+            "GENERATE symlink_format_manifest FOR TABLE catalog.schema.events",
+        ];
+
+        for sql in cases {
+            let ast = d.parse(sql).expect("Parse failed");
+            let output = d.generate(&ast[0]).expect("Generate failed");
+            assert_eq!(output, sql);
+        }
+    }
+
+    #[test]
+    fn test_convert_to_delta_roundtrip() {
+        let d = Dialect::get(DialectType::Databricks);
+        let cases = [
+            "CONVERT TO DELTA parquet.`/mnt/data/events`",
+            "CONVERT TO DELTA database_name.table_name",
+            "CONVERT TO DELTA parquet.`s3://my-bucket/path/to/table` PARTITIONED BY (date DATE)",
+            "CONVERT TO DELTA database_name.table_name NO STATISTICS",
+        ];
+
+        for sql in cases {
+            let ast = d.parse(sql).expect("Parse failed");
+            let output = d.generate(&ast[0]).expect("Generate failed");
+            assert_eq!(output, sql);
+        }
     }
 }

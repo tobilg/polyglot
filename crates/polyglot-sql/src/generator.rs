@@ -7740,6 +7740,8 @@ impl Generator {
                 self.write_keyword("COPY");
             } else if ct.shallow_clone {
                 self.write_keyword("SHALLOW CLONE");
+            } else if ct.deep_clone {
+                self.write_keyword("DEEP CLONE");
             } else {
                 self.write_keyword("CLONE");
             }

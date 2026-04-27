@@ -42,6 +42,12 @@ impl DialectImpl for HiveDialect {
         config
             .keywords
             .insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("REPAIR".to_string(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("MSCK".to_string(), crate::tokens::TokenType::Command);
         // Hive numeric literal suffixes: 1L -> BIGINT, 1S -> SMALLINT, etc.
         config
             .numeric_literals

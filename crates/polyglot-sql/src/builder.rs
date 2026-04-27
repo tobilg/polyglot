@@ -1603,6 +1603,7 @@ impl SelectBuilder {
             clone_at_clause: None,
             is_copy: false,
             shallow_clone: false,
+            deep_clone: false,
             leading_comments: vec![],
             with_properties: vec![],
             teradata_post_name_options: vec![],

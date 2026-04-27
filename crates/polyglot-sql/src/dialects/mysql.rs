@@ -1217,6 +1217,29 @@ mod tests {
         assert_eq!(config.identifier_quote, '`');
     }
 
+    #[test]
+    fn test_create_procedure_signal_sqlstate_regression() {
+        let sql = "CREATE PROCEDURE CheckSalary(IN p_salary DECIMAL(10,2))
+BEGIN
+  IF p_salary <= 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Salary must be positive';
+  END IF;
+  INSERT INTO employees (salary) VALUES (p_salary);
+END;";
+
+        let dialect = Dialect::get(DialectType::MySQL);
+        let ast = dialect.parse(sql).expect("Parse failed");
+        let output = dialect.generate(&ast[0]).expect("Generate failed");
+
+        assert!(output.contains("CREATE PROCEDURE CheckSalary"));
+        assert!(output.contains("IF p_salary <= 0 THEN"));
+        assert!(
+            output.contains("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Salary must be positive'")
+        );
+        assert!(output.contains("END IF"));
+        assert!(output.contains("INSERT INTO employees (salary) VALUES (p_salary)"));
+    }
+
     fn mysql_identity(sql: &str, expected: &str) {
         let dialect = Dialect::get(DialectType::MySQL);
         let ast = dialect.parse(sql).expect("Parse failed");

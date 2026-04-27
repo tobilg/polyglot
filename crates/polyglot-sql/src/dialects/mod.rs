@@ -31326,6 +31326,7 @@ impl Dialect {
                             clone_source: None,
                             clone_at_clause: None,
                             shallow_clone: false,
+                            deep_clone: false,
                             is_copy: false,
                             leading_comments: Vec::new(),
                             with_properties: Vec::new(),

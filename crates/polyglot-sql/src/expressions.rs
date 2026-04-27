@@ -7297,6 +7297,9 @@ pub struct CreateTable {
     /// Whether this is a SHALLOW CLONE (Databricks/Delta Lake)
     #[serde(default)]
     pub shallow_clone: bool,
+    /// Whether this is an explicit DEEP CLONE (Databricks/Delta Lake)
+    #[serde(default)]
+    pub deep_clone: bool,
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
@@ -7406,6 +7409,7 @@ impl CreateTable {
             clone_source: None,
             clone_at_clause: None,
             shallow_clone: false,
+            deep_clone: false,
             is_copy: false,
             leading_comments: Vec::new(),
             with_properties: Vec::new(),

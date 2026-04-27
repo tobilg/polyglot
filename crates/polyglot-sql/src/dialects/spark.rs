@@ -41,6 +41,12 @@ impl DialectImpl for SparkDialect {
         config
             .keywords
             .insert("DIV".to_string(), crate::tokens::TokenType::Div);
+        config
+            .keywords
+            .insert("REPAIR".to_string(), crate::tokens::TokenType::Command);
+        config
+            .keywords
+            .insert("MSCK".to_string(), crate::tokens::TokenType::Command);
         // Spark numeric literal suffixes (same as Hive): 1L -> BIGINT, 1S -> SMALLINT, etc.
         config
             .numeric_literals

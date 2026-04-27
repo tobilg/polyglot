@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.4] - 2026-04-27
+
+### Added
+- Databricks parser support for additional Delta Lake and Lakeflow command
+  forms:
+  - `CREATE TABLE ... DEEP CLONE ... VERSION/TIMESTAMP AS OF ...`
+  - `REPAIR TABLE` / `MSCK REPAIR TABLE`
+  - `APPLY CHANGES INTO`, `AUTO CDC INTO`, and `CREATE FLOW ... AS AUTO CDC`
+  - `GENERATE symlink_format_manifest FOR TABLE ...`
+  - `CONVERT TO DELTA ...`
+- Snowflake scripting block support for `DECLARE ... BEGIN ... END` cursor
+  blocks, including cursor `OPEN` and `RETURN TABLE(RESULTSET_FROM_CURSOR(...))`
+  command bodies.
+- PostgreSQL to T-SQL/Fabric rewrites for scalar array comparisons:
+  `= ANY(ARRAY[...])` and `= ANY((...))` now emit `IN (...)`, with empty
+  arrays rewritten to an always-false predicate.
+
+### Changed
+- Raw command parsing now preserves original source text when available, keeping
+  dialect-specific quoted paths and procedural command bodies intact.
+
+### Fixed
+- Databricks parsing failures for Delta maintenance, clone, CDC, manifest, and
+  conversion commands.
+- Snowflake parsing failures for anonymous scripting blocks with cursor
+  declarations.
+- Regression coverage for MySQL stored procedures using `SIGNAL SQLSTATE` inside
+  `BEGIN ... END` blocks.
+
 ## [0.3.3] - 2026-04-24
 
 ### Added
@@ -144,7 +173,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
-[Unreleased]: https://github.com/tobilg/polyglot/compare/v0.3.3...HEAD
+[0.3.4]: https://github.com/tobilg/polyglot/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/tobilg/polyglot/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/tobilg/polyglot/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/tobilg/polyglot/compare/v0.3.0...v0.3.1

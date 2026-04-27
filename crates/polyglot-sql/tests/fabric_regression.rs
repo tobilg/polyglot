@@ -49,3 +49,37 @@ fn bpchar_ddl_column_with_length_maps_to_char() {
     let out = pg_to_fabric("CREATE TABLE t (x BPCHAR(3))");
     assert_eq!(out, "CREATE TABLE t (x CHAR(3))");
 }
+
+// ---------------------------------------------------------------------------
+// = ANY(ARRAY[...]) / = ANY((...)) → IN
+// ---------------------------------------------------------------------------
+
+#[test]
+fn any_eq_array_brackets_rewrites_to_in() {
+    let out = pg_to_fabric("SELECT * FROM t WHERE col = ANY(ARRAY['a', 'b', 'c'])");
+    assert_eq!(out, "SELECT * FROM t WHERE col IN ('a', 'b', 'c')");
+}
+
+#[test]
+fn any_eq_tuple_rewrites_to_in() {
+    let out = pg_to_fabric("SELECT * FROM t WHERE col = ANY(('a', 'b', 'c'))");
+    assert_eq!(out, "SELECT * FROM t WHERE col IN ('a', 'b', 'c')");
+}
+
+#[test]
+fn any_eq_empty_array_rewrites_to_always_false() {
+    let out = pg_to_fabric("SELECT * FROM t WHERE col = ANY(ARRAY[])");
+    assert_eq!(out, "SELECT * FROM t WHERE 1 = 0");
+}
+
+#[test]
+fn any_neq_array_not_rewritten() {
+    let out = pg_to_fabric("SELECT * FROM t WHERE col <> ANY(ARRAY['a', 'b'])");
+    assert_eq!(out, "SELECT * FROM t WHERE col <> ANY(ARRAY['a', 'b'])");
+}
+
+#[test]
+fn any_eq_subquery_not_rewritten() {
+    let out = pg_to_fabric("SELECT * FROM t WHERE col = ANY(SELECT id FROM s)");
+    assert_eq!(out, "SELECT * FROM t WHERE col = ANY (SELECT id FROM s)");
+}

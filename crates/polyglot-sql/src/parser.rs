@@ -795,9 +795,51 @@ impl Parser {
             TokenType::Replace => self.parse_replace(),
             TokenType::Update => self.parse_update(),
             TokenType::Delete => self.parse_delete(),
+            TokenType::Create
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Databricks)
+                ) && self.check_databricks_create_flow_auto_cdc() =>
+            {
+                self.parse_raw_command_statement()
+            }
             TokenType::Create => self.parse_create(),
             TokenType::Drop => self.parse_drop(),
             TokenType::Alter => self.parse_alter(),
+            TokenType::Apply
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Databricks)
+                ) && self.check_text_seq(&["APPLY", "CHANGES", "INTO"]) =>
+            {
+                self.parse_raw_command_statement()
+            }
+            _ if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Databricks)
+            ) && self.check_text_seq(&["AUTO", "CDC", "INTO"]) =>
+            {
+                self.parse_raw_command_statement()
+            }
+            _ if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Databricks)
+            ) && self.check_text_seq(&[
+                "GENERATE",
+                "symlink_format_manifest",
+                "FOR",
+                "TABLE",
+            ]) =>
+            {
+                self.parse_raw_command_statement()
+            }
+            _ if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Databricks)
+            ) && self.check_text_seq(&["CONVERT", "TO", "DELTA"]) =>
+            {
+                self.parse_raw_command_statement()
+            }
             TokenType::Truncate => {
                 // TRUNCATE could be TRUNCATE TABLE (statement) or TRUNCATE(a, b) (function)
                 // Check if followed by ( to determine which
@@ -935,9 +977,17 @@ impl Parser {
                 }
             }
             TokenType::Declare => {
-                self.skip(); // consume DECLARE
-                self.parse_declare()?
-                    .ok_or_else(|| self.parse_error("Failed to parse DECLARE statement"))
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::Snowflake)
+                ) && self.check_snowflake_scripting_block()
+                {
+                    self.parse_raw_scripting_block()
+                } else {
+                    self.skip(); // consume DECLARE
+                    self.parse_declare()?
+                        .ok_or_else(|| self.parse_error("Failed to parse DECLARE statement"))
+                }
             }
             // GET is a command only when followed by @ (stage reference), otherwise it's a function
             // If followed by ( it should be parsed as GET() function, so fall through to expression parsing
@@ -11576,6 +11626,96 @@ impl Parser {
         }
     }
 
+    fn check_databricks_create_flow_auto_cdc(&self) -> bool {
+        self.peek_nth(0)
+            .is_some_and(|t| t.token_type == TokenType::Create)
+            && self
+                .peek_nth(1)
+                .is_some_and(|t| t.text.eq_ignore_ascii_case("FLOW"))
+            && (2..8).any(|i| {
+                self.peek_nth(i)
+                    .is_some_and(|t| t.text.eq_ignore_ascii_case("AUTO"))
+                    && self
+                        .peek_nth(i + 1)
+                        .is_some_and(|t| t.text.eq_ignore_ascii_case("CDC"))
+                    && self
+                        .peek_nth(i + 2)
+                        .is_some_and(|t| t.token_type == TokenType::Into)
+            })
+    }
+
+    fn parse_raw_command_statement(&mut self) -> Result<Expression> {
+        let start = self.current;
+        let start_pos = self.peek().span.start;
+
+        while !self.is_at_end() && !self.check(TokenType::Semicolon) {
+            self.skip();
+        }
+
+        let command_text = if let Some(ref source) = self.source {
+            let end_pos = if self.current > start {
+                self.tokens[self.current - 1].span.end
+            } else {
+                start_pos
+            };
+            source[start_pos..end_pos].to_string()
+        } else {
+            self.tokens_to_sql(start, self.current)
+        };
+
+        Ok(Expression::Command(Box::new(Command {
+            this: command_text,
+        })))
+    }
+
+    fn check_snowflake_scripting_block(&self) -> bool {
+        self.check(TokenType::Declare)
+            && (1..self.tokens.len().saturating_sub(self.current))
+                .take(128)
+                .any(|i| {
+                    self.peek_nth(i)
+                        .is_some_and(|t| t.token_type == TokenType::Begin)
+                })
+    }
+
+    fn parse_raw_scripting_block(&mut self) -> Result<Expression> {
+        let start = self.current;
+        let start_pos = self.peek().span.start;
+        let mut depth = 0usize;
+        let mut seen_begin = false;
+
+        while !self.is_at_end() {
+            if self.check(TokenType::Begin) {
+                seen_begin = true;
+                depth += 1;
+            } else if self.check(TokenType::End) && seen_begin {
+                depth = depth.saturating_sub(1);
+                self.skip();
+                if depth == 0 {
+                    break;
+                }
+                continue;
+            }
+
+            self.skip();
+        }
+
+        let command_text = if let Some(ref source) = self.source {
+            let end_pos = if self.current > start {
+                self.tokens[self.current - 1].span.end
+            } else {
+                start_pos
+            };
+            source[start_pos..end_pos].to_string()
+        } else {
+            self.tokens_to_sql(start, self.current)
+        };
+
+        Ok(Expression::Command(Box::new(Command {
+            this: command_text,
+        })))
+    }
+
     /// Parse CREATE TABLE
     fn parse_create_table(
         &mut self,
@@ -11753,20 +11893,41 @@ impl Parser {
                 }
                 result.push(')');
                 Some(Expression::Raw(Raw { sql: result }))
-            } else if self.match_identifier("VERSION") || self.match_identifier("TIMESTAMP") {
+            } else if matches!(
+                self.peek().token_type,
+                TokenType::VersionSnapshot | TokenType::TimestampSnapshot
+            ) || ((self.check_keyword_text("VERSION")
+                || self.check_keyword_text("TIMESTAMP"))
+                && self
+                    .peek_nth(1)
+                    .is_some_and(|t| t.token_type == TokenType::As)
+                && self
+                    .peek_nth(2)
+                    .is_some_and(|t| t.text.eq_ignore_ascii_case("OF")))
+            {
                 // Databricks: VERSION AS OF n / TIMESTAMP AS OF t
-                let keyword = self.previous().text.to_ascii_uppercase();
-                self.match_token(TokenType::As); // consume AS
-                self.match_identifier("OF"); // consume OF
-                let token = self.advance();
-                let value = if token.token_type == TokenType::String {
-                    format!("'{}'", token.text.replace('\'', "''"))
+                let version_kind = if self.match_token(TokenType::TimestampSnapshot) {
+                    "TIMESTAMP".to_string()
+                } else if self.match_token(TokenType::VersionSnapshot) {
+                    "VERSION".to_string()
                 } else {
-                    token.text.clone()
+                    let version_kind = self.advance().text.to_ascii_uppercase();
+                    self.expect(TokenType::As)?;
+                    if !self.match_keyword("OF") {
+                        return Err(self.parse_error("Expected OF after AS"));
+                    }
+                    version_kind
                 };
-                Some(Expression::Raw(Raw {
-                    sql: format!("{} AS OF {}", keyword, value),
-                }))
+
+                let value = self.parse_bitwise()?.ok_or_else(|| {
+                    self.parse_error(format!("Expected expression after {version_kind} AS OF"))
+                })?;
+
+                Some(Expression::Version(Box::new(Version {
+                    this: Box::new(Expression::Identifier(Identifier::new(&version_kind))),
+                    kind: "AS OF".to_string(),
+                    expression: Some(Box::new(value)),
+                })))
             } else {
                 None
             };
@@ -11786,6 +11947,7 @@ impl Parser {
                 clone_source: Some(source),
                 clone_at_clause: at_clause,
                 shallow_clone,
+                deep_clone,
                 is_copy,
                 leading_comments,
                 with_properties: Vec::new(),
@@ -11891,6 +12053,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 // BigQuery EXTERNAL uses OPTIONS(), not generic WITH (key=value) properties
@@ -11953,6 +12116,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties,
@@ -12121,6 +12285,7 @@ impl Parser {
                         clone_source: None,
                         clone_at_clause: None,
                         shallow_clone: false,
+                        deep_clone: false,
                         is_copy: false,
                         leading_comments,
                         with_properties,
@@ -12163,6 +12328,7 @@ impl Parser {
                     clone_source: Some(source),
                     clone_at_clause: None,
                     shallow_clone: false,
+                    deep_clone: false,
                     is_copy: false,
                     leading_comments,
                     with_properties,
@@ -12270,6 +12436,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties,
@@ -12332,6 +12499,7 @@ impl Parser {
                     clone_source: None,
                     clone_at_clause: None,
                     shallow_clone: false,
+                    deep_clone: false,
                     is_copy: false,
                     leading_comments,
                     with_properties,
@@ -12417,6 +12585,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties: extra_options,
@@ -12462,6 +12631,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties,
@@ -12505,6 +12675,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties,
@@ -12564,6 +12735,7 @@ impl Parser {
                 clone_source: None,
                 clone_at_clause: None,
                 shallow_clone: false,
+                deep_clone: false,
                 is_copy: false,
                 leading_comments,
                 with_properties,
@@ -12618,6 +12790,7 @@ impl Parser {
                     clone_source: None,
                     clone_at_clause: None,
                     shallow_clone: false,
+                    deep_clone: false,
                     is_copy: false,
                     leading_comments,
                     with_properties,
@@ -13723,6 +13896,7 @@ impl Parser {
             clone_source: None,
             clone_at_clause: None,
             shallow_clone: false,
+            deep_clone: false,
             is_copy: false,
             leading_comments,
             with_properties: all_with_properties,
@@ -13873,6 +14047,7 @@ impl Parser {
             clone_source: None,
             clone_at_clause: None,
             shallow_clone: false,
+            deep_clone: false,
             is_copy: false,
             leading_comments,
             with_properties: Vec::new(),
@@ -60449,7 +60624,12 @@ OPTIONS (
         fn check(sql: &str, expected: Option<&str>) {
             let expected_out = expected.unwrap_or(sql);
             let parsed = crate::parse(sql, DialectType::DuckDB);
-            assert!(parsed.is_ok(), "Failed to parse: {} - {:?}", sql, parsed.err());
+            assert!(
+                parsed.is_ok(),
+                "Failed to parse: {} - {:?}",
+                sql,
+                parsed.err()
+            );
             let stmts = parsed.unwrap();
             assert!(!stmts.is_empty(), "No statements parsed: {}", sql);
             let generated = crate::generate(&stmts[0], DialectType::DuckDB);

@@ -13,8 +13,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    Alias, Cast, Cte, DataType, Expression, Function, Identifier, Join, JoinKind, LikeOp, Literal,
-    Null, StringAggFunc, Subquery, UnaryFunc,
+    Alias, Cast, Cte, DataType, Expression, Function, Identifier, In, Join, JoinKind, LikeOp,
+    Literal, Null, QuantifiedOp, StringAggFunc, Subquery, UnaryFunc,
 };
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
@@ -641,6 +641,36 @@ impl DialectImpl for TSQLDialect {
                 vec![f.this, f.path],
             )))),
 
+            // PostgreSQL pg_get_querydef can emit scalar array comparisons for
+            // literal arrays/tuples. T-SQL/Fabric require IN for this shape.
+            Expression::Any(ref q) if matches!(&q.op, Some(QuantifiedOp::Eq)) => {
+                let values: Option<Vec<Expression>> = match &q.subquery {
+                    Expression::ArrayFunc(a) => Some(a.expressions.clone()),
+                    Expression::Array(a) => Some(a.expressions.clone()),
+                    Expression::Tuple(t) => Some(t.expressions.clone()),
+                    _ => None,
+                };
+
+                match values {
+                    Some(expressions) if expressions.is_empty() => {
+                        Ok(Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
+                            Expression::Literal(Box::new(Literal::Number("1".to_string()))),
+                            Expression::Literal(Box::new(Literal::Number("0".to_string()))),
+                        ))))
+                    }
+                    Some(expressions) => Ok(Expression::In(Box::new(In {
+                        this: q.this.clone(),
+                        expressions,
+                        query: None,
+                        not: false,
+                        global: false,
+                        unnest: None,
+                        is_field: false,
+                    }))),
+                    None => Ok(expr.clone()),
+                }
+            }
+
             // Pass through everything else
             _ => Ok(expr),
         }
@@ -649,7 +679,10 @@ impl DialectImpl for TSQLDialect {
 
 impl TSQLDialect {
     /// Transform data types according to T-SQL TYPE_MAPPING
-    pub(super) fn transform_data_type(&self, dt: crate::expressions::DataType) -> Result<Expression> {
+    pub(super) fn transform_data_type(
+        &self,
+        dt: crate::expressions::DataType,
+    ) -> Result<Expression> {
         use crate::expressions::DataType;
         let transformed = match dt {
             // BOOLEAN -> BIT
@@ -684,8 +717,7 @@ impl TSQLDialect {
             // Normalise custom type names that have PostgreSQL aliases
             DataType::Custom { ref name } => {
                 let upper = name.trim().to_uppercase();
-                let (base_name, precision, _scale) =
-                    Self::parse_type_precision_and_scale(&upper);
+                let (base_name, precision, _scale) = Self::parse_type_precision_and_scale(&upper);
                 match base_name.as_str() {
                     // BPCHAR is PostgreSQL's blank-padded CHAR alias — map to CHAR
                     "BPCHAR" => {
@@ -705,9 +737,7 @@ impl TSQLDialect {
     }
 
     /// Parse a type name that may embed precision/scale: `"TYPENAME(n, m)"` → `("TYPENAME", Some(n), Some(m))`.
-    pub(super) fn parse_type_precision_and_scale(
-        name: &str,
-    ) -> (String, Option<u32>, Option<u32>) {
+    pub(super) fn parse_type_precision_and_scale(name: &str) -> (String, Option<u32>, Option<u32>) {
         if let Some(paren_pos) = name.find('(') {
             let base = name[..paren_pos].to_string();
             let rest = &name[paren_pos + 1..];
@@ -1395,6 +1425,9 @@ mod tests {
             )
             .expect("transpile failed");
         let expected = r#"ISNULL(JSON_QUERY(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'), JSON_VALUE(REPLACE(REPLACE(x, '''', '"'), '""', '"'), '$'))"#;
-        assert_eq!(result[0], expected, "JSON_QUERY should be wrapped with ISNULL");
+        assert_eq!(
+            result[0], expected,
+            "JSON_QUERY should be wrapped with ISNULL"
+        );
     }
 }
