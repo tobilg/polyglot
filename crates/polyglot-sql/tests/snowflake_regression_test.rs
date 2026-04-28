@@ -327,3 +327,105 @@ fn test_snowflake_create_table_unaffected() {
     let result = parse_one(&gen, DialectType::Snowflake);
     assert!(result.is_ok(), "CREATE TABLE broken: {:?}", result.err());
 }
+
+// =====================================================================
+// Category A: DollarString in PUT (source/target)
+// Related: https://github.com/tobilg/polyglot/issues/165
+// =====================================================================
+
+#[test]
+fn test_snowflake_put_dollar_quoted_stage() {
+    // JDBC driver wraps stage references in $$...$$ for special characters
+    let sql = r#"put file:///tmp/placeholder $$@%"ice cream (nice)"$$ overwrite=true"#;
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with dollar-quoted stage target failed: {:?}",
+        result.err()
+    );
+}
+
+// =====================================================================
+// Category B: DollarString as table source in SELECT FROM
+// Related: https://github.com/tobilg/polyglot/issues/165
+// =====================================================================
+
+#[test]
+fn test_snowflake_select_from_dollar_quoted_stage() {
+    // JDBC driver uses $$...$$ for stage paths in FROM clause
+    let sql = r#"SELECT $1 FROM $$@%"ice cream (nice)"/$$"#;
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "SELECT FROM dollar-quoted stage path failed: {:?}",
+        result.err()
+    );
+}
+
+// =====================================================================
+// Category C: @~ user stage with UUID path segments
+// Related: https://github.com/tobilg/polyglot/issues/165
+// =====================================================================
+
+#[test]
+fn test_snowflake_put_user_stage_uuid_path() {
+    let sql =
+        "put file:///tmp/placeholder @~/00626646-bb1e-4729-a1ab-d4b96aebbed5/testUploadStream overwrite=true";
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with @~/UUID/name path failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_snowflake_put_user_stage_uuid_path_compress() {
+    let sql =
+        "put file:///tmp/placeholder @~/00626646-bb1e-4729-a1ab-d4b96aebbed5/testCompressAndUploadStream overwrite=true";
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with @~/UUID/compressUpload path failed: {:?}",
+        result.err()
+    );
+}
+
+// =====================================================================
+// Category D: Named stage with UUID subpath + AUTO_COMPRESS
+// Related: https://github.com/tobilg/polyglot/issues/165
+// =====================================================================
+
+#[test]
+fn test_snowflake_put_named_stage_uuid_subpath_auto_compress() {
+    let sql = "PUT file:///tmp/test_file.csv @teststage/c8b31cea-a6d1-4413-936d-bf8c9d63ab9f AUTO_COMPRESS=FALSE";
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with @stage/UUID AUTO_COMPRESS=FALSE failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_snowflake_put_named_stage_uuid_subpath_auto_compress_true() {
+    let sql = "PUT file:///tmp/test_file.csv @teststage/c8b31cea-a6d1-4413-936d-bf8c9d63ab9f AUTO_COMPRESS=TRUE";
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with @stage/UUID AUTO_COMPRESS=TRUE failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_snowflake_put_long_path_stage_uuid() {
+    // Real JDBC test path with long file URI and named stage + UUID
+    let sql = "PUT file:///Users/test/projects/test_file.csv @testeb07cda9279e4320a061356c5a1eef53/c8b31cea-a6d1-4413-936d-bf8c9d63ab9f AUTO_COMPRESS=FALSE";
+    let result = parse_one(sql, DialectType::Snowflake);
+    assert!(
+        result.is_ok(),
+        "PUT with long path + @stage/UUID failed: {:?}",
+        result.err()
+    );
+}

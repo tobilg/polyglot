@@ -4882,8 +4882,9 @@ impl Parser {
             } else {
                 return Err(self.parse_error("Expected identifier after ${"));
             }
-        } else if self.check(TokenType::String) {
+        } else if self.check(TokenType::String) || self.check(TokenType::DollarString) {
             // DuckDB allows string literals as table names: SELECT * FROM 'x.y'
+            // Snowflake JDBC uses dollar-quoted strings for stage paths: SELECT $1 FROM $$@%"table"/$$
             // Convert to a quoted identifier
             let string_token = self.advance();
             let table_name = Identifier {
@@ -22741,9 +22742,14 @@ impl Parser {
                 while self.check(TokenType::Slash) {
                     self.skip(); // consume /
                     stage_path.push('/');
-                    if (self.check(TokenType::Var)
+                    // Use `while` (not `if`) because a single path segment between slashes
+                    // may consist of multiple tokens — e.g., a UUID like `c8b31cea-a6d1-4413`
+                    // tokenizes as Identifier("c8b31cea") + Dash + Identifier("a6d1") + Dash + Number(4413).
+                    while (self.check(TokenType::Var)
                         || self.check_keyword()
-                        || self.is_identifier_token())
+                        || self.is_identifier_token()
+                        || self.check(TokenType::Number)
+                        || self.check(TokenType::Dash))
                         && !self.check_next(TokenType::Eq)
                     {
                         stage_path.push_str(&self.advance().text);
@@ -22790,10 +22796,14 @@ impl Parser {
             while self.check(TokenType::Slash) {
                 self.skip(); // consume /
                 stage_path.push('/');
-                // Get path segment but don't consume if followed by = (that's a parameter)
-                if (self.check(TokenType::Var)
+                // Use `while` (not `if`) because a single path segment between slashes
+                // may consist of multiple tokens — e.g., a UUID like `c8b31cea-a6d1-4413`
+                // tokenizes as Identifier("c8b31cea") + Dash + Identifier("a6d1") + Dash + Number(4413).
+                while (self.check(TokenType::Var)
                     || self.check_keyword()
-                    || self.is_identifier_token())
+                    || self.is_identifier_token()
+                    || self.check(TokenType::Number)
+                    || self.check(TokenType::Dash))
                     && !self.check_next(TokenType::Eq)
                 {
                     stage_path.push_str(&self.advance().text);
@@ -22828,9 +22838,14 @@ impl Parser {
             while self.check(TokenType::Slash) {
                 self.skip(); // consume /
                 stage_path.push('/');
-                if (self.check(TokenType::Var)
+                // Use `while` (not `if`) because a single path segment between slashes
+                // may consist of multiple tokens — e.g., a UUID like `c8b31cea-a6d1-4413`
+                // tokenizes as Identifier("c8b31cea") + Dash + Identifier("a6d1") + Dash + Number(4413).
+                while (self.check(TokenType::Var)
                     || self.check_keyword()
-                    || self.is_identifier_token())
+                    || self.is_identifier_token()
+                    || self.check(TokenType::Number)
+                    || self.check(TokenType::Dash))
                     && !self.check_next(TokenType::Eq)
                 {
                     stage_path.push_str(&self.advance().text);
@@ -22863,9 +22878,11 @@ impl Parser {
                     break;
                 }
                 // Stop at ? (placeholder for stage destination), quoted string
-                // (e.g., '@SYSTEM$BIND/...'), or semicolon
+                // (e.g., '@SYSTEM$BIND/...'), dollar-quoted string (e.g., $$@%"table"$$),
+                // or semicolon
                 if self.check(TokenType::Parameter)
                     || self.check(TokenType::String)
+                    || self.check(TokenType::DollarString)
                     || self.check(TokenType::Semicolon)
                 {
                     break;
@@ -22876,11 +22893,11 @@ impl Parser {
             (source_parts.join(""), false)
         };
 
-        // Parse target stage (@stage_name, ? placeholder, or quoted '@stage')
+        // Parse target stage (@stage_name, ? placeholder, quoted '@stage', or dollar-quoted $$@%"stage"$$)
         let target = if self.match_token(TokenType::Parameter) {
             Expression::Placeholder(Placeholder { index: None })
-        } else if self.check(TokenType::String) {
-            // Quoted stage: '@SYSTEM$BIND/path'
+        } else if self.check(TokenType::String) || self.check(TokenType::DollarString) {
+            // Quoted stage: '@SYSTEM$BIND/path' or $$@%"table"$$
             let tok = self.advance();
             Expression::Literal(Box::new(Literal::String(tok.text.clone())))
         } else {
