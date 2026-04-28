@@ -63,7 +63,7 @@ fn tpch_query2_transpile_postgres_to_fabric() {
     assert_eq!(stmts.len(), 1, "expected a single output statement");
     let sql = &stmts[0];
 
-    assert!(sql.starts_with("SELECT "), "got: {sql}");
+    assert!(sql.starts_with("SELECT TOP 100 "), "got: {sql}");
     assert!(sql.contains(" FROM part, supplier, partsupp, nation, region "));
     assert!(sql.contains(" WHERE p_partkey = ps_partkey "));
     assert!(sql.contains(" AND p_type LIKE '%BRASS' "));
@@ -73,7 +73,10 @@ fn tpch_query2_transpile_postgres_to_fabric() {
         "missing correlated MIN subquery; got: {sql}"
     );
     assert!(sql.contains(" ORDER BY s_acctbal DESC"));
-    assert!(sql.trim_end().ends_with(" LIMIT 100"));
+    assert!(
+        !sql.contains(" LIMIT "),
+        "Fabric output should use TOP instead of LIMIT; got: {sql}"
+    );
 }
 
 #[test]

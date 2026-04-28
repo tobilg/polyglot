@@ -5,7 +5,8 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    AggFunc, BinaryFunc, BinaryOp, Case, Cast, CeilFunc, Expression, Function, LikeOp, UnaryFunc,
+    AggFunc, BinaryFunc, BinaryOp, Case, Cast, CeilFunc, DataType, DateTimeField, DateTruncFunc,
+    Expression, ExtractFunc, Function, LikeOp, Literal, TrimFunc, TrimPosition, UnaryFunc,
     VarArgFunc,
 };
 use crate::generator::GeneratorConfig;
@@ -138,6 +139,46 @@ impl DialectImpl for SQLiteDialect {
                 Ok(Expression::Pragma(p))
             }
 
+            // PostgreSQL DATE '...' literals are not SQLite syntax.
+            Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Date(_)) => {
+                let Literal::Date(date) = lit.as_ref() else {
+                    unreachable!()
+                };
+                Ok(Self::string_literal(date))
+            }
+
+            // SQLite scalar MIN/MAX are multi-argument equivalents of LEAST/GREATEST.
+            Expression::Least(f) => Ok(Self::function("MIN", f.expressions)),
+            Expression::Greatest(f) => Ok(Self::function("MAX", f.expressions)),
+
+            // PostgreSQL EXTRACT(...) lowers to SQLite strftime() for common units.
+            Expression::Extract(f) => Self::transform_extract(*f),
+
+            // PostgreSQL DATE_TRUNC(...) lowers to date/strftime() for common units.
+            Expression::DateTrunc(f) => Self::transform_date_trunc(*f),
+
+            // SQLite uses comma-call SUBSTRING/SUBSTR syntax, not SQL-standard FROM/FOR.
+            Expression::Substring(mut f) => {
+                f.from_for_syntax = false;
+                Ok(Expression::Substring(f))
+            }
+
+            // SQLite supports LTRIM/RTRIM/TRIM(str, chars), not TRIM(LEADING ... FROM ...).
+            Expression::Trim(f) => Ok(Self::transform_trim(*f)),
+
+            // Strip PostgreSQL's default public schema in SQLite DDL.
+            Expression::CreateTable(mut ct)
+                if ct
+                    .name
+                    .schema
+                    .as_ref()
+                    .is_some_and(|schema| schema.name.eq_ignore_ascii_case("public"))
+                    && ct.name.catalog.is_none() =>
+            {
+                ct.name.schema = None;
+                Ok(Expression::CreateTable(ct))
+            }
+
             // Generic function transformations
             Expression::Function(f) => self.transform_function(*f),
 
@@ -177,6 +218,122 @@ impl DialectImpl for SQLiteDialect {
 }
 
 impl SQLiteDialect {
+    fn function(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::Function(Box::new(Function::new(name.to_string(), args)))
+    }
+
+    fn string_literal(value: &str) -> Expression {
+        Expression::Literal(Box::new(Literal::String(value.to_string())))
+    }
+
+    fn strftime(format: &str, expr: Expression) -> Expression {
+        Expression::Function(Box::new(Function::new(
+            "STRFTIME".to_string(),
+            vec![Self::string_literal(format), expr],
+        )))
+    }
+
+    fn cast(expr: Expression, to: DataType) -> Expression {
+        Expression::Cast(Box::new(Cast {
+            this: expr,
+            to,
+            trailing_comments: Vec::new(),
+            double_colon_syntax: false,
+            format: None,
+            default: None,
+            inferred_type: None,
+        }))
+    }
+
+    fn sqlite_int_type() -> DataType {
+        DataType::Int {
+            length: None,
+            integer_spelling: true,
+        }
+    }
+
+    fn sqlite_real_type() -> DataType {
+        DataType::Float {
+            precision: None,
+            scale: None,
+            real_spelling: true,
+        }
+    }
+
+    fn transform_extract(f: ExtractFunc) -> Result<Expression> {
+        let strftime_format = match &f.field {
+            DateTimeField::Year => "%Y",
+            DateTimeField::Month => "%m",
+            DateTimeField::Day => "%d",
+            DateTimeField::Hour => "%H",
+            DateTimeField::Minute => "%M",
+            DateTimeField::Second => "%f",
+            DateTimeField::DayOfWeek => "%w",
+            DateTimeField::DayOfYear => "%j",
+            DateTimeField::Epoch => "%s",
+            _ => return Ok(Expression::Extract(Box::new(f))),
+        };
+        let target_type = if matches!(f.field, DateTimeField::Epoch | DateTimeField::Second) {
+            Self::sqlite_real_type()
+        } else {
+            Self::sqlite_int_type()
+        };
+        Ok(Self::cast(
+            Self::strftime(strftime_format, f.this),
+            target_type,
+        ))
+    }
+
+    fn transform_date_trunc(f: DateTruncFunc) -> Result<Expression> {
+        match &f.unit {
+            DateTimeField::Day => Ok(Self::function("DATE", vec![f.this])),
+            DateTimeField::Hour => Ok(Self::strftime("%Y-%m-%d %H:00:00", f.this)),
+            DateTimeField::Minute => Ok(Self::strftime("%Y-%m-%d %H:%M:00", f.this)),
+            DateTimeField::Second => Ok(Self::strftime("%Y-%m-%d %H:%M:%S", f.this)),
+            DateTimeField::Month => Ok(Self::strftime("%Y-%m-01", f.this)),
+            DateTimeField::Year => Ok(Self::strftime("%Y-01-01", f.this)),
+            _ => Ok(Expression::DateTrunc(Box::new(f))),
+        }
+    }
+
+    fn datetime_field_from_expr(expr: &Expression) -> Option<DateTimeField> {
+        let unit = match expr {
+            Expression::Literal(lit) => match lit.as_ref() {
+                Literal::String(s) => s.as_str(),
+                _ => return None,
+            },
+            Expression::Identifier(id) => id.name.as_str(),
+            Expression::Var(v) => v.this.as_str(),
+            Expression::Column(col) if col.table.is_none() => col.name.name.as_str(),
+            _ => return None,
+        };
+        match unit.to_ascii_lowercase().as_str() {
+            "year" | "yyyy" | "yy" => Some(DateTimeField::Year),
+            "month" | "mon" | "mm" => Some(DateTimeField::Month),
+            "day" | "dd" => Some(DateTimeField::Day),
+            "hour" | "hours" | "h" | "hh" | "hr" | "hrs" => Some(DateTimeField::Hour),
+            "minute" | "minutes" | "mi" | "min" | "mins" => Some(DateTimeField::Minute),
+            "second" | "seconds" | "s" | "sec" | "secs" | "ss" => Some(DateTimeField::Second),
+            "dow" | "dayofweek" | "dw" => Some(DateTimeField::DayOfWeek),
+            "doy" | "dayofyear" | "dy" => Some(DateTimeField::DayOfYear),
+            "epoch" => Some(DateTimeField::Epoch),
+            _ => None,
+        }
+    }
+
+    fn transform_trim(f: TrimFunc) -> Expression {
+        let function_name = match f.position {
+            TrimPosition::Leading => "LTRIM",
+            TrimPosition::Trailing => "RTRIM",
+            TrimPosition::Both => "TRIM",
+        };
+        let mut args = vec![f.this];
+        if let Some(characters) = f.characters {
+            args.push(characters);
+        }
+        Expression::Function(Box::new(Function::new(function_name.to_string(), args)))
+    }
+
     /// Check if an expression is already a CAST to a float type
     fn is_float_cast(expr: &Expression) -> bool {
         if let Expression::Cast(cast) = expr {
@@ -299,6 +456,18 @@ impl SQLiteDialect {
                 Function::new("EDITDIST3".to_string(), f.args),
             ))),
 
+            // PostgreSQL-compatible scalar/JSON rewrites.
+            "LEAST" if !f.args.is_empty() => Ok(Self::function("MIN", f.args)),
+            "GREATEST" if !f.args.is_empty() => Ok(Self::function("MAX", f.args)),
+            "JSON_BUILD_ARRAY" => Ok(Self::function("JSON_ARRAY", f.args)),
+            "JSON_BUILD_OBJECT" => Ok(Self::function("JSON_OBJECT", f.args)),
+            "JSON_AGG" | "JSONB_AGG" if f.args.len() == 1 => {
+                Ok(Self::function("JSON_GROUP_ARRAY", f.args))
+            }
+            "JSON_OBJECT_AGG" if f.args.len() == 2 => {
+                Ok(Self::function("JSON_GROUP_OBJECT", f.args))
+            }
+
             // GETDATE -> CURRENT_TIMESTAMP
             "GETDATE" => Ok(Expression::CurrentTimestamp(
                 crate::expressions::CurrentTimestamp {
@@ -328,10 +497,7 @@ impl SQLiteDialect {
             )))),
 
             // SUBSTRING is native to SQLite (keep as-is)
-            "SUBSTRING" => Ok(Expression::Function(Box::new(Function::new(
-                "SUBSTRING".to_string(),
-                f.args,
-            )))),
+            "SUBSTRING" => Ok(Self::function("SUBSTRING", f.args)),
 
             // STRING_AGG -> GROUP_CONCAT in SQLite
             "STRING_AGG" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
@@ -343,6 +509,28 @@ impl SQLiteDialect {
                 "GROUP_CONCAT".to_string(),
                 f.args,
             )))),
+
+            "DATE_PART" if f.args.len() == 2 => {
+                let mut args = f.args;
+                let unit = args.remove(0);
+                let expr = args.remove(0);
+                if let Some(field) = Self::datetime_field_from_expr(&unit) {
+                    Self::transform_extract(ExtractFunc { this: expr, field })
+                } else {
+                    Ok(Self::function("DATE_PART", vec![unit, expr]))
+                }
+            }
+
+            "DATE_TRUNC" if f.args.len() == 2 => {
+                let mut args = f.args;
+                let unit = args.remove(0);
+                let expr = args.remove(0);
+                if let Some(unit) = Self::datetime_field_from_expr(&unit) {
+                    Self::transform_date_trunc(DateTruncFunc { this: expr, unit })
+                } else {
+                    Ok(Self::function("DATE_TRUNC", vec![unit, expr]))
+                }
+            }
 
             // DATEDIFF(a, b, unit_string) -> JULIANDAY arithmetic for SQLite
             "DATEDIFF" | "DATE_DIFF" if f.args.len() == 3 => {
@@ -533,6 +721,14 @@ impl SQLiteDialect {
                 "GROUP_CONCAT".to_string(),
                 f.args,
             )))),
+
+            "JSON_AGG" | "JSONB_AGG" if f.args.len() == 1 => {
+                Ok(Self::function("JSON_GROUP_ARRAY", f.args))
+            }
+
+            "JSON_OBJECT_AGG" if f.args.len() == 2 => {
+                Ok(Self::function("JSON_GROUP_OBJECT", f.args))
+            }
 
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),

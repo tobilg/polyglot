@@ -161,7 +161,7 @@ use crate::error::Result;
 use crate::expressions::{Expression, Function, FunctionBody, Identifier, Null};
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
-use crate::tokens::{Token, Tokenizer, TokenizerConfig};
+use crate::tokens::{Token, TokenType, Tokenizer, TokenizerConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -3750,6 +3750,11 @@ impl Dialect {
         pretty: bool,
     ) -> Result<Vec<String>> {
         let target = target_dialect.dialect_type;
+        if matches!(self.dialect_type, DialectType::PostgreSQL)
+            && matches!(target, DialectType::SQLite)
+        {
+            self.reject_pgvector_distance_operators_for_sqlite(sql)?;
+        }
         let expressions = self.parse(sql)?;
         let generic_identity =
             self.dialect_type == DialectType::Generic && target == DialectType::Generic;
@@ -4063,6 +4068,14 @@ impl Dialect {
                 let normalized =
                     Self::cross_dialect_normalize(normalized, self.dialect_type, target)?;
 
+                let normalized = if matches!(self.dialect_type, DialectType::PostgreSQL)
+                    && matches!(target, DialectType::SQLite)
+                {
+                    Self::normalize_postgres_to_sqlite_types(normalized)?
+                } else {
+                    normalized
+                };
+
                 // For DuckDB target from BigQuery source: wrap UNNEST of struct arrays in
                 // (SELECT UNNEST(..., max_depth => 2)) subquery
                 // Must run BEFORE unnest_alias_to_column_alias since it changes alias structure
@@ -4222,6 +4235,77 @@ impl Dialect {
 // Transpile-only methods: cross-dialect normalization and helpers
 #[cfg(feature = "transpile")]
 impl Dialect {
+    fn reject_pgvector_distance_operators_for_sqlite(&self, sql: &str) -> Result<()> {
+        let tokens = self.tokenize(sql)?;
+        for (i, token) in tokens.iter().enumerate() {
+            if token.token_type == TokenType::NullsafeEq {
+                return Err(crate::error::Error::unsupported(
+                    "PostgreSQL pgvector cosine distance operator <=>",
+                    "SQLite",
+                ));
+            }
+            if token.token_type == TokenType::Lt
+                && tokens
+                    .get(i + 1)
+                    .is_some_and(|token| token.token_type == TokenType::Tilde)
+                && tokens
+                    .get(i + 2)
+                    .is_some_and(|token| token.token_type == TokenType::Gt)
+            {
+                return Err(crate::error::Error::unsupported(
+                    "PostgreSQL pgvector Hamming distance operator <~>",
+                    "SQLite",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize_postgres_to_sqlite_types(expr: Expression) -> Result<Expression> {
+        fn sqlite_type(dt: crate::expressions::DataType) -> crate::expressions::DataType {
+            use crate::expressions::DataType;
+
+            match dt {
+                DataType::Bit { .. } => DataType::Int {
+                    length: None,
+                    integer_spelling: true,
+                },
+                DataType::TextWithLength { .. } => DataType::Text,
+                DataType::VarChar { .. } => DataType::Text,
+                DataType::Char { .. } => DataType::Text,
+                DataType::Timestamp { timezone: true, .. } => DataType::Text,
+                DataType::Custom { name } => {
+                    let base = name
+                        .split_once('(')
+                        .map_or(name.as_str(), |(base, _)| base)
+                        .trim();
+                    if base.eq_ignore_ascii_case("TSVECTOR")
+                        || base.eq_ignore_ascii_case("TIMESTAMPTZ")
+                        || base.eq_ignore_ascii_case("TIMESTAMP WITH TIME ZONE")
+                        || base.eq_ignore_ascii_case("NVARCHAR")
+                        || base.eq_ignore_ascii_case("NCHAR")
+                    {
+                        DataType::Text
+                    } else {
+                        DataType::Custom { name }
+                    }
+                }
+                _ => dt,
+            }
+        }
+
+        transform_recursive(expr, &|e| match e {
+            Expression::DataType(dt) => Ok(Expression::DataType(sqlite_type(dt))),
+            Expression::CreateTable(mut ct) => {
+                for column in &mut ct.columns {
+                    column.data_type = sqlite_type(column.data_type.clone());
+                }
+                Ok(Expression::CreateTable(ct))
+            }
+            _ => Ok(e),
+        })
+    }
+
     /// For DuckDB target: when FROM clause contains RANGE(n), replace
     /// `(ROW_NUMBER() OVER (ORDER BY 1 NULLS FIRST) - 1)` with `range` in select expressions.
     /// This handles SEQ1/2/4/8 → RANGE transpilation from Snowflake.
