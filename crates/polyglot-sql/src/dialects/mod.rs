@@ -5464,6 +5464,18 @@ impl Dialect {
             SnowflakeArrayPositionToDuckDB, // ARRAY_POSITION(val, arr) -> ARRAY_POSITION(arr, val) - 1 for DuckDB
         }
 
+        // Rewrite UNNEST WITH ORDINALITY → ROW_NUMBER() OVER () for Cat E targets
+        let expr = if Self::needs_row_number_ordinality_emulation(target) {
+            if let Expression::Select(mut select) = expr {
+                Self::rewrite_unnest_ordinality_to_row_number(&mut select, source);
+                Expression::Select(select)
+            } else {
+                expr
+            }
+        } else {
+            expr
+        };
+
         // Handle SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake/etc.
         let expr = if matches!(source, DialectType::TSQL | DialectType::Fabric) {
             Self::transform_select_into(expr, source, target)
@@ -31355,6 +31367,150 @@ impl Dialect {
             }
         }
         result
+    }
+
+    /// Check if a target dialect needs ROW_NUMBER() emulation for WITH ORDINALITY.
+    fn needs_row_number_ordinality_emulation(target: DialectType) -> bool {
+        matches!(
+            target,
+            DialectType::DataFusion
+                | DialectType::MySQL
+                | DialectType::TSQL
+                | DialectType::Fabric
+                | DialectType::Oracle
+                | DialectType::ClickHouse
+                | DialectType::Redshift
+                | DialectType::SQLite
+                | DialectType::StarRocks
+                | DialectType::Doris
+                | DialectType::Exasol
+                | DialectType::Teradata
+                | DialectType::Drill
+        )
+    }
+
+    /// Determine the base index for ordinality in the source dialect.
+    /// 0-based: BigQuery (WITH OFFSET), Spark/Databricks/Hive (POSEXPLODE), Snowflake (FLATTEN INDEX)
+    /// 1-based: PostgreSQL, Presto, Trino, DuckDB, etc. (WITH ORDINALITY)
+    fn source_ordinality_base(source: DialectType) -> i32 {
+        match source {
+            DialectType::BigQuery
+            | DialectType::Spark
+            | DialectType::Databricks
+            | DialectType::Hive
+            | DialectType::Snowflake => 0,
+            _ => 1,
+        }
+    }
+
+    /// Rewrite UNNEST WITH ORDINALITY → flat ROW_NUMBER() OVER () injection.
+    ///
+    /// For Cat E target dialects that lack native ordinality support, this:
+    /// 1. Scans FROM clause and JOINs for UNNEST nodes with `with_ordinality = true`
+    /// 2. Extracts the ordinality alias (from `column_aliases[1]`, `offset_alias`, or default "ordinality")
+    /// 3. Strips `with_ordinality` from the UNNEST and removes the ordinality alias from column_aliases
+    /// 4. Adds `ROW_NUMBER() OVER () AS <alias>` to the SELECT list
+    /// 5. For 0-based sources, uses `ROW_NUMBER() OVER () - 1 AS <alias>` instead
+    fn rewrite_unnest_ordinality_to_row_number(
+        select: &mut crate::expressions::Select,
+        source: DialectType,
+    ) {
+        use crate::expressions::{
+            Alias, BinaryOp, Expression, Identifier, Over, RowNumber, WindowFunction,
+        };
+
+        let mut ordinality_aliases: Vec<String> = Vec::new();
+
+        // Helper: process a single FROM/JOIN expression looking for UNNEST with ordinality
+        let mut process_expr = |expr: &mut Expression| {
+            match expr {
+                Expression::Unnest(ref mut unnest) if unnest.with_ordinality => {
+                    // Extract ordinality alias from offset_alias or UnnestFunc.alias (fallback "ordinality")
+                    let ord_alias = if let Some(ref oa) = unnest.offset_alias {
+                        oa.name.clone()
+                    } else {
+                        "ordinality".to_string()
+                    };
+                    ordinality_aliases.push(ord_alias);
+
+                    // Strip ordinality
+                    unnest.with_ordinality = false;
+                    unnest.offset_alias = None;
+                }
+                Expression::Alias(ref mut alias) => {
+                    if let Expression::Unnest(ref mut unnest) = alias.this {
+                        if unnest.with_ordinality {
+                            // Extract ordinality alias from column_aliases[1] or offset_alias or default
+                            let ord_alias = if alias.column_aliases.len() >= 2 {
+                                alias.column_aliases[1].name.clone()
+                            } else if let Some(ref oa) = unnest.offset_alias {
+                                oa.name.clone()
+                            } else {
+                                "ordinality".to_string()
+                            };
+                            ordinality_aliases.push(ord_alias);
+
+                            // Strip ordinality from UNNEST
+                            unnest.with_ordinality = false;
+                            unnest.offset_alias = None;
+
+                            // Remove the ordinality column alias (keep only element alias)
+                            if alias.column_aliases.len() >= 2 {
+                                alias.column_aliases.truncate(1);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+
+        // Process FROM clause expressions
+        if let Some(ref mut from) = select.from {
+            for from_expr in from.expressions.iter_mut() {
+                process_expr(from_expr);
+            }
+        }
+
+        // Process JOIN clauses
+        for join in select.joins.iter_mut() {
+            process_expr(&mut join.this);
+        }
+
+        // For each extracted ordinality alias, inject ROW_NUMBER() OVER () into SELECT list
+        let base = Self::source_ordinality_base(source);
+        for alias_name in ordinality_aliases {
+            let row_number_expr = Expression::WindowFunction(Box::new(WindowFunction {
+                this: Expression::RowNumber(RowNumber),
+                over: Over {
+                    window_name: None,
+                    partition_by: Vec::new(),
+                    order_by: Vec::new(),
+                    frame: None,
+                    alias: None,
+                },
+                keep: None,
+                inferred_type: None,
+            }));
+
+            // For 0-based sources, subtract 1 to maintain 0-based semantics
+            let final_expr = if base == 0 {
+                Expression::Sub(Box::new(BinaryOp::new(
+                    row_number_expr,
+                    Expression::number(1),
+                )))
+            } else {
+                row_number_expr
+            };
+
+            // Wrap with alias: ROW_NUMBER() OVER () AS <ord_alias>
+            let aliased = Expression::Alias(Box::new(Alias::new(
+                final_expr,
+                Identifier::new(alias_name),
+            )));
+
+            select.expressions.push(aliased);
+        }
     }
 
     /// Transform TSQL SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake

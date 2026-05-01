@@ -62,6 +62,8 @@ impl DialectImpl for ClickHouseDialect {
             identifiers_can_start_with_digit: true,
             // ClickHouse uses bracket-only notation for arrays: [1, 2, 3]
             array_bracket_only: true,
+            // ClickHouse does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

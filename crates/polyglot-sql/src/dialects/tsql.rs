@@ -86,6 +86,8 @@ impl DialectImpl for TSQLDialect {
             multi_arg_distinct: false,
             // TSQL doesn't support FOR UPDATE/SHARE
             locking_reads_supported: false,
+            // TSQL does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

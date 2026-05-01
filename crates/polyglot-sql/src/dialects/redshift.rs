@@ -42,6 +42,8 @@ impl DialectImpl for RedshiftDialect {
             supports_column_join_marks: true,
             locking_reads_supported: false,
             tz_to_with_time_zone: true,
+            // Redshift does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

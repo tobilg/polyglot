@@ -50,6 +50,8 @@ impl DialectImpl for ExasolDialect {
             supports_column_join_marks: true,
             // Exasol uses lowercase for window frame keywords (rows, preceding, following)
             lowercase_window_frame_keywords: true,
+            // Exasol does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

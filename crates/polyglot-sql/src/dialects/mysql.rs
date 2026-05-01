@@ -126,6 +126,8 @@ impl DialectImpl for MySQLDialect {
             identifiers_can_start_with_digit: true,
             // MySQL supports FOR UPDATE/SHARE
             locking_reads_supported: true,
+            // MySQL does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

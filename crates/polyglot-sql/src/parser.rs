@@ -5615,6 +5615,53 @@ impl Parser {
             };
         }
 
+        // BigQuery: WITH OFFSET comes after the alias, not before
+        // e.g., UNNEST(arr) AS elem WITH OFFSET AS off
+        // At this point the alias has already been parsed, so expr is
+        // Alias { this: Unnest(..), alias: "elem", .. }
+        // We need to detect WITH OFFSET here and set with_ordinality + offset_alias
+        // on the inner UnnestFunc.
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::BigQuery)
+        ) && self.match_text_seq(&["WITH", "OFFSET"])
+        {
+            // Parse optional offset alias: WITH OFFSET [AS] alias
+            let offset_alias = {
+                let has_as = self.match_token(TokenType::As);
+                if has_as
+                    || self.check(TokenType::Identifier)
+                    || self.check(TokenType::Var)
+                {
+                    let alias_name = self.advance().text;
+                    Some(crate::expressions::Identifier {
+                        name: alias_name,
+                        quoted: false,
+                        trailing_comments: Vec::new(),
+                        span: None,
+                    })
+                } else {
+                    None
+                }
+            };
+
+            // Reach into the expression to set with_ordinality on the inner UnnestFunc
+            match &mut expr {
+                Expression::Alias(ref mut alias_box) => {
+                    if let Expression::Unnest(ref mut u) = alias_box.this {
+                        u.with_ordinality = true;
+                        u.offset_alias = offset_alias;
+                    }
+                }
+                Expression::Unnest(ref mut u) => {
+                    // No alias wrapper — bare UNNEST with WITH OFFSET
+                    u.with_ordinality = true;
+                    u.offset_alias = offset_alias;
+                }
+                _ => {}
+            }
+        }
+
         // ClickHouse: subquery column alias list without alias name: FROM (...) (c0, c1)
         if matches!(
             self.config.dialect,

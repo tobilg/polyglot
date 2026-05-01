@@ -43,6 +43,8 @@ impl DialectImpl for FabricDialect {
             identifier_quote_style: IdentifierQuoteStyle::BRACKET,
             dialect: Some(DialectType::Fabric),
             null_ordering_supported: false,
+            // Fabric does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

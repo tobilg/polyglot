@@ -82,6 +82,8 @@ impl DialectImpl for DataFusionDialect {
             aggregate_filter_supported: true,
             // BETWEEN flags not supported
             supports_between_flags: false,
+            // DataFusion does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

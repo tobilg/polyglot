@@ -93,6 +93,8 @@ impl DialectImpl for TeradataDialect {
             tablesample_keywords: "SAMPLE",
             tablesample_requires_parens: false,
             tz_to_with_time_zone: true,
+            // Teradata does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

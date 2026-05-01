@@ -1465,3 +1465,349 @@ mod secondary_dialects {
         ));
     }
 }
+
+/// Tests for WITH ORDINALITY transpilation across dialect categories.
+///
+/// Dialect classification:
+///   Cat A (native ordinality): PostgreSQL, Presto, Trino, DuckDB
+///   Cat B (native offset, 0-based): BigQuery
+///   Cat E (emulated via ROW_NUMBER): DataFusion, MySQL, TSQL, etc.
+///
+/// Test matrix covers:
+///   Cat A → Cat E:  WITH ORDINALITY → ROW_NUMBER() OVER ()
+///   Cat A → Cat A:  WITH ORDINALITY preserved (identity)
+///   Cat A → Cat B:  WITH ORDINALITY → WITH OFFSET
+///   Cat B → Cat E:  WITH OFFSET → ROW_NUMBER() OVER () - 1
+///   Cat B → Cat A:  WITH OFFSET → WITH ORDINALITY
+///   Cat B → Cat B:  WITH OFFSET preserved (identity)
+mod unnest_ordinality {
+    use super::*;
+
+    // ── Cat A → Cat E: ROW_NUMBER() rewrite ─────────────────────────────
+
+    #[test]
+    fn test_pg_to_datafusion_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::PostgreSQL,
+                DialectType::DataFusion
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM UNNEST(ARRAY[1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_pg_to_datafusion_correlated() {
+        assert_eq!(
+            transpile(
+                "SELECT t.id, x, pos FROM tbl AS t, UNNEST(t.arr) WITH ORDINALITY AS u(x, pos)",
+                DialectType::PostgreSQL,
+                DialectType::DataFusion
+            ),
+            "SELECT t.id, x, pos, ROW_NUMBER() OVER () AS pos FROM tbl AS t, UNNEST(t.arr) AS u(x)"
+        );
+    }
+
+    #[test]
+    fn test_pg_to_datafusion_no_alias() {
+        assert_eq!(
+            transpile(
+                "SELECT * FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY",
+                DialectType::PostgreSQL,
+                DialectType::DataFusion
+            ),
+            "SELECT *, ROW_NUMBER() OVER () AS ordinality FROM UNNEST(ARRAY[1, 2, 3])"
+        );
+    }
+
+    #[test]
+    fn test_pg_to_mysql_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::PostgreSQL,
+                DialectType::MySQL
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM JSON_TABLE(ARRAY[1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_pg_to_tsql_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::PostgreSQL,
+                DialectType::TSQL
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM OPENJSON(ARRAY[1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_duckdb_to_datafusion_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::DuckDB,
+                DialectType::DataFusion
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM UNNEST([1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_duckdb_to_mysql_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::DuckDB,
+                DialectType::MySQL
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM JSON_TABLE([1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_presto_to_datafusion_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::Presto,
+                DialectType::DataFusion
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM UNNEST(ARRAY[1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    #[test]
+    fn test_trino_to_datafusion_unnest_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::Trino,
+                DialectType::DataFusion
+            ),
+            "SELECT elem, ord, ROW_NUMBER() OVER () AS ord FROM UNNEST(ARRAY[1, 2, 3]) AS t(elem)"
+        );
+    }
+
+    // ── Cat B → Cat E: 0-based offset → ROW_NUMBER() - 1 ───────────────
+
+    #[test]
+    fn test_bigquery_to_datafusion_unnest_with_offset() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::DataFusion,
+        );
+        assert!(
+            result.contains("ROW_NUMBER() OVER () - 1"),
+            "Expected ROW_NUMBER() OVER () - 1 for 0-based BigQuery offset, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS off"),
+            "Expected alias 'off' preserved, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bigquery_to_mysql_unnest_with_offset() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::MySQL,
+        );
+        assert!(
+            result.contains("ROW_NUMBER() OVER () - 1"),
+            "Expected 0-based ROW_NUMBER for BQ->MySQL, got: {}",
+            result
+        );
+        assert!(
+            result.contains("JSON_TABLE"),
+            "Expected JSON_TABLE for MySQL target, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bigquery_to_tsql_unnest_with_offset() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::TSQL,
+        );
+        assert!(
+            result.contains("ROW_NUMBER() OVER () - 1"),
+            "Expected 0-based ROW_NUMBER for BQ->TSQL, got: {}",
+            result
+        );
+        assert!(
+            result.contains("OPENJSON"),
+            "Expected OPENJSON for TSQL target, got: {}",
+            result
+        );
+    }
+
+    // ── Cat A → Cat B: ordinality → offset ──────────────────────────────
+
+    #[test]
+    fn test_pg_to_bigquery_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::BigQuery,
+        );
+        assert!(
+            result.contains("WITH OFFSET"),
+            "Expected WITH OFFSET for BigQuery target, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_duckdb_to_bigquery_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::DuckDB,
+            DialectType::BigQuery,
+        );
+        assert!(
+            result.contains("WITH OFFSET"),
+            "Expected WITH OFFSET for BigQuery target, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_presto_to_bigquery_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::Presto,
+            DialectType::BigQuery,
+        );
+        assert!(
+            result.contains("WITH OFFSET"),
+            "Expected WITH OFFSET for BigQuery target, got: {}",
+            result
+        );
+    }
+
+    // ── Cat B → Cat A: offset → ordinality ──────────────────────────────
+
+    #[test]
+    fn test_bigquery_to_pg_unnest_with_offset() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::PostgreSQL,
+        );
+        assert!(
+            result.contains("WITH ORDINALITY"),
+            "Expected WITH ORDINALITY for PG target, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bigquery_to_duckdb_unnest_with_offset() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::DuckDB,
+        );
+        assert!(
+            result.contains("WITH ORDINALITY"),
+            "Expected WITH ORDINALITY for DuckDB target, got: {}",
+            result
+        );
+    }
+
+    // ── Cat A → Cat A: identity (native preserved) ──────────────────────
+
+    #[test]
+    fn test_pg_to_pg_identity_with_ordinality() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::PostgreSQL,
+                DialectType::PostgreSQL
+            ),
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)"
+        );
+    }
+
+    #[test]
+    fn test_pg_to_duckdb_with_ordinality_preserved() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::PostgreSQL,
+                DialectType::DuckDB
+            ),
+            "SELECT elem, ord FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS t(elem, ord)"
+        );
+    }
+
+    #[test]
+    fn test_presto_to_pg_identity() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::Presto,
+                DialectType::PostgreSQL
+            ),
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)"
+        );
+    }
+
+    #[test]
+    fn test_duckdb_to_pg_identity() {
+        assert_eq!(
+            transpile(
+                "SELECT elem, ord FROM UNNEST([1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+                DialectType::DuckDB,
+                DialectType::PostgreSQL
+            ),
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)"
+        );
+    }
+
+    // ── Cat B → Cat B: identity (offset preserved) ──────────────────────
+
+    #[test]
+    fn test_bigquery_to_bigquery_identity() {
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([1, 2, 3]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::BigQuery,
+        );
+        assert!(
+            result.contains("UNNEST"),
+            "Expected UNNEST in BQ round-trip, got: {}",
+            result
+        );
+        assert!(
+            result.contains("WITH OFFSET"),
+            "Expected WITH OFFSET preserved in BQ round-trip, got: {}",
+            result
+        );
+    }
+
+    // ── Alias preservation ──────────────────────────────────────────────
+
+    #[test]
+    fn test_pg_to_datafusion_custom_alias() {
+        assert_eq!(
+            transpile(
+                "SELECT element, position FROM UNNEST(ARRAY[1, 2]) WITH ORDINALITY AS t(element, position)",
+                DialectType::PostgreSQL,
+                DialectType::DataFusion
+            ),
+            "SELECT element, position, ROW_NUMBER() OVER () AS position FROM UNNEST(ARRAY[1, 2]) AS t(element)"
+        );
+    }
+}

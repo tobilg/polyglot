@@ -51,6 +51,8 @@ impl DialectImpl for OracleDialect {
             alias_post_tablesample: true,
             // Oracle uses TIMESTAMP WITH TIME ZONE syntax (not TIMESTAMPTZ)
             tz_to_with_time_zone: true,
+            // Oracle does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

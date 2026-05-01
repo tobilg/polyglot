@@ -41,6 +41,8 @@ impl DialectImpl for DrillDialect {
             dialect: Some(DialectType::Drill),
             // Drill: NORMALIZE_FUNCTIONS = False, PRESERVE_ORIGINAL_NAMES = True
             normalize_functions: NormalizeFunctions::None,
+            // Drill does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

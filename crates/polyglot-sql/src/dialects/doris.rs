@@ -37,6 +37,8 @@ impl DialectImpl for DorisDialect {
             schema_comment_with_eq: false,
             // Doris: PROPERTIES ('key'='value') instead of WITH ('key'='value')
             with_properties_prefix: "PROPERTIES",
+            // Doris does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

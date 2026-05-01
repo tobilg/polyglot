@@ -43,6 +43,8 @@ impl DialectImpl for SQLiteDialect {
             json_key_value_pair_sep: ",",
             // SQLite doesn't support table alias columns: t AS t(c1, c2)
             supports_table_alias_columns: false,
+            // SQLite does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }

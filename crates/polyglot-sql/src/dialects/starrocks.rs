@@ -65,6 +65,8 @@ impl DialectImpl for StarRocksDialect {
             supports_exploding_projections: false,
             // StarRocks: COMMENT 'value' (naked property, no = sign)
             schema_comment_with_eq: false,
+            // StarRocks does not support WITH ORDINALITY
+            unnest_with_ordinality: false,
             ..Default::default()
         }
     }
