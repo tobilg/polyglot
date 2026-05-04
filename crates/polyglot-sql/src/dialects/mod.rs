@@ -157,7 +157,7 @@ pub use trino::TrinoDialect;
 #[cfg(feature = "dialect-tsql")]
 pub use tsql::TSQLDialect;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expressions::{Expression, Function, FunctionBody, Identifier, Null};
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
@@ -5464,17 +5464,14 @@ impl Dialect {
             SnowflakeArrayPositionToDuckDB, // ARRAY_POSITION(val, arr) -> ARRAY_POSITION(arr, val) - 1 for DuckDB
         }
 
-        // Rewrite UNNEST WITH ORDINALITY → ROW_NUMBER() OVER () for Cat E targets
-        let expr = if Self::needs_row_number_ordinality_emulation(target) {
-            if let Expression::Select(mut select) = expr {
-                Self::rewrite_unnest_ordinality_to_row_number(&mut select, source);
-                Expression::Select(select)
-            } else {
-                expr
-            }
-        } else {
-            expr
-        };
+        // Check and rewrite UNNEST WITH ORDINALITY for target dialect.
+        // Recursively walks AST (CTEs, subqueries, nested SELECTs).
+        // Tier 1 (native): PG, DuckDB, Presto, Trino, BigQuery — adjust ±1 base
+        // Tier 2 (semantic equivalent): Snowflake, Spark, MySQL, TSQL, etc. — fail with targeted error
+        // Tier 3 (emulated): DataFusion, StarRocks, Doris, Redshift — ROW_NUMBER() rewrite
+        // Tier 4 (no support): SQLite, Exasol, Teradata, Drill — fail hard
+        // See ordinality_tier() for per-dialect classification and doc references.
+        let expr = Self::check_and_rewrite_ordinality(expr, source, target)?;
 
         // Handle SELECT INTO -> CREATE TABLE AS for DuckDB/Snowflake/etc.
         let expr = if matches!(source, DialectType::TSQL | DialectType::Fabric) {
@@ -31369,78 +31366,411 @@ impl Dialect {
         result
     }
 
-    /// Check if a target dialect needs ROW_NUMBER() emulation for WITH ORDINALITY.
-    fn needs_row_number_ordinality_emulation(target: DialectType) -> bool {
-        matches!(
-            target,
-            DialectType::DataFusion
-                | DialectType::MySQL
-                | DialectType::TSQL
-                | DialectType::Fabric
-                | DialectType::Oracle
-                | DialectType::ClickHouse
-                | DialectType::Redshift
-                | DialectType::SQLite
-                | DialectType::StarRocks
-                | DialectType::Doris
-                | DialectType::Exasol
-                | DialectType::Teradata
-                | DialectType::Drill
-        )
+    /// Recursively check and rewrite UNNEST WITH ORDINALITY for the target dialect.
+    ///
+    /// Walks the entire AST (nested SELECTs, CTEs, subqueries, set operations)
+    /// so that ordinality in any position is handled, not just top-level SELECT.
+    fn check_and_rewrite_ordinality(
+        expr: Expression,
+        source: DialectType,
+        target: DialectType,
+    ) -> Result<Expression> {
+        transform_recursive(expr, &|e| {
+            Self::check_and_rewrite_ordinality_single(e, source, target)
+        })
     }
 
-    /// Determine the base index for ordinality in the source dialect.
-    /// 0-based: BigQuery (WITH OFFSET), Spark/Databricks/Hive (POSEXPLODE), Snowflake (FLATTEN INDEX)
+    /// Handle ordinality for a single SELECT node.
+    fn check_and_rewrite_ordinality_single(
+        expr: Expression,
+        source: DialectType,
+        target: DialectType,
+    ) -> Result<Expression> {
+        if let Expression::Select(mut select) = expr {
+            if !Self::select_has_ordinality(&select) {
+                return Ok(Expression::Select(select));
+            }
+
+            // Classify the target dialect
+            // Tier 1: native — adjust ±1 base between 1-based and 0-based dialects
+            // Tier 2: semantic equivalent — fail with targeted guidance
+            // Tier 3: emulated — ROW_NUMBER() OVER () rewrite
+            // Tier 4: no support — fail hard
+            let (tier, info) = Self::ordinality_tier(target);
+            match tier {
+                1 => {
+                    // Tier 1 (native): adjust ±1 base if converting between
+                    // 1-based (WITH ORDINALITY) and 0-based (WITH OFFSET) dialects.
+                    Self::adjust_ordinality_base(&mut select, source, target)?;
+                }
+                2 => {
+                    // Tier 2 (semantic equivalent, different syntax): not yet implemented.
+                    let dialect_name = format!("{:?}", target);
+                    return Err(Error::unsupported(
+                        format!(
+                            "WITH ORDINALITY requires a {}-specific rewrite ({}). \
+                             This is not yet implemented",
+                            dialect_name, info
+                        ),
+                        dialect_name,
+                    ));
+                }
+                3 => {
+                    // Tier 3 (emulated): ROW_NUMBER() OVER () for dialects that
+                    // preserve array element order in UNNEST output.
+                    Self::rewrite_unnest_ordinality_to_row_number(&mut select, source)?;
+                }
+                _ => {
+                    // Tier 4 (no support)
+                    let dialect_name = format!("{:?}", target);
+                    return Err(Error::unsupported(
+                        format!(
+                            "WITH ORDINALITY is not supported for {}. {}",
+                            dialect_name, info
+                        ),
+                        dialect_name,
+                    ));
+                }
+            }
+            Ok(Expression::Select(select))
+        } else {
+            Ok(expr)
+        }
+    }
+
+    /// Check if any FROM or JOIN source in this SELECT has UNNEST with_ordinality.
+    fn select_has_ordinality(select: &crate::expressions::Select) -> bool {
+        let check_expr = |expr: &Expression| -> bool {
+            match expr {
+                Expression::Unnest(u) => u.with_ordinality,
+                Expression::Alias(a) => {
+                    matches!(&a.this, Expression::Unnest(u) if u.with_ordinality)
+                }
+                _ => false,
+            }
+        };
+        if let Some(ref from) = select.from {
+            for item in &from.expressions {
+                if check_expr(item) {
+                    return true;
+                }
+            }
+        }
+        for join in &select.joins {
+            if check_expr(&join.this) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Classify a target dialect's support for WITH ORDINALITY.
+    ///
+    /// Returns (tier_number, info_string) where info_string describes the
+    /// native mechanism (Tier 2) or the reason for failure (Tier 4).
+    ///
+    /// Each match arm includes a documentation reference URL so that developers,
+    /// LLMs, and contributors can verify the classification.
+    fn ordinality_tier(target: DialectType) -> (u8, &'static str) {
+        match target {
+            // ── Tier 1: Native WITH ORDINALITY or WITH OFFSET ────────────
+            //
+            // PostgreSQL WITH ORDINALITY (1-based):
+            //   https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-TABLEFUNCTIONS
+            // DuckDB WITH ORDINALITY (1-based):
+            //   https://duckdb.org/docs/sql/query_syntax/unnest.html
+            // Presto/Trino/Athena WITH ORDINALITY (1-based):
+            //   https://trino.io/docs/current/sql/select.html#unnest
+            DialectType::PostgreSQL
+            | DialectType::DuckDB
+            | DialectType::Presto
+            | DialectType::Trino
+            | DialectType::Athena => (1, "native WITH ORDINALITY"),
+
+            // BigQuery WITH OFFSET (0-based):
+            //   https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unnest_operator
+            DialectType::BigQuery => (1, "native WITH OFFSET"),
+
+            // ── Tier 2: Semantic equivalent, different syntax ────────────
+            //
+            // Snowflake LATERAL FLATTEN → INDEX column (0-based):
+            //   https://docs.snowflake.com/en/sql-reference/functions/flatten
+            DialectType::Snowflake => (2, "LATERAL FLATTEN with INDEX column"),
+
+            // Spark/Databricks/Hive POSEXPLODE (0-based):
+            //   https://spark.apache.org/docs/latest/api/sql/index.html#posexplode
+            DialectType::Spark | DialectType::Databricks | DialectType::Hive => {
+                (2, "POSEXPLODE function")
+            }
+
+            // MySQL JSON_TABLE FOR ORDINALITY (1-based):
+            //   https://dev.mysql.com/doc/refman/8.0/en/json-table-functions.html
+            DialectType::MySQL => (2, "JSON_TABLE with FOR ORDINALITY column"),
+
+            // TSQL/Fabric OPENJSON .key column (0-based):
+            //   https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql
+            DialectType::TSQL | DialectType::Fabric => (2, "OPENJSON with key column"),
+
+            // Oracle JSON_TABLE FOR ORDINALITY (1-based):
+            //   https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/JSON_TABLE.html
+            DialectType::Oracle => (2, "JSON_TABLE with FOR ORDINALITY column"),
+
+            // ClickHouse ARRAY JOIN + arrayEnumerate (1-based):
+            //   https://clickhouse.com/docs/en/sql-reference/statements/select/array-join
+            DialectType::ClickHouse => (2, "ARRAY JOIN with arrayEnumerate function"),
+
+            // ── Tier 3: UNNEST preserves array order — ROW_NUMBER() emulation ──
+            //
+            // DataFusion UNNEST (preserves array element order):
+            //   https://datafusion.apache.org/user-guide/sql/select.html
+            // StarRocks UNNEST (preserves array element order):
+            //   https://docs.starrocks.io/docs/sql-reference/sql-functions/array-functions/unnest/
+            // Doris UNNEST (preserves array element order):
+            //   https://doris.apache.org/docs/sql-manual/sql-functions/table-functions/unnest/
+            // Redshift UNNEST/PartiQL (preserves element order):
+            //   https://docs.aws.amazon.com/redshift/latest/dg/query-super.html
+            DialectType::DataFusion
+            | DialectType::StarRocks
+            | DialectType::Doris
+            | DialectType::Redshift => (3, "ROW_NUMBER() OVER () emulation"),
+
+            // ── Tier 4: No UNNEST or no mechanism at all ────────────────
+            _ => (
+                4,
+                "This dialect has no UNNEST or no mechanism to produce array element indices.",
+            ),
+        }
+    }
+
+    /// Determine the ordinality base index for a dialect.
+    /// 0-based: BigQuery (WITH OFFSET), Spark/Databricks/Hive (POSEXPLODE)
     /// 1-based: PostgreSQL, Presto, Trino, DuckDB, etc. (WITH ORDINALITY)
-    fn source_ordinality_base(source: DialectType) -> i32 {
-        match source {
-            DialectType::BigQuery
-            | DialectType::Spark
-            | DialectType::Databricks
-            | DialectType::Hive
-            | DialectType::Snowflake => 0,
+    fn ordinality_base(dialect: DialectType) -> i32 {
+        match dialect {
+            // BigQuery WITH OFFSET is 0-based:
+            //   https://cloud.google.com/bigquery/docs/reference/standard-sql/query-syntax#unnest_operator
+            DialectType::BigQuery => 0,
+            // Spark/Databricks/Hive POSEXPLODE is 0-based:
+            //   https://spark.apache.org/docs/latest/api/sql/index.html#posexplode
+            DialectType::Spark | DialectType::Databricks | DialectType::Hive => 0,
+            // All others (PG, DuckDB, Presto, Trino, etc.) are 1-based
             _ => 1,
         }
     }
 
-    /// Rewrite UNNEST WITH ORDINALITY → flat ROW_NUMBER() OVER () injection.
+    /// Adjust ordinality column references when converting between 1-based
+    /// (WITH ORDINALITY) and 0-based (WITH OFFSET) Tier 1 dialects.
     ///
-    /// For Cat E target dialects that lack native ordinality support, this:
-    /// 1. Scans FROM clause and JOINs for UNNEST nodes with `with_ordinality = true`
-    /// 2. Extracts the ordinality alias (from `column_aliases[1]`, `offset_alias`, or default "ordinality")
-    /// 3. Strips `with_ordinality` from the UNNEST and removes the ordinality alias from column_aliases
-    /// 4. Adds `ROW_NUMBER() OVER () AS <alias>` to the SELECT list
-    /// 5. For 0-based sources, uses `ROW_NUMBER() OVER () - 1 AS <alias>` instead
+    /// PG → BQ: each ref to the ordinality alias becomes `<ref> + 1`
+    ///   because BQ produces 0-based values while PG produced 1-based.
+    ///   Wrapping as `ref + 1` makes BQ output match PG semantics.
+    /// BQ → PG: each ref to the offset alias becomes `<ref> - 1`
+    ///   because PG produces 1-based values while BQ produced 0-based.
+    ///   Wrapping as `ref - 1` makes PG output match BQ semantics.
+    fn adjust_ordinality_base(
+        select: &mut crate::expressions::Select,
+        source: DialectType,
+        target: DialectType,
+    ) -> Result<()> {
+
+
+        let src_base = Self::ordinality_base(source);
+        let tgt_base = Self::ordinality_base(target);
+        if src_base == tgt_base {
+            return Ok(());
+        }
+
+        // Extract the ordinality alias name(s) from FROM/JOIN UNNEST nodes
+        let ord_aliases = Self::extract_ordinality_aliases(select);
+        if ord_aliases.is_empty() {
+            return Ok(());
+        }
+
+        // Determine adjustment direction
+        // src=1-based → tgt=0-based: wrap refs with `ref + 1` (BQ offset + 1 = PG ordinality)
+        // src=0-based → tgt=1-based: wrap refs with `ref - 1` (PG ordinality - 1 = BQ offset)
+        let _adjustment = if src_base == 1 && tgt_base == 0 {
+            1 // add 1 to convert 0-based output to look like 1-based
+        } else {
+            -1 // subtract 1 to convert 1-based output to look like 0-based
+        };
+
+        // Replace matching column references in the SELECT list
+        for expr in select.expressions.iter_mut() {
+            Self::adjust_ordinality_ref(expr, &ord_aliases, _adjustment);
+        }
+
+        Ok(())
+    }
+
+    /// Recursively adjust a column reference that matches an ordinality alias.
+    /// Wraps bare Identifier/Column references with `ref + 1` or `ref - 1`.
+    fn adjust_ordinality_ref(
+        expr: &mut Expression,
+        ord_aliases: &[String],
+        adjustment: i32,
+    ) {
+        use crate::expressions::BinaryOp;
+
+        match expr {
+            Expression::Identifier(ref id) if ord_aliases.iter().any(|a| a.eq_ignore_ascii_case(&id.name)) => {
+                let orig = expr.clone();
+                if adjustment > 0 {
+                    *expr = Expression::Add(Box::new(BinaryOp::new(
+                        orig,
+                        Expression::number(adjustment.unsigned_abs() as i64),
+                    )));
+                } else {
+                    *expr = Expression::Sub(Box::new(BinaryOp::new(
+                        orig,
+                        Expression::number(adjustment.unsigned_abs() as i64),
+                    )));
+                }
+            }
+            Expression::Column(ref col)
+                if col.table.is_none()
+                    && ord_aliases.iter().any(|a| a.eq_ignore_ascii_case(&col.name.name)) =>
+            {
+                let orig = expr.clone();
+                if adjustment > 0 {
+                    *expr = Expression::Add(Box::new(BinaryOp::new(
+                        orig,
+                        Expression::number(adjustment.unsigned_abs() as i64),
+                    )));
+                } else {
+                    *expr = Expression::Sub(Box::new(BinaryOp::new(
+                        orig,
+                        Expression::number(adjustment.unsigned_abs() as i64),
+                    )));
+                }
+            }
+            // Recurse into Alias to adjust the inner expression
+            Expression::Alias(ref mut a) => {
+                Self::adjust_ordinality_ref(&mut a.this, ord_aliases, adjustment);
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract ordinality alias names from UNNEST nodes in FROM/JOIN.
+    fn extract_ordinality_aliases(select: &crate::expressions::Select) -> Vec<String> {
+        let mut aliases = Vec::new();
+        let mut extract = |expr: &Expression| {
+            match expr {
+                Expression::Unnest(u) if u.with_ordinality => {
+                    if let Some(ref oa) = u.offset_alias {
+                        aliases.push(oa.name.clone());
+                    } else {
+                        aliases.push("ordinality".to_string());
+                    }
+                }
+                Expression::Alias(a) => {
+                    if let Expression::Unnest(u) = &a.this {
+                        if u.with_ordinality {
+                            if a.column_aliases.len() >= 2 {
+                                aliases.push(a.column_aliases[1].name.clone());
+                            } else if let Some(ref oa) = u.offset_alias {
+                                aliases.push(oa.name.clone());
+                            } else {
+                                aliases.push("ordinality".to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+        if let Some(ref from) = select.from {
+            for item in &from.expressions {
+                extract(item);
+            }
+        }
+        for join in &select.joins {
+            extract(&join.this);
+        }
+        aliases
+    }
+
+    /// Check if an UNNEST argument is correlated (references a table column).
+    ///
+    /// Correlated UNNEST (e.g. `UNNEST(t.arr)`) cannot be emulated with
+    /// ROW_NUMBER() OVER () because the numbering must restart per input row,
+    /// which a global window function cannot achieve.
+    fn is_correlated_unnest_arg(expr: &Expression) -> bool {
+        match expr {
+            // Qualified column: t.arr
+            Expression::Column(c) => c.table.is_some(),
+            // Dot path: t.nested.arr
+            Expression::Dot(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Rewrite UNNEST WITH ORDINALITY → ROW_NUMBER() OVER () for Tier 3 targets.
+    ///
+    /// Fixed behavior (compared to original):
+    /// - C1: REPLACES column references to the ordinality alias in the SELECT
+    ///   list instead of appending a duplicate. Falls back to append only for
+    ///   SELECT * where no explicit reference exists.
+    /// - C2: Detects correlated UNNEST (argument references a table column)
+    ///   and returns an error, since ROW_NUMBER() OVER () cannot restart
+    ///   numbering per input row.
+    /// - For 0-based sources (BigQuery), uses ROW_NUMBER() OVER () - 1 to
+    ///   preserve 0-based semantics.
     fn rewrite_unnest_ordinality_to_row_number(
         select: &mut crate::expressions::Select,
         source: DialectType,
-    ) {
+    ) -> Result<()> {
         use crate::expressions::{
-            Alias, BinaryOp, Expression, Identifier, Over, RowNumber, WindowFunction,
+            Alias, BinaryOp, Identifier, Over, RowNumber, WindowFunction,
         };
 
-        let mut ordinality_aliases: Vec<String> = Vec::new();
+        let base = Self::ordinality_base(source);
 
-        // Helper: process a single FROM/JOIN expression looking for UNNEST with ordinality
-        let mut process_expr = |expr: &mut Expression| {
+        // Collect (alias_name, was_correlated) from FROM/JOIN UNNEST nodes
+        struct OrdInfo {
+            alias_name: String,
+        }
+        let mut ord_infos: Vec<OrdInfo> = Vec::new();
+
+        // Helper: process a single FROM/JOIN expression
+        let mut process_expr = |expr: &mut Expression| -> Result<()> {
             match expr {
                 Expression::Unnest(ref mut unnest) if unnest.with_ordinality => {
-                    // Extract ordinality alias from offset_alias or UnnestFunc.alias (fallback "ordinality")
+                    // C2: Check for correlated UNNEST
+                    if Self::is_correlated_unnest_arg(&unnest.this) {
+                        return Err(Error::unsupported(
+                            "Correlated UNNEST WITH ORDINALITY cannot be emulated with \
+                             ROW_NUMBER() OVER (). The numbering must restart per input row, \
+                             which a global window function cannot achieve",
+                            format!("{:?}", source),
+                        ));
+                    }
+
                     let ord_alias = if let Some(ref oa) = unnest.offset_alias {
                         oa.name.clone()
                     } else {
                         "ordinality".to_string()
                     };
-                    ordinality_aliases.push(ord_alias);
+                    ord_infos.push(OrdInfo { alias_name: ord_alias });
 
-                    // Strip ordinality
+                    // Strip ordinality from the UNNEST node
                     unnest.with_ordinality = false;
                     unnest.offset_alias = None;
                 }
                 Expression::Alias(ref mut alias) => {
                     if let Expression::Unnest(ref mut unnest) = alias.this {
                         if unnest.with_ordinality {
-                            // Extract ordinality alias from column_aliases[1] or offset_alias or default
+                            // C2: Check for correlated UNNEST
+                            if Self::is_correlated_unnest_arg(&unnest.this) {
+                                return Err(Error::unsupported(
+                                    "Correlated UNNEST WITH ORDINALITY cannot be emulated with \
+                                     ROW_NUMBER() OVER (). The numbering must restart per input \
+                                     row, which a global window function cannot achieve",
+                                    format!("{:?}", source),
+                                ));
+                            }
+
                             let ord_alias = if alias.column_aliases.len() >= 2 {
                                 alias.column_aliases[1].name.clone()
                             } else if let Some(ref oa) = unnest.offset_alias {
@@ -31448,13 +31778,11 @@ impl Dialect {
                             } else {
                                 "ordinality".to_string()
                             };
-                            ordinality_aliases.push(ord_alias);
+                            ord_infos.push(OrdInfo { alias_name: ord_alias });
 
-                            // Strip ordinality from UNNEST
+                            // Strip ordinality
                             unnest.with_ordinality = false;
                             unnest.offset_alias = None;
-
-                            // Remove the ordinality column alias (keep only element alias)
                             if alias.column_aliases.len() >= 2 {
                                 alias.column_aliases.truncate(1);
                             }
@@ -31463,23 +31791,42 @@ impl Dialect {
                 }
                 _ => {}
             }
+            Ok(())
         };
 
-        // Process FROM clause expressions
+        // Process FROM clause
         if let Some(ref mut from) = select.from {
             for from_expr in from.expressions.iter_mut() {
-                process_expr(from_expr);
+                process_expr(from_expr)?;
             }
         }
-
         // Process JOIN clauses
         for join in select.joins.iter_mut() {
-            process_expr(&mut join.this);
+            process_expr(&mut join.this)?;
         }
 
-        // For each extracted ordinality alias, inject ROW_NUMBER() OVER () into SELECT list
-        let base = Self::source_ordinality_base(source);
-        for alias_name in ordinality_aliases {
+        // C3: ROW_NUMBER() OVER () is a global window function — it only gives
+        // correct per-element indices when UNNEST is the sole row source.
+        // Multiple UNNEST sources or cross-joins with tables would produce
+        // incorrect sequential numbering instead of per-UNNEST indices.
+        let total_from_sources = select
+            .from
+            .as_ref()
+            .map_or(0, |f| f.expressions.len())
+            + select.joins.len();
+        if ord_infos.len() > 1 || (ord_infos.len() == 1 && total_from_sources > 1) {
+            return Err(Error::unsupported(
+                "ROW_NUMBER() OVER () emulation for WITH ORDINALITY only works \
+                 when UNNEST is the sole row source. Multiple UNNEST sources or \
+                 cross-joins with other tables produce incorrect global numbering \
+                 instead of per-UNNEST element indices",
+                format!("{:?}", source),
+            ));
+        }
+
+        // For each ordinality alias, build the ROW_NUMBER expression and
+        // replace or append in the SELECT list.
+        for info in &ord_infos {
             let row_number_expr = Expression::WindowFunction(Box::new(WindowFunction {
                 this: Expression::RowNumber(RowNumber),
                 over: Over {
@@ -31503,13 +31850,42 @@ impl Dialect {
                 row_number_expr
             };
 
-            // Wrap with alias: ROW_NUMBER() OVER () AS <ord_alias>
+            // C1 fix: REPLACE matching column references in SELECT list
+            // instead of blindly appending a duplicate.
             let aliased = Expression::Alias(Box::new(Alias::new(
                 final_expr,
-                Identifier::new(alias_name),
+                Identifier::new(info.alias_name.clone()),
             )));
 
-            select.expressions.push(aliased);
+            let mut replaced = false;
+            for sel_expr in select.expressions.iter_mut() {
+                if Self::expr_matches_alias(sel_expr, &info.alias_name) {
+                    *sel_expr = aliased.clone();
+                    replaced = true;
+                    break;
+                }
+            }
+
+            // If no matching reference found (e.g. SELECT *), append
+            if !replaced {
+                select.expressions.push(aliased);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a SELECT expression is a bare reference to the given alias name.
+    /// Matches:
+    ///   - `Identifier("ord")` — bare column name
+    ///   - `Column { name: "ord", table: None }` — unqualified column
+    fn expr_matches_alias(expr: &Expression, alias_name: &str) -> bool {
+        match expr {
+            Expression::Identifier(id) => id.name.eq_ignore_ascii_case(alias_name),
+            Expression::Column(c) => {
+                c.table.is_none() && c.name.name.eq_ignore_ascii_case(alias_name)
+            }
+            _ => false,
         }
     }
 
