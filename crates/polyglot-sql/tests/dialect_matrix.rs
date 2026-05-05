@@ -1478,7 +1478,7 @@ mod secondary_dialects {
 ///   Tier 1 → Tier 1: identity / ±1 base adjustment
 ///   Tier 1 → Tier 3: ROW_NUMBER() OVER () rewrite (C1: replace, not append)
 ///   Tier 1 → Tier 2: fail hard with guidance
-///   Correlated UNNEST → Tier 3: fail hard (C2)
+///   Correlated UNNEST → Tier 3: CTE + PARTITION BY emulation (C2)
 ///   Multi-source UNNEST → Tier 3: fail hard (C3)
 mod unnest_ordinality {
     use super::*;
@@ -1571,7 +1571,7 @@ mod unnest_ordinality {
         );
     }
 
-    // ── Tier 1 → Tier 2: fail hard with targeted guidance ───────────────
+    // ── Tier 1 → Tier 4: fail hard (incompatible type systems) ───────────
 
     #[test]
     fn test_pg_to_mysql_fails_with_guidance() {
@@ -1603,38 +1603,251 @@ mod unnest_ordinality {
         );
     }
 
+    // ── Tier 2: Spark POSEXPLODE rewrite ─────────────────────────────────
+
     #[test]
-    fn test_pg_to_snowflake_fails_with_guidance() {
-        let err = transpile_err(
+    fn test_pg_to_spark_posexplode_with_plus_one() {
+        // PG is 1-based, Spark POSEXPLODE is 0-based → pos + 1
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::Spark,
+        );
+        assert!(
+            result.contains("POSEXPLODE"),
+            "Should use POSEXPLODE for Spark, got: {}",
+            result
+        );
+        assert!(
+            result.contains("pos + 1"),
+            "Should add +1 for 1-based source semantics, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS ord"),
+            "Should preserve ord alias name, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS elem"),
+            "Should preserve elem alias name, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("WITH ORDINALITY"),
+            "Should NOT contain WITH ORDINALITY, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bq_to_spark_posexplode_identity() {
+        // BigQuery WITH OFFSET is 0-based, POSEXPLODE is 0-based → no adjustment
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([10, 20, 30]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::Spark,
+        );
+        assert!(
+            result.contains("POSEXPLODE"),
+            "Should use POSEXPLODE for Spark, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("pos + 1"),
+            "Should NOT add +1 for 0-based source (BQ), got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_pg_to_spark_custom_alias_names() {
+        // Verify custom alias names are preserved through the rewrite
+        let result = transpile(
+            "SELECT element, position FROM UNNEST(ARRAY[10, 20]) WITH ORDINALITY AS t(element, position)",
+            DialectType::PostgreSQL,
+            DialectType::Spark,
+        );
+        assert!(
+            result.contains("AS element"),
+            "Should preserve custom element alias 'element', got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS position"),
+            "Should preserve custom ordinality alias 'position', got: {}",
+            result
+        );
+        assert!(
+            result.contains("POSEXPLODE"),
+            "Should use POSEXPLODE, got: {}",
+            result
+        );
+    }
+
+    // ── Tier 2: Snowflake FLATTEN INDEX rewrite ──────────────────────────
+
+    #[test]
+    fn test_pg_to_snowflake_flatten_index_plus_one() {
+        // PG is 1-based, Snowflake FLATTEN INDEX is 0-based → index + 1
+        let result = transpile(
             "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
             DialectType::PostgreSQL,
             DialectType::Snowflake,
         );
         assert!(
-            err.contains("FLATTEN"),
-            "Error should mention FLATTEN: {}",
-            err
+            result.contains("FLATTEN"),
+            "Should use FLATTEN for Snowflake, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_t0.index + 1"),
+            "Should reference _t0.index + 1 for 1-based source, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_t0.value"),
+            "Should reference _t0.value for element, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS ord"),
+            "Should preserve ord alias, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("WITH ORDINALITY"),
+            "Should NOT contain WITH ORDINALITY, got: {}",
+            result
         );
     }
 
-    // ── C2: Correlated UNNEST → fail hard ───────────────────────────────
+    #[test]
+    fn test_bq_to_snowflake_flatten_index_identity() {
+        // BQ is 0-based, Snowflake FLATTEN INDEX is 0-based → identity
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([10, 20, 30]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::Snowflake,
+        );
+        assert!(
+            result.contains("FLATTEN"),
+            "Should use FLATTEN for Snowflake, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("index + 1"),
+            "Should NOT add +1 for 0-based source (BQ), got: {}",
+            result
+        );
+    }
+
+    // ── Tier 2: ClickHouse ARRAY JOIN + arrayEnumerate rewrite ───────────
 
     #[test]
-    fn test_correlated_unnest_fails() {
-        let err = transpile_err(
+    fn test_pg_to_clickhouse_array_join_enumerate() {
+        // PG 1-based, arrayEnumerate is 1-based → no adjustment needed
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.contains("ARRAY JOIN"),
+            "Should use ARRAY JOIN for ClickHouse, got: {}",
+            result
+        );
+        assert!(
+            result.contains("arrayEnumerate"),
+            "Should use arrayEnumerate for ordinality, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS elem"),
+            "Should preserve elem alias, got: {}",
+            result
+        );
+        assert!(
+            result.contains("AS ord"),
+            "Should preserve ord alias, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("WITH ORDINALITY"),
+            "Should NOT contain WITH ORDINALITY, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_pg_to_clickhouse_subquery_wrapping() {
+        // ClickHouse needs a subquery to materialize the array for ARRAY JOIN
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.contains("_arr"),
+            "Should create _arr alias for the array in subquery, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_src"),
+            "Should create _src alias for the subquery, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_bq_to_clickhouse_enumerate_minus_one() {
+        // BQ is 0-based, arrayEnumerate is 1-based → subtract 1
+        let result = transpile(
+            "SELECT elem, off FROM UNNEST([10, 20, 30]) AS elem WITH OFFSET AS off",
+            DialectType::BigQuery,
+            DialectType::ClickHouse,
+        );
+        assert!(
+            result.contains("arrayEnumerate"),
+            "Should use arrayEnumerate, got: {}",
+            result
+        );
+        assert!(
+            result.contains("- 1"),
+            "Should subtract 1 for 0-based source (BQ→CH), got: {}",
+            result
+        );
+    }
+
+    // ── C2: Correlated UNNEST → CTE + PARTITION BY emulation ─────────────
+
+    #[test]
+    fn test_correlated_unnest_cte_emulation() {
+        let result = transpile(
             "SELECT t.id, x, pos FROM tbl AS t, UNNEST(t.arr) WITH ORDINALITY AS u(x, pos)",
             DialectType::PostgreSQL,
             DialectType::DataFusion,
         );
+        // Should inject a CTE with _ord_rn and use PARTITION BY
         assert!(
-            err.contains("Correlated"),
-            "Error should mention correlated UNNEST: {}",
-            err
+            result.contains("_ord_base"),
+            "Should inject _ord_base CTE: {}",
+            result
         );
         assert!(
-            err.contains("restart per input row"),
-            "Error should explain the scoping issue: {}",
-            err
+            result.contains("_ord_rn"),
+            "Should create _ord_rn identifier: {}",
+            result
+        );
+        assert!(
+            result.contains("PARTITION BY"),
+            "Should use PARTITION BY for per-row scoping: {}",
+            result
+        );
+        assert!(
+            result.contains("ROW_NUMBER()"),
+            "Should emit ROW_NUMBER(): {}",
+            result
         );
     }
 
@@ -1732,6 +1945,115 @@ mod unnest_ordinality {
         assert!(
             result.contains("WITH OFFSET"),
             "Expected WITH OFFSET preserved in BQ round-trip, got: {}",
+            result
+        );
+    }
+
+    // ── Tier 3: Remaining emulated dialects (Redshift, StarRocks, Doris) ──
+
+    #[test]
+    fn test_pg_to_redshift_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::Redshift,
+        );
+        assert!(
+            result.contains("ROW_NUMBER()") && result.contains("OVER"),
+            "Redshift should use ROW_NUMBER() emulation, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("WITH ORDINALITY"),
+            "Redshift output should not contain WITH ORDINALITY, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_pg_to_starrocks_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::StarRocks,
+        );
+        assert!(
+            result.contains("ROW_NUMBER()") && result.contains("OVER"),
+            "StarRocks should use ROW_NUMBER() emulation, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_pg_to_doris_unnest_with_ordinality() {
+        let result = transpile(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::Doris,
+        );
+        assert!(
+            result.contains("ROW_NUMBER()") && result.contains("OVER"),
+            "Doris should use ROW_NUMBER() emulation, got: {}",
+            result
+        );
+    }
+
+    // ── Tier 4: Remaining error dialects (Oracle) ──────────────────────────
+
+    #[test]
+    fn test_pg_to_oracle_fails_with_guidance() {
+        let err = transpile_err(
+            "SELECT elem, ord FROM UNNEST(ARRAY[1, 2, 3]) WITH ORDINALITY AS t(elem, ord)",
+            DialectType::PostgreSQL,
+            DialectType::Oracle,
+        );
+        assert!(
+            err.contains("Oracle"),
+            "Error should mention Oracle: {}",
+            err
+        );
+    }
+
+    // ── Correlated UNNEST on all Tier 3 targets ──────────────────────────
+
+    #[test]
+    fn test_correlated_unnest_cte_redshift() {
+        let result = transpile(
+            "SELECT t.id, x, pos FROM tbl AS t, UNNEST(t.arr) WITH ORDINALITY AS u(x, pos)",
+            DialectType::PostgreSQL,
+            DialectType::Redshift,
+        );
+        assert!(
+            result.contains("_ord_base") && result.contains("PARTITION BY"),
+            "Redshift correlated UNNEST should use CTE + PARTITION BY, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_correlated_unnest_cte_starrocks() {
+        let result = transpile(
+            "SELECT t.id, x, pos FROM tbl AS t, UNNEST(t.arr) WITH ORDINALITY AS u(x, pos)",
+            DialectType::PostgreSQL,
+            DialectType::StarRocks,
+        );
+        assert!(
+            result.contains("_ord_base") && result.contains("PARTITION BY"),
+            "StarRocks correlated UNNEST should use CTE + PARTITION BY, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_correlated_unnest_cte_doris() {
+        let result = transpile(
+            "SELECT t.id, x, pos FROM tbl AS t, UNNEST(t.arr) WITH ORDINALITY AS u(x, pos)",
+            DialectType::PostgreSQL,
+            DialectType::Doris,
+        );
+        assert!(
+            result.contains("_ord_base") && result.contains("PARTITION BY"),
+            "Doris correlated UNNEST should use CTE + PARTITION BY, got: {}",
             result
         );
     }
