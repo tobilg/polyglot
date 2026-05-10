@@ -32060,7 +32060,7 @@ impl Dialect {
             match unit.trim().to_ascii_uppercase().as_str() {
                 "YEAR" | "YEARS" => Some(IntervalUnit::Year),
                 "QUARTER" | "QUARTERS" => Some(IntervalUnit::Quarter),
-                "MONTH" | "MONTHS" => Some(IntervalUnit::Month),
+                "MONTH" | "MONTHS" | "MON" | "MONS" | "MM" => Some(IntervalUnit::Month),
                 "WEEK" | "WEEKS" | "ISOWEEK" => Some(IntervalUnit::Week),
                 "DAY" | "DAYS" => Some(IntervalUnit::Day),
                 "HOUR" | "HOURS" => Some(IntervalUnit::Hour),
@@ -36732,7 +36732,9 @@ impl Dialect {
         match s {
             "YEAR" | "YY" | "YYYY" => crate::expressions::IntervalUnit::Year,
             "QUARTER" | "QQ" | "Q" => crate::expressions::IntervalUnit::Quarter,
-            "MONTH" | "MM" | "M" => crate::expressions::IntervalUnit::Month,
+            "MONTH" | "MONTHS" | "MON" | "MONS" | "MM" | "M" => {
+                crate::expressions::IntervalUnit::Month
+            }
             "WEEK" | "WK" | "WW" | "ISOWEEK" => crate::expressions::IntervalUnit::Week,
             "DAY" | "DD" | "D" | "DY" => crate::expressions::IntervalUnit::Day,
             "HOUR" | "HH" => crate::expressions::IntervalUnit::Hour,

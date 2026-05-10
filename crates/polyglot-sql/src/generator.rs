@@ -18528,7 +18528,7 @@ impl Generator {
         };
         match lower {
             "day" | "days" | "d" => "DAY".to_string(),
-            "month" | "months" | "mon" | "mm" => "MONTH".to_string(),
+            "month" | "months" | "mon" | "mons" | "mm" => "MONTH".to_string(),
             "year" | "years" | "y" | "yy" | "yyyy" => "YEAR".to_string(),
             "week" | "weeks" | "w" | "wk" => "WEEK".to_string(),
             "hour" | "hours" | "h" | "hh" => "HOUR".to_string(),

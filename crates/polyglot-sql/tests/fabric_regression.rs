@@ -122,6 +122,42 @@ fn date_plus_cast_interval_rewrites_to_dateadd() {
 }
 
 #[test]
+fn date_plus_month_interval_rewrites_to_month_dateadd() {
+    let out = pg_to_fabric("SELECT DATE '1993-07-01' + INTERVAL '3 months'");
+    assert_eq!(out, "SELECT DATEADD(MONTH, 3, CAST('1993-07-01' AS DATE))");
+}
+
+#[test]
+fn date_plus_mon_interval_rewrites_to_month_dateadd() {
+    let out = pg_to_fabric("SELECT DATE '1993-07-01' + INTERVAL '3 mon'");
+    assert_eq!(out, "SELECT DATEADD(MONTH, 3, CAST('1993-07-01' AS DATE))");
+}
+
+#[test]
+fn date_plus_mons_interval_rewrites_to_month_dateadd() {
+    let out = pg_to_fabric("SELECT DATE '1993-07-01' + INTERVAL '3 mons'");
+    assert_eq!(out, "SELECT DATEADD(MONTH, 3, CAST('1993-07-01' AS DATE))");
+}
+
+#[test]
+fn date_minus_mons_interval_rewrites_to_negative_month_dateadd() {
+    let out = pg_to_fabric("SELECT DATE '1993-07-01' - INTERVAL '3 mons'");
+    assert_eq!(out, "SELECT DATEADD(MONTH, -3, CAST('1993-07-01' AS DATE))");
+}
+
+#[test]
+fn date_plus_cast_mons_interval_rewrites_to_month_dateadd() {
+    let out = pg_to_fabric("SELECT shipdate + CAST('3 mons' AS INTERVAL) FROM lineitem");
+    assert_eq!(out, "SELECT DATEADD(MONTH, 3, shipdate) FROM lineitem");
+}
+
+#[test]
+fn date_minus_double_colon_mons_interval_rewrites_to_month_dateadd() {
+    let out = pg_to_fabric("SELECT shipdate - '3 mons'::INTERVAL FROM lineitem");
+    assert_eq!(out, "SELECT DATEADD(MONTH, -3, shipdate) FROM lineitem");
+}
+
+#[test]
 fn date_minus_double_colon_interval_rewrites_to_dateadd() {
     let out = pg_to_fabric("SELECT shipdate - '3 day'::INTERVAL FROM lineitem");
     assert_eq!(out, "SELECT DATEADD(DAY, -3, shipdate) FROM lineitem");
