@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any as TypingAny
 
 
 class PolyglotError(Exception):
@@ -139,7 +139,7 @@ class Expression:
 
     # ── Serialization ────────────────────────────────────────────────
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, TypingAny]:
         """Serialize this node to a nested Python dict (JSON-like).
 
         The top-level key is the :attr:`kind` string and the value is a dict
@@ -152,7 +152,7 @@ class Expression:
         """
         ...
 
-    def arg(self, name: str) -> Any:
+    def arg(self, name: str) -> TypingAny:
         """Look up a single field by name from the serialized payload.
 
         Returns a Python object: child ``Expression`` objects are wrapped
@@ -204,7 +204,7 @@ class Expression:
         ...
 
     @property
-    def args(self) -> dict[str, Any]:
+    def args(self) -> dict[str, TypingAny]:
         """All fields as a dict (uses serialization, not on the hot path).
 
         Keys are field names, values are Python objects.
@@ -1246,6 +1246,7 @@ class Truncate(Expression): ...
 class TruncFunc(Expression): ...
 class TruncateTable(Expression): ...
 class TryCast(Expression): ...
+class TryCatch(Expression): ...
 class TryBase64DecodeBinary(Expression): ...
 class TryBase64DecodeString(Expression): ...
 class TryToDecfloat(Expression): ...
@@ -1388,7 +1389,7 @@ def parse_one(
     read: str | None = None,
     dialect: str | None = None,
     *,
-    into: Any | None = None,
+    into: TypingAny | None = None,
     error_level: str | None = None,
 ) -> Expression:
     """Parse a single SQL statement into an ``Expression`` AST node.
@@ -1411,7 +1412,7 @@ def parse_one(
 
 
 def generate(
-    ast: Expression | dict[str, Any] | list[Expression] | list[dict[str, Any]],
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
     dialect: str = "generic",
     *,
     pretty: bool = False,
@@ -1499,7 +1500,7 @@ def optimize(sql: str, dialect: str | None = None, *, read: str | None = None) -
     ...
 
 
-def lineage(column: str, sql: str, dialect: str = "generic") -> dict[str, Any]:
+def lineage(column: str, sql: str, dialect: str = "generic") -> dict[str, TypingAny]:
     """Trace column lineage through a SQL query.
 
     Args:
@@ -1515,9 +1516,9 @@ def lineage(column: str, sql: str, dialect: str = "generic") -> dict[str, Any]:
 def lineage_with_schema(
     column: str,
     sql: str,
-    schema: dict[str, Any],
+    schema: dict[str, TypingAny],
     dialect: str = "generic",
-) -> dict[str, Any]:
+) -> dict[str, TypingAny]:
     """Trace column lineage with an explicit schema for disambiguation.
 
     Args:
@@ -1546,7 +1547,7 @@ def source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]:
     ...
 
 
-def diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict[str, Any]]:
+def diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict[str, TypingAny]]:
     """Compute a structural diff between two SQL statements.
 
     Args:

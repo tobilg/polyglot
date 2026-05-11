@@ -34,6 +34,25 @@ def test_parse_returns_typed_subclasses():
     assert all(isinstance(r, polyglot_sql.Expression) for r in results)
 
 
+def test_parse_tsql_try_catch_returns_typed_subclass():
+    ast = polyglot_sql.parse_one(
+        """
+        BEGIN TRY
+            INSERT INTO orders (id, amount) VALUES (1, 100.00);
+        END TRY
+        BEGIN CATCH
+            INSERT INTO error_log (msg) VALUES (ERROR_MESSAGE());
+        END CATCH
+        """,
+        dialect="tsql",
+    )
+
+    assert isinstance(ast, polyglot_sql.TryCatch)
+    assert isinstance(ast, polyglot_sql.Expression)
+    assert ast.kind == "try_catch"
+    assert ast.sql("tsql").startswith("BEGIN TRY")
+
+
 def test_parse_multiple_statements_returns_n_entries():
     ast_list = polyglot_sql.parse("SELECT 1; SELECT 2", dialect="postgres")
     assert len(ast_list) == 2

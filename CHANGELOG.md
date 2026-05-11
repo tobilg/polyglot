@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.9] - 2026-05-11
+
+### Added
+- Python binding regression coverage for structured T-SQL `BEGIN TRY` /
+  `BEGIN CATCH` parsing, ensuring parsed nodes are exposed as the typed
+  `polyglot_sql.TryCatch` subclass.
+
+### Fixed
+- Python release builds now include the `TryCatch` expression variant in the
+  native subclass dispatcher, fixing the non-exhaustive Rust match introduced
+  by structured TRY/CATCH AST support.
+- Python package exports and type stubs now expose `TryCatch`, and the stubs
+  avoid shadowing `typing.Any` with the SQL expression subclass named `Any`.
+
 ## [0.3.8] - 2026-05-11
 
 ### Added
@@ -256,6 +270,7 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.3.9]: https://github.com/tobilg/polyglot/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/tobilg/polyglot/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/tobilg/polyglot/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/tobilg/polyglot/compare/v0.3.5...v0.3.6

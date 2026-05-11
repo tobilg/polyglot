@@ -88,6 +88,7 @@ define_expression_subclasses!(
     Copy,
     Put,
     StageReference,
+    TryCatch,
     Alias,
     Cast,
     Collation,
