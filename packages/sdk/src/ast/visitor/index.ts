@@ -11,6 +11,7 @@ export {
   addWhere,
   clone,
   qualifyColumns,
+  qualifyTables,
   remove,
   removeLimitOffset,
   removeSelectColumns,
@@ -34,6 +35,7 @@ export type {
   VisitorConfig,
   VisitorContext,
 } from './types';
+export type { QualifyTablesOptions, RenameTablesOptions } from './transformer';
 // Walker functions
 export {
   countNodes,

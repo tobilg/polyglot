@@ -33,6 +33,50 @@ BEGIN CATCH
 END CATCH"#;
 
 // ---------------------------------------------------------------------------
+// PostgreSQL NULLS FIRST/LAST -> T-SQL CASE sort key
+// ---------------------------------------------------------------------------
+
+#[test]
+fn postgres_null_ordering_rewrites_for_tsql() {
+    let cases = [
+        (
+            "SELECT id FROM t ORDER BY id ASC",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id ASC NULLS LAST",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id ASC NULLS FIRST",
+            "SELECT id FROM t ORDER BY id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END DESC, id DESC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC NULLS FIRST",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END DESC, id DESC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC NULLS LAST",
+            "SELECT id FROM t ORDER BY id DESC",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_random_ordering_does_not_add_null_sort_key_for_tsql() {
+    let out = pg_to_tsql(r#"SELECT * FROM "test_table" ORDER BY RANDOM() LIMIT 5"#);
+    assert_eq!(out, "SELECT TOP 5 * FROM [test_table] ORDER BY RAND()");
+}
+
+// ---------------------------------------------------------------------------
 // T-SQL TRY/CATCH structured traversal
 // ---------------------------------------------------------------------------
 

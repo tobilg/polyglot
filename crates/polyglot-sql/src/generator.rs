@@ -4803,7 +4803,10 @@ impl Generator {
                 } else {
                     self.write_space();
                 }
-                if matches!(self.config.dialect, Some(DialectType::TSQL)) {
+                if matches!(
+                    self.config.dialect,
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                ) {
                     // SQL Server 2012+ OFFSET ... FETCH syntax
                     self.write_keyword("OFFSET");
                     self.write_space();
@@ -23212,6 +23215,36 @@ impl Generator {
     }
 
     fn generate_ordered(&mut self, ordered: &Ordered) -> Result<()> {
+        let unsupported_tsql_null_ordering = ordered.nulls_first.is_some()
+            && !self.config.null_ordering_supported
+            && matches!(
+                self.config.dialect,
+                Some(DialectType::TSQL) | Some(DialectType::Fabric)
+            );
+        let random_ordering = matches!(ordered.this, Expression::Rand(_) | Expression::Random(_));
+        let emulate_tsql_null_ordering = if let Some(nulls_first) = ordered.nulls_first {
+            let target_default_nulls_first = !ordered.desc;
+
+            unsupported_tsql_null_ordering
+                && nulls_first != target_default_nulls_first
+                && !random_ordering
+        } else {
+            false
+        };
+
+        if emulate_tsql_null_ordering {
+            self.write_keyword("CASE WHEN");
+            self.write_space();
+            self.generate_expression(&ordered.this)?;
+            self.write_space();
+            self.write_keyword("IS NULL THEN 1 ELSE 0 END");
+            if ordered.nulls_first == Some(true) {
+                self.write_space();
+                self.write_keyword("DESC");
+            }
+            self.write(", ");
+        }
+
         self.generate_expression(&ordered.this)?;
         if ordered.desc {
             self.write_space();
@@ -23221,8 +23254,9 @@ impl Generator {
             self.write_keyword("ASC");
         }
         if let Some(nulls_first) = ordered.nulls_first {
-            if self.config.null_ordering_supported
-                || !matches!(self.config.dialect, Some(DialectType::Fabric))
+            if !unsupported_tsql_null_ordering
+                && (self.config.null_ordering_supported
+                    || !matches!(self.config.dialect, Some(DialectType::Fabric)))
             {
                 // Determine if we should skip outputting NULLS FIRST/LAST when it's the default
                 // for the dialect. Different dialects have different NULL ordering defaults:

@@ -42,8 +42,8 @@ pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
     get_identifiers, get_literals, get_output_column_names, get_subqueries, get_table_names,
     get_window_functions, node_count, qualify_columns, remove_limit_offset, remove_nodes,
-    remove_select_columns, remove_where, rename_columns, rename_tables, replace_by_type,
-    replace_nodes, set_distinct, set_limit, set_offset,
+    remove_select_columns, remove_where, rename_columns, rename_tables, rename_tables_with_options,
+    replace_by_type, replace_nodes, set_distinct, set_limit, set_offset, RenameTablesOptions,
 };
 pub use dialects::{
     unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType, TranspileOptions,
@@ -59,7 +59,9 @@ pub use helper::{
     csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,
     name_sequence, seq_get, split_num_words, tsort, while_changing, DATE_UNITS,
 };
-pub use optimizer::{annotate_types, TypeAnnotator, TypeCoercionClass};
+pub use optimizer::{
+    annotate_types, qualify_tables, QualifyTablesOptions, TypeAnnotator, TypeCoercionClass,
+};
 pub use parser::Parser;
 pub use resolver::{is_column_ambiguous, resolve_column, Resolver, ResolverError, ResolverResult};
 pub use schema::{

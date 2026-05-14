@@ -3,8 +3,9 @@ use polyglot_sql_ffi::{
     polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
     polyglot_free_validation_result, polyglot_generate, polyglot_lineage,
     polyglot_lineage_with_schema, polyglot_optimize, polyglot_parse, polyglot_parse_one,
-    polyglot_source_tables, polyglot_transpile, polyglot_transpile_with_options, polyglot_validate,
-    polyglot_version, PolyglotResult, PolyglotValidationResult,
+    polyglot_qualify_tables, polyglot_rename_tables_with_options, polyglot_source_tables,
+    polyglot_transpile, polyglot_transpile_with_options, polyglot_validate, polyglot_version,
+    PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
 use std::ffi::{CStr, CString};
@@ -273,6 +274,67 @@ fn test_parse_generate_roundtrip() {
         serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
     assert_eq!(statements.len(), 1);
     assert!(statements[0].to_uppercase().contains("SELECT"));
+}
+
+#[test]
+fn test_qualify_tables_ast_transform() {
+    let sql =
+        c("SELECT * FROM (SELECT * FROM tab_1) UNION ALL SELECT * FROM (SELECT * FROM tab_1)");
+    let dialect = c("generic");
+
+    let (parse_status, parse_data, parse_error) =
+        consume_result(polyglot_parse(sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(parse_status, 0, "parse_error={parse_error:?}");
+
+    let ast_json = c(&parse_data.expect("missing parse result"));
+    let options_json = c("{}");
+    let (qualify_status, qualify_data, qualify_error) = consume_result(polyglot_qualify_tables(
+        ast_json.as_ptr(),
+        options_json.as_ptr(),
+    ));
+    assert_eq!(qualify_status, 0, "qualify_error={qualify_error:?}");
+
+    let qualified_ast = c(&qualify_data.expect("missing qualify result"));
+    let (gen_status, gen_data, gen_error) =
+        consume_result(polyglot_generate(qualified_ast.as_ptr(), dialect.as_ptr()));
+    assert_eq!(gen_status, 0, "gen_error={gen_error:?}");
+
+    let statements: Vec<String> =
+        serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(
+        statements[0],
+        "SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _0 UNION ALL SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _1"
+    );
+}
+
+#[test]
+fn test_rename_tables_with_options_ast_transform() {
+    let sql = c("SELECT a FROM old_table");
+    let dialect = c("generic");
+
+    let (parse_status, parse_data, parse_error) =
+        consume_result(polyglot_parse(sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(parse_status, 0, "parse_error={parse_error:?}");
+
+    let ast_json = c(&parse_data.expect("missing parse result"));
+    let mapping_json = c(r#"{"old_table":"new_table"}"#);
+    let options_json = c(r#"{"aliasRenamedTables":true}"#);
+    let (rename_status, rename_data, rename_error) =
+        consume_result(polyglot_rename_tables_with_options(
+            ast_json.as_ptr(),
+            mapping_json.as_ptr(),
+            options_json.as_ptr(),
+        ));
+    assert_eq!(rename_status, 0, "rename_error={rename_error:?}");
+
+    let renamed_ast = c(&rename_data.expect("missing rename result"));
+    let (gen_status, gen_data, gen_error) =
+        consume_result(polyglot_generate(renamed_ast.as_ptr(), dialect.as_ptr()));
+    assert_eq!(gen_status, 0, "gen_error={gen_error:?}");
+
+    let statements: Vec<String> =
+        serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(statements[0], "SELECT a FROM new_table AS new_table");
 }
 
 #[test]

@@ -8285,15 +8285,21 @@ impl Dialect {
                         if matches!(target, DialectType::MySQL) && o.nulls_first.is_some() {
                             Action::MysqlNullsOrdering
                         } else {
-                            // Skip targets that don't support NULLS FIRST/LAST syntax
+                            // Skip targets that don't support NULLS FIRST/LAST syntax unless
+                            // the generator can preserve semantics with a CASE sort key.
+                            let target_rewrites_nulls =
+                                matches!(target, DialectType::TSQL | DialectType::Fabric);
                             let target_supports_nulls = !matches!(
                                 target,
                                 DialectType::MySQL
                                     | DialectType::TSQL
+                                    | DialectType::Fabric
                                     | DialectType::StarRocks
                                     | DialectType::Doris
                             );
-                            if o.nulls_first.is_none() && source != target && target_supports_nulls
+                            if o.nulls_first.is_none()
+                                && source != target
+                                && (target_supports_nulls || target_rewrites_nulls)
                             {
                                 Action::NullsOrdering
                             } else {

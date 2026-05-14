@@ -11,6 +11,81 @@ fn pg_to_fabric(sql: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// PostgreSQL NULLS FIRST/LAST -> Fabric CASE sort key
+// ---------------------------------------------------------------------------
+
+#[test]
+fn postgres_null_ordering_rewrites_for_fabric() {
+    let cases = [
+        (
+            "SELECT id FROM t ORDER BY id ASC",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id ASC NULLS LAST",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id ASC NULLS FIRST",
+            "SELECT id FROM t ORDER BY id ASC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END DESC, id DESC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC NULLS FIRST",
+            "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END DESC, id DESC",
+        ),
+        (
+            "SELECT id FROM t ORDER BY id DESC NULLS LAST",
+            "SELECT id FROM t ORDER BY id DESC",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_fabric(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_random_ordering_does_not_add_null_sort_key_for_fabric() {
+    let out = pg_to_fabric(r#"SELECT * FROM "test_table" ORDER BY RANDOM() LIMIT 5"#);
+    assert_eq!(out, "SELECT TOP 5 * FROM [test_table] ORDER BY RAND()");
+}
+
+// ---------------------------------------------------------------------------
+// PostgreSQL LIMIT/OFFSET -> Fabric TOP/OFFSET/FETCH
+// ---------------------------------------------------------------------------
+
+#[test]
+fn limit_without_offset_uses_top() {
+    let out = pg_to_fabric("SELECT id FROM t ORDER BY id LIMIT 5");
+    assert_eq!(
+        out,
+        "SELECT TOP 5 id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id"
+    );
+}
+
+#[test]
+fn limit_with_offset_uses_offset_fetch() {
+    let out = pg_to_fabric("SELECT id FROM t ORDER BY id LIMIT 5 OFFSET 2");
+    assert_eq!(
+        out,
+        "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id OFFSET 2 ROWS FETCH NEXT 5 ROWS ONLY"
+    );
+}
+
+#[test]
+fn offset_without_limit_keeps_rows_keyword() {
+    let out = pg_to_fabric("SELECT id FROM t ORDER BY id OFFSET 2");
+    assert_eq!(
+        out,
+        "SELECT id FROM t ORDER BY CASE WHEN id IS NULL THEN 1 ELSE 0 END, id OFFSET 2 ROWS"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // BPCHAR → CHAR normalisation
 // ---------------------------------------------------------------------------
 

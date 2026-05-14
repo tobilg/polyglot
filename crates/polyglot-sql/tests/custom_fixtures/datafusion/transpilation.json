@@ -36,7 +36,7 @@
         "postgresql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1",
         "mysql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1",
         "spark": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x NULLS LAST) AS _w FROM t) AS _t WHERE _w = 1",
-        "tsql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w = 1"
+        "tsql": "SELECT * FROM (SELECT *, ROW_NUMBER() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) AS _w FROM t) AS _t WHERE _w = 1"
       },
       "description": "QUALIFY ROW_NUMBER elimination for dialects without QUALIFY"
     },
@@ -48,7 +48,7 @@
         "postgresql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3",
         "mysql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3",
         "spark": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x NULLS LAST) AS _w FROM t) AS _t WHERE _w <= 3",
-        "tsql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY x) AS _w FROM t) AS _t WHERE _w <= 3"
+        "tsql": "SELECT * FROM (SELECT *, RANK() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) AS _w FROM t) AS _t WHERE _w <= 3"
       },
       "description": "QUALIFY RANK elimination for dialects without QUALIFY"
     },
@@ -242,7 +242,7 @@
         "snowflake": "SELECT * FROM t ORDER BY x ASC",
         "mysql": "SELECT * FROM t ORDER BY x ASC",
         "spark": "SELECT * FROM t ORDER BY x ASC NULLS LAST",
-        "tsql": "SELECT * FROM t ORDER BY x ASC NULLS LAST"
+        "tsql": "SELECT * FROM t ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x ASC"
       },
       "description": "ASC NULLS LAST: redundant for DuckDB/PostgreSQL/Snowflake/MySQL"
     },
@@ -254,7 +254,7 @@
         "duckdb": "SELECT * FROM t ORDER BY x DESC NULLS FIRST",
         "mysql": "SELECT * FROM t ORDER BY x DESC",
         "spark": "SELECT * FROM t ORDER BY x DESC NULLS FIRST",
-        "tsql": "SELECT * FROM t ORDER BY x DESC NULLS FIRST"
+        "tsql": "SELECT * FROM t ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END DESC, x DESC"
       },
       "description": "DESC NULLS FIRST: redundant for PostgreSQL/Snowflake/MySQL"
     },
@@ -266,7 +266,7 @@
         "mysql": "SELECT * FROM t ORDER BY x DESC",
         "snowflake": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
         "spark": "SELECT * FROM t ORDER BY x DESC NULLS LAST",
-        "tsql": "SELECT * FROM t ORDER BY x DESC NULLS LAST"
+        "tsql": "SELECT * FROM t ORDER BY x DESC"
       },
       "description": "DESC NULLS LAST: redundant for DuckDB/MySQL"
     },
@@ -511,7 +511,7 @@
     {
       "sql": "SELECT * FROM t ORDER BY x LIMIT 10",
       "write": {
-        "tsql": "SELECT TOP 10 * FROM t ORDER BY x",
+        "tsql": "SELECT TOP 10 * FROM t ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x",
         "duckdb": "SELECT * FROM t ORDER BY x LIMIT 10",
         "mysql": "SELECT * FROM t ORDER BY x LIMIT 10",
         "postgresql": "SELECT * FROM t ORDER BY x LIMIT 10",
@@ -535,7 +535,7 @@
     {
       "sql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
       "write": {
-        "tsql": "SELECT * FROM t ORDER BY x OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        "tsql": "SELECT * FROM t ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
         "duckdb": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
         "mysql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
         "postgresql": "SELECT * FROM t ORDER BY x LIMIT 10 OFFSET 5",
@@ -603,7 +603,7 @@
         "postgresql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
         "snowflake": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t",
         "spark": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z NULLS LAST) FROM t",
-        "tsql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY z) FROM t"
+        "tsql": "SELECT SUM(x) OVER (PARTITION BY y ORDER BY CASE WHEN z IS NULL THEN 1 ELSE 0 END, z) FROM t"
       },
       "description": "Window function: Spark adds NULLS LAST"
     },
@@ -615,7 +615,7 @@
         "postgresql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
         "snowflake": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t",
         "spark": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y NULLS LAST) FROM t",
-        "tsql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY y) FROM t"
+        "tsql": "SELECT ROW_NUMBER() OVER (PARTITION BY x ORDER BY CASE WHEN y IS NULL THEN 1 ELSE 0 END, y) FROM t"
       },
       "description": "ROW_NUMBER window function: Spark adds NULLS LAST"
     },

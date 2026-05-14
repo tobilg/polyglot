@@ -23,12 +23,30 @@ import type {
 import {
   ast_rename_columns,
   ast_rename_tables,
+  ast_rename_tables_with_options,
   ast_qualify_columns,
+  ast_qualify_tables,
   ast_add_where,
   ast_remove_where,
   ast_set_limit,
   ast_set_distinct,
 } from '../../../wasm/polyglot_sql_wasm.js';
+
+export interface RenameTablesOptions {
+  aliasRenamedTables?: boolean;
+  preserveExistingAliases?: boolean;
+}
+
+export interface QualifyTablesOptions {
+  db?: string;
+  catalog?: string;
+  dialect?: string;
+  canonicalizeTableAliases?: boolean;
+  aliasUnaliasedTables?: boolean;
+  aliasUnaliasedSubqueries?: boolean;
+  aliasPrefix?: string;
+  normalizeSetOperationSubqueries?: boolean;
+}
 
 /** Serialize Expression to JSON for WASM functions */
 function exprToJson(node: Expression): string {
@@ -290,9 +308,16 @@ export function renameColumns(
 export function renameTables(
   node: Expression,
   mapping: Record<string, string>,
+  options?: RenameTablesOptions,
 ): Expression {
   const result = parseAstResult(
-    ast_rename_tables(exprToJson(node), JSON.stringify(mapping)),
+    options
+      ? ast_rename_tables_with_options(
+          exprToJson(node),
+          JSON.stringify(mapping),
+          JSON.stringify(options),
+        )
+      : ast_rename_tables(exprToJson(node), JSON.stringify(mapping)),
   );
   return result ?? node;
 }
@@ -313,6 +338,26 @@ export function qualifyColumns(
 ): Expression {
   const result = parseAstResult(
     ast_qualify_columns(exprToJson(node), tableName),
+  );
+  return result ?? node;
+}
+
+/**
+ * Qualify table references and optionally generate stable aliases (via WASM)
+ *
+ * @example
+ * ```typescript
+ * const newAst = qualifyTables(ast, {
+ *   canonicalizeTableAliases: true
+ * });
+ * ```
+ */
+export function qualifyTables(
+  node: Expression,
+  options: QualifyTablesOptions = {},
+): Expression {
+  const result = parseAstResult(
+    ast_qualify_tables(exprToJson(node), JSON.stringify(options)),
   );
   return result ?? node;
 }

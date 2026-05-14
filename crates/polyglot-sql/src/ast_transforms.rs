@@ -159,12 +159,61 @@ pub fn rename_columns(expr: Expression, mapping: &HashMap<String, String>) -> Ex
     })
 }
 
+/// Options for table renaming.
+#[derive(Debug, Clone)]
+pub struct RenameTablesOptions {
+    /// Whether renamed table references should receive aliases.
+    pub alias_renamed_tables: bool,
+    /// Whether existing aliases should be preserved when aliasing renamed tables.
+    pub preserve_existing_aliases: bool,
+}
+
+impl Default for RenameTablesOptions {
+    fn default() -> Self {
+        Self {
+            alias_renamed_tables: false,
+            preserve_existing_aliases: true,
+        }
+    }
+}
+
+impl RenameTablesOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_alias_renamed_tables(mut self, alias: bool) -> Self {
+        self.alias_renamed_tables = alias;
+        self
+    }
+
+    pub fn with_preserve_existing_aliases(mut self, preserve: bool) -> Self {
+        self.preserve_existing_aliases = preserve;
+        self
+    }
+}
+
 /// Rename tables throughout the expression tree using the provided mapping.
 pub fn rename_tables(expr: Expression, mapping: &HashMap<String, String>) -> Expression {
+    rename_tables_with_options(expr, mapping, &RenameTablesOptions::default())
+}
+
+/// Rename tables throughout the expression tree using the provided mapping and options.
+pub fn rename_tables_with_options(
+    expr: Expression,
+    mapping: &HashMap<String, String>,
+    options: &RenameTablesOptions,
+) -> Expression {
     xform(expr, |node| match node {
         Expression::Table(mut tbl) => {
             if let Some(new_name) = mapping.get(&tbl.name.name) {
                 tbl.name.name = new_name.clone();
+                if options.alias_renamed_tables
+                    && (!options.preserve_existing_aliases || tbl.alias.is_none())
+                {
+                    tbl.alias = Some(Identifier::new(new_name));
+                    tbl.alias_explicit_as = true;
+                }
             }
             Expression::Table(tbl)
         }
@@ -699,6 +748,30 @@ mod tests {
         let result = rename_tables(expr, &mapping);
         let sql = result.sql();
         assert!(sql.contains("new_table"), "Expected new_table in: {}", sql);
+    }
+
+    #[test]
+    fn test_rename_tables_with_alias_renamed_tables() {
+        let expr = parse_one("SELECT a FROM old_table");
+        let mut mapping = HashMap::new();
+        mapping.insert("old_table".to_string(), "new_table".to_string());
+        let options = RenameTablesOptions::new().with_alias_renamed_tables(true);
+        let result = rename_tables_with_options(expr, &mapping, &options);
+        let sql = result.sql();
+
+        assert_eq!(sql, "SELECT a FROM new_table AS new_table");
+    }
+
+    #[test]
+    fn test_rename_tables_with_alias_preserves_existing_alias() {
+        let expr = parse_one("SELECT a FROM old_table AS t");
+        let mut mapping = HashMap::new();
+        mapping.insert("old_table".to_string(), "new_table".to_string());
+        let options = RenameTablesOptions::new().with_alias_renamed_tables(true);
+        let result = rename_tables_with_options(expr, &mapping, &options);
+        let sql = result.sql();
+
+        assert_eq!(sql, "SELECT a FROM new_table AS t");
     }
 
     #[test]

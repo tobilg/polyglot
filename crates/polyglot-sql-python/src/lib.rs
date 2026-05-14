@@ -11,6 +11,7 @@ mod lineage;
 mod optimize;
 mod parse;
 mod tokenize;
+mod transforms;
 mod transpile;
 mod types;
 mod validate;
@@ -32,6 +33,8 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(diff::diff, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(annotate_types::annotate_types, m)?)?;
+    m.add_function(wrap_pyfunction!(transforms::qualify_tables, m)?)?;
+    m.add_function(wrap_pyfunction!(transforms::rename_tables, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::dialects, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::version, m)?)?;
 

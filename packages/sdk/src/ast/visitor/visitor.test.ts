@@ -37,6 +37,7 @@ import {
   hasWindowFunctions,
   nodeCount,
   qualifyColumns,
+  qualifyTables,
   remove,
   removeLimitOffset,
   removeSelectColumns,
@@ -597,6 +598,18 @@ describe('Column and Table Renaming', () => {
       // If tables are in FROM wrapper without type, they won't be renamed
       expect(sql.length).toBeGreaterThan(0);
     });
+
+    it('should alias renamed tables when requested', () => {
+      const ast = parseFirst('SELECT a FROM old_table');
+      const newAst = renameTables(
+        ast,
+        { old_table: 'new_table' },
+        { aliasRenamedTables: true },
+      );
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT a FROM new_table AS new_table');
+    });
   });
 
   describe('qualifyColumns()', () => {
@@ -607,6 +620,20 @@ describe('Column and Table Renaming', () => {
 
       // Should have users.name or similar
       expect(sql.toLowerCase()).toContain('users');
+    });
+  });
+
+  describe('qualifyTables()', () => {
+    it('should qualify union derived-table operands with stable aliases', () => {
+      const ast = parseFirst(
+        'SELECT * FROM (SELECT * FROM tab_1) UNION ALL SELECT * FROM (SELECT * FROM tab_1)',
+      );
+      const newAst = qualifyTables(ast);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe(
+        'SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _0 UNION ALL SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _1',
+      );
     });
   });
 });

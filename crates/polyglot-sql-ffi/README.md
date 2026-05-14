@@ -103,6 +103,8 @@ typedef struct {
 - `polyglot_parse_one(sql, dialect)`
 - `polyglot_tokenize(sql, dialect)`
 - `polyglot_generate(ast_json, dialect)` (expects `Vec<Expression>` JSON)
+- `polyglot_qualify_tables(ast_json, options_json)` (expects `Vec<Expression>` JSON)
+- `polyglot_rename_tables_with_options(ast_json, mapping_json, options_json)` (expects `Vec<Expression>` JSON)
 - `polyglot_format(sql, dialect)`
 - `polyglot_format_with_options(sql, dialect, options_json)` (`FormatGuardOptions` JSON)
 - `polyglot_validate(sql, dialect)`
@@ -160,6 +162,8 @@ polyglot_result_t r = polyglot_format_with_options(sql, "generic", opts);
 - `polyglot_parse_one`: JSON `Expression`
 - `polyglot_tokenize`: JSON `Vec<Token>` (each token has `token_type`, `text`, `span`, `comments`, `trailing_comments`)
 - `polyglot_generate`: JSON array of SQL strings
+- `polyglot_qualify_tables`: JSON `Vec<Expression>`
+- `polyglot_rename_tables_with_options`: JSON `Vec<Expression>`
 - `polyglot_format`: JSON array of SQL strings
 - `polyglot_format_with_options`: JSON array of SQL strings
 - `polyglot_optimize`: JSON array of SQL strings

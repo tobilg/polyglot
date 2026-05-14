@@ -1437,6 +1437,41 @@ def generate(
     ...
 
 
+def qualify_tables(
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+    *,
+    db: str | None = None,
+    catalog: str | None = None,
+    dialect: str | None = None,
+    canonicalize_table_aliases: bool = False,
+    alias_unaliased_tables: bool = True,
+    alias_unaliased_subqueries: bool = True,
+    alias_prefix: str = "_",
+    normalize_set_operation_subqueries: bool = True,
+) -> Expression | list[Expression]:
+    """Qualify table references in an AST.
+
+    The returned shape matches the input shape: a single AST returns a single
+    ``Expression`` and a list input returns a list.
+    """
+    ...
+
+
+def rename_tables(
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+    mapping: dict[str, str],
+    *,
+    alias_renamed_tables: bool = False,
+    preserve_existing_aliases: bool = True,
+) -> Expression | list[Expression]:
+    """Rename table references in an AST.
+
+    The returned shape matches the input shape: a single AST returns a single
+    ``Expression`` and a list input returns a list.
+    """
+    ...
+
+
 def format_sql(
     sql: str,
     dialect: str = "generic",

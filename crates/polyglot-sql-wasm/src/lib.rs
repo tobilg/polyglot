@@ -15,7 +15,7 @@ use polyglot_sql::{
     mapping_schema_from_validation_schema,
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
-    FormatGuardOptions as CoreFormatGuardOptions,
+    FormatGuardOptions as CoreFormatGuardOptions, QualifyTablesOptions, RenameTablesOptions,
     SchemaValidationOptions as CoreSchemaValidationOptions, Token,
     ValidationOptions as CoreValidationOptions, ValidationResult as CoreValidationResult,
     ValidationSchema as CoreValidationSchema,
@@ -1402,6 +1402,87 @@ pub struct AstResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WasmQualifyTablesOptions {
+    #[serde(default)]
+    db: Option<String>,
+    #[serde(default)]
+    catalog: Option<String>,
+    #[serde(default)]
+    dialect: Option<String>,
+    #[serde(default, alias = "canonicalize_table_aliases")]
+    canonicalize_table_aliases: Option<bool>,
+    #[serde(default, alias = "alias_unaliased_tables")]
+    alias_unaliased_tables: Option<bool>,
+    #[serde(default, alias = "alias_unaliased_subqueries")]
+    alias_unaliased_subqueries: Option<bool>,
+    #[serde(default, alias = "alias_prefix")]
+    alias_prefix: Option<String>,
+    #[serde(default, alias = "normalize_set_operation_subqueries")]
+    normalize_set_operation_subqueries: Option<bool>,
+}
+
+impl WasmQualifyTablesOptions {
+    fn into_core(self) -> Result<QualifyTablesOptions, String> {
+        let dialect = self
+            .dialect
+            .as_deref()
+            .filter(|dialect| !dialect.is_empty())
+            .map(str::parse::<DialectType>)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+
+        let mut options = QualifyTablesOptions::new();
+        options.db = self.db;
+        options.catalog = self.catalog;
+        options.dialect = dialect;
+        if let Some(value) = self.canonicalize_table_aliases {
+            options.canonicalize_table_aliases = value;
+        }
+        if let Some(value) = self.alias_unaliased_tables {
+            options.alias_unaliased_tables = value;
+        }
+        if let Some(value) = self.alias_unaliased_subqueries {
+            options.alias_unaliased_subqueries = value;
+        }
+        if let Some(value) = self.alias_prefix {
+            options.alias_prefix = if value.is_empty() {
+                "_".to_string()
+            } else {
+                value
+            };
+        }
+        if let Some(value) = self.normalize_set_operation_subqueries {
+            options.normalize_set_operation_subqueries = value;
+        }
+
+        Ok(options)
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct WasmRenameTablesOptions {
+    #[serde(default, alias = "alias_renamed_tables")]
+    alias_renamed_tables: Option<bool>,
+    #[serde(default, alias = "preserve_existing_aliases")]
+    preserve_existing_aliases: Option<bool>,
+}
+
+impl WasmRenameTablesOptions {
+    fn into_core(self) -> RenameTablesOptions {
+        let mut options = RenameTablesOptions::new();
+        if let Some(value) = self.alias_renamed_tables {
+            options.alias_renamed_tables = value;
+        }
+        if let Some(value) = self.preserve_existing_aliases {
+            options.preserve_existing_aliases = value;
+        }
+        options
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ScalarResult {
     pub success: bool,
@@ -1688,6 +1769,37 @@ pub fn ast_rename_tables(ast_json: &str, mapping_json: &str) -> String {
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
+/// Rename tables in an AST with table-renaming options.
+#[wasm_bindgen]
+pub fn ast_rename_tables_with_options(
+    ast_json: &str,
+    mapping_json: &str,
+    options_json: &str,
+) -> String {
+    set_panic_hook();
+    let result = (|| -> Result<AstResult, String> {
+        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let mapping: HashMap<String, String> =
+            serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
+        let options: WasmRenameTablesOptions =
+            serde_json::from_str(options_json).map_err(|e| e.to_string())?;
+        let transformed =
+            ast_transforms::rename_tables_with_options(expr, &mapping, &options.into_core());
+        let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
+    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+}
+
 /// Qualify unqualified column references with a table name.
 #[wasm_bindgen]
 pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
@@ -1695,6 +1807,30 @@ pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
     let result = (|| -> Result<AstResult, String> {
         let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::qualify_columns(expr, table_name);
+        let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
+    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+}
+
+/// Qualify table references in an AST.
+#[wasm_bindgen]
+pub fn ast_qualify_tables(ast_json: &str, options_json: &str) -> String {
+    set_panic_hook();
+    let result = (|| -> Result<AstResult, String> {
+        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let options: WasmQualifyTablesOptions =
+            serde_json::from_str(options_json).map_err(|e| e.to_string())?;
+        let transformed = polyglot_sql::qualify_tables(expr, &options.into_core()?);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
             success: true,
@@ -2706,11 +2842,48 @@ mod tests {
     }
 
     #[test]
+    fn test_ast_rename_tables_with_options() {
+        let ast = parse_first_ast("SELECT a FROM old_table");
+        let mapping = r#"{"old_table":"new_table"}"#;
+        let options = r#"{"aliasRenamedTables":true}"#;
+        let result = ast_rename_tables_with_options(&ast, mapping, options);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+
+        let transformed: Expression =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let sql = Dialect::get(DialectType::Generic)
+            .generate(&transformed)
+            .unwrap();
+        assert_eq!(sql, "SELECT a FROM new_table AS new_table");
+    }
+
+    #[test]
     fn test_ast_qualify_columns() {
         let ast = parse_first_ast("SELECT a, b FROM t");
         let result = ast_qualify_columns(&ast, "t");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_ast_qualify_tables() {
+        let ast = parse_first_ast(
+            "SELECT * FROM (SELECT * FROM tab_1) UNION ALL SELECT * FROM (SELECT * FROM tab_1)",
+        );
+        let result = ast_qualify_tables(&ast, "{}");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+
+        let transformed: Expression =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let sql = Dialect::get(DialectType::Generic)
+            .generate(&transformed)
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _0 UNION ALL SELECT * FROM (SELECT * FROM tab_1 AS tab_1) AS _1"
+        );
     }
 
     #[test]
