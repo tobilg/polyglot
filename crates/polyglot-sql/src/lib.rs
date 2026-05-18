@@ -23,6 +23,7 @@ mod function_registry;
 pub mod generator;
 pub mod helper;
 pub mod lineage;
+pub mod openlineage;
 pub mod optimizer;
 pub mod parser;
 pub mod planner;

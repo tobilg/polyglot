@@ -19,6 +19,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **Format** / pretty-print SQL
 - **Fluent builder API** for constructing queries programmatically
 - **Validation** with syntax, semantic, and schema-aware checks
+- **Column lineage** and OpenLineage-compatible payload generation
 - **AST visitor** utilities for walking, transforming, and analyzing queries
 - **Stack-safety hardening** on native targets via default-on `stacker`
 - **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
@@ -116,6 +117,21 @@ print(result[0])  # SELECT COALESCE(a, b) FROM t
 ```
 
 See the full [Python bindings README](crates/polyglot-sql-python/README.md).
+
+## Lineage and OpenLineage Output
+
+Polyglot can trace column lineage through SQL queries and can generate
+OpenLineage-compatible JSON payloads from that analysis. The OpenLineage support
+currently produces `columnLineage` dataset facets, optional schema facets, and
+`JobEvent` / `RunEvent` payloads for supported query shapes such as `SELECT`,
+`INSERT ... SELECT`, and `CREATE TABLE AS SELECT`.
+
+OpenLineage transport and client emission are intentionally out of scope:
+Polyglot builds payloads for callers to inspect, persist, or send through their
+own infrastructure.
+
+- TypeScript SDK examples: [`packages/sdk/README.md`](packages/sdk/README.md#openlineage-output)
+- Python examples: [`crates/polyglot-sql-python/README.md`](crates/polyglot-sql-python/README.md)
 
 ## Format Guard Rails
 

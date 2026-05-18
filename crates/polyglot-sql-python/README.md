@@ -67,6 +67,26 @@ if result:
     print("valid")
 ```
 
+```python
+options = {
+    "producer": "https://github.com/tobilg/polyglot",
+    "datasetNamespace": "postgres://warehouse",
+    "outputDataset": {
+        "namespace": "postgres://warehouse",
+        "name": "analytics.revenue",
+    },
+}
+
+payload = polyglot_sql.openlineage_column_lineage(
+    "SELECT order_id, amount * 100 AS amount_cents FROM raw.orders",
+    options,
+)
+print(payload["facet"]["fields"])
+```
+
+OpenLineage helpers only produce compatible payloads. Transport and client
+emission are intentionally out of scope.
+
 ## API Reference
 
 All functions are exported from `polyglot_sql`.
@@ -81,6 +101,9 @@ All functions are exported from `polyglot_sql`.
 - `optimize(sql: str, dialect: str = "generic") -> str`
 - `lineage(column: str, sql: str, dialect: str = "generic") -> dict`
 - `source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]`
+- `openlineage_column_lineage(sql: str, options: dict) -> dict`
+- `openlineage_job_event(sql: str, options: dict) -> dict`
+- `openlineage_run_event(sql: str, options: dict) -> dict`
 - `diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict]`
 - `dialects() -> list[str]`
 - `__version__: str`

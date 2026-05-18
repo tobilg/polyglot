@@ -62,3 +62,56 @@ def test_lineage_with_schema_resolves_ambiguous_column():
 
     names = collect_names(result)
     assert any(name == "u.id" for name in names), f"expected u.id in lineage tree, got: {names}"
+
+
+def test_openlineage_column_lineage_returns_facet():
+    options = {
+        "producer": "https://github.com/tobilg/polyglot",
+        "datasetNamespace": "postgres://warehouse",
+        "outputDataset": {
+            "namespace": "postgres://warehouse",
+            "name": "analytics.out",
+        },
+    }
+    result = polyglot_sql.openlineage_column_lineage("SELECT a FROM t", options)
+
+    assert result["facet"]["fields"]["a"]["inputFields"][0]["field"] == "a"
+    assert result["outputs"][0]["facets"]["columnLineage"]["fields"]["a"]
+
+
+def test_openlineage_job_event_returns_payload():
+    options = {
+        "producer": "https://github.com/tobilg/polyglot",
+        "datasetNamespace": "postgres://warehouse",
+        "outputDataset": {
+            "namespace": "postgres://warehouse",
+            "name": "analytics.out",
+        },
+        "jobNamespace": "polyglot-tests",
+        "jobName": "lineage-test",
+        "eventTime": "2026-05-18T00:00:00Z",
+    }
+    result = polyglot_sql.openlineage_job_event("SELECT a FROM t", options)
+
+    assert result["event"]["job"]["namespace"] == "polyglot-tests"
+    assert result["event"]["outputs"][0]["facets"]["columnLineage"]
+
+
+def test_openlineage_run_event_returns_payload():
+    options = {
+        "producer": "https://github.com/tobilg/polyglot",
+        "datasetNamespace": "postgres://warehouse",
+        "outputDataset": {
+            "namespace": "postgres://warehouse",
+            "name": "analytics.out",
+        },
+        "jobNamespace": "polyglot-tests",
+        "jobName": "lineage-test",
+        "eventTime": "2026-05-18T00:00:00Z",
+        "runId": "3b452093-782c-4ef2-9c0c-aafe2aa6f34d",
+        "eventType": "COMPLETE",
+    }
+    result = polyglot_sql.openlineage_run_event("SELECT a FROM t", options)
+
+    assert result["event"]["eventType"] == "COMPLETE"
+    assert result["event"]["run"]["runId"] == "3b452093-782c-4ef2-9c0c-aafe2aa6f34d"

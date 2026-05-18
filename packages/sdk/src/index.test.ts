@@ -8,6 +8,9 @@ import {
   getVersion,
   init,
   isInitialized,
+  openLineageColumnLineage,
+  openLineageJobEvent,
+  openLineageRunEvent,
   Polyglot,
   parse,
   transpile,
@@ -177,6 +180,50 @@ describe('Polyglot SDK', () => {
 
       const next = format('SELECT a,b FROM t', Dialect.Generic);
       expect(next.success).toBe(true);
+    });
+  });
+
+  describe('OpenLineage', () => {
+    const options = {
+      producer: 'https://github.com/tobilg/polyglot',
+      datasetNamespace: 'postgres://warehouse',
+      outputDataset: {
+        namespace: 'postgres://warehouse',
+        name: 'analytics.out',
+      },
+    };
+
+    it('should produce column lineage facets', () => {
+      const result = openLineageColumnLineage('SELECT a FROM t', options);
+      expect(result.success).toBe(true);
+      expect(result.facet?.fields.a.inputFields[0].field).toBe('a');
+      expect(result.outputs?.[0].facets).toHaveProperty('columnLineage');
+    });
+
+    it('should produce JobEvent payloads', () => {
+      const result = openLineageJobEvent('SELECT a FROM t', {
+        ...options,
+        jobNamespace: 'polyglot-tests',
+        jobName: 'lineage-test',
+        eventTime: '2026-05-18T00:00:00Z',
+      });
+      expect(result.success).toBe(true);
+      expect(result.event?.job).toBeDefined();
+      expect(result.event?.outputs).toBeDefined();
+    });
+
+    it('should produce RunEvent payloads', () => {
+      const result = openLineageRunEvent('SELECT a FROM t', {
+        ...options,
+        jobNamespace: 'polyglot-tests',
+        jobName: 'lineage-test',
+        eventTime: '2026-05-18T00:00:00Z',
+        runId: '3b452093-782c-4ef2-9c0c-aafe2aa6f34d',
+        eventType: 'COMPLETE',
+      });
+      expect(result.success).toBe(true);
+      expect(result.event?.eventType).toBe('COMPLETE');
+      expect(result.event?.run).toBeDefined();
     });
   });
 

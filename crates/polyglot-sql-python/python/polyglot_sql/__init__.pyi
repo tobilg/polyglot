@@ -1582,6 +1582,35 @@ def source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]:
     ...
 
 
+def openlineage_column_lineage(
+    sql: str,
+    options: dict[str, TypingAny],
+) -> dict[str, TypingAny]:
+    """Build an OpenLineage columnLineage facet and dataset payload.
+
+    The options dict uses the same camelCase keys as the JSON API, including
+    ``producer``, ``datasetNamespace``, ``outputDataset``, and optional
+    ``schema``. This function does not send events.
+    """
+    ...
+
+
+def openlineage_job_event(
+    sql: str,
+    options: dict[str, TypingAny],
+) -> dict[str, TypingAny]:
+    """Build an OpenLineage JobEvent payload without sending it."""
+    ...
+
+
+def openlineage_run_event(
+    sql: str,
+    options: dict[str, TypingAny],
+) -> dict[str, TypingAny]:
+    """Build an OpenLineage RunEvent payload without sending it."""
+    ...
+
+
 def diff(sql1: str, sql2: str, dialect: str = "generic") -> list[dict[str, TypingAny]]:
     """Compute a structural diff between two SQL statements.
 

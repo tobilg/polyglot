@@ -738,6 +738,25 @@ export { ValidationSeverity, validate } from './validation';
 // Re-export lineage module
 export { getSourceTables, lineage, lineageWithSchema } from './lineage';
 export type { LineageNode, LineageResult, SourceTablesResult } from './lineage';
+// Re-export OpenLineage module
+export {
+  openLineageColumnLineage,
+  openLineageJobEvent,
+  openLineageRunEvent,
+} from './openlineage';
+export type {
+  OpenLineageColumnLineageFacet,
+  OpenLineageColumnLineageField,
+  OpenLineageColumnLineageResult,
+  OpenLineageDataset,
+  OpenLineageDatasetId,
+  OpenLineageEventResult,
+  OpenLineageInputField,
+  OpenLineageOptions,
+  OpenLineageRunEventType,
+  OpenLineageTransformation,
+  OpenLineageWarning,
+} from './openlineage';
 // Re-export diff module
 export { changesOnly, diff, hasChanges } from './diff';
 export type { DiffEdit, DiffOptions, DiffResult, EditType } from './diff';
@@ -761,6 +780,11 @@ export { validateWithSchema } from './validation/schema-validator';
 
 // Import new modules for default export
 import { lineage, lineageWithSchema, getSourceTables } from './lineage';
+import {
+  openLineageColumnLineage,
+  openLineageJobEvent,
+  openLineageRunEvent,
+} from './openlineage';
 import { diff, hasChanges, changesOnly } from './diff';
 import { plan } from './planner';
 
@@ -779,6 +803,9 @@ export default {
   lineage,
   lineageWithSchema,
   getSourceTables,
+  openLineageColumnLineage,
+  openLineageJobEvent,
+  openLineageRunEvent,
   diff,
   hasChanges,
   changesOnly,

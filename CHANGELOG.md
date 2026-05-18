@@ -4,6 +4,84 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.3.12] - 2026-05-18
+
+### Added
+- OpenLineage-compatible lineage payload generation in the Rust core via the
+  new `polyglot_sql::openlineage` module. The new helpers produce standalone
+  `columnLineage` dataset facets plus inferred input/output datasets, and can
+  also build OpenLineage `JobEvent` and `RunEvent` JSON payloads.
+- OpenLineage column lineage support for `SELECT`, `INSERT ... SELECT`, and
+  `CREATE TABLE AS SELECT`, including dataset namespace/mapping options,
+  target-column remapping for `INSERT INTO target(col) SELECT ...`, table alias
+  resolution, direct/transformation/aggregation classification, and optional
+  schema facet generation from validation schema metadata.
+- WASM exports for OpenLineage payload generation:
+  `openlineage_column_lineage`, `openlineage_job_event`, and
+  `openlineage_run_event`.
+- TypeScript SDK helpers and types:
+  `openLineageColumnLineage`, `openLineageJobEvent`, `openLineageRunEvent`,
+  and the associated OpenLineage option/result interfaces.
+- Python binding functions:
+  `openlineage_column_lineage`, `openlineage_job_event`, and
+  `openlineage_run_event`.
+- Documentation for OpenLineage output in the root README, TypeScript SDK
+  README, and Python bindings README.
+- Focused Rust, WASM, TypeScript SDK, and Python regression coverage for the
+  new OpenLineage payload generation paths.
+
+### Notes
+- OpenLineage transport/client behavior remains intentionally out of scope.
+  Polyglot generates JSON-compatible payloads for callers to inspect, persist,
+  or emit through their own infrastructure.
+- OpenLineage JSON Schema URLs are emitted as fixed `schemaURL` / `_schemaURL`
+  references. Schemas are not downloaded or validated at runtime.
+
+## [0.3.11] - 2026-05-15
+
+### Added
+- Regression coverage for issue #201 across Rust, Python, C FFI, WASM, and the
+  TypeScript SDK.
+- TypeScript/WASM builder `toSql(dialect?)` support for `Expr` and
+  `CaseBuilder`, allowing builder-generated SQL to use dialect-specific
+  generation rules instead of always using the generic dialect.
+
+### Fixed
+- T-SQL `NCHAR`/`NVARCHAR` parsing and generation now preserves national
+  character types for T-SQL identity transpilation, including `NVARCHAR(MAX)`.
+- Fabric generation now maps unsupported `NCHAR`/`NVARCHAR` casts to
+  `CHAR`/`VARCHAR` while preserving lengths, including `(MAX)`.
+- Snowflake timestamp variant casts now parse and generate consistently for
+  `TIMESTAMP_TZ`, `TIMESTAMP_NTZ`, `TIMESTAMP_LTZ`, and their no-underscore
+  aliases with optional precision.
+
+## [0.3.10] - 2026-05-14
+
+### Added
+- Rust AST table transform options for table qualification and table renaming,
+  including generated aliases for unaliased tables/subqueries, configurable
+  alias prefixes, set-operation subquery normalization, and optional aliases for
+  renamed tables.
+- WASM AST transform exports for table qualification and table renaming with
+  options: `ast_qualify_tables` and `ast_rename_tables_with_options`.
+- TypeScript SDK visitor helpers for `qualifyTables` and enhanced
+  `renameTables` options.
+- Python binding functions `qualify_tables` and `rename_tables`, accepting both
+  single expressions and expression lists.
+- C FFI AST transform functions `polyglot_qualify_tables` and
+  `polyglot_rename_tables_with_options`.
+- Regression coverage for PostgreSQL-to-T-SQL/Fabric transpilation, AST table
+  transforms, Python transform bindings, and FFI transform bindings.
+
+### Fixed
+- T-SQL and Fabric generation now emulate unsupported `NULLS FIRST` /
+  `NULLS LAST` ordering with CASE sort keys when required, while avoiding that
+  rewrite for random ordering expressions.
+- Fabric `LIMIT`/`OFFSET` generation now uses T-SQL-style `OFFSET ... ROWS` /
+  `FETCH NEXT ... ROWS ONLY` syntax where appropriate.
+- Table qualification now handles set-operation operands and parser-produced
+  passthrough `SELECT * FROM (<set op>)` wrappers more reliably.
+
 ## [0.3.9] - 2026-05-11
 
 ### Added

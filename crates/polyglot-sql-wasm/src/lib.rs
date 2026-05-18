@@ -13,6 +13,12 @@ use polyglot_sql::{
     format as core_format, format_with_options as core_format_with_options,
     lineage::{self, LineageNode},
     mapping_schema_from_validation_schema,
+    openlineage::{
+        openlineage_column_lineage as core_openlineage_column_lineage,
+        openlineage_job_event as core_openlineage_job_event,
+        openlineage_run_event as core_openlineage_run_event, ColumnLineageDatasetFacet,
+        OpenLineageDataset, OpenLineageOptions, OpenLineageWarning,
+    },
     planner::{Plan, Step},
     validate_with_schema as core_validate_with_schema,
     FormatGuardOptions as CoreFormatGuardOptions, QualifyTablesOptions, RenameTablesOptions,
@@ -880,6 +886,26 @@ pub struct SourceTablesResult {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageColumnLineageResult {
+    pub success: bool,
+    pub facet: Option<ColumnLineageDatasetFacet>,
+    pub inputs: Option<Vec<OpenLineageDataset>>,
+    pub outputs: Option<Vec<OpenLineageDataset>>,
+    pub warnings: Vec<OpenLineageWarning>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageEventResult {
+    pub success: bool,
+    pub event: Option<serde_json::Value>,
+    pub warnings: Vec<OpenLineageWarning>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct DiffResult {
     pub success: bool,
     pub edits: Option<Vec<Edit>>,
@@ -1121,6 +1147,114 @@ fn source_tables_internal(sql: &str, column: &str, dialect: &str) -> SourceTable
             error: Some(e.to_string()),
         },
     }
+}
+
+// ============================================================================
+// OpenLineage WASM functions
+// ============================================================================
+
+/// Build an OpenLineage columnLineage facet and dataset payload.
+#[wasm_bindgen]
+pub fn openlineage_column_lineage(sql: &str, options_json: &str) -> String {
+    set_panic_hook();
+
+    let result = match parse_openlineage_options(options_json) {
+        Ok(options) => match core_openlineage_column_lineage(sql, &options) {
+            Ok(result) => OpenLineageColumnLineageResult {
+                success: true,
+                facet: Some(result.facet),
+                inputs: Some(result.inputs),
+                outputs: Some(result.outputs),
+                warnings: result.warnings,
+                error: None,
+            },
+            Err(e) => OpenLineageColumnLineageResult {
+                success: false,
+                facet: None,
+                inputs: None,
+                outputs: None,
+                warnings: Vec::new(),
+                error: Some(e.to_string()),
+            },
+        },
+        Err(error) => OpenLineageColumnLineageResult {
+            success: false,
+            facet: None,
+            inputs: None,
+            outputs: None,
+            warnings: Vec::new(),
+            error: Some(error),
+        },
+    };
+
+    serialize_result(&result)
+}
+
+/// Build an OpenLineage JobEvent payload. This does not send the event.
+#[wasm_bindgen]
+pub fn openlineage_job_event(sql: &str, options_json: &str) -> String {
+    set_panic_hook();
+
+    let result = match parse_openlineage_options(options_json) {
+        Ok(options) => match core_openlineage_job_event(sql, &options) {
+            Ok(result) => OpenLineageEventResult {
+                success: true,
+                event: Some(result.event),
+                warnings: result.warnings,
+                error: None,
+            },
+            Err(e) => OpenLineageEventResult {
+                success: false,
+                event: None,
+                warnings: Vec::new(),
+                error: Some(e.to_string()),
+            },
+        },
+        Err(error) => OpenLineageEventResult {
+            success: false,
+            event: None,
+            warnings: Vec::new(),
+            error: Some(error),
+        },
+    };
+
+    serialize_result(&result)
+}
+
+/// Build an OpenLineage RunEvent payload. This does not send the event.
+#[wasm_bindgen]
+pub fn openlineage_run_event(sql: &str, options_json: &str) -> String {
+    set_panic_hook();
+
+    let result = match parse_openlineage_options(options_json) {
+        Ok(options) => match core_openlineage_run_event(sql, &options) {
+            Ok(result) => OpenLineageEventResult {
+                success: true,
+                event: Some(result.event),
+                warnings: result.warnings,
+                error: None,
+            },
+            Err(e) => OpenLineageEventResult {
+                success: false,
+                event: None,
+                warnings: Vec::new(),
+                error: Some(e.to_string()),
+            },
+        },
+        Err(error) => OpenLineageEventResult {
+            success: false,
+            event: None,
+            warnings: Vec::new(),
+            error: Some(error),
+        },
+    };
+
+    serialize_result(&result)
+}
+
+fn parse_openlineage_options(options_json: &str) -> Result<OpenLineageOptions, String> {
+    serde_json::from_str::<OpenLineageOptions>(options_json)
+        .map_err(|e| format!("Invalid OpenLineage options JSON: {e}"))
 }
 
 // ============================================================================
@@ -2610,6 +2744,70 @@ mod tests {
     fn test_source_tables_invalid_dialect() {
         let result = source_tables("SELECT a FROM t", "a", "invalid_dialect");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_openlineage_column_lineage() {
+        let options = r#"{
+            "producer": "https://github.com/tobilg/polyglot",
+            "datasetNamespace": "postgres://warehouse",
+            "outputDataset": {
+                "namespace": "postgres://warehouse",
+                "name": "analytics.out"
+            }
+        }"#;
+        let result = openlineage_column_lineage("SELECT a FROM t", options);
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(result.contains("\"columnLineage\""), "Result: {}", result);
+        assert!(result.contains("\"field\":\"a\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_openlineage_job_event() {
+        let options = r#"{
+            "producer": "https://github.com/tobilg/polyglot",
+            "datasetNamespace": "postgres://warehouse",
+            "outputDataset": {
+                "namespace": "postgres://warehouse",
+                "name": "analytics.out"
+            },
+            "jobNamespace": "polyglot-tests",
+            "jobName": "lineage-test",
+            "eventTime": "2026-05-18T00:00:00Z"
+        }"#;
+        let result = openlineage_job_event("SELECT a FROM t", options);
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(
+            result.contains("\"JobEvent\"") || result.contains("\"job\""),
+            "Result: {}",
+            result
+        );
+        assert!(result.contains("\"sql\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_openlineage_run_event() {
+        let options = r#"{
+            "producer": "https://github.com/tobilg/polyglot",
+            "datasetNamespace": "postgres://warehouse",
+            "outputDataset": {
+                "namespace": "postgres://warehouse",
+                "name": "analytics.out"
+            },
+            "jobNamespace": "polyglot-tests",
+            "jobName": "lineage-test",
+            "eventTime": "2026-05-18T00:00:00Z",
+            "runId": "3b452093-782c-4ef2-9c0c-aafe2aa6f34d",
+            "eventType": "COMPLETE"
+        }"#;
+        let result = openlineage_run_event("SELECT a FROM t", options);
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(
+            result.contains("\"eventType\":\"COMPLETE\""),
+            "Result: {}",
+            result
+        );
+        assert!(result.contains("\"runId\""), "Result: {}", result);
     }
 
     // ============================================================================

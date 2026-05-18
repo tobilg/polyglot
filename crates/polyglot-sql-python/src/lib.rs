@@ -8,6 +8,7 @@ mod format;
 mod generate;
 mod helpers;
 mod lineage;
+mod openlineage;
 mod optimize;
 mod parse;
 mod tokenize;
@@ -30,6 +31,12 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lineage::lineage, m)?)?;
     m.add_function(wrap_pyfunction!(lineage::lineage_with_schema, m)?)?;
     m.add_function(wrap_pyfunction!(lineage::source_tables, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        openlineage::openlineage_column_lineage,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(openlineage::openlineage_job_event, m)?)?;
+    m.add_function(wrap_pyfunction!(openlineage::openlineage_run_event, m)?)?;
     m.add_function(wrap_pyfunction!(diff::diff, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(annotate_types::annotate_types, m)?)?;

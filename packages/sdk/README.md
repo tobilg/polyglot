@@ -561,6 +561,43 @@ if (tables.success) {
 }
 ```
 
+## OpenLineage Output
+
+Generate OpenLineage-compatible JSON payloads from SQL analysis. The SDK only
+builds payloads; OpenLineage transport and client emission are intentionally out
+of scope.
+
+```typescript
+import {
+  openLineageColumnLineage,
+  openLineageJobEvent,
+  openLineageRunEvent,
+} from '@polyglot-sql/sdk';
+
+const options = {
+  producer: 'https://github.com/tobilg/polyglot',
+  datasetNamespace: 'postgres://warehouse',
+  outputDataset: {
+    namespace: 'postgres://warehouse',
+    name: 'analytics.revenue',
+  },
+};
+
+const columnLineage = openLineageColumnLineage(
+  'SELECT order_id, amount * 100 AS amount_cents FROM raw.orders',
+  options,
+);
+
+const runEvent = openLineageRunEvent('SELECT order_id FROM raw.orders', {
+  ...options,
+  jobNamespace: 'polyglot',
+  jobName: 'orders_lineage',
+  eventTime: '2026-05-18T00:00:00Z',
+  runId: '3b452093-782c-4ef2-9c0c-aafe2aa6f34d',
+  eventType: 'COMPLETE',
+});
+```
+
 ## SQL Diff
 
 Compare two SQL statements and get a list of edit operations using the ChangeDistiller algorithm.
@@ -640,6 +677,9 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | `lineage(column, sql, dialect?, trimSelects?)` | Trace column lineage through a query |
 | `lineageWithSchema(column, sql, schema, dialect?, trimSelects?)` | Trace lineage with schema-based qualification |
 | `getSourceTables(column, sql, dialect?)` | Get source tables for a column |
+| `openLineageColumnLineage(sql, options)` | Build an OpenLineage columnLineage facet and datasets |
+| `openLineageJobEvent(sql, options)` | Build an OpenLineage JobEvent payload |
+| `openLineageRunEvent(sql, options)` | Build an OpenLineage RunEvent payload |
 | `diff(source, target, dialect?, options?)` | Diff two SQL statements |
 | `hasChanges(edits)` | Check if diff has non-keep edits |
 | `changesOnly(edits)` | Filter to only change edits |
