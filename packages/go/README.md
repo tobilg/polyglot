@@ -7,6 +7,12 @@ The SDK uses [PureGo](https://github.com/ebitengine/purego) to call the
 native libraries at runtime. Build or download the matching FFI library yourself
 and point the SDK at it.
 
+Important: `go get github.com/tobilg/polyglot/packages/go` installs only the Go
+module. Runtime calls such as `Transpile`, `Parse`, `Validate`, lineage, and
+OpenLineage generation require a separate `polyglot-sql-ffi` shared library
+(`.so`, `.dylib`, or `.dll`) that matches the SDK release version. Provide that
+library with `Open(path)` or `POLYGLOT_SQL_FFI_PATH` plus `OpenDefault()`.
+
 ## Install
 
 ```bash
@@ -18,7 +24,8 @@ example `packages/go/v0.4.0`.
 
 ## Native Library Setup
 
-Build the shared library from this repository:
+Build the shared library from this repository, or download the matching FFI
+artifact from the same Polyglot release as the Go SDK tag:
 
 ```bash
 cargo build -p polyglot-sql-ffi --profile ffi_release

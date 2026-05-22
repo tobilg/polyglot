@@ -125,6 +125,15 @@ See the full [Python bindings README](crates/polyglot-sql-python/README.md).
 go get github.com/tobilg/polyglot/packages/go
 ```
 
+The Go module contains the PureGo wrapper only. Runtime API calls require a
+separate matching `polyglot-sql-ffi` shared library (`.so`, `.dylib`, or
+`.dll`) from the same Polyglot release or a local FFI build:
+
+```bash
+cargo build -p polyglot-sql-ffi --profile ffi_release
+export POLYGLOT_SQL_FFI_PATH="$PWD/target/ffi_release/libpolyglot_sql_ffi.so"
+```
+
 ```go
 import (
     "fmt"
@@ -150,8 +159,9 @@ fmt.Println(result[0]) // SELECT COALESCE(a, b) FROM t
 ```
 
 The Go SDK uses PureGo over `polyglot-sql-ffi`; it does not download native
-libraries. Build/download the FFI shared library and set `POLYGLOT_SQL_FFI_PATH`
-or pass its path to `polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
+libraries or bundle release artifacts in the Go module. Build/download the FFI
+shared library and set `POLYGLOT_SQL_FFI_PATH` or pass its path to
+`polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
 
 ## Lineage and OpenLineage Output
 
@@ -167,7 +177,7 @@ own infrastructure.
 
 - TypeScript SDK examples: [`packages/sdk/README.md`](packages/sdk/README.md#openlineage-output)
 - Python examples: [`crates/polyglot-sql-python/README.md`](crates/polyglot-sql-python/README.md)
-- Go examples: [`packages/go/README.md`](packages/go/README.md#openlineage-output)
+- Go examples: [`packages/go/README.md`](packages/go/README.md#openlineage)
 
 ## Format Guard Rails
 
