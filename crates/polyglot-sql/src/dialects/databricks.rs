@@ -13,6 +13,7 @@ use crate::expressions::{
     AggregateFunction, Cast, DataType, Expression, Function, JSONExtract, Literal, UnaryFunc,
     VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -70,6 +71,8 @@ impl DialectImpl for DatabricksDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -85,6 +88,8 @@ impl DialectImpl for DatabricksDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -182,6 +187,7 @@ impl DialectImpl for DatabricksDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl DatabricksDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

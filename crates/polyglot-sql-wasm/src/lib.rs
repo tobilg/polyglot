@@ -422,6 +422,7 @@ pub fn get_dialects_value() -> JsValue {
 }
 
 fn get_dialects_internal() -> Vec<&'static str> {
+    #[allow(unused_mut)]
     let mut dialects = vec!["generic"];
     #[cfg(feature = "dialect-postgresql")]
     dialects.push("postgresql");

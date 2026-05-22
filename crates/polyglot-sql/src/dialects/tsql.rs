@@ -16,6 +16,7 @@ use crate::expressions::{
     Alias, Cast, Cte, DataType, Expression, Function, Identifier, In, Join, JoinKind, LikeOp,
     Literal, Null, QuantifiedOp, StringAggFunc, Subquery, UnaryFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -35,6 +36,8 @@ impl DialectImpl for TSQLDialect {
         config.identifiers.insert('"', '"');
         config
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
@@ -89,6 +92,8 @@ impl DialectImpl for TSQLDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         // Transform column data types in DDL (transform_recursive skips them by design).
@@ -681,6 +686,7 @@ impl DialectImpl for TSQLDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl TSQLDialect {
     /// Transform data types according to T-SQL TYPE_MAPPING
     pub(super) fn transform_data_type(

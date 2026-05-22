@@ -11,6 +11,7 @@
 use super::{DialectImpl, DialectType, TrinoDialect};
 use crate::error::Result;
 use crate::expressions::Expression;
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -30,6 +31,8 @@ impl DialectImpl for DuneDialect {
         trino.tokenizer_config()
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         // Inherit from Trino with Dune dialect type
@@ -40,6 +43,8 @@ impl DialectImpl for DuneDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         // Delegate to Trino for most transformations

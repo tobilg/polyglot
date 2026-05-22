@@ -12,33 +12,53 @@
 //!
 //! Each stage can be customized per dialect.
 
+#[cfg(any(feature = "ast-tools", feature = "generate", feature = "semantic"))]
 pub mod ast_transforms;
+#[cfg(feature = "builder")]
 pub mod builder;
 pub mod dialects;
+#[cfg(feature = "diff")]
 pub mod diff;
 pub mod error;
 pub mod expressions;
+#[cfg(feature = "semantic")]
 pub mod function_catalog;
 mod function_registry;
+#[cfg(feature = "generate")]
 pub mod generator;
+#[cfg(feature = "semantic")]
 pub mod helper;
+#[cfg(feature = "semantic")]
 pub mod lineage;
+#[cfg(feature = "openlineage")]
 pub mod openlineage;
+#[cfg(feature = "semantic")]
 pub mod optimizer;
 pub mod parser;
+#[cfg(feature = "planner")]
 pub mod planner;
+#[cfg(feature = "semantic")]
 pub mod resolver;
+#[cfg(feature = "semantic")]
 pub mod schema;
+#[cfg(feature = "semantic")]
 pub mod scope;
+#[cfg(feature = "time")]
 pub mod time;
 pub mod tokens;
+#[cfg(feature = "transpile")]
 pub mod transforms;
+#[cfg(any(feature = "ast-tools", feature = "generate", feature = "semantic"))]
 pub mod traversal;
+#[cfg(any(feature = "semantic", feature = "time"))]
 pub mod trie;
+#[cfg(feature = "semantic")]
 pub mod validation;
 
+#[cfg(any(feature = "generate", feature = "semantic"))]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "ast-tools")]
 pub use ast_transforms::{
     add_select_columns, add_where, get_aggregate_functions, get_column_names, get_functions,
     get_identifiers, get_literals, get_output_column_names, get_subqueries, get_table_names,
@@ -46,34 +66,44 @@ pub use ast_transforms::{
     remove_select_columns, remove_where, rename_columns, rename_tables, rename_tables_with_options,
     replace_by_type, replace_nodes, set_distinct, set_limit, set_offset, RenameTablesOptions,
 };
-pub use dialects::{
-    unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType, TranspileOptions,
-    TranspileTarget,
-};
-pub use error::{Error, Result, ValidationError, ValidationResult, ValidationSeverity};
+pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
+#[cfg(feature = "transpile")]
+pub use dialects::{TranspileOptions, TranspileTarget};
+pub use error::{Error, Result};
+#[cfg(feature = "semantic")]
+pub use error::{ValidationError, ValidationResult, ValidationSeverity};
 pub use expressions::Expression;
+#[cfg(feature = "semantic")]
 pub use function_catalog::{
     FunctionCatalog, FunctionNameCase, FunctionSignature, HashMapFunctionCatalog,
 };
+#[cfg(feature = "generate")]
 pub use generator::Generator;
+#[cfg(feature = "semantic")]
 pub use helper::{
     csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,
     name_sequence, seq_get, split_num_words, tsort, while_changing, DATE_UNITS,
 };
+#[cfg(feature = "semantic")]
 pub use optimizer::{
     annotate_types, qualify_tables, QualifyTablesOptions, TypeAnnotator, TypeCoercionClass,
 };
 pub use parser::Parser;
+#[cfg(feature = "semantic")]
 pub use resolver::{is_column_ambiguous, resolve_column, Resolver, ResolverError, ResolverResult};
+#[cfg(feature = "semantic")]
 pub use schema::{
     ensure_schema, from_simple_map, normalize_name, MappingSchema, Schema, SchemaError,
 };
+#[cfg(feature = "semantic")]
 pub use scope::{
     build_scope, find_all_in_scope, find_in_scope, traverse_scope, walk_in_scope, ColumnRef, Scope,
     ScopeType, SourceInfo,
 };
+#[cfg(feature = "time")]
 pub use time::{format_time, is_valid_timezone, subsecond_precision, TIMEZONES};
 pub use tokens::{Token, TokenType, Tokenizer};
+#[cfg(feature = "ast-tools")]
 pub use traversal::{
     contains_aggregate,
     contains_subquery,
@@ -172,30 +202,40 @@ pub use traversal::{
     ParentInfo,
     TreeContext,
 };
+#[cfg(any(feature = "semantic", feature = "time"))]
 pub use trie::{new_trie, new_trie_from_keys, Trie, TrieResult};
+#[cfg(feature = "semantic")]
 pub use validation::{
     mapping_schema_from_validation_schema, validate_with_schema, SchemaColumn,
     SchemaColumnReference, SchemaForeignKey, SchemaTable, SchemaTableReference,
     SchemaValidationOptions, ValidationSchema,
 };
 
+#[cfg(feature = "generate")]
 const DEFAULT_FORMAT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+#[cfg(feature = "generate")]
 const DEFAULT_FORMAT_MAX_TOKENS: usize = 1_000_000;
+#[cfg(feature = "generate")]
 const DEFAULT_FORMAT_MAX_AST_NODES: usize = 1_000_000;
+#[cfg(feature = "generate")]
 const DEFAULT_FORMAT_MAX_SET_OP_CHAIN: usize = 256;
 
+#[cfg(feature = "generate")]
 fn default_format_max_input_bytes() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_INPUT_BYTES)
 }
 
+#[cfg(feature = "generate")]
 fn default_format_max_tokens() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_TOKENS)
 }
 
+#[cfg(feature = "generate")]
 fn default_format_max_ast_nodes() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_AST_NODES)
 }
 
+#[cfg(feature = "generate")]
 fn default_format_max_set_op_chain() -> Option<usize> {
     Some(DEFAULT_FORMAT_MAX_SET_OP_CHAIN)
 }
@@ -204,6 +244,7 @@ fn default_format_max_set_op_chain() -> Option<usize> {
 ///
 /// These limits protect against extremely large/complex queries that can cause
 /// high memory pressure in constrained runtimes (for example browser WASM).
+#[cfg(feature = "generate")]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormatGuardOptions {
@@ -227,6 +268,7 @@ pub struct FormatGuardOptions {
     pub max_set_op_chain: Option<usize>,
 }
 
+#[cfg(feature = "generate")]
 impl Default for FormatGuardOptions {
     fn default() -> Self {
         Self {
@@ -238,12 +280,14 @@ impl Default for FormatGuardOptions {
     }
 }
 
+#[cfg(feature = "generate")]
 fn format_guard_error(code: &str, actual: usize, limit: usize) -> Error {
     Error::generate(format!(
         "{code}: value {actual} exceeds configured limit {limit}"
     ))
 }
 
+#[cfg(feature = "generate")]
 fn enforce_input_guard(sql: &str, options: &FormatGuardOptions) -> Result<()> {
     if let Some(max) = options.max_input_bytes {
         let input_bytes = sql.len();
@@ -258,6 +302,7 @@ fn enforce_input_guard(sql: &str, options: &FormatGuardOptions) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "generate")]
 fn parse_with_token_guard(
     sql: &str,
     dialect: &Dialect,
@@ -284,6 +329,7 @@ fn parse_with_token_guard(
     parser.parse()
 }
 
+#[cfg(feature = "generate")]
 fn is_trivia_token(token_type: TokenType) -> bool {
     matches!(
         token_type,
@@ -291,6 +337,7 @@ fn is_trivia_token(token_type: TokenType) -> bool {
     )
 }
 
+#[cfg(feature = "generate")]
 fn next_significant_token(tokens: &[Token], start: usize) -> Option<&Token> {
     tokens
         .iter()
@@ -298,6 +345,7 @@ fn next_significant_token(tokens: &[Token], start: usize) -> Option<&Token> {
         .find(|token| !is_trivia_token(token.token_type))
 }
 
+#[cfg(feature = "generate")]
 fn is_set_operation_token(tokens: &[Token], idx: usize) -> bool {
     let token = &tokens[idx];
     match token.token_type {
@@ -319,6 +367,7 @@ fn is_set_operation_token(tokens: &[Token], idx: usize) -> bool {
     }
 }
 
+#[cfg(feature = "generate")]
 fn enforce_set_op_chain_guard(tokens: &[Token], options: &FormatGuardOptions) -> Result<()> {
     let Some(max) = options.max_set_op_chain else {
         return Ok(());
@@ -346,9 +395,13 @@ fn enforce_set_op_chain_guard(tokens: &[Token], options: &FormatGuardOptions) ->
     Ok(())
 }
 
+#[cfg(feature = "generate")]
 fn enforce_ast_guard(expressions: &[Expression], options: &FormatGuardOptions) -> Result<()> {
     if let Some(max) = options.max_ast_nodes {
-        let ast_nodes: usize = expressions.iter().map(node_count).sum();
+        let ast_nodes: usize = expressions
+            .iter()
+            .map(crate::ast_transforms::node_count)
+            .sum();
         if ast_nodes > max {
             return Err(format_guard_error(
                 "E_GUARD_AST_BUDGET_EXCEEDED",
@@ -360,6 +413,7 @@ fn enforce_ast_guard(expressions: &[Expression], options: &FormatGuardOptions) -
     Ok(())
 }
 
+#[cfg(feature = "generate")]
 fn format_with_dialect(
     sql: &str,
     dialect: &Dialect,
@@ -395,6 +449,7 @@ fn format_with_dialect(
 ///     DialectType::Hive
 /// );
 /// ```
+#[cfg(feature = "transpile")]
 pub fn transpile(sql: &str, read: DialectType, write: DialectType) -> Result<Vec<String>> {
     // Delegate to Dialect::transpile so that the full cross-dialect rewrite
     // pipeline (source+target-aware normalization in `cross_dialect_normalize`)
@@ -448,6 +503,7 @@ pub fn parse_one(sql: &str, dialect: DialectType) -> Result<Expression> {
 ///
 /// # Returns
 /// The generated SQL string
+#[cfg(feature = "generate")]
 pub fn generate(expression: &Expression, dialect: DialectType) -> Result<String> {
     let d = Dialect::get(dialect);
     d.generate(expression)
@@ -456,11 +512,13 @@ pub fn generate(expression: &Expression, dialect: DialectType) -> Result<String>
 /// Format/pretty-print SQL statements.
 ///
 /// Uses [`FormatGuardOptions::default`] guards.
+#[cfg(feature = "generate")]
 pub fn format(sql: &str, dialect: DialectType) -> Result<Vec<String>> {
     format_with_options(sql, dialect, &FormatGuardOptions::default())
 }
 
 /// Format/pretty-print SQL statements with configurable guard limits.
+#[cfg(feature = "generate")]
 pub fn format_with_options(
     sql: &str,
     dialect: DialectType,
@@ -478,11 +536,13 @@ pub fn format_with_options(
 ///
 /// # Returns
 /// A validation result with any errors found
+#[cfg(feature = "semantic")]
 pub fn validate(sql: &str, dialect: DialectType) -> ValidationResult {
     validate_with_options(sql, dialect, &ValidationOptions::default())
 }
 
 /// Options for syntax validation behavior.
+#[cfg(feature = "semantic")]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidationOptions {
@@ -493,6 +553,7 @@ pub struct ValidationOptions {
 }
 
 /// Validate SQL syntax with additional validation options.
+#[cfg(feature = "semantic")]
 pub fn validate_with_options(
     sql: &str,
     dialect: DialectType,
@@ -555,6 +616,7 @@ pub fn validate_with_options(
     }
 }
 
+#[cfg(feature = "semantic")]
 fn strict_syntax_error(sql: &str, dialect: &Dialect) -> Option<ValidationError> {
     let tokens = dialect.tokenize(sql).ok()?;
 
@@ -608,6 +670,7 @@ fn strict_syntax_error(sql: &str, dialect: &Dialect) -> Option<ValidationError> 
 ///
 /// # Returns
 /// A vector of transpiled SQL statements, or an error if a dialect name is unknown.
+#[cfg(feature = "transpile")]
 pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<String>> {
     transpile_with_by_name(sql, read, write, &TranspileOptions::default())
 }
@@ -615,6 +678,7 @@ pub fn transpile_by_name(sql: &str, read: &str, write: &str) -> Result<Vec<Strin
 /// Transpile SQL with configurable [`TranspileOptions`], using string dialect names.
 ///
 /// Same as [`transpile_by_name`] but accepts options (e.g., pretty-printing).
+#[cfg(feature = "transpile")]
 pub fn transpile_with_by_name(
     sql: &str,
     read: &str,
@@ -640,6 +704,7 @@ pub fn parse_by_name(sql: &str, dialect: &str) -> Result<Vec<Expression>> {
 /// Generate SQL from an AST using a string dialect name.
 ///
 /// Supports both built-in and custom dialect names.
+#[cfg(feature = "generate")]
 pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String> {
     let d = Dialect::get_by_name(dialect)
         .ok_or_else(|| Error::parse(format!("Unknown dialect: {}", dialect), 0, 0, 0, 0))?;
@@ -649,11 +714,13 @@ pub fn generate_by_name(expression: &Expression, dialect: &str) -> Result<String
 /// Format SQL using a string dialect name.
 ///
 /// Uses [`FormatGuardOptions::default`] guards.
+#[cfg(feature = "generate")]
 pub fn format_by_name(sql: &str, dialect: &str) -> Result<Vec<String>> {
     format_with_options_by_name(sql, dialect, &FormatGuardOptions::default())
 }
 
 /// Format SQL using a string dialect name with configurable guard limits.
+#[cfg(feature = "generate")]
 pub fn format_with_options_by_name(
     sql: &str,
     dialect: &str,
@@ -664,7 +731,7 @@ pub fn format_with_options_by_name(
     format_with_dialect(sql, &d, options)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "semantic"))]
 mod validation_tests {
     use super::*;
 
@@ -711,7 +778,7 @@ mod validation_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "generate"))]
 mod format_tests {
     use super::*;
 

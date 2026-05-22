@@ -13,6 +13,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{BinaryOp, Expression};
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -33,6 +34,8 @@ impl DialectImpl for SolrDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -42,6 +45,8 @@ impl DialectImpl for SolrDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         // Solr has limited SQL support

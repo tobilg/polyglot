@@ -9,6 +9,7 @@ use crate::expressions::{
     AggFunc, AggregateFunction, BinaryOp, Case, Cast, Column, DataType, Expression, Function,
     JsonExtractFunc, LikeOp, Literal, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -32,6 +33,8 @@ impl DialectImpl for PrestoDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -43,6 +46,8 @@ impl DialectImpl for PrestoDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -262,6 +267,7 @@ impl DialectImpl for PrestoDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl PrestoDialect {
     /// Recursively unqualify columns - remove table qualifiers from Column references
     fn unqualify_columns(expr: Expression) -> Expression {

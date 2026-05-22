@@ -13,6 +13,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{Expression, Function};
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -31,6 +32,8 @@ impl DialectImpl for TableauDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -40,6 +43,8 @@ impl DialectImpl for TableauDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -80,6 +85,7 @@ impl DialectImpl for TableauDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl TableauDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

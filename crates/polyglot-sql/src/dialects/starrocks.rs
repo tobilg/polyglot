@@ -9,6 +9,7 @@ use crate::expressions::{
     AggFunc, Case, Cast, Expression, Function, Interval, IntervalUnit, IntervalUnitSpec, Lateral,
     VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -35,6 +36,8 @@ impl DialectImpl for StarRocksDialect {
             .insert("LARGEINT".to_string(), TokenType::Int128);
         config
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
@@ -68,6 +71,8 @@ impl DialectImpl for StarRocksDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -142,6 +147,7 @@ impl DialectImpl for StarRocksDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl StarRocksDialect {
     fn wrap_day_interval(expr: Expression) -> Expression {
         Expression::Interval(Box::new(Interval {

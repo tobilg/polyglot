@@ -21,6 +21,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{Expression, Function, ListAggFunc, Literal, VarArgFunc};
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -41,6 +42,8 @@ impl DialectImpl for ExasolDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -53,6 +56,8 @@ impl DialectImpl for ExasolDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -150,6 +155,7 @@ impl DialectImpl for ExasolDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl ExasolDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

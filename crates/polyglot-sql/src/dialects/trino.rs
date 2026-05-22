@@ -9,6 +9,7 @@ use crate::expressions::{
     AggFunc, AggregateFunction, Case, Cast, DataType, Expression, Function, IntervalUnit,
     IntervalUnitSpec, LikeOp, Literal, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -32,6 +33,8 @@ impl DialectImpl for TrinoDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -43,6 +46,8 @@ impl DialectImpl for TrinoDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -161,6 +166,7 @@ impl DialectImpl for TrinoDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl TrinoDialect {
     /// Parse a compound interval string like "1 day" into (value, unit_spec).
     /// Returns None if the string doesn't match a known pattern.

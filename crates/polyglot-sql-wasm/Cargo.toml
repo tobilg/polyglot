@@ -15,7 +15,20 @@ wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", 
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-polyglot-sql = { path = "../polyglot-sql", default-features = false }
+polyglot-sql = {
+    path = "../polyglot-sql",
+    default-features = false,
+    features = [
+        "generate",
+        "transpile",
+        "builder",
+        "ast-tools",
+        "semantic",
+        "openlineage",
+        "diff",
+        "planner",
+    ],
+}
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 serde = { workspace = true }
@@ -26,9 +39,27 @@ serde-wasm-bindgen = "0.6"
 wasm-bindgen-test = "0.3"
 
 [features]
-default = ["console_error_panic_hook", "all-dialects", "transpile"]
+default = [
+    "console_error_panic_hook",
+    "all-dialects",
+    "generate",
+    "transpile",
+    "builder",
+    "ast-tools",
+    "semantic",
+    "openlineage",
+    "diff",
+    "planner",
+]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
+generate = ["polyglot-sql/generate"]
 transpile = ["polyglot-sql/transpile"]
+builder = ["polyglot-sql/builder"]
+ast-tools = ["polyglot-sql/ast-tools"]
+semantic = ["polyglot-sql/semantic"]
+openlineage = ["polyglot-sql/openlineage"]
+diff = ["polyglot-sql/diff"]
+planner = ["polyglot-sql/planner"]
 all-dialects = [
     "polyglot-sql/all-dialects",
     "dialect-postgresql", "dialect-mysql", "dialect-bigquery",
@@ -78,14 +109,17 @@ dialect-exasol = ["polyglot-sql/dialect-exasol"]
 dialect-datafusion = ["polyglot-sql/dialect-datafusion"]
 function-catalog-clickhouse = [
     "dialect-clickhouse",
+    "semantic",
     "polyglot-sql/function-catalog-clickhouse",
 ]
 function-catalog-duckdb = [
     "dialect-duckdb",
+    "semantic",
     "polyglot-sql/function-catalog-duckdb",
 ]
 function-catalog-all-dialects = [
     "all-dialects",
+    "semantic",
     "polyglot-sql/function-catalog-all-dialects",
 ]
 

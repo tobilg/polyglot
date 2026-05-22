@@ -18,6 +18,7 @@ use crate::expressions::{
     BinaryOp, CeilFunc, DateTimeField, Expression, ExtractFunc, Function, LikeOp, Literal, Paren,
     UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -72,6 +73,8 @@ impl DialectImpl for HiveDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -89,6 +92,8 @@ impl DialectImpl for HiveDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -162,6 +167,7 @@ impl DialectImpl for HiveDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl HiveDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

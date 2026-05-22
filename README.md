@@ -6,6 +6,7 @@ Polyglot parses, generates, transpiles, and formats SQL across 32+ database dial
 - a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/))
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
+- a Go SDK (`github.com/tobilg/polyglot/packages/go`) backed by the native FFI library
 
 There's also a [playground](https://polyglot-playground.gh.tobilg.com/) where you can try it out in the browser, as well as [Rust API Docs](https://docs.rs/polyglot-sql/latest/polyglot_sql/), [TypeScript API Docs](https://polyglot.gh.tobilg.com/), and [Python API Docs](https://polyglot-python.gh.tobilg.com/).
 
@@ -118,6 +119,40 @@ print(result[0])  # SELECT COALESCE(a, b) FROM t
 
 See the full [Python bindings README](crates/polyglot-sql-python/README.md).
 
+### Go
+
+```bash
+go get github.com/tobilg/polyglot/packages/go
+```
+
+```go
+import (
+    "fmt"
+
+    polyglot "github.com/tobilg/polyglot/packages/go"
+)
+
+client, err := polyglot.OpenDefault()
+if err != nil {
+    panic(err)
+}
+defer client.Close()
+
+result, err := client.Transpile(
+    "SELECT IFNULL(a, b) FROM t",
+    "mysql",
+    "postgres",
+)
+if err != nil {
+    panic(err)
+}
+fmt.Println(result[0]) // SELECT COALESCE(a, b) FROM t
+```
+
+The Go SDK uses PureGo over `polyglot-sql-ffi`; it does not download native
+libraries. Build/download the FFI shared library and set `POLYGLOT_SQL_FFI_PATH`
+or pass its path to `polyglot.Open`. See the full [Go SDK README](packages/go/README.md).
+
 ## Lineage and OpenLineage Output
 
 Polyglot can trace column lineage through SQL queries and can generate
@@ -132,6 +167,7 @@ own infrastructure.
 
 - TypeScript SDK examples: [`packages/sdk/README.md`](packages/sdk/README.md#openlineage-output)
 - Python examples: [`crates/polyglot-sql-python/README.md`](crates/polyglot-sql-python/README.md)
+- Go examples: [`packages/go/README.md`](packages/go/README.md#openlineage-output)
 
 ## Format Guard Rails
 
@@ -184,7 +220,7 @@ If you want to disable `stacker` for a native Rust build, turn off default featu
 
 ```toml
 [dependencies]
-polyglot-sql = { version = "0.3.3", default-features = false, features = ["all-dialects", "transpile"] }
+polyglot-sql = { version = "0.4.0", default-features = false, features = ["all-dialects", "transpile"] }
 ```
 
 That can reduce overhead slightly on trusted inputs, but you lose the default stack-growth protection for deeply nested SQL.
@@ -201,6 +237,7 @@ polyglot/
 │   └── polyglot-sql-python/    # Python bindings (PyO3 + maturin, published on PyPI)
 ├── packages/
 │   ├── sdk/                    # TypeScript SDK (@polyglot-sql/sdk on npm)
+│   ├── go/                     # Go SDK backed by polyglot-sql-ffi
 │   ├── documentation/          # TypeScript API documentation site
 │   ├── playground/             # Playground for testing the SDK (React 19, Tailwind v4, Vite)
 │   └── python-docs/            # Python API documentation site (Cloudflare Pages)

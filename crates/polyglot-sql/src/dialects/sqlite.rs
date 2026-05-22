@@ -9,6 +9,7 @@ use crate::expressions::{
     Expression, ExtractFunc, Function, LikeOp, Literal, TrimFunc, TrimPosition, UnaryFunc,
     VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -33,6 +34,8 @@ impl DialectImpl for SQLiteDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -46,6 +49,8 @@ impl DialectImpl for SQLiteDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -217,6 +222,7 @@ impl DialectImpl for SQLiteDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl SQLiteDialect {
     fn function(name: &str, args: Vec<Expression>) -> Expression {
         Expression::Function(Box::new(Function::new(name.to_string(), args)))

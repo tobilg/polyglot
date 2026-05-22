@@ -17,6 +17,7 @@ use crate::expressions::{
     JSONPathRoot, JSONPathSubscript, JsonExtractFunc, Literal, Null, Paren, Struct, Subquery,
     SubstringFunc, UnaryFunc, UnaryOp, VarArgFunc, WindowFunction,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -103,6 +104,8 @@ impl DialectImpl for DuckDBDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -148,6 +151,8 @@ impl DialectImpl for DuckDBDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -1360,6 +1365,7 @@ impl DialectImpl for DuckDBDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl DuckDBDialect {
     /// Extract a numeric value from a literal expression, if possible
     fn extract_number_value(expr: &Expression) -> Option<f64> {

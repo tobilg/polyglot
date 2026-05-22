@@ -2,7 +2,7 @@
 
 C Foreign Function Interface bindings for `polyglot-sql`.
 
-`polyglot-sql-ffi` exposes core parsing/transpilation/formatting/validation/analysis features through a small, stable C ABI. It is intended to be used as the native layer for language-specific wrappers (Python, Go, Java, C#, Swift, etc.).
+`polyglot-sql-ffi` exposes core parsing/transpilation/formatting/validation/analysis features through a small, stable C ABI. It is intended to be used as the native layer for language-specific wrappers. The official Go SDK (`packages/go`) uses this library through PureGo.
 
 ## What It Provides
 
@@ -112,6 +112,9 @@ typedef struct {
 - `polyglot_lineage(column_name, sql, dialect)`
 - `polyglot_lineage_with_schema(column_name, sql, schema_json, dialect)` (`ValidationSchema` JSON)
 - `polyglot_source_tables(column_name, sql, dialect)`
+- `polyglot_openlineage_column_lineage(sql, options_json)` (`OpenLineageOptions` JSON)
+- `polyglot_openlineage_job_event(sql, options_json)` (`OpenLineageOptions` JSON)
+- `polyglot_openlineage_run_event(sql, options_json)` (`OpenLineageOptions` JSON)
 - `polyglot_diff(sql1, sql2, dialect)`
 - `polyglot_dialect_list()`
 - `polyglot_dialect_count()`
@@ -170,6 +173,9 @@ polyglot_result_t r = polyglot_format_with_options(sql, "generic", opts);
 - `polyglot_lineage`: JSON `LineageNode`
 - `polyglot_lineage_with_schema`: JSON `LineageNode`
 - `polyglot_source_tables`: JSON array of source table names
+- `polyglot_openlineage_column_lineage`: JSON `OpenLineageColumnLineageResult`
+- `polyglot_openlineage_job_event`: JSON `OpenLineageEventResult`
+- `polyglot_openlineage_run_event`: JSON `OpenLineageEventResult`
 - `polyglot_diff`: JSON array of diff edits
 - `polyglot_dialect_list`: JSON array of dialect names
 
@@ -217,6 +223,13 @@ For a complete runtime list, call `polyglot_dialect_list()`.
 ## Thread Safety
 
 The FFI layer does not maintain mutable global state. Calls are safe to use from multiple threads concurrently.
+
+## Native Library Transport
+
+The FFI crate only builds native libraries and the C header. Runtime transport,
+download, and update logic are intentionally left to downstream applications or
+packaging systems. The official Go SDK follows the same policy: users provide
+the shared library path explicitly or through `POLYGLOT_SQL_FFI_PATH`.
 
 ## Make Targets
 

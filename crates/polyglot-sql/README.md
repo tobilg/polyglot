@@ -17,6 +17,44 @@ Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
 ## Usage
 
+### Cargo Features
+
+By default, `polyglot-sql` enables the full public API. Parser-only consumers can
+disable default features and opt into only the dialect parsers they need:
+
+```toml
+polyglot-sql = { version = "0.4", default-features = false }
+```
+
+```toml
+polyglot-sql = {
+    version = "0.4",
+    default-features = false,
+    features = ["dialect-clickhouse"],
+}
+```
+
+Optional capability features include `generate`, `transpile`, `builder`,
+`ast-tools`, `semantic`, `openlineage`, `diff`, `planner`, and `time`.
+
+Examples:
+
+```toml
+# Parse and generate SQL for one dialect.
+polyglot-sql = {
+    version = "0.4",
+    default-features = false,
+    features = ["generate", "dialect-clickhouse"],
+}
+
+# Cross-dialect transpilation.
+polyglot-sql = {
+    version = "0.4",
+    default-features = false,
+    features = ["transpile", "dialect-clickhouse", "dialect-postgresql"],
+}
+```
+
 ### Transpile
 
 ```rust
@@ -323,6 +361,15 @@ Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Doris, Dremio, Drill, Dru
 
 | Flag | Description |
 |------|-------------|
+| `generate` | Enable SQL generation and formatting from AST nodes |
+| `transpile` | Enable cross-dialect transpilation; implies `generate` |
+| `builder` | Enable the fluent query builder API; implies `generate` |
+| `ast-tools` | Enable AST inspection and transform helper APIs |
+| `semantic` | Enable schema, resolver, lineage, optimizer, and validation APIs |
+| `openlineage` | Enable OpenLineage payload generation; implies `semantic` |
+| `diff` | Enable AST diff support; implies `generate` |
+| `planner` | Enable logical planning helpers |
+| `time` | Enable time-format conversion helpers |
 | `bindings` | Enable `ts-rs` TypeScript type generation |
 
 ## License

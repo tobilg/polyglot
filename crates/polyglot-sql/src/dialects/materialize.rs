@@ -6,6 +6,7 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{AggFunc, Case, Cast, Expression, Function, VarArgFunc};
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -26,6 +27,8 @@ impl DialectImpl for MaterializeDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -36,6 +39,8 @@ impl DialectImpl for MaterializeDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -111,6 +116,7 @@ impl DialectImpl for MaterializeDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl MaterializeDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

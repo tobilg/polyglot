@@ -17,6 +17,7 @@ use crate::expressions::{
     CeilFunc, CurrentTimestamp, DataType, DateTimeField, Expression, ExtractFunc, Function,
     Literal, StructField, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -74,6 +75,8 @@ impl DialectImpl for SparkDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -94,6 +97,8 @@ impl DialectImpl for SparkDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -212,6 +217,7 @@ impl DialectImpl for SparkDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl SparkDialect {
     /// Normalize a data type for Spark:
     /// - VARCHAR/CHAR without length -> STRING

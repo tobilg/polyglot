@@ -16,6 +16,7 @@ use crate::expressions::{
     Identifier, JsonExtractFunc, LikeOp, Literal, Select, SplitFunc, StringAggFunc, UnaryFunc,
     UnnestFunc, VarArgFunc, Where,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -52,6 +53,8 @@ impl DialectImpl for BigQueryDialect {
         config.hash_comments = true;
         config
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::{IdentifierQuoteStyle, NormalizeFunctions};
@@ -93,6 +96,8 @@ impl DialectImpl for BigQueryDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -857,6 +862,7 @@ impl DialectImpl for BigQueryDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl BigQueryDialect {
     /// Transform data types according to BigQuery TYPE_MAPPING
     fn transform_data_type(&self, dt: crate::expressions::DataType) -> Result<Expression> {

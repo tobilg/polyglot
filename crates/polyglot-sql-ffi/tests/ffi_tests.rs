@@ -2,10 +2,12 @@ use polyglot_sql_ffi::{
     polyglot_dialect_count, polyglot_dialect_list, polyglot_diff, polyglot_format,
     polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
     polyglot_free_validation_result, polyglot_generate, polyglot_lineage,
-    polyglot_lineage_with_schema, polyglot_optimize, polyglot_parse, polyglot_parse_one,
-    polyglot_qualify_tables, polyglot_rename_tables_with_options, polyglot_source_tables,
-    polyglot_transpile, polyglot_transpile_with_options, polyglot_validate, polyglot_version,
-    PolyglotResult, PolyglotValidationResult,
+    polyglot_lineage_with_schema, polyglot_openlineage_column_lineage,
+    polyglot_openlineage_job_event, polyglot_openlineage_run_event, polyglot_optimize,
+    polyglot_parse, polyglot_parse_one, polyglot_qualify_tables,
+    polyglot_rename_tables_with_options, polyglot_source_tables, polyglot_transpile,
+    polyglot_transpile_with_options, polyglot_validate, polyglot_version, PolyglotResult,
+    PolyglotValidationResult,
 };
 use serde_json::Value;
 use std::ffi::{CStr, CString};
@@ -278,6 +280,23 @@ fn test_null_pointer_inputs_on_other_apis() {
 
     let (status, _, _) = consume_result(polyglot_diff(sql.as_ptr(), ptr::null(), dialect.as_ptr()));
     assert_eq!(status, 5);
+
+    let openlineage_options = c(r#"{"producer":"test"}"#);
+    let (status, _, _) = consume_result(polyglot_openlineage_column_lineage(
+        ptr::null(),
+        openlineage_options.as_ptr(),
+    ));
+    assert_eq!(status, 5);
+    let (status, _, _) = consume_result(polyglot_openlineage_job_event(
+        ptr::null(),
+        openlineage_options.as_ptr(),
+    ));
+    assert_eq!(status, 5);
+    let (status, _, _) = consume_result(polyglot_openlineage_run_event(
+        ptr::null(),
+        openlineage_options.as_ptr(),
+    ));
+    assert_eq!(status, 5);
 }
 
 #[test]
@@ -533,6 +552,94 @@ fn test_lineage_with_schema_resolves_ambiguous_column() {
         "expected qualified lineage edge u.id, got: {}",
         payload
     );
+}
+
+#[test]
+fn test_openlineage_column_lineage() {
+    let sql = c("SELECT a FROM input_table");
+    let options = c(r#"{
+            "dialect":"generic",
+            "producer":"https://github.com/tobilg/polyglot",
+            "datasetNamespace":"warehouse",
+            "outputDataset":{"namespace":"warehouse","name":"output_table"}
+        }"#);
+
+    let (status, data, error) = consume_result(polyglot_openlineage_column_lineage(
+        sql.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let payload: Value =
+        serde_json::from_str(&data.expect("missing openlineage payload")).expect("invalid json");
+    assert!(payload["facet"]["fields"]["a"]["inputFields"].is_array());
+    assert!(payload["inputs"].is_array());
+    assert!(payload["outputs"].is_array());
+}
+
+#[test]
+fn test_openlineage_job_event() {
+    let sql = c("SELECT a FROM input_table");
+    let options = c(r#"{
+            "dialect":"generic",
+            "producer":"https://github.com/tobilg/polyglot",
+            "datasetNamespace":"warehouse",
+            "outputDataset":{"namespace":"warehouse","name":"output_table"},
+            "jobNamespace":"jobs",
+            "jobName":"daily_sql",
+            "eventTime":"2026-05-21T00:00:00Z"
+        }"#);
+
+    let (status, data, error) = consume_result(polyglot_openlineage_job_event(
+        sql.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let payload: Value =
+        serde_json::from_str(&data.expect("missing openlineage event")).expect("invalid json");
+    assert_eq!(payload["event"]["job"]["name"], "daily_sql");
+    assert!(payload["event"]["outputs"].is_array());
+}
+
+#[test]
+fn test_openlineage_run_event() {
+    let sql = c("SELECT a FROM input_table");
+    let options = c(r#"{
+            "dialect":"generic",
+            "producer":"https://github.com/tobilg/polyglot",
+            "datasetNamespace":"warehouse",
+            "outputDataset":{"namespace":"warehouse","name":"output_table"},
+            "jobNamespace":"jobs",
+            "jobName":"daily_sql",
+            "eventTime":"2026-05-21T00:00:00Z",
+            "runId":"run-1",
+            "eventType":"COMPLETE"
+        }"#);
+
+    let (status, data, error) = consume_result(polyglot_openlineage_run_event(
+        sql.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let payload: Value =
+        serde_json::from_str(&data.expect("missing openlineage run event")).expect("invalid json");
+    assert_eq!(payload["event"]["eventType"], "COMPLETE");
+    assert_eq!(payload["event"]["run"]["runId"], "run-1");
+}
+
+#[test]
+fn test_openlineage_invalid_options_json() {
+    let sql = c("SELECT 1");
+    let options = c("{not-json");
+
+    let (status, data, error) = consume_result(polyglot_openlineage_column_lineage(
+        sql.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 6);
+    assert!(data.is_none());
+    assert!(error
+        .unwrap_or_default()
+        .contains("Invalid OpenLineage options JSON"));
 }
 
 #[test]

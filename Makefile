@@ -3,13 +3,13 @@
         extract-fixtures extract-clickhouse-fixtures extract-all-fixtures \
         test-rust test-rust-all test-rust-identity test-rust-dialect \
         test-rust-transpile test-rust-pretty test-rust-roundtrip test-rust-matrix \
-        test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-verify \
+        test-rust-compat test-rust-errors test-rust-functions test-rust-custom test-rust-lib test-rust-feature-gates test-rust-verify \
         test-rust-transpile-generic test-rust-parser test-rust-check \
         test-rust-clickhouse-parser test-rust-clickhouse-coverage \
-        test-ffi \
+        test-ffi build-go test-go test-go-integration \
         test-compare build-wasm clean-fixtures clean-clickhouse-fixtures clean-external clean \
         generate-bindings copy-bindings cargo-build-release \
-        build-all build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi \
+        build-all build-ffi build-ffi-static generate-ffi-header build-ffi-example clean-ffi build-go \
         develop-python test-python build-python typecheck-python \
         python-docs-build python-docs-preview python-docs-deploy \
         bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full bench-simple bench-simple-quick bench-simple-full bench-transpile bench-transpile-quick \
@@ -46,6 +46,7 @@ help:
 	@echo "  make test-rust           - Run SQLGlot-named Rust tests"
 	@echo "  make test-rust-all       - Run all sqlglot fixture tests"
 	@echo "  make test-rust-lib       - Run lib unit tests"
+	@echo "  make test-rust-feature-gates - Check optional Cargo feature combinations"
 	@echo "  make test-rust-check     - Compile Rust test targets without running them"
 	@echo "  make test-rust-verify    - Run full Rust verification suite incl. FFI"
 	@echo ""
@@ -65,6 +66,8 @@ help:
 	@echo "  make test-rust-functions - Function-focused unit tests"
 	@echo "  make test-rust-custom   - Custom dialect tests (DataFusion, etc.)"
 	@echo "  make test-ffi           - Run C FFI crate tests"
+	@echo "  make test-go            - Run Go SDK unit tests"
+	@echo "  make test-go-integration - Build FFI and run Go SDK integration tests"
 	@echo ""
 	@echo "  ClickHouse Tests:"
 	@echo "  make test-rust-clickhouse-parser   - ClickHouse parser tests"
@@ -96,6 +99,7 @@ help:
 	@echo "  make build-ffi-static    - Build C FFI static library"
 	@echo "  make generate-ffi-header - Generate C header via cbindgen/build.rs"
 	@echo "  make build-ffi-example   - Build and run C example"
+	@echo "  make build-go            - Compile the Go SDK"
 	@echo "  make develop-python      - Build/install Python extension in uv-managed env"
 	@echo "  make test-python         - Run Python bindings pytest suite"
 	@echo "  make build-python        - Build Python wheels (maturin)"
@@ -212,6 +216,18 @@ test-rust-pretty:
 test-rust-lib:
 	cargo test --lib -p polyglot-sql
 
+test-rust-feature-gates:
+	cargo check -p polyglot-sql --no-default-features
+	cargo check -p polyglot-sql --no-default-features --features dialect-clickhouse
+	cargo check -p polyglot-sql --no-default-features --features generate,dialect-clickhouse
+	cargo check -p polyglot-sql --no-default-features --features transpile,dialect-clickhouse,dialect-postgresql
+	cargo check -p polyglot-sql --no-default-features --features semantic,dialect-clickhouse
+	cargo check -p polyglot-sql --no-default-features --features openlineage,dialect-clickhouse
+	cargo check -p polyglot-sql --no-default-features --features builder,diff,planner,time,dialect-clickhouse
+	cargo check -p polyglot-sql-wasm --no-default-features
+	cargo check -p polyglot-sql-wasm
+	cargo test -p polyglot-sql --lib
+
 # Run all sqlglot fixture tests
 test-rust-all:
 	cargo test -p polyglot-sql --test sqlglot_identity --test sqlglot_dialect_identity \
@@ -296,6 +312,18 @@ test-rust-check:
 # Run FFI crate tests
 test-ffi:
 	cargo test -p polyglot-sql-ffi -- --nocapture
+
+# Build Go SDK packages
+build-go:
+	cd packages/go && go build ./...
+
+# Run Go SDK unit tests. Integration tests are skipped unless POLYGLOT_SQL_FFI_PATH is set.
+test-go:
+	cd packages/go && go test ./...
+
+# Build the native FFI library and run Go SDK integration tests against it.
+test-go-integration: build-ffi
+	cd packages/go && POLYGLOT_SQL_FFI_PATH="../../target/ffi_release/$$(case "$$(uname -s)" in Darwin) echo libpolyglot_sql_ffi.dylib ;; MINGW*|MSYS*|CYGWIN*) echo polyglot_sql_ffi.dll ;; *) echo libpolyglot_sql_ffi.so ;; esac)" go test ./...
 
 # -----------------------------------------------------------------------------
 # ClickHouse Tests
@@ -536,6 +564,7 @@ endif
 	@echo "Bumping version to $(V)..."
 	cargo set-version $(V)
 	pnpm -r exec pnpm version $(V) --no-git-tag-version
+	perl -0pi -e 's/const sdkVersion = "[^"]+"/const sdkVersion = "$(V)"/' packages/go/types.go
 	@echo "Version bumped to $(V) in all crates and packages."
 
 # =============================================================================

@@ -7,6 +7,7 @@ mod generate;
 mod helpers;
 mod lineage;
 mod memory;
+mod openlineage;
 mod optimize;
 mod parse;
 mod tokenize;
@@ -24,6 +25,10 @@ pub use format::{polyglot_format, polyglot_format_with_options};
 pub use generate::polyglot_generate;
 pub use lineage::{polyglot_lineage, polyglot_lineage_with_schema, polyglot_source_tables};
 pub use memory::{polyglot_free_result, polyglot_free_string, polyglot_free_validation_result};
+pub use openlineage::{
+    polyglot_openlineage_column_lineage, polyglot_openlineage_job_event,
+    polyglot_openlineage_run_event,
+};
 pub use optimize::polyglot_optimize;
 pub use parse::{polyglot_parse, polyglot_parse_one};
 pub use tokenize::polyglot_tokenize;

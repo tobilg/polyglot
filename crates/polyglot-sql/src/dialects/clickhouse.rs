@@ -4,11 +4,14 @@
 //! ClickHouse is case-sensitive and has unique function naming conventions.
 
 use super::{DialectImpl, DialectType};
+#[cfg(feature = "transpile")]
 use crate::error::Result;
+#[cfg(feature = "transpile")]
 use crate::expressions::{
     AggregateFunction, BinaryOp, Case, Cast, Expression, Function, In, IsNull, LikeOp,
     MapConstructor, Paren, UnaryOp,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -49,6 +52,8 @@ impl DialectImpl for ClickHouseDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::{IdentifierQuoteStyle, NormalizeFunctions};
         GeneratorConfig {
@@ -69,6 +74,8 @@ impl DialectImpl for ClickHouseDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         let wrap_predicate_left = |expr: Expression| -> Expression {
@@ -365,8 +372,10 @@ impl DialectImpl for ClickHouseDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl ClickHouseDialect {}
 
+#[cfg(feature = "transpile")]
 impl ClickHouseDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

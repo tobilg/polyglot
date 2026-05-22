@@ -22,6 +22,7 @@ use crate::expressions::{
     ExtractFunc, Function, Interval, IntervalUnit, IntervalUnitSpec, Join, JoinKind, Literal,
     Paren, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -66,6 +67,8 @@ impl DialectImpl for PostgresDialect {
             .insert("EXEC".to_string(), TokenType::Command);
         config
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
@@ -126,6 +129,8 @@ impl DialectImpl for PostgresDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -988,6 +993,7 @@ impl DialectImpl for PostgresDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl PostgresDialect {
     /// Check if a JSON path expression is "simple" (string literal or non-negative integer)
     /// Simple paths can use arrow syntax (->>) in PostgreSQL

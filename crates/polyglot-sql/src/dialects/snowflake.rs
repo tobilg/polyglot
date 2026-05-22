@@ -15,6 +15,7 @@ use crate::expressions::{
     AggFunc, BinaryOp, Cast, CeilFunc, DataType, Expression, Function, IntervalUnit, ListAggFunc,
     Literal, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -55,6 +56,8 @@ impl DialectImpl for SnowflakeDialect {
         config.comments.insert("//".to_string(), None);
         config
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
@@ -100,6 +103,8 @@ impl DialectImpl for SnowflakeDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -1251,6 +1256,7 @@ impl DialectImpl for SnowflakeDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl SnowflakeDialect {
     /// Format a Snowflake external table property for output.
     /// Some properties like LOCATION and FILE_FORMAT are uppercased keywords.

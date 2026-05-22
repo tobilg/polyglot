@@ -17,6 +17,7 @@
 use super::{DialectImpl, DialectType, TSQLDialect};
 use crate::error::Result;
 use crate::expressions::{BinaryOp, Cast, DataType, Expression, Function, Identifier, Literal};
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -34,6 +35,8 @@ impl DialectImpl for FabricDialect {
         tsql.tokenizer_config()
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         // Inherit from T-SQL with Fabric dialect type
@@ -46,6 +49,8 @@ impl DialectImpl for FabricDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         // Handle CreateTable specially - add default precision of 1 to VARCHAR/CHAR without length
@@ -294,6 +299,7 @@ impl DialectImpl for FabricDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl FabricDialect {
     /// Fabric-specific expression transformations
     fn transform_fabric_expr(&self, expr: Expression) -> Result<Expression> {

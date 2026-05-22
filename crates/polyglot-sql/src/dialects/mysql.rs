@@ -13,6 +13,7 @@ use crate::expressions::{
     BinaryFunc, BinaryOp, Cast, DataType, Expression, Function, JsonExtractFunc, LikeOp, Literal,
     Paren, UnaryFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -87,6 +88,8 @@ impl DialectImpl for MySQLDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -130,6 +133,8 @@ impl DialectImpl for MySQLDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -523,6 +528,7 @@ impl DialectImpl for MySQLDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl MySQLDialect {
     fn normalize_mysql_date_format(fmt: &str) -> String {
         fmt.replace("%H:%i:%s", "%T").replace("%H:%i:%S", "%T")

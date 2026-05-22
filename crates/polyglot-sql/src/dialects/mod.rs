@@ -158,13 +158,22 @@ pub use trino::TrinoDialect;
 pub use tsql::TSQLDialect;
 
 use crate::error::Result;
-use crate::expressions::{
-    Expression, From, Function, FunctionBody, Identifier, Join, Null, OrderBy, OutputClause,
-    TableRef, With,
-};
+use crate::expressions::Expression;
+#[cfg(feature = "transpile")]
+use crate::expressions::{ColumnConstraint, Function, Identifier, Literal};
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
+use crate::expressions::{From, FunctionBody, Join, Null, OrderBy, OutputClause, TableRef, With};
+#[cfg(feature = "generate")]
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
-use crate::tokens::{Token, TokenType, Tokenizer, TokenizerConfig};
+#[cfg(feature = "transpile")]
+use crate::tokens::TokenType;
+use crate::tokens::{Token, Tokenizer, TokenizerConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -378,6 +387,7 @@ pub trait DialectImpl {
     ///
     /// Override to customize identifier quoting style, function name casing,
     /// keyword casing, and other SQL generation behavior.
+    #[cfg(feature = "generate")]
     fn generator_config(&self) -> GeneratorConfig {
         GeneratorConfig::default()
     }
@@ -387,6 +397,7 @@ pub trait DialectImpl {
     /// Override this for hybrid dialects like Athena that route to different SQL engines
     /// based on expression type (e.g., Hive-style generation for DDL, Trino-style for DML).
     /// The default delegates to [`generator_config`](DialectImpl::generator_config).
+    #[cfg(feature = "generate")]
     fn generator_config_for_expr(&self, _expr: &Expression) -> GeneratorConfig {
         self.generator_config()
     }
@@ -396,6 +407,7 @@ pub trait DialectImpl {
     /// This is the per-node rewrite hook invoked by [`transform_recursive`]. Return the
     /// expression unchanged if no dialect-specific rewrite is needed. Transformations
     /// typically include function renaming, operator substitution, and type mapping.
+    #[cfg(feature = "transpile")]
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         Ok(expr)
     }
@@ -405,6 +417,7 @@ pub trait DialectImpl {
     /// Override this to apply structural rewrites that must see the entire tree at once,
     /// such as `eliminate_qualify`, `eliminate_distinct_on`, `ensure_bools`, or
     /// `explode_projection_to_unnest`. The default is a no-op pass-through.
+    #[cfg(feature = "transpile")]
     fn preprocess(&self, expr: Expression) -> Result<Expression> {
         Ok(expr)
     }
@@ -416,6 +429,12 @@ pub trait DialectImpl {
 /// The outer type is first passed through `transform_fn` as an `Expression::DataType`,
 /// and then nested element/field types are recursed into. This ensures that dialect-level
 /// type mappings (e.g., `INT` to `INTEGER`) propagate into complex nested types.
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_data_type_recursive<F>(
     dt: crate::expressions::DataType,
     transform_fn: &F,
@@ -519,12 +538,74 @@ fn duckdb_to_bigquery_format(fmt: &str) -> String {
     result
 }
 
+#[cfg(feature = "transpile")]
+fn presto_to_java_format(fmt: &str) -> String {
+    fmt.replace("%Y", "yyyy")
+        .replace("%m", "MM")
+        .replace("%d", "dd")
+        .replace("%H", "HH")
+        .replace("%i", "mm")
+        .replace("%S", "ss")
+        .replace("%s", "ss")
+        .replace("%y", "yy")
+        .replace("%T", "HH:mm:ss")
+        .replace("%F", "yyyy-MM-dd")
+        .replace("%M", "MMMM")
+}
+
+#[cfg(feature = "transpile")]
+fn normalize_presto_format(fmt: &str) -> String {
+    fmt.replace("%H:%i:%S", "%T").replace("%H:%i:%s", "%T")
+}
+
+#[cfg(feature = "transpile")]
+fn presto_to_duckdb_format(fmt: &str) -> String {
+    fmt.replace("%i", "%M")
+        .replace("%s", "%S")
+        .replace("%T", "%H:%M:%S")
+}
+
+#[cfg(feature = "transpile")]
+fn presto_to_bigquery_format(fmt: &str) -> String {
+    fmt.replace("%Y-%m-%d", "%F")
+        .replace("%H:%i:%S", "%T")
+        .replace("%H:%i:%s", "%T")
+        .replace("%i", "%M")
+        .replace("%s", "%S")
+}
+
+#[cfg(feature = "transpile")]
+fn is_default_presto_timestamp_format(fmt: &str) -> bool {
+    let normalized = normalize_presto_format(fmt);
+    normalized == "%Y-%m-%d %T"
+        || normalized == "%Y-%m-%d %H:%i:%S"
+        || fmt == "%Y-%m-%d %H:%i:%S"
+        || fmt == "%Y-%m-%d %T"
+}
+
+#[cfg(feature = "transpile")]
+fn is_default_presto_date_format(fmt: &str) -> bool {
+    fmt == "%Y-%m-%d" || fmt == "%F"
+}
+
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 #[derive(Debug)]
 enum TransformTask {
     Visit(Expression),
     Finish(FinishTask),
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 #[derive(Debug)]
 enum FinishTask {
     Unary(Expression),
@@ -536,6 +617,12 @@ enum FinishTask {
     SetOp(Expression),
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 #[derive(Debug)]
 struct SelectFrame {
     select: Box<crate::expressions::Select>,
@@ -547,12 +634,24 @@ struct SelectFrame {
     qualify_present: bool,
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_pop_result(results: &mut Vec<Expression>) -> Result<Expression> {
     results
         .pop()
         .ok_or_else(|| crate::error::Error::Internal("transform stack underflow".to_string()))
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_pop_results(results: &mut Vec<Expression>, count: usize) -> Result<Vec<Expression>> {
     if results.len() < count {
         return Err(crate::error::Error::Internal(
@@ -569,6 +668,12 @@ fn transform_pop_results(results: &mut Vec<Expression>, count: usize) -> Result<
 /// trees, and common binary/unary expression chains). Less common shapes currently
 /// reuse the reference recursive implementation so semantics stay identical while
 /// the hot path avoids stack growth.
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 pub fn transform_recursive<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -590,6 +695,12 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_recursive_inner<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1664,6 +1775,12 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_table_ref_recursive<F>(table: TableRef, transform_fn: &F) -> Result<TableRef>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1680,6 +1797,12 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_from_recursive<F>(from: From, transform_fn: &F) -> Result<From>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1696,6 +1819,12 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_join_recursive<F>(mut join: Join, transform_fn: &F) -> Result<Join>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1725,6 +1854,12 @@ where
     }
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_output_clause_recursive<F>(
     mut output: OutputClause,
     transform_fn: &F,
@@ -1743,6 +1878,12 @@ where
     Ok(output)
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_with_recursive<F>(mut with: With, transform_fn: &F) -> Result<With>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1761,6 +1902,12 @@ where
     Ok(with)
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_order_by_recursive<F>(mut order: OrderBy, transform_fn: &F) -> Result<OrderBy>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -1780,6 +1927,12 @@ where
     Ok(order)
 }
 
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 fn transform_recursive_reference<F>(expr: Expression, transform_fn: &F) -> Result<Expression>
 where
     F: Fn(Expression) -> Result<Expression>,
@@ -3005,7 +3158,16 @@ where
 /// Transform closures are cheap (unit-struct method calls) and created fresh each time.
 struct CachedDialectConfig {
     tokenizer_config: TokenizerConfig,
+    #[cfg(feature = "generate")]
     generator_config: Arc<GeneratorConfig>,
+}
+
+struct DialectConfigs {
+    tokenizer_config: TokenizerConfig,
+    #[cfg(feature = "generate")]
+    generator_config: Arc<GeneratorConfig>,
+    #[cfg(feature = "transpile")]
+    transformer: Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
 }
 
 /// Declare a per-dialect `LazyLock<CachedDialectConfig>` static.
@@ -3016,6 +3178,7 @@ macro_rules! cached_dialect {
             let d = $dialect_struct;
             CachedDialectConfig {
                 tokenizer_config: d.tokenizer_config(),
+                #[cfg(feature = "generate")]
                 generator_config: Arc::new(d.generator_config()),
             }
         });
@@ -3026,6 +3189,7 @@ static CACHED_GENERIC: LazyLock<CachedDialectConfig> = LazyLock::new(|| {
     let d = GenericDialect;
     CachedDialectConfig {
         tokenizer_config: d.tokenizer_config(),
+        #[cfg(feature = "generate")]
         generator_config: Arc::new(d.generator_config()),
     }
 });
@@ -3076,22 +3240,18 @@ cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
 
-fn configs_for_dialect_type(
-    dt: DialectType,
-) -> (
-    TokenizerConfig,
-    Arc<GeneratorConfig>,
-    Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
-) {
+fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
     macro_rules! from_cache {
         ($cache:expr, $dialect_struct:expr) => {{
             let c = &*$cache;
-            (
-                c.tokenizer_config.clone(),
-                c.generator_config.clone(),
-                Box::new(move |e| $dialect_struct.transform_expr(e)),
-            )
+            DialectConfigs {
+                tokenizer_config: c.tokenizer_config.clone(),
+                #[cfg(feature = "generate")]
+                generator_config: c.generator_config.clone(),
+                #[cfg(feature = "transpile")]
+                transformer: Box::new(move |e| $dialect_struct.transform_expr(e)),
+            }
         }};
     }
     match dt {
@@ -3176,8 +3336,11 @@ struct CustomDialectConfig {
     name: String,
     base_dialect: DialectType,
     tokenizer_config: TokenizerConfig,
+    #[cfg(feature = "generate")]
     generator_config: GeneratorConfig,
+    #[cfg(feature = "transpile")]
     transform: Option<Arc<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
+    #[cfg(feature = "transpile")]
     preprocess: Option<Arc<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
 }
 
@@ -3212,8 +3375,11 @@ pub struct CustomDialectBuilder {
     name: String,
     base_dialect: DialectType,
     tokenizer_modifier: Option<Box<dyn FnOnce(&mut TokenizerConfig)>>,
+    #[cfg(feature = "generate")]
     generator_modifier: Option<Box<dyn FnOnce(&mut GeneratorConfig)>>,
+    #[cfg(feature = "transpile")]
     transform: Option<Arc<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
+    #[cfg(feature = "transpile")]
     preprocess: Option<Arc<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
 }
 
@@ -3224,8 +3390,11 @@ impl CustomDialectBuilder {
             name: name.into(),
             base_dialect: DialectType::Generic,
             tokenizer_modifier: None,
+            #[cfg(feature = "generate")]
             generator_modifier: None,
+            #[cfg(feature = "transpile")]
             transform: None,
+            #[cfg(feature = "transpile")]
             preprocess: None,
         }
     }
@@ -3246,6 +3415,7 @@ impl CustomDialectBuilder {
     }
 
     /// Provide a closure that modifies the generator configuration inherited from the base dialect.
+    #[cfg(feature = "generate")]
     pub fn generator_config_modifier<F>(mut self, f: F) -> Self
     where
         F: FnOnce(&mut GeneratorConfig) + 'static,
@@ -3258,6 +3428,7 @@ impl CustomDialectBuilder {
     ///
     /// This replaces the base dialect's transform. It is called on every expression
     /// node during the recursive transform pass.
+    #[cfg(feature = "transpile")]
     pub fn transform_fn<F>(mut self, f: F) -> Self
     where
         F: Fn(Expression) -> Result<Expression> + Send + Sync + 'static,
@@ -3270,6 +3441,7 @@ impl CustomDialectBuilder {
     ///
     /// This replaces the base dialect's built-in preprocessing. It is called once
     /// on the entire expression tree before the recursive per-node transform.
+    #[cfg(feature = "transpile")]
     pub fn preprocess_fn<F>(mut self, f: F) -> Self
     where
         F: Fn(Expression) -> Result<Expression> + Send + Sync + 'static,
@@ -3299,14 +3471,16 @@ impl CustomDialectBuilder {
         }
 
         // Get base configs
-        let (mut tok_config, arc_gen_config, _base_transform) =
-            configs_for_dialect_type(self.base_dialect);
-        let mut gen_config = (*arc_gen_config).clone();
+        let base_configs = configs_for_dialect_type(self.base_dialect);
+        let mut tok_config = base_configs.tokenizer_config;
+        #[cfg(feature = "generate")]
+        let mut gen_config = (*base_configs.generator_config).clone();
 
         // Apply modifiers
         if let Some(tok_mod) = self.tokenizer_modifier {
             tok_mod(&mut tok_config);
         }
+        #[cfg(feature = "generate")]
         if let Some(gen_mod) = self.generator_modifier {
             gen_mod(&mut gen_config);
         }
@@ -3315,8 +3489,11 @@ impl CustomDialectBuilder {
             name: self.name.clone(),
             base_dialect: self.base_dialect,
             tokenizer_config: tok_config,
+            #[cfg(feature = "generate")]
             generator_config: gen_config,
+            #[cfg(feature = "transpile")]
             transform: self.transform,
+            #[cfg(feature = "transpile")]
             preprocess: self.preprocess,
         };
 
@@ -3389,11 +3566,15 @@ fn get_custom_dialect_config(name: &str) -> Option<Arc<CustomDialectConfig>> {
 pub struct Dialect {
     dialect_type: DialectType,
     tokenizer: Tokenizer,
+    #[cfg(feature = "generate")]
     generator_config: Arc<GeneratorConfig>,
+    #[cfg(feature = "transpile")]
     transformer: Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
     /// Optional function to get expression-specific generator config (for hybrid dialects like Athena).
+    #[cfg(feature = "generate")]
     generator_config_for_expr: Option<Box<dyn Fn(&Expression) -> GeneratorConfig + Send + Sync>>,
     /// Optional custom preprocessing function (overrides built-in preprocess for custom dialects).
+    #[cfg(feature = "transpile")]
     custom_preprocess: Option<Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>>,
 }
 
@@ -3405,6 +3586,7 @@ pub struct Dialect {
 ///
 /// The struct derives `Serialize`/`Deserialize` using camelCase field names so
 /// it can be round-tripped over JSON bridges (C FFI, WASM) without mapping.
+#[cfg(feature = "transpile")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 #[non_exhaustive]
@@ -3413,6 +3595,7 @@ pub struct TranspileOptions {
     pub pretty: bool,
 }
 
+#[cfg(feature = "transpile")]
 impl TranspileOptions {
     /// Construct options with pretty-printing enabled.
     pub fn pretty() -> Self {
@@ -3426,17 +3609,20 @@ impl TranspileOptions {
 /// Implemented for [`DialectType`] (built-in dialect enum) and `&Dialect` (any
 /// dialect handle, including custom ones). End users do not normally need to
 /// implement this trait themselves.
+#[cfg(feature = "transpile")]
 pub trait TranspileTarget {
     /// Invoke `f` with a reference to the resolved target dialect.
     fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R;
 }
 
+#[cfg(feature = "transpile")]
 impl TranspileTarget for DialectType {
     fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R {
         f(&Dialect::get(self))
     }
 }
 
+#[cfg(feature = "transpile")]
 impl TranspileTarget for &Dialect {
     fn with_dialect<R>(self, f: impl FnOnce(&Dialect) -> R) -> R {
         f(self)
@@ -3451,10 +3637,15 @@ impl Dialect {
     /// For hybrid dialects like Athena, it also sets up expression-specific generator
     /// config routing.
     pub fn get(dialect_type: DialectType) -> Self {
-        let (tokenizer_config, generator_config, transformer) =
-            configs_for_dialect_type(dialect_type);
+        let configs = configs_for_dialect_type(dialect_type);
+        let tokenizer_config = configs.tokenizer_config;
+        #[cfg(feature = "generate")]
+        let generator_config = configs.generator_config;
+        #[cfg(feature = "transpile")]
+        let transformer = configs.transformer;
 
         // Set up expression-specific generator config for hybrid dialects
+        #[cfg(feature = "generate")]
         let generator_config_for_expr: Option<
             Box<dyn Fn(&Expression) -> GeneratorConfig + Send + Sync>,
         > = match dialect_type {
@@ -3468,9 +3659,13 @@ impl Dialect {
         Self {
             dialect_type,
             tokenizer: Tokenizer::new(tokenizer_config),
+            #[cfg(feature = "generate")]
             generator_config,
+            #[cfg(feature = "transpile")]
             transformer,
+            #[cfg(feature = "generate")]
             generator_config_for_expr,
+            #[cfg(feature = "transpile")]
             custom_preprocess: None,
         }
     }
@@ -3494,29 +3689,35 @@ impl Dialect {
     /// Construct a `Dialect` from a custom dialect configuration.
     fn from_custom_config(config: &CustomDialectConfig) -> Self {
         // Build the transformer: use custom if provided, else use base dialect's
+        #[cfg(feature = "transpile")]
         let transformer: Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync> =
             if let Some(ref custom_transform) = config.transform {
                 let t = Arc::clone(custom_transform);
                 Box::new(move |e| t(e))
             } else {
-                let (_, _, base_transform) = configs_for_dialect_type(config.base_dialect);
-                base_transform
+                configs_for_dialect_type(config.base_dialect).transformer
             };
 
         // Build the custom preprocess: use custom if provided
-        let custom_preprocess: Option<Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>> =
-            config.preprocess.as_ref().map(|p| {
-                let p = Arc::clone(p);
-                Box::new(move |e: Expression| p(e))
-                    as Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>
-            });
+        #[cfg(feature = "transpile")]
+        let custom_preprocess: Option<
+            Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>,
+        > = config.preprocess.as_ref().map(|p| {
+            let p = Arc::clone(p);
+            Box::new(move |e: Expression| p(e))
+                as Box<dyn Fn(Expression) -> Result<Expression> + Send + Sync>
+        });
 
         Self {
             dialect_type: config.base_dialect,
             tokenizer: Tokenizer::new(config.tokenizer_config.clone()),
+            #[cfg(feature = "generate")]
             generator_config: Arc::new(config.generator_config.clone()),
+            #[cfg(feature = "transpile")]
             transformer,
+            #[cfg(feature = "generate")]
             generator_config_for_expr: None,
+            #[cfg(feature = "transpile")]
             custom_preprocess,
         }
     }
@@ -3527,6 +3728,7 @@ impl Dialect {
     }
 
     /// Get the generator configuration
+    #[cfg(feature = "generate")]
     pub fn generator_config(&self) -> &GeneratorConfig {
         &self.generator_config
     }
@@ -3553,6 +3755,7 @@ impl Dialect {
 
     /// Get the generator config for a specific expression (supports hybrid dialects).
     /// Returns an owned `GeneratorConfig` suitable for mutation before generation.
+    #[cfg(feature = "generate")]
     fn get_config_for_expr(&self, expr: &Expression) -> GeneratorConfig {
         if let Some(ref config_fn) = self.generator_config_for_expr {
             config_fn(expr)
@@ -3566,6 +3769,7 @@ impl Dialect {
     /// The output uses this dialect's generator configuration for identifier quoting,
     /// keyword casing, function name normalization, and syntax style. The result is
     /// a single-line (non-pretty) SQL string.
+    #[cfg(feature = "generate")]
     pub fn generate(&self, expr: &Expression) -> Result<String> {
         // Fast path: when no per-expression config override, share the Arc cheaply.
         if self.generator_config_for_expr.is_none() {
@@ -3578,6 +3782,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with pretty printing enabled
+    #[cfg(feature = "generate")]
     pub fn generate_pretty(&self, expr: &Expression) -> Result<String> {
         let mut config = self.get_config_for_expr(expr);
         config.pretty = true;
@@ -3586,6 +3791,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with source dialect info (for transpilation)
+    #[cfg(feature = "generate")]
     pub fn generate_with_source(&self, expr: &Expression, source: DialectType) -> Result<String> {
         let mut config = self.get_config_for_expr(expr);
         config.source_dialect = Some(source);
@@ -3594,6 +3800,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with pretty printing and source dialect info
+    #[cfg(feature = "generate")]
     pub fn generate_pretty_with_source(
         &self,
         expr: &Expression,
@@ -3607,6 +3814,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with forced identifier quoting (identify=True)
+    #[cfg(feature = "generate")]
     pub fn generate_with_identify(&self, expr: &Expression) -> Result<String> {
         let mut config = self.get_config_for_expr(expr);
         config.always_quote_identifiers = true;
@@ -3615,6 +3823,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with pretty printing and forced identifier quoting
+    #[cfg(feature = "generate")]
     pub fn generate_pretty_with_identify(&self, expr: &Expression) -> Result<String> {
         let mut config = (*self.generator_config).clone();
         config.pretty = true;
@@ -3624,6 +3833,7 @@ impl Dialect {
     }
 
     /// Generate SQL from an expression with caller-specified config overrides
+    #[cfg(feature = "generate")]
     pub fn generate_with_overrides(
         &self,
         expr: &Expression,
@@ -3645,6 +3855,7 @@ impl Dialect {
     ///
     /// This method is used both during transpilation (to rewrite an AST for a target dialect)
     /// and for identity transforms (normalizing SQL within the same dialect).
+    #[cfg(feature = "transpile")]
     pub fn transform(&self, expr: Expression) -> Result<Expression> {
         // Apply preprocessing transforms based on dialect
         let preprocessed = self.preprocess(expr)?;
@@ -3653,6 +3864,7 @@ impl Dialect {
     }
 
     /// Apply dialect-specific preprocessing transforms
+    #[cfg(feature = "transpile")]
     fn preprocess(&self, expr: Expression) -> Result<Expression> {
         // If a custom preprocess function is set, use it instead of the built-in logic
         if let Some(ref custom_preprocess) = self.custom_preprocess {
@@ -3864,11 +4076,13 @@ impl Dialect {
     /// ```
     ///
     /// For pretty-printing or other options, use [`transpile_with`](Self::transpile_with).
+    #[cfg(feature = "transpile")]
     pub fn transpile<T: TranspileTarget>(&self, sql: &str, target: T) -> Result<Vec<String>> {
         self.transpile_with(sql, target, TranspileOptions::default())
     }
 
     /// Transpile SQL with configurable [`TranspileOptions`] (e.g. pretty-printing).
+    #[cfg(feature = "transpile")]
     pub fn transpile_with<T: TranspileTarget>(
         &self,
         sql: &str,
@@ -3876,58 +4090,6 @@ impl Dialect {
         opts: TranspileOptions,
     ) -> Result<Vec<String>> {
         target.with_dialect(|td| self.transpile_inner(sql, td, opts.pretty))
-    }
-
-    #[cfg(not(feature = "transpile"))]
-    fn transpile_inner(
-        &self,
-        sql: &str,
-        target_dialect: &Dialect,
-        pretty: bool,
-    ) -> Result<Vec<String>> {
-        let target = target_dialect.dialect_type;
-        // Without the transpile feature, only same-dialect or to/from generic is supported
-        if self.dialect_type != target
-            && self.dialect_type != DialectType::Generic
-            && target != DialectType::Generic
-        {
-            return Err(crate::error::Error::parse(
-                "Cross-dialect transpilation not available in this build",
-                0,
-                0,
-                0,
-                0,
-            ));
-        }
-
-        let expressions = self.parse(sql)?;
-        let generic_identity =
-            self.dialect_type == DialectType::Generic && target == DialectType::Generic;
-
-        if generic_identity {
-            return expressions
-                .into_iter()
-                .map(|expr| {
-                    if pretty {
-                        target_dialect.generate_pretty_with_source(&expr, self.dialect_type)
-                    } else {
-                        target_dialect.generate_with_source(&expr, self.dialect_type)
-                    }
-                })
-                .collect();
-        }
-
-        expressions
-            .into_iter()
-            .map(|expr| {
-                let transformed = target_dialect.transform(expr)?;
-                if pretty {
-                    target_dialect.generate_pretty_with_source(&transformed, self.dialect_type)
-                } else {
-                    target_dialect.generate_with_source(&transformed, self.dialect_type)
-                }
-            })
-            .collect()
     }
 
     #[cfg(feature = "transpile")]
@@ -4256,6 +4418,14 @@ impl Dialect {
                 let normalized =
                     Self::cross_dialect_normalize(normalized, self.dialect_type, target)?;
 
+                let normalized = if matches!(self.dialect_type, DialectType::SQLite)
+                    && !matches!(target, DialectType::SQLite)
+                {
+                    Self::normalize_sqlite_double_quoted_defaults(normalized)?
+                } else {
+                    normalized
+                };
+
                 let normalized = if matches!(self.dialect_type, DialectType::PostgreSQL)
                     && matches!(target, DialectType::SQLite)
                 {
@@ -4447,6 +4617,52 @@ impl Dialect {
             }
         }
         Ok(())
+    }
+
+    fn normalize_sqlite_double_quoted_defaults(expr: Expression) -> Result<Expression> {
+        fn normalize_default_expr(expr: Expression) -> Result<Expression> {
+            transform_recursive(expr, &|e| match e {
+                Expression::Column(col)
+                    if col.table.is_none() && col.name.quoted && !col.join_mark =>
+                {
+                    Ok(Expression::Literal(Box::new(Literal::String(
+                        col.name.name,
+                    ))))
+                }
+                Expression::Identifier(id) if id.quoted => {
+                    Ok(Expression::Literal(Box::new(Literal::String(id.name))))
+                }
+                _ => Ok(e),
+            })
+        }
+
+        fn normalize_column_default(col: &mut crate::expressions::ColumnDef) -> Result<()> {
+            if let Some(default) = col.default.take() {
+                col.default = Some(normalize_default_expr(default)?);
+            }
+
+            for constraint in &mut col.constraints {
+                if let ColumnConstraint::Default(default) = constraint {
+                    *default = normalize_default_expr(default.clone())?;
+                }
+            }
+
+            Ok(())
+        }
+
+        transform_recursive(expr, &|e| match e {
+            Expression::CreateTable(mut ct) => {
+                for column in &mut ct.columns {
+                    normalize_column_default(column)?;
+                }
+                Ok(Expression::CreateTable(ct))
+            }
+            Expression::ColumnDef(mut col) => {
+                normalize_column_default(&mut col)?;
+                Ok(Expression::ColumnDef(col))
+            }
+            _ => Ok(e),
+        })
     }
 
     fn normalize_postgres_to_sqlite_types(expr: Expression) -> Result<Expression> {
@@ -15784,7 +16000,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let normalized = crate::dialects::presto::PrestoDialect::normalize_presto_format(s);
+                                                let normalized = normalize_presto_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "DATE_FORMAT".to_string(),
                                                     vec![val, Expression::string(&normalized)],
@@ -15804,7 +16020,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
+                                                let java_fmt = presto_to_java_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "DATE_FORMAT".to_string(),
                                                     vec![val, Expression::string(&java_fmt)],
@@ -15822,7 +16038,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let duckdb_fmt = crate::dialects::presto::PrestoDialect::presto_to_duckdb_format(s);
+                                                let duckdb_fmt = presto_to_duckdb_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "STRFTIME".to_string(),
                                                     vec![val, Expression::string(&duckdb_fmt)],
@@ -15846,7 +16062,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let bq_fmt = crate::dialects::presto::PrestoDialect::presto_to_bigquery_format(s);
+                                                let bq_fmt = presto_to_bigquery_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "FORMAT_DATE".to_string(),
                                                     vec![Expression::string(&bq_fmt), val],
@@ -15889,7 +16105,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let normalized = crate::dialects::presto::PrestoDialect::normalize_presto_format(s);
+                                                let normalized = normalize_presto_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "DATE_PARSE".to_string(),
                                                     vec![val, Expression::string(&normalized)],
@@ -15907,24 +16123,35 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                if crate::dialects::presto::PrestoDialect::is_default_timestamp_format(s)
-                                               || crate::dialects::presto::PrestoDialect::is_default_date_format(s) {
-                                                Ok(Expression::Cast(Box::new(crate::expressions::Cast {
-                                                    this: val,
-                                                    to: DataType::Timestamp { timezone: false, precision: None },
-                                                    trailing_comments: Vec::new(),
-                                                    double_colon_syntax: false,
-                                                    format: None,
-                                                    default: None,
-                                                    inferred_type: None,
-                                                })))
-                                            } else {
-                                                let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
-                                                Ok(Expression::Function(Box::new(Function::new(
-                                                    "TO_TIMESTAMP".to_string(),
-                                                    vec![val, Expression::string(&java_fmt)],
-                                                ))))
-                                            }
+                                                if is_default_presto_timestamp_format(s)
+                                                    || is_default_presto_date_format(s)
+                                                {
+                                                    Ok(Expression::Cast(Box::new(
+                                                        crate::expressions::Cast {
+                                                            this: val,
+                                                            to: DataType::Timestamp {
+                                                                timezone: false,
+                                                                precision: None,
+                                                            },
+                                                            trailing_comments: Vec::new(),
+                                                            double_colon_syntax: false,
+                                                            format: None,
+                                                            default: None,
+                                                            inferred_type: None,
+                                                        },
+                                                    )))
+                                                } else {
+                                                    let java_fmt = presto_to_java_format(s);
+                                                    Ok(Expression::Function(Box::new(
+                                                        Function::new(
+                                                            "TO_TIMESTAMP".to_string(),
+                                                            vec![
+                                                                val,
+                                                                Expression::string(&java_fmt),
+                                                            ],
+                                                        ),
+                                                    )))
+                                                }
                                             } else {
                                                 Ok(Expression::Function(f))
                                             }
@@ -15938,7 +16165,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let java_fmt = crate::dialects::presto::PrestoDialect::presto_to_java_format(s);
+                                                let java_fmt = presto_to_java_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "TO_TIMESTAMP".to_string(),
                                                     vec![val, Expression::string(&java_fmt)],
@@ -15956,7 +16183,7 @@ impl Dialect {
                                             if let crate::expressions::Literal::String(s) =
                                                 lit.as_ref()
                                             {
-                                                let duckdb_fmt = crate::dialects::presto::PrestoDialect::presto_to_duckdb_format(s);
+                                                let duckdb_fmt = presto_to_duckdb_format(s);
                                                 Ok(Expression::Function(Box::new(Function::new(
                                                     "STRPTIME".to_string(),
                                                     vec![val, Expression::string(&duckdb_fmt)],
@@ -37758,6 +37985,41 @@ mod tests {
             .unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], "SELECT 1");
+    }
+
+    #[test]
+    fn test_sqlite_double_quoted_column_defaults_to_postgres_strings() {
+        let sqlite = Dialect::get(DialectType::SQLite);
+        let result = sqlite
+            .transpile(
+                r#"CREATE TABLE "_collections" (
+                    "type" TEXT DEFAULT "base" NOT NULL,
+                    "fields" JSON DEFAULT "[]" NOT NULL,
+                    "options" JSON DEFAULT "{}" NOT NULL
+                )"#,
+                DialectType::PostgreSQL,
+            )
+            .unwrap();
+
+        assert!(result[0].contains(r#""type" TEXT DEFAULT 'base' NOT NULL"#));
+        assert!(result[0].contains(r#""fields" JSON DEFAULT '[]' NOT NULL"#));
+        assert!(result[0].contains(r#""options" JSON DEFAULT '{}' NOT NULL"#));
+    }
+
+    #[test]
+    fn test_sqlite_identity_preserves_double_quoted_column_defaults() {
+        let sqlite = Dialect::get(DialectType::SQLite);
+        let result = sqlite
+            .transpile(
+                r#"CREATE TABLE "_collections" ("type" TEXT DEFAULT "base" NOT NULL)"#,
+                DialectType::SQLite,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result[0],
+            r#"CREATE TABLE "_collections" ("type" TEXT DEFAULT "base" NOT NULL)"#
+        );
     }
 
     #[test]

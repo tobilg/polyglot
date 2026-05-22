@@ -9,9 +9,29 @@ documentation.workspace = true
 description = "SQL parsing, validating, formatting, and dialect translation library"
 
 [features]
-default = ["all-dialects", "transpile", "stacker"]
+default = [
+    "all-dialects",
+    "generate",
+    "transpile",
+    "builder",
+    "ast-tools",
+    "semantic",
+    "openlineage",
+    "diff",
+    "planner",
+    "time",
+    "stacker",
+]
 bindings = ["dep:ts-rs"]
-transpile = []
+generate = []
+transpile = ["generate"]
+builder = ["generate"]
+ast-tools = []
+semantic = ["generate", "ast-tools"]
+openlineage = ["semantic"]
+diff = ["generate"]
+planner = []
+time = []
 # Default-on for native builds so direct Rust users and the FFI/Python bindings
 # inherit stack-growth protection automatically. WASM opts out via
 # `default-features = false` in its dependency declaration.
@@ -63,14 +83,17 @@ dialect-dremio = []
 dialect-exasol = []
 dialect-datafusion = []
 function-catalog-clickhouse = [
+    "semantic",
     "dep:polyglot-sql-function-catalogs",
     "polyglot-sql-function-catalogs/dialect-clickhouse",
 ]
 function-catalog-duckdb = [
+    "semantic",
     "dep:polyglot-sql-function-catalogs",
     "polyglot-sql-function-catalogs/dialect-duckdb",
 ]
 function-catalog-all-dialects = [
+    "semantic",
     "dep:polyglot-sql-function-catalogs",
     "polyglot-sql-function-catalogs/all-dialects",
 ]
@@ -82,7 +105,7 @@ thiserror = { workspace = true }
 unicode-segmentation = { workspace = true }
 stacker = { version = "0.1", optional = true }
 ts-rs = { version = "12.0", features = ["serde-compat"], optional = true }
-polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.3.12", optional = true, default-features = false }
+polyglot-sql-function-catalogs = { path = "../polyglot-sql-function-catalogs", version = "0.4.0", optional = true, default-features = false }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

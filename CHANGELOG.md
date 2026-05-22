@@ -4,6 +4,51 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.4.0] - 2026-05-22
+
+### Added
+- Official Go SDK at `packages/go`, published as the nested Go module
+  `github.com/tobilg/polyglot/packages/go`.
+- PureGo-based Go bindings over the native `polyglot-sql-ffi` shared library,
+  with explicit client lifecycle management and no cgo or runtime native
+  library downloads by default.
+- Go SDK APIs for transpilation, formatting, optimization, generation,
+  validation, dialect listing, parsing/tokenization, AST diff, table
+  transforms, lineage/source-table extraction, and OpenLineage payload
+  generation.
+- Go SDK typed option/result structs, default-client helpers, error wrapping,
+  native library path resolution, FFI layout checks, unit tests, integration
+  tests, and setup documentation.
+- C FFI OpenLineage exports:
+  `polyglot_openlineage_column_lineage`,
+  `polyglot_openlineage_job_event`, and
+  `polyglot_openlineage_run_event`.
+- Cargo capability feature gates for `polyglot-sql`: `generate`, `transpile`,
+  `builder`, `ast-tools`, `semantic`, `openlineage`, `diff`, `planner`, and
+  `time`.
+- Documented parser-only Rust builds via `default-features = false`.
+- Makefile targets for Go SDK builds/tests and Rust feature-gate verification:
+  `build-go`, `test-go`, `test-go-integration`, and
+  `test-rust-feature-gates`.
+
+### Changed
+- The default Rust feature set continues to expose the full existing API, while
+  optional capability groups now support smaller parser-only or selected-feature
+  builds.
+- `polyglot-sql-wasm` now explicitly opts into the full core capability set so
+  existing JavaScript/WASM exports remain available with the new core feature
+  gates.
+- Release automation now verifies the Go SDK against the release-built FFI
+  artifact and creates matching nested Go module tags such as
+  `packages/go/v0.4.0`.
+- Version bump helpers now update the Go SDK runtime version constant.
+
+### Fixed
+- SQLite-source transpilation now converts double-quoted column defaults such
+  as `DEFAULT "base"`, `DEFAULT "[]"`, and `DEFAULT "{}"` into string
+  literals for non-SQLite targets, fixing invalid PostgreSQL output while
+  preserving SQLite identity output.
+
 ## [0.3.12] - 2026-05-18
 
 ### Added
@@ -348,6 +393,10 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   - removed problematic doc-comment patterns that broke generated JSDoc parsing
   - removed `Index.ts` renaming in binding copy flow to avoid case-sensitive import conflicts
 
+[0.4.0]: https://github.com/tobilg/polyglot/compare/v0.3.12...v0.4.0
+[0.3.12]: https://github.com/tobilg/polyglot/compare/v0.3.11...v0.3.12
+[0.3.11]: https://github.com/tobilg/polyglot/compare/v0.3.10...v0.3.11
+[0.3.10]: https://github.com/tobilg/polyglot/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/tobilg/polyglot/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/tobilg/polyglot/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/tobilg/polyglot/compare/v0.3.6...v0.3.7

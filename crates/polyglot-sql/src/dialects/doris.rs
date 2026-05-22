@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::expressions::{
     AggFunc, Case, Cast, Expression, Function, Interval, IntervalUnit, IntervalUnitSpec, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -27,6 +28,8 @@ impl DialectImpl for DorisDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -40,6 +43,8 @@ impl DialectImpl for DorisDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -107,6 +112,7 @@ impl DialectImpl for DorisDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl DorisDialect {
     fn wrap_day_interval(expr: Expression) -> Expression {
         Expression::Interval(Box::new(Interval {

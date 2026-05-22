@@ -98,6 +98,33 @@ jobs:
       - name: Python bindings typecheck
         run: make typecheck-python
 
+  go-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Go SDK unit tests
+        run: cd packages/go && go test ./...
+
+      - name: Verify Go SDK version matches release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cd packages/go && POLYGLOT_GO_EXPECTED_VERSION="${GITHUB_REF_NAME#v}" go test ./...
+
+      - name: Build FFI for Go integration tests
+        run: cargo build -p polyglot-sql-ffi --profile ffi_release
+
+      - name: Go SDK integration tests
+        run: cd packages/go && POLYGLOT_SQL_FFI_PATH="../../target/ffi_release/libpolyglot_sql_ffi.so" go test ./...
+
   sdk-build:
     needs: rust-test
     runs-on: ubuntu-latest
@@ -558,7 +585,7 @@ jobs:
 
   publish-ffi-assets:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ffi-build-artifacts]
+    needs: [ffi-build-artifacts, go-sdk-release-artifact]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -588,6 +615,52 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.sha256
+
+  go-sdk-release-artifact:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ffi-build-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: packages/go/go.sum
+
+      - name: Download Linux x86_64 FFI archive
+        uses: actions/download-artifact@v8
+        with:
+          name: ffi-linux-x86_64
+          path: dist
+
+      - name: Test Go SDK against release-built FFI artifact
+        run: |
+          tar -xzf dist/polyglot-sql-ffi-linux-x86_64.tar.gz -C dist
+          cd packages/go
+          POLYGLOT_SQL_FFI_PATH="../../dist/polyglot-sql-ffi-linux-x86_64/libpolyglot_sql_ffi.so" go test ./...
+
+  tag-go-module:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [go-sdk-release-artifact]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create matching Go module tag
+        run: |
+          set -euo pipefail
+          tag="packages/go/${GITHUB_REF_NAME}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists"
+            exit 0
+          fi
+          git tag "${tag}" HEAD
+          git push origin "refs/tags/${tag}"
 
   deploy-docs:
     if: startsWith(github.ref, 'refs/tags/v')

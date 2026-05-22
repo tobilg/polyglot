@@ -1797,6 +1797,7 @@ impl Expression {
     ///
     /// Returns an empty string if generation fails. For dialect-specific output,
     /// use [`sql_for()`](Self::sql_for) instead.
+    #[cfg(feature = "generate")]
     pub fn sql(&self) -> String {
         crate::generator::Generator::sql(self).unwrap_or_default()
     }
@@ -1806,6 +1807,7 @@ impl Expression {
     /// Dialect-specific rules (identifier quoting, function names, type mappings,
     /// syntax variations) are applied automatically.  Returns an empty string if
     /// generation fails.
+    #[cfg(feature = "generate")]
     pub fn sql_for(&self, dialect: crate::dialects::DialectType) -> String {
         crate::generate(self, dialect).unwrap_or_default()
     }

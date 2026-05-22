@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::expressions::{
     AggFunc, Case, Cast, DataType, Expression, Function, Limit, RegexpFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
 use crate::tokens::TokenizerConfig;
 
@@ -33,6 +34,8 @@ impl DialectImpl for RedshiftDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::IdentifierQuoteStyle;
         GeneratorConfig {
@@ -46,6 +49,8 @@ impl DialectImpl for RedshiftDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -181,6 +186,7 @@ impl DialectImpl for RedshiftDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl RedshiftDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();

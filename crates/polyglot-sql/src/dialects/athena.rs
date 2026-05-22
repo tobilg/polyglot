@@ -13,6 +13,7 @@ use crate::error::Result;
 use crate::expressions::{
     AggFunc, Case, Cast, DataType, Expression, Function, LikeOp, UnaryFunc, VarArgFunc,
 };
+#[cfg(feature = "generate")]
 use crate::generator::{GeneratorConfig, IdentifierQuoteStyle};
 use crate::tokens::TokenizerConfig;
 
@@ -36,6 +37,8 @@ impl DialectImpl for AthenaDialect {
         config
     }
 
+    #[cfg(feature = "generate")]
+
     fn generator_config(&self) -> GeneratorConfig {
         // Default config uses Trino style (double quotes)
         GeneratorConfig {
@@ -46,6 +49,8 @@ impl DialectImpl for AthenaDialect {
             ..Default::default()
         }
     }
+
+    #[cfg(feature = "generate")]
 
     fn generator_config_for_expr(&self, expr: &Expression) -> GeneratorConfig {
         if should_use_hive_engine(expr) {
@@ -68,6 +73,8 @@ impl DialectImpl for AthenaDialect {
             }
         }
     }
+
+    #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
         match expr {
@@ -169,6 +176,7 @@ impl DialectImpl for AthenaDialect {
     }
 }
 
+#[cfg(feature = "transpile")]
 impl AthenaDialect {
     fn transform_function(&self, f: Function) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
