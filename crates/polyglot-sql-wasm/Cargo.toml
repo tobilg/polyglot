@@ -15,25 +15,25 @@ wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", 
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-polyglot-sql = {
-    path = "../polyglot-sql",
-    default-features = false,
-    features = [
-        "generate",
-        "transpile",
-        "builder",
-        "ast-tools",
-        "semantic",
-        "openlineage",
-        "diff",
-        "planner",
-    ],
-}
 wasm-bindgen = { workspace = true }
 js-sys = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde-wasm-bindgen = "0.6"
+
+[dependencies.polyglot-sql]
+path = "../polyglot-sql"
+default-features = false
+features = [
+    "generate",
+    "transpile",
+    "builder",
+    "ast-tools",
+    "semantic",
+    "openlineage",
+    "diff",
+    "planner",
+]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
