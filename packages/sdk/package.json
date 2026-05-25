@@ -45,7 +45,7 @@
   "scripts": {
     "build:bindings": "cd ../.. && make generate-bindings",
     "build:wasm:bundler": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target bundler --release --out-dir ../../packages/sdk/wasm",
-    "build:wasm:web": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target web --release --out-dir ../../packages/sdk/wasm-web",
+    "build:wasm:web": "cd ../../crates/polyglot-sql-wasm && wasm-pack build --target web --release --no-opt --out-dir ../../packages/sdk/wasm-web && cp ../../packages/sdk/wasm/polyglot_sql_wasm_bg.wasm ../../packages/sdk/wasm-web/polyglot_sql_wasm_bg.wasm",
     "build:wasm": "pnpm run build:wasm:bundler && pnpm run build:wasm:web",
     "build:esm": "vite build",
     "build:node": "vite build --config vite.config.node.ts",
