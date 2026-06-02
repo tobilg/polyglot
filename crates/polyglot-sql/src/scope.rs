@@ -533,6 +533,9 @@ fn collect_columns(expr: &Expression, columns: &mut Vec<ColumnRef>) {
         Expression::Exists(_) | Expression::Subquery(_) => {
             // These create their own scopes - don't collect from here
         }
+        Expression::Prepare(prepare) => {
+            collect_columns(&prepare.statement, columns);
+        }
         _ => {
             // For other expressions, we might need to add more cases
         }
@@ -551,6 +554,9 @@ pub fn build_scope(expression: &Expression) -> Scope {
 
 fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
     match expression {
+        Expression::Prepare(prepare) => {
+            build_scope_impl(&prepare.statement, current_scope);
+        }
         Expression::Select(select) => {
             // Process CTEs first
             if let Some(with) = &select.with {
@@ -673,6 +679,14 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
 
             scope.add_source(name.clone(), expr.clone(), true);
             scope.derived_table_scopes.push(derived_scope);
+        }
+        Expression::Unnest(unnest) => {
+            if let Some(alias) = &unnest.alias {
+                scope.add_source(alias.name.clone(), expr.clone(), false);
+            }
+        }
+        Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
+            scope.add_source(alias.alias.name.clone(), expr.clone(), false);
         }
         Expression::Paren(paren) => {
             add_table_to_scope(&paren.this, scope);
@@ -848,6 +862,9 @@ impl<'a> WalkInScopeIter<'a> {
         let mut children = Vec::new();
 
         match expr {
+            Expression::Prepare(prepare) => {
+                children.push(&prepare.statement);
+            }
             Expression::Select(select) => {
                 // Walk SELECT expressions
                 for e in &select.expressions {
@@ -1117,6 +1134,7 @@ pub fn traverse_scope(expression: &Expression) -> Vec<Scope> {
         | Expression::Union(_)
         | Expression::Intersect(_)
         | Expression::Except(_)
+        | Expression::Prepare(_)
         | Expression::CreateTable(_) => {
             let root = build_scope(expression);
             root.traverse().into_iter().cloned().collect()

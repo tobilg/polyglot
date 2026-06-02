@@ -363,6 +363,7 @@ fn analyze_statement(
     warnings: &mut Vec<OpenLineageWarning>,
 ) -> Result<StatementAnalysis> {
     match expr {
+        Expression::Prepare(prepare) => analyze_statement(&prepare.statement, options, warnings),
         Expression::Select(select) => {
             let output = if let Some(into) = &select.into {
                 dataset_from_expression(&into.this, options)?
@@ -914,6 +915,7 @@ fn collect_source_table(expr: &Expression, result: &mut Vec<(String, String)>) {
 
 fn leftmost_select(expr: &Expression) -> Option<&Select> {
     match expr {
+        Expression::Prepare(prepare) => leftmost_select(&prepare.statement),
         Expression::Select(select) => Some(select),
         Expression::Union(union) => leftmost_select(&union.left),
         Expression::Intersect(intersect) => leftmost_select(&intersect.left),
@@ -1104,6 +1106,19 @@ mod tests {
     }
 
     #[test]
+    fn emits_column_lineage_for_prepared_statement_body() {
+        let result = openlineage_column_lineage(
+            "PREPARE leak AS SELECT id FROM sensitive_table WHERE id = $1",
+            &options(),
+        )
+        .expect("lineage");
+        let field = result.facet.fields.get("id").expect("field id");
+        assert_eq!(field.input_fields.len(), 1);
+        assert_eq!(field.input_fields[0].name, "sensitive_table");
+        assert_eq!(field.input_fields[0].field, "id");
+    }
+
+    #[test]
     fn resolves_input_dataset_behind_table_alias() {
         let result = openlineage_column_lineage("SELECT o.total FROM orders o", &options())
             .expect("lineage");
@@ -1162,6 +1177,39 @@ SELECT json_data FROM transform_cte
                 .any(|input| input.field.eq_ignore_ascii_case("safe")),
             "did not expect SAFE namespace as input field, got {:?}",
             field.input_fields
+        );
+    }
+
+    #[test]
+    fn emits_bigquery_unnest_alias_column_lineage_issue209() {
+        let mut opts = options();
+        opts.dialect = DialectType::BigQuery;
+        opts.dataset_namespace = Some("bigquery://warehouse".to_string());
+        opts.output_dataset = Some(OpenLineageDatasetId::new(
+            "bigquery://warehouse",
+            "calendar",
+        ));
+
+        let result = openlineage_column_lineage(
+            r#"
+SELECT date_val AS week_start
+FROM UNNEST(GENERATE_DATE_ARRAY('2024-01-01', '2024-12-31', INTERVAL 1 WEEK)) AS date_val
+"#,
+            &opts,
+        )
+        .expect("lineage");
+        let field = result.facet.fields.get("week_start").expect("week_start");
+
+        assert_eq!(field.input_fields.len(), 1);
+        assert_eq!(field.input_fields[0].name, "date_val");
+        assert_eq!(field.input_fields[0].field, "date_val");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .all(|warning| warning.code != "W_EMPTY_FIELD_LINEAGE"),
+            "did not expect empty-lineage warning, got {:?}",
+            result.warnings
         );
     }
 

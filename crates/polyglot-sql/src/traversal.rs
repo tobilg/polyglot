@@ -701,6 +701,18 @@ fn iter_children(expr: &Expression) -> Vec<(&'static str, &Expression)> {
         Expression::CreateTask(ct) => {
             children.push(("body", &ct.body));
         }
+        Expression::Prepare(prepare) => {
+            children.push(("statement", &prepare.statement));
+        }
+        Expression::Execute(exec) => {
+            children.push(("this", &exec.this));
+            for argument in &exec.arguments {
+                children.push(("argument", argument));
+            }
+            for parameter in &exec.parameters {
+                children.push(("parameter", &parameter.value));
+            }
+        }
         Expression::Analyze(a) => {
             if let Some(this) = &a.this {
                 children.push(("this", this));

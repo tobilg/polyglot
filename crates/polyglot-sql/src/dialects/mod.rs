@@ -2918,6 +2918,31 @@ where
             Expression::CreateTask(ct)
         }
 
+        // Prepare: recurse into the prepared statement body
+        Expression::Prepare(mut prepare) => {
+            prepare.statement = transform_recursive(prepare.statement, transform_fn)?;
+            Expression::Prepare(prepare)
+        }
+
+        // Execute: recurse into procedure/prepared name and argument values
+        Expression::Execute(mut execute) => {
+            execute.this = transform_recursive(execute.this, transform_fn)?;
+            execute.arguments = execute
+                .arguments
+                .into_iter()
+                .map(|argument| transform_recursive(argument, transform_fn))
+                .collect::<Result<Vec<_>>>()?;
+            execute.parameters = execute
+                .parameters
+                .into_iter()
+                .map(|mut parameter| {
+                    parameter.value = transform_recursive(parameter.value, transform_fn)?;
+                    Ok(parameter)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Expression::Execute(execute)
+        }
+
         // CreateProcedure: recurse into body expressions
         Expression::CreateProcedure(mut cp) => {
             if let Some(body) = cp.body.take() {

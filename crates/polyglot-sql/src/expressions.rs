@@ -587,6 +587,8 @@ pub enum Expression {
     // Transaction and other commands
     Command(Box<Command>),
     Kill(Box<Kill>),
+    /// PREPARE statement (PostgreSQL/generic prepared statement definition)
+    Prepare(Box<PrepareStatement>),
     /// EXEC/EXECUTE statement (TSQL stored procedure call)
     Execute(Box<ExecuteStatement>),
 
@@ -1197,6 +1199,7 @@ impl Expression {
             | Expression::Describe(_)
             | Expression::Show(_)
             | Expression::Kill(_)
+            | Expression::Prepare(_)
             | Expression::Execute(_)
             | Expression::Declare(_)
             | Expression::Refresh(_)
@@ -2235,6 +2238,7 @@ impl Expression {
             Expression::Command(_) => "command",
             Expression::TryCatch(_) => "try_catch",
             Expression::Kill(_) => "kill",
+            Expression::Prepare(_) => "prepare",
             Expression::Execute(_) => "execute",
             Expression::Raw(_) => "raw",
             Expression::CreateTask(_) => "create_task",
@@ -6008,6 +6012,20 @@ pub struct Command {
     pub this: String,
 }
 
+/// PREPARE statement (PostgreSQL/generic prepared statement definition)
+/// Syntax: PREPARE name [(type, ...)] AS statement
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct PrepareStatement {
+    /// The prepared statement name.
+    pub name: Identifier,
+    /// Optional PostgreSQL parameter type list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter_types: Vec<DataType>,
+    /// The statement to execute when the prepared statement is invoked.
+    pub statement: Expression,
+}
+
 /// T-SQL TRY/CATCH block.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
@@ -6030,6 +6048,12 @@ pub struct ExecuteStatement {
     /// Named parameters: @param=value pairs
     #[serde(default)]
     pub parameters: Vec<ExecuteParameter>,
+    /// Positional prepared statement arguments, used by PostgreSQL EXECUTE name(...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arguments: Vec<Expression>,
+    /// Whether this statement represents PostgreSQL-style prepared statement execution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prepared: bool,
     /// Trailing clause text (e.g. WITH RESULT SETS ((...)))
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suffix: Option<String>,

@@ -5,6 +5,7 @@ import {
   formatWithOptions,
   generate,
   getDialects,
+  getSourceTables,
   getVersion,
   init,
   isInitialized,
@@ -69,6 +70,21 @@ describe('Polyglot SDK', () => {
       expect(result.ast).toBeDefined();
     });
 
+    it('should parse PostgreSQL PREPARE and EXECUTE statements', () => {
+      const prepare = parse(
+        'PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1',
+        Dialect.PostgreSQL,
+      );
+      expect(prepare.success).toBe(true);
+      expect((prepare.ast![0] as any).prepare.name.name).toBe('leak');
+      expect((prepare.ast![0] as any).prepare.statement.select).toBeDefined();
+
+      const execute = parse('EXECUTE leak(1)', Dialect.PostgreSQL);
+      expect(execute.success).toBe(true);
+      expect((execute.ast![0] as any).execute.prepared).toBe(true);
+      expect((execute.ast![0] as any).execute.arguments).toHaveLength(1);
+    });
+
     it('should handle malformed SQL gracefully', () => {
       const result = parse('SELECT FROM WHERE', Dialect.Generic);
       // The parser may handle some invalid SQL gracefully
@@ -100,6 +116,30 @@ describe('Polyglot SDK', () => {
       expect(generateResult.success).toBe(true);
       expect(generateResult.sql![0].toLowerCase()).toContain('select');
       expect(generateResult.sql![0].toLowerCase()).toContain('from');
+    });
+
+    it('should roundtrip PostgreSQL PREPARE statements', () => {
+      const parseResult = parse(
+        'PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1',
+        Dialect.PostgreSQL,
+      );
+      const generateResult = generate(parseResult.ast, Dialect.PostgreSQL);
+
+      expect(generateResult.success).toBe(true);
+      expect(generateResult.sql![0]).toContain('PREPARE leak (INT) AS SELECT');
+    });
+  });
+
+  describe('lineage helpers', () => {
+    it('should collect source tables from prepared statement bodies', () => {
+      const result = getSourceTables(
+        'id',
+        'PREPARE leak AS SELECT id FROM sensitive_table WHERE id = $1',
+        Dialect.PostgreSQL,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.tables).toContain('sensitive_table');
     });
   });
 

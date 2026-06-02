@@ -53,6 +53,26 @@ def test_parse_tsql_try_catch_returns_typed_subclass():
     assert ast.sql("tsql").startswith("BEGIN TRY")
 
 
+def test_parse_postgres_prepare_returns_typed_subclass():
+    ast = polyglot_sql.parse_one(
+        "PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1",
+        dialect="postgres",
+    )
+
+    assert isinstance(ast, polyglot_sql.Prepare)
+    assert isinstance(ast, polyglot_sql.Expression)
+    assert ast.kind == "prepare"
+    assert ast.sql("postgres").startswith("PREPARE leak (INT) AS SELECT")
+
+
+def test_parse_postgres_execute_prepared_statement():
+    ast = polyglot_sql.parse_one("EXECUTE leak(1)", dialect="postgres")
+
+    assert isinstance(ast, polyglot_sql.Execute)
+    assert ast.kind == "execute"
+    assert ast.sql("postgres") == "EXECUTE leak(1)"
+
+
 def test_parse_multiple_statements_returns_n_entries():
     ast_list = polyglot_sql.parse("SELECT 1; SELECT 2", dialect="postgres")
     assert len(ast_list) == 2

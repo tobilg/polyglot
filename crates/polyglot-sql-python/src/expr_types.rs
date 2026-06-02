@@ -474,6 +474,7 @@ define_expression_subclasses!(
     Show,
     Command,
     Kill,
+    Prepare,
     Execute,
     Raw,
     Paren,

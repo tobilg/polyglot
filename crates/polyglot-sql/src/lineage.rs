@@ -120,7 +120,8 @@ pub fn lineage(
     trim_selects: bool,
 ) -> Result<LineageNode> {
     // Fast path: skip clone when there are no CTEs to expand
-    let has_with = matches!(sql, Expression::Select(s) if s.with.is_some());
+    let effective_sql = lineage_effective_expression(sql);
+    let has_with = matches!(effective_sql, Expression::Select(s) if s.with.is_some());
     if !has_with {
         return lineage_from_expression(column, sql, dialect, trim_selects);
     }
@@ -181,6 +182,7 @@ fn lineage_from_expression(
     dialect: Option<DialectType>,
     trim_selects: bool,
 ) -> Result<LineageNode> {
+    let sql = lineage_effective_expression(sql);
     let scope = build_scope(sql);
     to_node(
         ColumnRef::Name(column),
@@ -191,6 +193,13 @@ fn lineage_from_expression(
         "",
         trim_selects,
     )
+}
+
+fn lineage_effective_expression(sql: &Expression) -> &Expression {
+    match sql {
+        Expression::Prepare(prepare) => &prepare.statement,
+        _ => sql,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +231,11 @@ fn normalize_cte_name(ident: &Identifier) -> String {
 /// case-insensitively (lowercased), while quoted names preserve their original case.
 /// This matches sqlglot's `normalize_identifiers` behavior.
 pub fn expand_cte_stars(expr: &mut Expression, schema: Option<&dyn Schema>) {
+    if let Expression::Prepare(prepare) = expr {
+        expand_cte_stars(&mut prepare.statement, schema);
+        return;
+    }
+
     let select = match expr {
         Expression::Select(s) => s,
         _ => return,
@@ -480,6 +494,14 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
     let mut sources = Vec::new();
 
     fn extract_source(expr: &Expression) -> Option<SourceInfo> {
+        fn virtual_source_info(alias: &Identifier) -> SourceInfo {
+            SourceInfo {
+                alias: alias.name.clone(),
+                normalized: normalize_cte_name(alias),
+                fq_name: alias.name.clone(),
+            }
+        }
+
         match expr {
             Expression::Table(t) => {
                 let normalized = normalize_cte_name(&t.name);
@@ -512,6 +534,10 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                     normalized,
                     fq_name,
                 })
+            }
+            Expression::Unnest(u) => u.alias.as_ref().map(virtual_source_info),
+            Expression::Alias(a) if matches!(&a.this, Expression::Unnest(_)) => {
+                Some(virtual_source_info(&a.alias))
             }
             Expression::Paren(p) => extract_source(&p.this),
             _ => None,
@@ -970,6 +996,10 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
             ),
             Expression::Subquery(subquery) => {
                 subquery.alias.as_ref().map(|alias| alias.name.clone())
+            }
+            Expression::Unnest(unnest) => unnest.alias.as_ref().map(|alias| alias.name.clone()),
+            Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
+                Some(alias.alias.name.clone())
             }
             Expression::Paren(paren) => source_name(&paren.this),
             _ => None,
@@ -2484,6 +2514,45 @@ mod tests {
             .expect("lineage should resolve mixed-case aliases in BigQuery");
 
         assert_eq!(node.name, "name");
+    }
+
+    #[test]
+    fn test_lineage_bigquery_unnest_alias_source_issue_209() {
+        let expr = parse_one(
+            r#"
+SELECT date_val AS week_start
+FROM UNNEST(GENERATE_DATE_ARRAY('2024-01-01', '2024-12-31', INTERVAL 1 WEEK)) AS date_val
+"#,
+            DialectType::BigQuery,
+        )
+        .expect("parse");
+
+        let node = lineage("week_start", &expr, Some(DialectType::BigQuery), false)
+            .expect("lineage should resolve UNNEST alias as a source");
+        let child = node
+            .downstream
+            .first()
+            .expect("week_start should have downstream lineage");
+
+        assert_eq!(child.name, "date_val.date_val");
+        assert_eq!(child.source_name, "date_val");
+
+        let Expression::Column(column) = &child.expression else {
+            panic!(
+                "expected downstream column expression, got {:?}",
+                child.expression
+            );
+        };
+        assert_eq!(column.name.name, "date_val");
+        assert_eq!(
+            column.table.as_ref().map(|table| table.name.as_str()),
+            Some("date_val")
+        );
+        assert!(
+            matches!(&child.source, Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) && alias.alias.name == "date_val"),
+            "expected UNNEST source expression, got {:?}",
+            child.source
+        );
     }
 
     #[test]

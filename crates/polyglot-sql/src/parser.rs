@@ -1136,6 +1136,7 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             TokenType::Kill => self.parse_kill(),
+            TokenType::Prepare => self.parse_prepare(),
             TokenType::Execute => {
                 // ClickHouse: EXECUTE AS username statement → parse as command
                 if matches!(
@@ -23658,6 +23659,48 @@ impl Parser {
         Ok(Expression::Kill(Box::new(Kill { this, kind })))
     }
 
+    /// Parse PREPARE statement (PostgreSQL/generic prepared statement definition)
+    /// PREPARE name [(type, ...)] AS statement
+    fn parse_prepare(&mut self) -> Result<Expression> {
+        self.expect(TokenType::Prepare)?;
+
+        let name = self.expect_identifier_or_keyword_with_quoted()?;
+
+        let mut parameter_types = Vec::new();
+        if self.match_token(TokenType::LParen) {
+            if !self.check(TokenType::RParen) {
+                loop {
+                    parameter_types.push(self.parse_data_type()?);
+                    if !self.match_token(TokenType::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(TokenType::RParen)?;
+        }
+
+        self.expect(TokenType::As)?;
+        let statement = self.parse_statement()?;
+
+        Ok(Expression::Prepare(Box::new(PrepareStatement {
+            name,
+            parameter_types,
+            statement,
+        })))
+    }
+
+    fn is_postgres_prepared_execute_dialect(&self) -> bool {
+        matches!(
+            self.config.dialect,
+            None | Some(crate::dialects::DialectType::Generic)
+                | Some(crate::dialects::DialectType::PostgreSQL)
+                | Some(crate::dialects::DialectType::Redshift)
+                | Some(crate::dialects::DialectType::Materialize)
+                | Some(crate::dialects::DialectType::RisingWave)
+                | Some(crate::dialects::DialectType::CockroachDB)
+        )
+    }
+
     /// Parse EXEC/EXECUTE statement (TSQL stored procedure call)
     /// EXEC [schema.]procedure_name [@param=value, ...]
     fn parse_execute(&mut self) -> Result<Expression> {
@@ -23679,6 +23722,28 @@ impl Parser {
             let proc_name = self.parse_table_ref()?;
             Expression::Table(Box::new(proc_name))
         };
+
+        if self.is_postgres_prepared_execute_dialect() && self.check(TokenType::LParen) {
+            let arguments = self.parse_wrapped_csv_expressions()?;
+            return Ok(Expression::Execute(Box::new(ExecuteStatement {
+                this,
+                parameters: Vec::new(),
+                arguments,
+                prepared: true,
+                suffix: None,
+            })));
+        }
+        if self.is_postgres_prepared_execute_dialect()
+            && (self.check(TokenType::Semicolon) || self.is_at_end())
+        {
+            return Ok(Expression::Execute(Box::new(ExecuteStatement {
+                this,
+                parameters: Vec::new(),
+                arguments: Vec::new(),
+                prepared: true,
+                suffix: None,
+            })));
+        }
 
         // Parse optional parameters: @param=value [OUTPUT], ...
         let mut parameters = Vec::new();
@@ -23743,6 +23808,8 @@ impl Parser {
         Ok(Expression::Execute(Box::new(ExecuteStatement {
             this,
             parameters,
+            arguments: Vec::new(),
+            prepared: false,
             suffix,
         })))
     }

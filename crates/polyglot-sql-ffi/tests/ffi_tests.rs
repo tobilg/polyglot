@@ -341,6 +341,43 @@ fn test_parse_generate_roundtrip() {
 }
 
 #[test]
+fn test_parse_generate_postgres_prepare_and_execute() {
+    let dialect = c("postgres");
+    let prepare_sql = c("PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1");
+
+    let (parse_status, parse_data, parse_error) =
+        consume_result(polyglot_parse(prepare_sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(parse_status, 0, "parse_error={parse_error:?}");
+    let payload = parse_data.expect("missing parse result");
+    let parsed: Value = serde_json::from_str(&payload).expect("invalid parse json");
+    assert!(parsed[0].get("prepare").is_some(), "payload={parsed}");
+
+    let ast_json = c(&payload);
+    let (gen_status, gen_data, gen_error) =
+        consume_result(polyglot_generate(ast_json.as_ptr(), dialect.as_ptr()));
+    assert_eq!(gen_status, 0, "gen_error={gen_error:?}");
+    let statements: Vec<String> =
+        serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
+    assert!(statements[0].starts_with("PREPARE leak (INT) AS SELECT"));
+
+    let execute_sql = c("EXECUTE leak(1)");
+    let (exec_status, exec_data, exec_error) =
+        consume_result(polyglot_parse(execute_sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(exec_status, 0, "exec_error={exec_error:?}");
+    let parsed_execute: Value =
+        serde_json::from_str(&exec_data.expect("missing execute parse result"))
+            .expect("invalid parse json");
+    assert_eq!(parsed_execute[0]["execute"]["prepared"], true);
+    assert_eq!(
+        parsed_execute[0]["execute"]["arguments"]
+            .as_array()
+            .expect("arguments")
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn test_qualify_tables_ast_transform() {
     let sql =
         c("SELECT * FROM (SELECT * FROM tab_1) UNION ALL SELECT * FROM (SELECT * FROM tab_1)");
@@ -519,6 +556,27 @@ fn test_source_tables() {
     let tables: Vec<String> =
         serde_json::from_str(&data.expect("missing source tables")).expect("invalid json");
     assert!(tables.iter().any(|t| t.eq_ignore_ascii_case("orders")));
+}
+
+#[test]
+fn test_source_tables_postgres_prepare_body() {
+    let column = c("id");
+    let sql = c("PREPARE leak AS SELECT id FROM sensitive_table WHERE id = $1");
+    let dialect = c("postgres");
+    let (status, data, error) = consume_result(polyglot_source_tables(
+        column.as_ptr(),
+        sql.as_ptr(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let tables: Vec<String> =
+        serde_json::from_str(&data.expect("missing source tables")).expect("invalid json");
+    assert!(
+        tables
+            .iter()
+            .any(|table| table.eq_ignore_ascii_case("sensitive_table")),
+        "tables={tables:?}"
+    );
 }
 
 #[test]

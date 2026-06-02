@@ -2094,6 +2094,41 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_postgres_prepare_and_execute() {
+        let prepare = parse(
+            "PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1",
+            "postgres",
+        );
+        assert!(prepare.contains("\"success\":true"), "Result: {}", prepare);
+        let prepare_result: serde_json::Value =
+            serde_json::from_str(&prepare).expect("valid prepare wrapper json");
+        let prepare_ast_json = prepare_result["ast"].as_str().expect("ast json string");
+        let prepare_ast: serde_json::Value =
+            serde_json::from_str(prepare_ast_json).expect("valid prepare ast json");
+        assert!(
+            prepare_ast[0].get("prepare").is_some(),
+            "Result: {}",
+            prepare
+        );
+
+        let execute = parse("EXECUTE leak(1)", "postgres");
+        assert!(execute.contains("\"success\":true"), "Result: {}", execute);
+        let execute_result: serde_json::Value =
+            serde_json::from_str(&execute).expect("valid execute wrapper json");
+        let execute_ast_json = execute_result["ast"].as_str().expect("ast json string");
+        let execute_ast: serde_json::Value =
+            serde_json::from_str(execute_ast_json).expect("valid execute ast json");
+        assert_eq!(execute_ast[0]["execute"]["prepared"], true);
+        assert_eq!(
+            execute_ast[0]["execute"]["arguments"]
+                .as_array()
+                .expect("arguments")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     #[cfg(feature = "all-dialects")]
     fn test_get_dialects() {
         let result = get_dialects();
@@ -2737,6 +2772,21 @@ mod tests {
         assert!(
             result.contains("\"t\""),
             "Should contain table t: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_source_tables_postgres_prepare_body() {
+        let result = source_tables(
+            "PREPARE leak AS SELECT id FROM sensitive_table WHERE id = $1",
+            "id",
+            "postgres",
+        );
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(
+            result.contains("\"sensitive_table\""),
+            "Should contain sensitive_table: {}",
             result
         );
     }

@@ -17,6 +17,12 @@ def test_source_tables_returns_orders():
     assert "orders" in tables
 
 
+def test_source_tables_from_prepared_statement_body():
+    sql = "PREPARE leak AS SELECT id FROM sensitive_table WHERE id = $1"
+    tables = polyglot_sql.source_tables("id", sql, dialect="postgres")
+    assert "sensitive_table" in tables
+
+
 def test_source_tables_nonexistent_column_is_graceful():
     sql = "SELECT o.total FROM orders o"
     try:

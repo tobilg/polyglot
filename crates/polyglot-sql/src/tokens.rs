@@ -377,6 +377,7 @@ pub enum TokenType {
     Command,
     Comment,
     Commit,
+    Prepare,
     Preserve,
     Connect,
     ConnectBy,
@@ -898,6 +899,7 @@ impl TokenType {
                 | TokenType::Qualify
                 | TokenType::Returning
                 | TokenType::Language
+                | TokenType::Prepare
                 | TokenType::Preserve
                 | TokenType::Savepoint
                 | TokenType::Rollback
@@ -1171,6 +1173,7 @@ static DEFAULT_KEYWORDS: LazyLock<HashMap<String, TokenType>> = LazyLock::new(||
     keywords.insert("COMMIT".to_string(), TokenType::Commit);
     keywords.insert("BEGIN".to_string(), TokenType::Begin);
     keywords.insert("DESCRIBE".to_string(), TokenType::Describe);
+    keywords.insert("PREPARE".to_string(), TokenType::Prepare);
     keywords.insert("PRESERVE".to_string(), TokenType::Preserve);
     keywords.insert("TRANSACTION".to_string(), TokenType::Transaction);
     keywords.insert("SAVEPOINT".to_string(), TokenType::Savepoint);

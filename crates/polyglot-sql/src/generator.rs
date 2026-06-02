@@ -3357,10 +3357,24 @@ impl Generator {
                 self.generate_expression(&kill.this)?;
                 Ok(())
             }
+            Expression::Prepare(prepare) => self.generate_prepare(prepare),
             Expression::Execute(exec) => {
                 self.write_keyword("EXECUTE");
                 self.write_space();
                 self.generate_expression(&exec.this)?;
+                if exec.prepared {
+                    if !exec.arguments.is_empty() {
+                        self.write("(");
+                        for (i, argument) in exec.arguments.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.generate_expression(argument)?;
+                        }
+                        self.write(")");
+                    }
+                    return Ok(());
+                }
                 for (i, param) in exec.parameters.iter().enumerate() {
                     if i == 0 {
                         self.write_space();
@@ -15614,6 +15628,28 @@ impl Generator {
             self.write_formatted_comment(comment);
         }
         Ok(())
+    }
+
+    fn generate_prepare(&mut self, prepare: &PrepareStatement) -> Result<()> {
+        self.write_keyword("PREPARE");
+        self.write_space();
+        self.generate_identifier(&prepare.name)?;
+
+        if !prepare.parameter_types.is_empty() {
+            self.write(" (");
+            for (i, data_type) in prepare.parameter_types.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_data_type(data_type)?;
+            }
+            self.write(")");
+        }
+
+        self.write_space();
+        self.write_keyword("AS");
+        self.write_space();
+        self.generate_expression(&prepare.statement)
     }
 
     /// Generate a pseudocolumn (Oracle ROWNUM, ROWID, LEVEL, etc.)
