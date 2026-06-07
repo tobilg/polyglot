@@ -193,6 +193,26 @@ fn test_transpile_with_options_pretty() {
 }
 
 #[test]
+fn test_transpile_with_options_unsupported_raise() {
+    let sql = c(
+        "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t",
+    );
+    let from = c("postgres");
+    let to = c("fabric");
+    let opts = c(r#"{"unsupportedLevel": "raise"}"#);
+
+    let (status, _, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        opts.as_ptr(),
+    ));
+
+    assert_eq!(status, 3); // STATUS_TRANSPILE_ERROR
+    assert!(error.unwrap_or_default().contains("recursive CTEs"));
+}
+
+#[test]
 fn test_transpile_with_options_invalid_json() {
     let sql = c("SELECT 1");
     let from = c("postgres");

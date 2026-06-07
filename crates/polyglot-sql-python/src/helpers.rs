@@ -1,7 +1,7 @@
 use crate::errors::{parse_statement_count_error, unknown_dialect_error, GenerateError};
 use crate::expr::PyExpression;
 use polyglot_sql::dialects::Dialect;
-use polyglot_sql::Expression;
+use polyglot_sql::{Expression, UnsupportedLevel};
 use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
@@ -112,6 +112,23 @@ pub fn normalize_error_level(error_level: Option<&str>) -> PyResult<Option<&str>
         Some(level) => Err(PyValueError::new_err(format!(
             "Unsupported error_level: {level}"
         ))),
+    }
+}
+
+pub fn normalize_unsupported_level(
+    unsupported_level: Option<&str>,
+) -> PyResult<Option<UnsupportedLevel>> {
+    match unsupported_level.map(|level| level.to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(level) => match level.as_str() {
+            "raise" => Ok(Some(UnsupportedLevel::Raise)),
+            "immediate" => Ok(Some(UnsupportedLevel::Immediate)),
+            "warn" => Ok(Some(UnsupportedLevel::Warn)),
+            "ignore" => Ok(Some(UnsupportedLevel::Ignore)),
+            _ => Err(PyValueError::new_err(format!(
+                "Unsupported unsupported_level: {level}"
+            ))),
+        },
     }
 }
 

@@ -25,6 +25,22 @@ const result = transpile(
 console.log(result.sql[0]); // SELECT COALESCE(a, b) FROM t
 ```
 
+Use `unsupportedLevel: 'raise'` when you want transpilation to fail instead of
+silently preserving known unsupported target-dialect constructs.
+
+```typescript
+const strict = transpile(
+  'SELECT ARRAY_AGG(x) FROM t',
+  Dialect.PostgreSQL,
+  Dialect.Fabric,
+  { unsupportedLevel: 'raise' },
+);
+
+if (!strict.success) {
+  console.error(strict.error);
+}
+```
+
 ### Parse + Generate
 
 ```typescript
@@ -664,7 +680,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 
 | Function | Description |
 |----------|-------------|
-| `transpile(sql, read, write)` | Transpile SQL between dialects |
+| `transpile(sql, read, write, options?)` | Transpile SQL between dialects |
 | `parse(sql, dialect?)` | Parse SQL into AST |
 | `generate(ast, dialect?)` | Generate SQL from AST |
 | `format(sql, dialect?)` | Pretty-print SQL |

@@ -78,7 +78,7 @@ pub use function_catalog::{
     FunctionCatalog, FunctionNameCase, FunctionSignature, HashMapFunctionCatalog,
 };
 #[cfg(feature = "generate")]
-pub use generator::Generator;
+pub use generator::{Generator, UnsupportedLevel};
 #[cfg(feature = "semantic")]
 pub use helper::{
     csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,

@@ -81,6 +81,39 @@ def test_identity_transpile_preserves_sql_shape():
     assert "SELECT a, b FROM t WHERE c = 1" in out[0]
 
 
+def test_unsupported_level_raise_rejects_known_unsupported_transpile():
+    with pytest.raises(polyglot_sql.TranspileError) as excinfo:
+        polyglot_sql.transpile(
+            "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t",
+            read="postgres",
+            write="fabric",
+            unsupported_level="raise",
+        )
+
+    assert "recursive CTEs" in str(excinfo.value)
+
+
+def test_unsupported_level_warn_preserves_default_transpile_behavior():
+    out = polyglot_sql.transpile(
+        "SELECT ARRAY_AGG(x) FROM t",
+        read="postgres",
+        write="fabric",
+        unsupported_level="warn",
+    )
+
+    assert out == ["SELECT ARRAY_AGG(x) FROM t"]
+
+
+def test_invalid_unsupported_level_raises_value_error():
+    with pytest.raises(ValueError, match="Unsupported unsupported_level"):
+        polyglot_sql.transpile(
+            "SELECT 1",
+            read="postgres",
+            write="fabric",
+            unsupported_level="loud",
+        )
+
+
 def test_invalid_sql_raises_parse_error():
     with pytest.raises(polyglot_sql.ParseError):
         polyglot_sql.transpile("SELECT FROM", read="postgres", write="mysql")

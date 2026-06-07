@@ -53,6 +53,17 @@ export enum Dialect {
 /**
  * Transpilation options
  */
+export type UnsupportedLevel = 'ignore' | 'warn' | 'raise' | 'immediate';
+
+export interface TranspileOptions {
+  /** Pretty-print the generated SQL */
+  pretty?: boolean;
+  /** How unsupported target-dialect constructs should be handled */
+  unsupportedLevel?: UnsupportedLevel;
+  /** Maximum number of unsupported diagnostics to include in raised errors */
+  maxUnsupported?: number;
+}
+
 /**
  * Result of a transpilation operation
  */
@@ -141,6 +152,18 @@ export interface FormatOptions {
 
 type WasmBindings = typeof wasmModule & {
   transpile_value?: (sql: string, read: string, write: string) => unknown;
+  transpile_with_options?: (
+    sql: string,
+    read: string,
+    write: string,
+    options_json: string,
+  ) => string;
+  transpile_with_options_value?: (
+    sql: string,
+    read: string,
+    write: string,
+    options: TranspileOptions,
+  ) => unknown;
   parse_value?: (sql: string, dialect: string) => unknown;
   generate_value?: (ast: unknown, dialect: string) => unknown;
   format_sql_value?: (sql: string, dialect: string) => unknown;
@@ -253,8 +276,27 @@ export function transpile(
   sql: string,
   read: Dialect,
   write: Dialect,
+  options?: TranspileOptions,
 ): TranspileResult {
   try {
+    if (options && Object.keys(options).length > 0) {
+      if (typeof wasm.transpile_with_options_value === 'function') {
+        return decodeWasmPayload<TranspileResult>(
+          wasm.transpile_with_options_value(sql, read, write, options),
+        );
+      }
+      if (typeof wasm.transpile_with_options === 'function') {
+        return JSON.parse(
+          wasm.transpile_with_options(sql, read, write, JSON.stringify(options)),
+        ) as TranspileResult;
+      }
+      return {
+        success: false,
+        sql: undefined,
+        error: 'WASM transpile options are not available in this build',
+      };
+    }
+
     if (typeof wasm.transpile_value === 'function') {
       return decodeWasmPayload<TranspileResult>(
         wasm.transpile_value(sql, read, write),
@@ -558,8 +600,13 @@ export class Polyglot {
    * Per-dialect builds only support same-dialect and to/from Generic transpilation.
    * Use {@link Polyglot.getDialects} to check available dialects.
    */
-  transpile(sql: string, read: Dialect, write: Dialect): TranspileResult {
-    return transpile(sql, read, write);
+  transpile(
+    sql: string,
+    read: Dialect,
+    write: Dialect,
+    options?: TranspileOptions,
+  ): TranspileResult {
+    return transpile(sql, read, write, options);
   }
 
   /**

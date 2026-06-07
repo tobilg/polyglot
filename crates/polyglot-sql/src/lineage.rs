@@ -542,6 +542,14 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
             }
         }
 
+        fn named_virtual_source_info(alias: &str) -> SourceInfo {
+            SourceInfo {
+                alias: alias.to_string(),
+                normalized: alias.to_lowercase(),
+                fq_name: alias.to_string(),
+            }
+        }
+
         match expr {
             Expression::Table(t) => {
                 let normalized = normalize_cte_name(&t.name);
@@ -579,6 +587,12 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
             Expression::Alias(a) if matches!(&a.this, Expression::Unnest(_)) => {
                 Some(virtual_source_info(&a.alias))
             }
+            Expression::Lateral(lateral) => lateral.alias.as_deref().map(named_virtual_source_info),
+            Expression::LateralView(lateral_view) => lateral_view
+                .table_alias
+                .as_ref()
+                .or_else(|| lateral_view.column_aliases.first())
+                .map(virtual_source_info),
             Expression::Paren(p) => extract_source(&p.this),
             _ => None,
         }
@@ -593,6 +607,12 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
     }
     for join in &select.joins {
         if let Some(info) = extract_source(&join.this) {
+            sources.push(info);
+        }
+    }
+    for lateral_view in &select.lateral_views {
+        if let Some(info) = extract_source(&Expression::LateralView(Box::new(lateral_view.clone())))
+        {
             sources.push(info);
         }
     }
@@ -1000,6 +1020,21 @@ fn resolve_unqualified_column(
     // mixing in CTE definitions that are in scope but not referenced.
     let from_source_names = source_names_from_from_join(scope);
 
+    if let Some(tbl) = unique_virtual_source_for_column(scope, &from_source_names, col_name) {
+        resolve_qualified_column(
+            node,
+            scope,
+            dialect,
+            &tbl,
+            col_name,
+            parent_name,
+            trim_selects,
+            all_cte_scopes,
+            depth,
+        );
+        return;
+    }
+
     if from_source_names.len() == 1 {
         let tbl = &from_source_names[0];
         resolve_qualified_column(
@@ -1030,6 +1065,110 @@ fn resolve_unqualified_column(
         node.source.clone(),
     );
     node.downstream.push(child);
+}
+
+fn unique_virtual_source_for_column(
+    scope: &Scope,
+    source_names: &[String],
+    col_name: &str,
+) -> Option<String> {
+    let mut matches = source_names.iter().filter_map(|source_name| {
+        let source = scope.sources.get(source_name)?;
+        if source.kind == SourceKind::Virtual
+            && virtual_source_output_columns(source)
+                .any(|column| column.eq_ignore_ascii_case(col_name))
+        {
+            Some(source_name.clone())
+        } else {
+            None
+        }
+    });
+
+    let first = matches.next()?;
+    if matches.next().is_none() {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn virtual_source_output_columns(
+    source_info: &ScopeSourceInfo,
+) -> Box<dyn Iterator<Item = String> + '_> {
+    match &source_info.expression {
+        Expression::Unnest(unnest) => Box::new(unnest_output_columns(unnest)),
+        Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
+            Box::new(alias_output_columns(alias))
+        }
+        Expression::Lateral(lateral) => Box::new(lateral_output_columns(lateral)),
+        Expression::LateralView(lateral_view) => {
+            Box::new(lateral_view_output_columns(lateral_view))
+        }
+        _ => Box::new(source_info.alias.clone().into_iter()),
+    }
+}
+
+fn unnest_output_columns(
+    unnest: &crate::expressions::UnnestFunc,
+) -> impl Iterator<Item = String> + '_ {
+    unnest
+        .alias
+        .iter()
+        .map(|alias| alias.name.clone())
+        .chain(unnest.offset_alias.iter().map(|alias| alias.name.clone()))
+}
+
+fn alias_output_columns(
+    alias: &crate::expressions::Alias,
+) -> Box<dyn Iterator<Item = String> + '_> {
+    if alias.column_aliases.is_empty() {
+        Box::new(std::iter::once(alias.alias.name.clone()))
+    } else {
+        Box::new(
+            alias
+                .column_aliases
+                .iter()
+                .map(|column| column.name.clone()),
+        )
+    }
+}
+
+fn lateral_output_columns(
+    lateral: &crate::expressions::Lateral,
+) -> Box<dyn Iterator<Item = String> + '_> {
+    if lateral.column_aliases.is_empty() {
+        default_virtual_output_columns(&lateral.this)
+    } else {
+        Box::new(lateral.column_aliases.iter().cloned())
+    }
+}
+
+fn lateral_view_output_columns(
+    lateral_view: &crate::expressions::LateralView,
+) -> Box<dyn Iterator<Item = String> + '_> {
+    Box::new(
+        lateral_view
+            .column_aliases
+            .iter()
+            .map(|column| column.name.clone()),
+    )
+}
+
+fn default_virtual_output_columns(expr: &Expression) -> Box<dyn Iterator<Item = String> + '_> {
+    match expr {
+        Expression::Unnest(unnest) => Box::new(unnest_output_columns(unnest)),
+        Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
+            alias_output_columns(alias)
+        }
+        Expression::Function(function) if function.name.eq_ignore_ascii_case("FLATTEN") => {
+            Box::new(
+                ["seq", "key", "path", "index", "value", "this"]
+                    .into_iter()
+                    .map(String::from),
+            )
+        }
+        _ => Box::new(std::iter::empty()),
+    }
 }
 
 fn attach_virtual_source_dependencies(
@@ -1105,6 +1244,12 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
             Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
                 Some(alias.alias.name.clone())
             }
+            Expression::Lateral(lateral) => lateral.alias.clone(),
+            Expression::LateralView(lateral_view) => lateral_view
+                .table_alias
+                .as_ref()
+                .or_else(|| lateral_view.column_aliases.first())
+                .map(|alias| alias.name.clone()),
             Expression::Paren(paren) => source_name(&paren.this),
             _ => None,
         }
@@ -1130,6 +1275,15 @@ fn source_names_from_from_join(scope: &Scope) -> Vec<String> {
         }
         for join in &select.joins {
             if let Some(name) = source_name(&join.this) {
+                if !name.is_empty() && seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+        }
+        for lateral_view in &select.lateral_views {
+            if let Some(name) =
+                source_name(&Expression::LateralView(Box::new(lateral_view.clone())))
+            {
                 if !name.is_empty() && seen.insert(name.clone()) {
                     names.push(name);
                 }
@@ -1842,6 +1996,21 @@ fn collect_column_refs(
             Expression::NamedArgument(n) => {
                 stack.push(&n.value);
             }
+            Expression::Lateral(l) => {
+                stack.push(&l.this);
+                if let Some(ref view) = l.view {
+                    stack.push(view);
+                }
+                if let Some(ref outer) = l.outer {
+                    stack.push(outer);
+                }
+                if let Some(ref ordinality) = l.ordinality {
+                    stack.push(ordinality);
+                }
+            }
+            Expression::LateralView(lv) => {
+                stack.push(&lv.this);
+            }
             Expression::TryCatch(t) => {
                 for stmt in &t.try_body {
                     stack.push(stmt);
@@ -2320,6 +2489,19 @@ fn collect_column_refs(
                     stack.push(jt);
                 }
             }
+            Expression::JSONExtract(f) => {
+                stack.push(&f.this);
+                stack.push(&f.expression);
+                for e in &f.expressions {
+                    stack.push(e);
+                }
+                if let Some(ref option) = f.option {
+                    stack.push(option);
+                }
+                if let Some(ref on_condition) = f.on_condition {
+                    stack.push(on_condition);
+                }
+            }
 
             // === True leaves and non-expression-bearing nodes ===
             // Literals, Identifier, Star, DataType, Placeholder, Boolean, Null,
@@ -2759,6 +2941,135 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
             .expect("UNNEST(t.items) should depend on t.items");
         assert_eq!(real_child.name, "t.items");
         assert_eq!(real_child.source_name, "t");
+        assert_eq!(real_child.source_kind, SourceKind::Table);
+    }
+
+    #[test]
+    fn test_lineage_table_backed_unnest_unqualified_column_resolves_to_virtual_source() {
+        let expr = parse_one(
+            r#"
+SELECT item AS item
+FROM t JOIN UNNEST(t.items) AS item ON TRUE
+"#,
+            DialectType::BigQuery,
+        )
+        .expect("parse");
+
+        let node = lineage("item", &expr, Some(DialectType::BigQuery), false).expect("lineage");
+        let virtual_child = node.downstream.first().expect("virtual item source");
+        assert_eq!(virtual_child.name, "_0.item");
+        assert_eq!(virtual_child.source_name, "_0");
+        assert_eq!(virtual_child.source_kind, SourceKind::Virtual);
+        assert_eq!(virtual_child.source_alias.as_deref(), Some("item"));
+
+        let real_child = virtual_child
+            .downstream
+            .first()
+            .expect("UNNEST(t.items) should depend on t.items");
+        assert_eq!(real_child.name, "t.items");
+        assert_eq!(real_child.source_name, "t");
+        assert_eq!(real_child.source_kind, SourceKind::Table);
+    }
+
+    #[test]
+    fn test_lineage_unnest_alias_columns_resolve_to_virtual_sources_across_dialects() {
+        let cases = [
+            (
+                DialectType::PostgreSQL,
+                "SELECT x AS out FROM t CROSS JOIN LATERAL UNNEST(items) AS u(x)",
+            ),
+            (
+                DialectType::Presto,
+                "SELECT x AS out FROM t CROSS JOIN UNNEST(items) AS u(x)",
+            ),
+            (
+                DialectType::Trino,
+                "SELECT x AS out FROM t CROSS JOIN UNNEST(items) AS u(x)",
+            ),
+        ];
+
+        for (dialect, sql) in cases {
+            let expr = parse_one(sql, dialect).unwrap_or_else(|e| panic!("parse {dialect:?}: {e}"));
+            let node = lineage("out", &expr, Some(dialect), false)
+                .unwrap_or_else(|e| panic!("lineage {dialect:?}: {e}"));
+            let virtual_child = node
+                .downstream
+                .first()
+                .unwrap_or_else(|| panic!("expected virtual child for {dialect:?}"));
+
+            assert_eq!(
+                virtual_child.name, "_0.x",
+                "unexpected virtual child for {dialect:?}"
+            );
+            assert_eq!(virtual_child.source_name, "_0");
+            assert_eq!(virtual_child.source_kind, SourceKind::Virtual);
+            assert_eq!(virtual_child.source_alias.as_deref(), Some("u"));
+
+            let real_child = virtual_child
+                .downstream
+                .first()
+                .unwrap_or_else(|| panic!("expected table dependency for {dialect:?}"));
+            assert_eq!(real_child.name, "t.items");
+            assert_eq!(real_child.source_kind, SourceKind::Table);
+        }
+    }
+
+    #[test]
+    fn test_lineage_lateral_view_columns_resolve_to_virtual_sources() {
+        let cases = [
+            (
+                DialectType::Spark,
+                "SELECT x AS out FROM t LATERAL VIEW EXPLODE(items) u AS x",
+            ),
+            (
+                DialectType::Hive,
+                "SELECT x AS out FROM t LATERAL VIEW EXPLODE(items) u AS x",
+            ),
+        ];
+
+        for (dialect, sql) in cases {
+            let expr = parse_one(sql, dialect).unwrap_or_else(|e| panic!("parse {dialect:?}: {e}"));
+            let node = lineage("out", &expr, Some(dialect), false)
+                .unwrap_or_else(|e| panic!("lineage {dialect:?}: {e}"));
+            let virtual_child = node
+                .downstream
+                .first()
+                .unwrap_or_else(|| panic!("expected virtual child for {dialect:?}"));
+
+            assert_eq!(virtual_child.name, "_0.x");
+            assert_eq!(virtual_child.source_name, "_0");
+            assert_eq!(virtual_child.source_kind, SourceKind::Virtual);
+            assert_eq!(virtual_child.source_alias.as_deref(), Some("u"));
+
+            let real_child = virtual_child
+                .downstream
+                .first()
+                .unwrap_or_else(|| panic!("expected table dependency for {dialect:?}"));
+            assert_eq!(real_child.name, "t.items");
+            assert_eq!(real_child.source_kind, SourceKind::Table);
+        }
+    }
+
+    #[test]
+    fn test_lineage_snowflake_lateral_flatten_is_virtual_source() {
+        let expr = parse_one(
+            "SELECT f.value AS value FROM raw_events, LATERAL FLATTEN(INPUT => payload:items) AS f",
+            DialectType::Snowflake,
+        )
+        .expect("parse");
+
+        let node = lineage("value", &expr, Some(DialectType::Snowflake), false).expect("lineage");
+        let virtual_child = node.downstream.first().expect("virtual flatten source");
+        assert_eq!(virtual_child.name, "_0.value");
+        assert_eq!(virtual_child.source_name, "_0");
+        assert_eq!(virtual_child.source_kind, SourceKind::Virtual);
+        assert_eq!(virtual_child.source_alias.as_deref(), Some("f"));
+
+        let real_child = virtual_child
+            .downstream
+            .first()
+            .expect("FLATTEN input should depend on raw_events.payload");
+        assert_eq!(real_child.name, "raw_events.payload");
         assert_eq!(real_child.source_kind, SourceKind::Table);
     }
 

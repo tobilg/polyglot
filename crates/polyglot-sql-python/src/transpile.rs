@@ -1,9 +1,11 @@
 use crate::errors::map_transpile_error;
-use crate::helpers::{normalize_error_level, resolve_dialect, run_on_large_stack};
+use crate::helpers::{
+    normalize_error_level, normalize_unsupported_level, resolve_dialect, run_on_large_stack,
+};
 use polyglot_sql::dialects::{Dialect, TranspileOptions};
 use pyo3::prelude::*;
 
-#[pyfunction(signature = (sql, read = None, write = None, *, identity = true, error_level = None, pretty = false))]
+#[pyfunction(signature = (sql, read = None, write = None, *, identity = true, error_level = None, unsupported_level = None, pretty = false, max_unsupported = None))]
 pub fn transpile(
     py: Python<'_>,
     sql: &str,
@@ -11,9 +13,12 @@ pub fn transpile(
     write: Option<&str>,
     identity: bool,
     error_level: Option<&str>,
+    unsupported_level: Option<&str>,
     pretty: bool,
+    max_unsupported: Option<usize>,
 ) -> PyResult<Vec<String>> {
     let _ = normalize_error_level(error_level)?;
+    let unsupported_level = normalize_unsupported_level(unsupported_level)?;
     let read = read.unwrap_or("generic");
     resolve_dialect(read)?;
     let write = if identity {
@@ -31,11 +36,17 @@ pub fn transpile(
             .expect("dialect existence checked before entering stack");
         let write_dialect = Dialect::get_by_name(&write_owned)
             .expect("dialect existence checked before entering stack");
-        let opts = if pretty {
+        let mut opts = if pretty {
             TranspileOptions::pretty()
         } else {
             TranspileOptions::default()
         };
+        if let Some(level) = unsupported_level {
+            opts.unsupported_level = level;
+        }
+        if let Some(max) = max_unsupported {
+            opts.max_unsupported = max;
+        }
         read_dialect.transpile_with(&sql_owned, &write_dialect, opts)
     })?
     .map_err(map_transpile_error)

@@ -639,6 +639,11 @@ fn build_scope_impl(expression: &Expression, current_scope: &mut Scope) {
                 add_table_to_scope(&join.this, current_scope);
             }
 
+            // Process table-generating lateral views (Hive/Spark style UDTFs).
+            for lateral_view in &select.lateral_views {
+                add_lateral_view_to_scope(lateral_view, current_scope);
+            }
+
             // Process subqueries in WHERE, SELECT expressions, etc.
             collect_subqueries(expression, current_scope);
         }
@@ -745,10 +750,33 @@ fn add_table_to_scope(expr: &Expression, scope: &mut Scope) {
         Expression::Alias(alias) if matches!(&alias.this, Expression::Unnest(_)) => {
             scope.add_virtual_source(alias.alias.name.clone(), expr.clone());
         }
+        Expression::Lateral(lateral) => {
+            if let Some(alias) = &lateral.alias {
+                scope.add_virtual_source(alias.clone(), expr.clone());
+            }
+        }
+        Expression::LateralView(lateral_view) => {
+            add_lateral_view_to_scope(lateral_view, scope);
+        }
         Expression::Paren(paren) => {
             add_table_to_scope(&paren.this, scope);
         }
         _ => {}
+    }
+}
+
+fn add_lateral_view_to_scope(lateral_view: &crate::expressions::LateralView, scope: &mut Scope) {
+    let alias = lateral_view
+        .table_alias
+        .as_ref()
+        .or_else(|| lateral_view.column_aliases.first())
+        .map(|alias| alias.name.clone());
+
+    if let Some(alias) = alias {
+        scope.add_virtual_source(
+            alias,
+            Expression::LateralView(Box::new(lateral_view.clone())),
+        );
     }
 }
 

@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.0] - 2026-06-07
+
+### Added
+- Strict unsupported-transpilation mode via `TranspileOptions.unsupported_level`,
+  `TranspileOptions.max_unsupported`, and the `TranspileOptions::strict()`
+  helper, with `UnsupportedLevel` re-exported from the Rust crate root and
+  serialized as lower-case option values.
+- Strict unsupported-transpilation options across C FFI, WASM, Python, Go, and
+  the TypeScript SDK, including Python `unsupported_level` /
+  `max_unsupported`, Go `UnsupportedLevel` constants, and TypeScript
+  `TranspileOptions`.
+- Regression coverage for strict unsupported transpilation in Rust core, C FFI,
+  WASM, Python, Go option serialization, and TypeScript SDK type/API tests.
+- Lineage and scope support for table-generating virtual sources beyond
+  BigQuery `UNNEST`, including PostgreSQL/Presto/Trino `UNNEST` aliases,
+  Spark/Hive `LATERAL VIEW EXPLODE`, and Snowflake `LATERAL FLATTEN`.
+
+### Changed
+- Transpilation now passes full `TranspileOptions` into the target generator,
+  so generator unsupported diagnostics honor caller-selected
+  `unsupported_level` and `max_unsupported` settings.
+- Strict unsupported checks run after source normalization and target rewrites,
+  allowing successful rewrites to proceed while rejecting only known unsupported
+  constructs that still remain in the final output AST.
+
+### Fixed
+- Strict unsupported mode now rejects known lossy or unsupported target output
+  such as Fabric/Hive recursive CTEs, remaining T-SQL/Fabric `LATERAL`, target
+  unsupported `UNNEST`/`EXPLODE`, lossy `ARRAY_AGG`, and PostgreSQL-specific
+  `JSONB_BUILD_OBJECT` / `TO_TSVECTOR` calls when the target dialect cannot
+  safely represent them.
+- Default transpilation remains permissive for the same constructs, preserving
+  existing behavior unless callers explicitly opt into strict unsupported
+  handling.
+- Lineage for unqualified columns emitted by table-generating functions now
+  resolves to the matching virtual source node and preserves downstream
+  dependencies on the real table columns feeding the virtual source.
+- Snowflake `LATERAL FLATTEN` lineage now treats `FLATTEN` output columns such
+  as `value` as virtual source columns and traces them back to the referenced
+  input expression.
+- Column-reference collection now follows `LATERAL`, `LATERAL VIEW`, and JSON
+  extraction expressions used inside virtual table-generating sources.
+
 ## [0.4.4] - 2026-06-03
 
 ### Added

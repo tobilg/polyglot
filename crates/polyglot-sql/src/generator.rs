@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::error::Result;
 use crate::expressions::*;
 use crate::DialectType;
+use serde::{Deserialize, Serialize};
 
 /// SQL code generator that converts an AST (`Expression`) back into a SQL string.
 ///
@@ -99,7 +100,8 @@ pub enum NotInStyle {
 }
 
 /// Controls how the generator reacts when it encounters unsupported output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum UnsupportedLevel {
     /// Ignore unsupported diagnostics and continue generation.
     Ignore,

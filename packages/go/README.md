@@ -292,7 +292,8 @@ fmt.Println(columnLineage.Facet.Fields, jobEvent.Event, runEvent.Event)
 
 | Type | Fields |
 | --- | --- |
-| `TranspileOptions` | `Pretty` |
+| `TranspileOptions` | `Pretty`, `UnsupportedLevel`, `MaxUnsupported` |
+| `UnsupportedLevel` | `UnsupportedIgnore`, `UnsupportedWarn`, `UnsupportedRaise`, `UnsupportedImmediate` |
 | `FormatOptions` | `MaxInputBytes`, `MaxTokens`, `MaxASTNodes`, `MaxSetOpChain` |
 | `OptimizeOptions` | Reserved for future optimizer options. |
 | `GenerateOptions` | Reserved for future generator options. |

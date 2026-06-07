@@ -168,12 +168,16 @@ use crate::expressions::{ColumnConstraint, Function, Identifier, Literal};
     feature = "semantic"
 ))]
 use crate::expressions::{From, FunctionBody, Join, Null, OrderBy, OutputClause, TableRef, With};
+#[cfg(feature = "transpile")]
+use crate::generator::UnsupportedLevel;
 #[cfg(feature = "generate")]
 use crate::generator::{Generator, GeneratorConfig};
 use crate::parser::Parser;
 #[cfg(feature = "transpile")]
 use crate::tokens::TokenType;
 use crate::tokens::{Token, Tokenizer, TokenizerConfig};
+#[cfg(feature = "transpile")]
+use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -3730,19 +3734,60 @@ pub struct Dialect {
 /// The struct derives `Serialize`/`Deserialize` using camelCase field names so
 /// it can be round-tripped over JSON bridges (C FFI, WASM) without mapping.
 #[cfg(feature = "transpile")]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 #[non_exhaustive]
 pub struct TranspileOptions {
     /// Whether to pretty-print the output SQL.
     pub pretty: bool,
+    /// How unsupported target-dialect constructs should be handled.
+    ///
+    /// The default is [`UnsupportedLevel::Warn`], which preserves the current
+    /// compatibility behavior and continues transpilation.
+    pub unsupported_level: UnsupportedLevel,
+    /// Maximum number of unsupported diagnostics to include in raised errors.
+    pub max_unsupported: usize,
+}
+
+#[cfg(feature = "transpile")]
+impl Default for TranspileOptions {
+    fn default() -> Self {
+        Self {
+            pretty: false,
+            unsupported_level: UnsupportedLevel::Warn,
+            max_unsupported: 3,
+        }
+    }
 }
 
 #[cfg(feature = "transpile")]
 impl TranspileOptions {
     /// Construct options with pretty-printing enabled.
     pub fn pretty() -> Self {
-        Self { pretty: true }
+        Self {
+            pretty: true,
+            ..Default::default()
+        }
+    }
+
+    /// Construct options that raise when known unsupported constructs remain.
+    pub fn strict() -> Self {
+        Self {
+            unsupported_level: UnsupportedLevel::Raise,
+            ..Default::default()
+        }
+    }
+
+    /// Set how unsupported target-dialect constructs should be handled.
+    pub fn with_unsupported_level(mut self, level: UnsupportedLevel) -> Self {
+        self.unsupported_level = level;
+        self
+    }
+
+    /// Set the maximum number of unsupported diagnostics to include in raised errors.
+    pub fn with_max_unsupported(mut self, max: usize) -> Self {
+        self.max_unsupported = max;
+        self
     }
 }
 
@@ -3952,6 +3997,23 @@ impl Dialect {
         let mut config = self.get_config_for_expr(expr);
         config.pretty = true;
         config.source_dialect = Some(source);
+        let mut generator = Generator::with_config(config);
+        generator.generate(expr)
+    }
+
+    /// Generate SQL from an expression with source dialect and transpile options.
+    #[cfg(all(feature = "generate", feature = "transpile"))]
+    fn generate_with_transpile_options(
+        &self,
+        expr: &Expression,
+        source: DialectType,
+        opts: &TranspileOptions,
+    ) -> Result<String> {
+        let mut config = self.get_config_for_expr(expr);
+        config.source_dialect = Some(source);
+        config.pretty = opts.pretty;
+        config.unsupported_level = opts.unsupported_level;
+        config.max_unsupported = opts.max_unsupported.max(1);
         let mut generator = Generator::with_config(config);
         generator.generate(expr)
     }
@@ -4232,7 +4294,7 @@ impl Dialect {
         target: T,
         opts: TranspileOptions,
     ) -> Result<Vec<String>> {
-        target.with_dialect(|td| self.transpile_inner(sql, td, opts.pretty))
+        target.with_dialect(|td| self.transpile_inner(sql, td, &opts))
     }
 
     #[cfg(feature = "transpile")]
@@ -4240,7 +4302,7 @@ impl Dialect {
         &self,
         sql: &str,
         target_dialect: &Dialect,
-        pretty: bool,
+        opts: &TranspileOptions,
     ) -> Result<Vec<String>> {
         let target = target_dialect.dialect_type;
         if matches!(self.dialect_type, DialectType::PostgreSQL)
@@ -4256,11 +4318,8 @@ impl Dialect {
             return expressions
                 .into_iter()
                 .map(|expr| {
-                    if pretty {
-                        target_dialect.generate_pretty_with_source(&expr, self.dialect_type)
-                    } else {
-                        target_dialect.generate_with_source(&expr, self.dialect_type)
-                    }
+                    Self::reject_strict_unsupported(&expr, self.dialect_type, target, opts)?;
+                    target_dialect.generate_with_transpile_options(&expr, self.dialect_type, opts)
                 })
                 .collect();
         }
@@ -4744,14 +4803,16 @@ impl Dialect {
                     transformed
                 };
 
-                let mut sql = if pretty {
-                    target_dialect.generate_pretty_with_source(&transformed, self.dialect_type)?
-                } else {
-                    target_dialect.generate_with_source(&transformed, self.dialect_type)?
-                };
+                Self::reject_strict_unsupported(&transformed, self.dialect_type, target, opts)?;
+
+                let mut sql = target_dialect.generate_with_transpile_options(
+                    &transformed,
+                    self.dialect_type,
+                    opts,
+                )?;
 
                 // Align a known Snowflake pretty-print edge case with Python sqlglot output.
-                if pretty && target == DialectType::Snowflake {
+                if opts.pretty && target == DialectType::Snowflake {
                     sql = Self::normalize_snowflake_pretty(sql);
                 }
 
@@ -4764,6 +4825,193 @@ impl Dialect {
 // Transpile-only methods: cross-dialect normalization and helpers
 #[cfg(feature = "transpile")]
 impl Dialect {
+    fn reject_strict_unsupported(
+        expr: &Expression,
+        source: DialectType,
+        target: DialectType,
+        opts: &TranspileOptions,
+    ) -> Result<()> {
+        if !matches!(
+            opts.unsupported_level,
+            UnsupportedLevel::Raise | UnsupportedLevel::Immediate
+        ) {
+            return Ok(());
+        }
+
+        let mut diagnostics = Vec::new();
+
+        for node in expr.dfs() {
+            if matches!(target, DialectType::Fabric | DialectType::Hive)
+                && Self::node_has_recursive_with(node)
+            {
+                Self::push_unsupported_diagnostic(&mut diagnostics, "recursive CTEs");
+            }
+
+            if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                && Self::node_has_lateral(node)
+            {
+                Self::push_unsupported_diagnostic(&mut diagnostics, "LATERAL joins and subqueries");
+            }
+
+            if !Self::target_supports_remaining_unnest(target) && Self::node_is_unnest(node) {
+                Self::push_unsupported_diagnostic(&mut diagnostics, "UNNEST");
+            }
+
+            if !Self::target_supports_remaining_explode(target) && Self::node_is_explode(node) {
+                Self::push_unsupported_diagnostic(&mut diagnostics, "EXPLODE");
+            }
+
+            if Self::target_lacks_array_agg(target) && Self::node_is_array_agg(node) {
+                Self::push_unsupported_diagnostic(&mut diagnostics, "ARRAY_AGG");
+            }
+
+            if matches!(source, DialectType::PostgreSQL | DialectType::CockroachDB)
+                && !matches!(target, DialectType::PostgreSQL | DialectType::CockroachDB)
+            {
+                if Self::node_is_function_named(node, "JSONB_BUILD_OBJECT") {
+                    Self::push_unsupported_diagnostic(
+                        &mut diagnostics,
+                        "PostgreSQL JSONB_BUILD_OBJECT",
+                    );
+                }
+                if Self::node_is_function_named(node, "TO_TSVECTOR") {
+                    Self::push_unsupported_diagnostic(&mut diagnostics, "PostgreSQL TO_TSVECTOR");
+                }
+            }
+
+            if opts.unsupported_level == UnsupportedLevel::Immediate && !diagnostics.is_empty() {
+                break;
+            }
+        }
+
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+
+        let limit = if opts.unsupported_level == UnsupportedLevel::Immediate {
+            1
+        } else {
+            opts.max_unsupported.max(1)
+        };
+        let mut messages = diagnostics.iter().take(limit).cloned().collect::<Vec<_>>();
+        if diagnostics.len() > limit {
+            messages.push(format!("... and {} more", diagnostics.len() - limit));
+        }
+
+        Err(crate::error::Error::unsupported(
+            messages.join("; "),
+            target.to_string(),
+        ))
+    }
+
+    fn push_unsupported_diagnostic(diagnostics: &mut Vec<String>, message: &str) {
+        if !diagnostics.iter().any(|existing| existing == message) {
+            diagnostics.push(message.to_string());
+        }
+    }
+
+    fn node_has_recursive_with(expr: &Expression) -> bool {
+        fn recursive(with: &Option<With>) -> bool {
+            with.as_ref().is_some_and(|with| with.recursive)
+        }
+
+        match expr {
+            Expression::With(with) => with.recursive,
+            Expression::Select(select) => recursive(&select.with),
+            Expression::Union(union) => recursive(&union.with),
+            Expression::Intersect(intersect) => recursive(&intersect.with),
+            Expression::Except(except) => recursive(&except.with),
+            Expression::Pivot(pivot) => recursive(&pivot.with),
+            Expression::Insert(insert) => recursive(&insert.with),
+            Expression::Update(update) => recursive(&update.with),
+            Expression::Delete(delete) => recursive(&delete.with),
+            _ => false,
+        }
+    }
+
+    fn node_has_lateral(expr: &Expression) -> bool {
+        fn joins_have_lateral(joins: &[Join]) -> bool {
+            joins.iter().any(|join| {
+                matches!(
+                    join.kind,
+                    crate::expressions::JoinKind::Lateral
+                        | crate::expressions::JoinKind::LeftLateral
+                )
+            })
+        }
+
+        match expr {
+            Expression::Subquery(subquery) => subquery.lateral,
+            Expression::Lateral(_) | Expression::LateralView(_) => true,
+            Expression::Join(join) => matches!(
+                join.kind,
+                crate::expressions::JoinKind::Lateral | crate::expressions::JoinKind::LeftLateral
+            ),
+            Expression::Select(select) => {
+                !select.lateral_views.is_empty() || joins_have_lateral(&select.joins)
+            }
+            Expression::JoinedTable(joined) => {
+                !joined.lateral_views.is_empty() || joins_have_lateral(&joined.joins)
+            }
+            Expression::Update(update) => {
+                joins_have_lateral(&update.table_joins) || joins_have_lateral(&update.from_joins)
+            }
+            _ => false,
+        }
+    }
+
+    fn target_supports_remaining_unnest(target: DialectType) -> bool {
+        matches!(
+            target,
+            DialectType::PostgreSQL
+                | DialectType::BigQuery
+                | DialectType::DuckDB
+                | DialectType::Presto
+                | DialectType::Trino
+                | DialectType::Athena
+        )
+    }
+
+    fn target_supports_remaining_explode(target: DialectType) -> bool {
+        matches!(
+            target,
+            DialectType::Spark | DialectType::Databricks | DialectType::Hive
+        )
+    }
+
+    fn target_lacks_array_agg(target: DialectType) -> bool {
+        matches!(
+            target,
+            DialectType::Fabric
+                | DialectType::TSQL
+                | DialectType::MySQL
+                | DialectType::SQLite
+                | DialectType::Oracle
+        )
+    }
+
+    fn node_is_unnest(expr: &Expression) -> bool {
+        matches!(expr, Expression::Unnest(_)) || Self::node_is_function_named(expr, "UNNEST")
+    }
+
+    fn node_is_explode(expr: &Expression) -> bool {
+        matches!(expr, Expression::Explode(_) | Expression::ExplodeOuter(_))
+            || Self::node_is_function_named(expr, "EXPLODE")
+            || Self::node_is_function_named(expr, "EXPLODE_OUTER")
+    }
+
+    fn node_is_array_agg(expr: &Expression) -> bool {
+        matches!(expr, Expression::ArrayAgg(_)) || Self::node_is_function_named(expr, "ARRAY_AGG")
+    }
+
+    fn node_is_function_named(expr: &Expression, name: &str) -> bool {
+        match expr {
+            Expression::Function(function) => function.name.eq_ignore_ascii_case(name),
+            Expression::AggregateFunction(function) => function.name.eq_ignore_ascii_case(name),
+            _ => false,
+        }
+    }
+
     fn rewrite_boolean_values_for_tsql(expr: Expression) -> Result<Expression> {
         match expr {
             Expression::Select(select) => Self::rewrite_boolean_values_in_tsql_select(select),

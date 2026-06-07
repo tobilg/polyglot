@@ -19,7 +19,8 @@ pub extern "C" fn polyglot_transpile(
 /// Transpile SQL between dialects with explicit transpile options.
 ///
 /// `options_json` must be a JSON object compatible with `TranspileOptions`, e.g.
-/// `{"pretty": true}`. Unknown fields are ignored; omitted fields use their defaults.
+/// `{"pretty": true, "unsupportedLevel": "raise"}`. Unknown fields are ignored;
+/// omitted fields use their defaults.
 #[no_mangle]
 pub extern "C" fn polyglot_transpile_with_options(
     sql: *const c_char,

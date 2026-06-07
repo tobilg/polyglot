@@ -2,15 +2,26 @@ package polyglot
 
 import "encoding/json"
 
-const sdkVersion = "0.4.4"
+const sdkVersion = "0.5.0"
 
 func Version() string {
 	return sdkVersion
 }
 
 type TranspileOptions struct {
-	Pretty bool `json:"pretty,omitempty"`
+	Pretty           bool             `json:"pretty,omitempty"`
+	UnsupportedLevel UnsupportedLevel `json:"unsupportedLevel,omitempty"`
+	MaxUnsupported   int              `json:"maxUnsupported,omitempty"`
 }
+
+type UnsupportedLevel string
+
+const (
+	UnsupportedIgnore    UnsupportedLevel = "ignore"
+	UnsupportedWarn      UnsupportedLevel = "warn"
+	UnsupportedRaise     UnsupportedLevel = "raise"
+	UnsupportedImmediate UnsupportedLevel = "immediate"
+)
 
 type FormatOptions struct {
 	MaxInputBytes *int `json:"maxInputBytes,omitempty"`

@@ -34,7 +34,9 @@ export type {
   AnnotateTypesResult,
   FormatOptions,
   ParseResult,
+  TranspileOptions,
   TranspileResult,
+  UnsupportedLevel,
 } from './index';
 
 // AST: Type guards & Visitors

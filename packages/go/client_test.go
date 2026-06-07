@@ -19,11 +19,15 @@ func TestVersion(t *testing.T) {
 }
 
 func TestTranspileOptionsJSON(t *testing.T) {
-	payload, err := marshalOptions(TranspileOptions{Pretty: true})
+	payload, err := marshalOptions(TranspileOptions{
+		Pretty:           true,
+		UnsupportedLevel: UnsupportedRaise,
+		MaxUnsupported:   2,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload != `{"pretty":true}` {
+	if payload != `{"pretty":true,"unsupportedLevel":"raise","maxUnsupported":2}` {
 		t.Fatalf("payload = %s", payload)
 	}
 }

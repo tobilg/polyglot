@@ -7,7 +7,7 @@ pub mod builders;
 
 use polyglot_sql::{
     ast_transforms,
-    dialects::{Dialect, DialectType},
+    dialects::{Dialect, DialectType, TranspileOptions},
     diff::{diff_with_config, DiffConfig, Edit},
     expressions::Expression,
     format as core_format, format_with_options as core_format_with_options,
@@ -135,7 +135,71 @@ pub fn transpile_value(sql: &str, read_dialect: &str, write_dialect: &str) -> Js
     serialize_result_value(&result)
 }
 
+/// Transpile SQL with explicit options encoded as a JSON string.
+#[wasm_bindgen]
+pub fn transpile_with_options(
+    sql: &str,
+    read_dialect: &str,
+    write_dialect: &str,
+    options_json: &str,
+) -> String {
+    set_panic_hook();
+
+    let result = match serde_json::from_str::<TranspileOptions>(options_json) {
+        Ok(options) => transpile_internal_with_options(sql, read_dialect, write_dialect, options),
+        Err(e) => TranspileResult {
+            success: false,
+            sql: None,
+            error: Some(format!("Invalid transpile options: {}", e)),
+            error_line: None,
+            error_column: None,
+            error_start: None,
+            error_end: None,
+        },
+    };
+    serialize_result(&result)
+}
+
+/// Transpile SQL with explicit options and return a structured JS object.
+#[wasm_bindgen]
+pub fn transpile_with_options_value(
+    sql: &str,
+    read_dialect: &str,
+    write_dialect: &str,
+    options: JsValue,
+) -> JsValue {
+    set_panic_hook();
+
+    let result = match serde_wasm_bindgen::from_value::<TranspileOptions>(options) {
+        Ok(options) => transpile_internal_with_options(sql, read_dialect, write_dialect, options),
+        Err(e) => TranspileResult {
+            success: false,
+            sql: None,
+            error: Some(format!("Invalid transpile options: {}", e)),
+            error_line: None,
+            error_column: None,
+            error_start: None,
+            error_end: None,
+        },
+    };
+    serialize_result_value(&result)
+}
+
 fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> TranspileResult {
+    transpile_internal_with_options(
+        sql,
+        read_dialect,
+        write_dialect,
+        TranspileOptions::default(),
+    )
+}
+
+fn transpile_internal_with_options(
+    sql: &str,
+    read_dialect: &str,
+    write_dialect: &str,
+    options: TranspileOptions,
+) -> TranspileResult {
     let read = match read_dialect.parse::<DialectType>() {
         Ok(d) => d,
         Err(e) => {
@@ -167,7 +231,7 @@ fn transpile_internal(sql: &str, read_dialect: &str, write_dialect: &str) -> Tra
     };
 
     let dialect = Dialect::get(read);
-    match dialect.transpile(sql, write) {
+    match dialect.transpile_with(sql, write, options) {
         Ok(results) => TranspileResult {
             success: true,
             sql: Some(results),
@@ -2084,6 +2148,22 @@ mod tests {
         let result = transpile("SELECT 1", "generic", "postgres");
         assert!(result.contains("success"));
         assert!(result.contains("true"));
+    }
+
+    #[test]
+    fn test_transpile_with_options_unsupported_raise() {
+        let result = transpile_with_options(
+            "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < 3) SELECT * FROM t",
+            "postgres",
+            "fabric",
+            r#"{"unsupportedLevel":"raise"}"#,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid JSON");
+        assert!(!parsed["success"].as_bool().unwrap());
+        assert!(parsed["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("recursive CTEs"));
     }
 
     #[test]
