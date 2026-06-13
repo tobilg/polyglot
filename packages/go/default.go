@@ -158,6 +158,30 @@ func QualifyTables(ast json.RawMessage, options QualifyTablesOptions) (json.RawM
 	return client.QualifyTables(ast, options)
 }
 
+func SetLimit(ast json.RawMessage, limit int) (json.RawMessage, error) {
+	client, err := DefaultClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.SetLimit(ast, limit)
+}
+
+func SetOffset(ast json.RawMessage, offset int) (json.RawMessage, error) {
+	client, err := DefaultClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.SetOffset(ast, offset)
+}
+
+func SetOrderBy(ast json.RawMessage, orderBy json.RawMessage) (json.RawMessage, error) {
+	client, err := DefaultClient()
+	if err != nil {
+		return nil, err
+	}
+	return client.SetOrderBy(ast, orderBy)
+}
+
 func RenameTables(ast json.RawMessage, mapping map[string]string, options RenameTablesOptions) (json.RawMessage, error) {
 	client, err := DefaultClient()
 	if err != nil {

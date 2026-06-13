@@ -98,33 +98,108 @@ pub fn remove_where(expr: Expression) -> Expression {
 }
 
 // ---------------------------------------------------------------------------
-// LIMIT / OFFSET
+// LIMIT / OFFSET / ORDER BY
 // ---------------------------------------------------------------------------
 
-/// Set the LIMIT on a SELECT.
+/// Set the LIMIT on a SELECT or set operation.
 pub fn set_limit(expr: Expression, limit: usize) -> Expression {
-    if let Expression::Select(mut sel) = expr {
-        sel.limit = Some(Limit {
-            this: Expression::number(limit as i64),
-            percent: false,
-            comments: Vec::new(),
-        });
-        Expression::Select(sel)
-    } else {
-        expr
+    set_limit_expr(expr, Expression::number(limit as i64))
+}
+
+/// Set the LIMIT on a SELECT or set operation using an expression.
+pub fn set_limit_expr(expr: Expression, limit: Expression) -> Expression {
+    match expr {
+        Expression::Select(mut sel) => {
+            sel.limit = Some(Limit {
+                this: limit,
+                percent: false,
+                comments: Vec::new(),
+            });
+            Expression::Select(sel)
+        }
+        Expression::Union(mut union) => {
+            union.limit = Some(Box::new(limit));
+            Expression::Union(union)
+        }
+        Expression::Intersect(mut intersect) => {
+            intersect.limit = Some(Box::new(limit));
+            Expression::Intersect(intersect)
+        }
+        Expression::Except(mut except) => {
+            except.limit = Some(Box::new(limit));
+            Expression::Except(except)
+        }
+        other => other,
     }
 }
 
-/// Set the OFFSET on a SELECT.
+/// Set the OFFSET on a SELECT or set operation.
 pub fn set_offset(expr: Expression, offset: usize) -> Expression {
-    if let Expression::Select(mut sel) = expr {
-        sel.offset = Some(Offset {
-            this: Expression::number(offset as i64),
-            rows: None,
-        });
-        Expression::Select(sel)
-    } else {
-        expr
+    set_offset_expr(expr, Expression::number(offset as i64))
+}
+
+/// Set the OFFSET on a SELECT or set operation using an expression.
+pub fn set_offset_expr(expr: Expression, offset: Expression) -> Expression {
+    match expr {
+        Expression::Select(mut sel) => {
+            sel.offset = Some(Offset {
+                this: offset,
+                rows: None,
+            });
+            Expression::Select(sel)
+        }
+        Expression::Union(mut union) => {
+            union.offset = Some(Box::new(offset));
+            Expression::Union(union)
+        }
+        Expression::Intersect(mut intersect) => {
+            intersect.offset = Some(Box::new(offset));
+            Expression::Intersect(intersect)
+        }
+        Expression::Except(mut except) => {
+            except.offset = Some(Box::new(offset));
+            Expression::Except(except)
+        }
+        other => other,
+    }
+}
+
+/// Set the ORDER BY clause on a SELECT or set operation.
+///
+/// Bare expressions are normalized to ascending order expressions. Existing
+/// `Ordered` expressions preserve their direction and null-ordering metadata.
+pub fn set_order_by(expr: Expression, expressions: Vec<Expression>) -> Expression {
+    let order_by = OrderBy {
+        expressions: expressions.into_iter().map(normalize_ordered).collect(),
+        siblings: false,
+        comments: Vec::new(),
+    };
+
+    match expr {
+        Expression::Select(mut sel) => {
+            sel.order_by = Some(order_by);
+            Expression::Select(sel)
+        }
+        Expression::Union(mut union) => {
+            union.order_by = Some(order_by);
+            Expression::Union(union)
+        }
+        Expression::Intersect(mut intersect) => {
+            intersect.order_by = Some(order_by);
+            Expression::Intersect(intersect)
+        }
+        Expression::Except(mut except) => {
+            except.order_by = Some(order_by);
+            Expression::Except(except)
+        }
+        other => other,
+    }
+}
+
+fn normalize_ordered(expression: Expression) -> Ordered {
+    match expression {
+        Expression::Ordered(ordered) => *ordered,
+        other => Ordered::asc(other),
     }
 }
 
@@ -609,11 +684,35 @@ mod tests {
     }
 
     #[test]
+    fn test_set_limit_on_set_operation() {
+        let expr = parse_one("SELECT a FROM t UNION ALL SELECT a FROM u");
+        let result = set_limit(expr, 10);
+        let sql = result.sql();
+        assert_eq!(sql, "SELECT a FROM t UNION ALL SELECT a FROM u LIMIT 10");
+    }
+
+    #[test]
     fn test_set_offset() {
         let expr = parse_one("SELECT a FROM t");
         let result = set_offset(expr, 5);
         let sql = result.sql();
         assert!(sql.contains("OFFSET 5"), "Expected OFFSET in: {}", sql);
+    }
+
+    #[test]
+    fn test_set_offset_on_set_operation() {
+        let expr = parse_one("SELECT a FROM t UNION ALL SELECT a FROM u");
+        let result = set_offset(expr, 5);
+        let sql = result.sql();
+        assert_eq!(sql, "SELECT a FROM t UNION ALL SELECT a FROM u OFFSET 5");
+    }
+
+    #[test]
+    fn test_set_order_by_on_set_operation() {
+        let expr = parse_one("SELECT a FROM t UNION ALL SELECT a FROM u");
+        let result = set_order_by(expr, vec![Expression::column("a")]);
+        let sql = result.sql();
+        assert_eq!(sql, "SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a");
     }
 
     #[test]

@@ -4,6 +4,40 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.4] - 2026-06-13
+
+### Added
+- `RelationFact` now includes nullable `catalog`, `schema`, and `table` fields
+  for physical table relations while preserving the qualified `name` string.
+- `ProjectionFact` now includes optional `transformFunction` /
+  `transform_function` metadata for function-like projections, including the
+  function name, literal arguments, and column arguments.
+- AST transform helpers now support setting `ORDER BY` across Rust,
+  C FFI, WASM/TypeScript, Python, and Go.
+- C FFI, Python, and Go now expose AST transform helpers for setting `LIMIT`
+  and `OFFSET`, matching the existing TypeScript SDK helper surface.
+- Regression coverage for set-operation AST transforms, JOIN table-node
+  discovery, nested dot-access builders, AST JSON compatibility, and
+  function-projection facts across Rust, C FFI, WASM/TypeScript, Python, and Go.
+
+### Changed
+- Public AST JSON boundaries now use the shared compatibility deserializer for
+  generation and AST transforms, so SDK-provided JSON shapes are normalized
+  consistently before deserialization.
+
+### Fixed
+- `set_limit` / `setLimit` and `set_offset` / `setOffset` now apply to outer
+  `UNION`, `INTERSECT`, and `EXCEPT` results instead of no-oping on set
+  operations.
+- TypeScript SDK `getTables(node)` now returns table expression nodes from JOIN
+  operands instead of only the locally traversable table nodes.
+- Rust and TypeScript builder output for `col("a.b.c")` now uses nested dot
+  access (`a.b.c`) instead of treating `a.b` as a single quoted table
+  qualifier.
+- AST JSON inputs now accept the known legacy/unit-variant compatibility shapes
+  at public API boundaries, including empty-object null payloads and `IS NULL`
+  shorthand values.
+
 ## [0.5.3] - 2026-06-11
 
 ### Added

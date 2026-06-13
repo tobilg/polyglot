@@ -207,6 +207,9 @@ fmt.Println(sql) // DECIMAL(10, 2)
 | API | Description |
 | --- | --- |
 | `QualifyTables(ast json.RawMessage, options QualifyTablesOptions) (json.RawMessage, error)` | Qualify table names and optionally generate stable aliases. |
+| `SetLimit(ast json.RawMessage, limit int) (json.RawMessage, error)` | Set `LIMIT` on a select or set-operation AST. |
+| `SetOffset(ast json.RawMessage, offset int) (json.RawMessage, error)` | Set `OFFSET` on a select or set-operation AST. |
+| `SetOrderBy(ast json.RawMessage, orderBy json.RawMessage) (json.RawMessage, error)` | Set `ORDER BY` on a select or set-operation AST. `orderBy` is a JSON array of expression nodes. |
 | `RenameTables(ast json.RawMessage, mapping map[string]string, options RenameTablesOptions) (json.RawMessage, error)` | Rename table references in a JSON AST. |
 
 ```go
@@ -237,6 +240,15 @@ if err != nil {
 	log.Fatal(err)
 }
 fmt.Println(sql[0])
+```
+
+```go
+ast, _ := client.Parse("SELECT id FROM a UNION ALL SELECT id FROM b", "generic")
+ast, _ = client.SetLimit(ast, 100)
+ast, _ = client.SetOffset(ast, 10)
+ast, _ = client.SetOrderBy(ast, json.RawMessage(
+	`[{"column":{"name":{"name":"id","quoted":false},"table":null,"join_mark":false,"trailing_comments":[]}}]`,
+))
 ```
 
 ### Lineage
@@ -363,11 +375,12 @@ fmt.Println(columnLineage.Facet.Fields, jobEvent.Event, runEvent.Event)
 | `GenerateOptions` | Reserved for future generator options. |
 | `AnalyzeQueryOptions` | `Dialect`, `Schema` |
 | `QueryAnalysis` | `Shape`, `CTEs`, `CTEFacts`, `Projections`, `Relations`, `BaseTables`, `StarProjections`, `SetOperations` |
-| `ProjectionFact` | `Index`, `Name`, `IsStar`, `StarTable`, `TransformKind`, `CastType`, `TypeHint`, `Nullability`, `Upstream` |
+| `ProjectionFact` | `Index`, `Name`, `IsStar`, `StarTable`, `TransformKind`, `TransformFunction`, `CastType`, `TypeHint`, `Nullability`, `Upstream` |
+| `TransformFunctionFact` | `Name`, `LiteralArgs`, `ColumnArgs` |
 | `CTEFact` | `Name`, `Columns`, `BodySQL`, `OutputColumns` |
 | `StarProjectionFact` | `Index`, `Table`, `ExpandedColumns` |
 | `ColumnReferenceFact` | `SourceName`, `SourceAlias`, `SourceKind`, `Table`, `Column`, `Unqualified`, `Confidence` |
-| `RelationFact` | `Name`, `Alias`, `Kind`, `Columns` |
+| `RelationFact` | `Name`, `Alias`, `Kind`, `Columns`, `Catalog`, `Schema`, `Table` |
 | `SetOperationFact` | `Kind`, `All`, `Distinct`, `OutputColumns`, `Branches` |
 | `ValidationResult` | `Valid`, `Errors` |
 | `ValidationError` | `Message`, `Line`, `Column`, `Severity`, `Code`, `Start`, `End` |

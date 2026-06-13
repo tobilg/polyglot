@@ -134,6 +134,27 @@ fn builder_table_ref(name: &str) -> TableRef {
 /// assert_eq!(c.to_sql(), "users.name");
 /// ```
 pub fn col(name: &str) -> Expr {
+    let parts: Vec<&str> = name.split('.').collect();
+    if parts.len() >= 3 && parts.iter().all(|part| !part.is_empty()) {
+        let mut expr = Expression::boxed_column(Column {
+            name: builder_identifier(parts[1]),
+            table: Some(builder_identifier(parts[0])),
+            join_mark: false,
+            trailing_comments: Vec::new(),
+            span: None,
+            inferred_type: None,
+        });
+
+        for field in &parts[2..] {
+            expr = Expression::Dot(Box::new(DotAccess {
+                this: expr,
+                field: builder_identifier(field),
+            }));
+        }
+
+        return Expr(expr);
+    }
+
     if let Some((table, column)) = name.rsplit_once('.') {
         Expr(Expression::boxed_column(Column {
             name: builder_identifier(column),
@@ -2889,6 +2910,12 @@ mod tests {
     fn test_qualified_column() {
         let sql = select([col("u.id"), col("u.name")]).from("users").to_sql();
         assert_eq!(sql, "SELECT u.id, u.name FROM users");
+    }
+
+    #[test]
+    fn test_nested_dot_column() {
+        let sql = select([col("t.s.f")]).from("users").to_sql();
+        assert_eq!(sql, "SELECT t.s.f FROM users");
     }
 
     #[test]

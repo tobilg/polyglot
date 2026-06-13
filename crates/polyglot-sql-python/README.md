@@ -41,6 +41,16 @@ polyglot_sql.parse_one("VARCHAR(255)", dialect="duckdb", into=polyglot_sql.DataT
 polyglot_sql.format_sql("SELECT a,b FROM t WHERE x=1", dialect="postgres")
 ```
 
+```python
+ast = polyglot_sql.parse_one("SELECT id FROM a UNION ALL SELECT id FROM b")
+order_expr = polyglot_sql.parse_one("SELECT id").args["expressions"][0]
+ast = polyglot_sql.set_limit(ast, 100)
+ast = polyglot_sql.set_offset(ast, 10)
+ast = polyglot_sql.set_order_by(ast, order_expr)
+polyglot_sql.generate(ast)
+# ["SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id LIMIT 100 OFFSET 10"]
+```
+
 ### Format Guard Behavior
 
 `format_sql` uses Rust core formatting guards with default limits:
@@ -118,16 +128,22 @@ print(analysis["cteFacts"][0]["bodySql"])           # "SELECT id, amount FROM or
 print(analysis["starProjections"][0]["expandedColumns"])  # ["id", "amount"]
 print(analysis["projections"][0]["nullability"])    # "non_null"
 print(analysis["baseTables"][0]["name"])            # "orders"
+print(analysis["baseTables"][0]["table"])           # "orders"
 ```
 
 `analysis["relations"]` reports sources visible in the analyzed scope.
 `analysis["baseTables"]` reports deduplicated physical table dependencies across
-nested CTEs, derived tables, subqueries, and set-operation branches. Validation
+nested CTEs, derived tables, subqueries, and set-operation branches. For
+physical relation facts, `name` remains the qualified display name while
+`catalog`, `schema`, and `table` expose parsed identifier parts. Validation
 uses broad type families, while query analysis preserves parseable detailed
 schema type strings for projection `typeHint` values. `analysis["cteFacts"]`
 reports top-level CTE definitions, `analysis["starProjections"]` records the
 original star projections and schema-expanded columns, and each projection has
 conservative `nullability`: `"non_null"`, `"nullable"`, or `"unknown"`.
+Function-like projections may include `transformFunction` with the function
+name, literal arguments, and column arguments, for example for
+`DATE_TRUNC('month', created_at)`.
 
 Validation schema dictionaries use:
 

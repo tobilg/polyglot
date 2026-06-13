@@ -16,6 +16,33 @@ def test_generate_invalid_ast_raises_generate_error():
         polyglot_sql.generate({"bad": "ast"}, dialect="postgres")
 
 
+def test_generate_accepts_legacy_empty_object_as_null():
+    assert polyglot_sql.generate([{}], dialect="postgres") == ["NULL"]
+
+
+def test_generate_accepts_is_null_array_shorthand():
+    ast = {
+        "is_null": [
+            {
+                "column": {
+                    "name": {
+                        "name": "deleted_at",
+                        "quoted": False,
+                        "trailing_comments": [],
+                        "span": None,
+                    },
+                    "table": None,
+                    "join_mark": False,
+                    "trailing_comments": [],
+                    "span": None,
+                    "inferred_type": None,
+                }
+            }
+        ]
+    }
+    assert polyglot_sql.generate(ast, dialect="postgres") == ["deleted_at IS NULL"]
+
+
 def test_generate_list_of_asts_returns_list():
     ast1 = polyglot_sql.parse_one("SELECT 1", dialect="postgres")
     ast2 = polyglot_sql.parse_one("SELECT 2", dialect="postgres")

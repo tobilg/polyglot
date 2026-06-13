@@ -19,7 +19,10 @@ mod validate;
 pub use types::{PolyglotResult, PolyglotValidationResult};
 
 pub use annotate_types::polyglot_annotate_types;
-pub use ast::{polyglot_qualify_tables, polyglot_rename_tables_with_options};
+pub use ast::{
+    polyglot_qualify_tables, polyglot_rename_tables_with_options, polyglot_set_limit,
+    polyglot_set_offset, polyglot_set_order_by,
+};
 pub use dialects::{polyglot_dialect_count, polyglot_dialect_list, polyglot_version};
 pub use diff::polyglot_diff;
 pub use format::{polyglot_format, polyglot_format_with_options};

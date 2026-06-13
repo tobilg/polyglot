@@ -2,7 +2,7 @@ package polyglot
 
 import "encoding/json"
 
-const sdkVersion = "0.5.3"
+const sdkVersion = "0.5.4"
 
 func Version() string {
 	return sdkVersion
@@ -119,15 +119,22 @@ type QueryAnalysis struct {
 }
 
 type ProjectionFact struct {
-	Index         int                   `json:"index"`
-	Name          *string               `json:"name"`
-	IsStar        bool                  `json:"isStar"`
-	StarTable     *string               `json:"starTable"`
-	TransformKind string                `json:"transformKind"`
-	CastType      *string               `json:"castType"`
-	TypeHint      *string               `json:"typeHint"`
-	Nullability   string                `json:"nullability"`
-	Upstream      []ColumnReferenceFact `json:"upstream"`
+	Index             int                    `json:"index"`
+	Name              *string                `json:"name"`
+	IsStar            bool                   `json:"isStar"`
+	StarTable         *string                `json:"starTable"`
+	TransformKind     string                 `json:"transformKind"`
+	TransformFunction *TransformFunctionFact `json:"transformFunction,omitempty"`
+	CastType          *string                `json:"castType"`
+	TypeHint          *string                `json:"typeHint"`
+	Nullability       string                 `json:"nullability"`
+	Upstream          []ColumnReferenceFact  `json:"upstream"`
+}
+
+type TransformFunctionFact struct {
+	Name        string                `json:"name"`
+	LiteralArgs []string              `json:"literalArgs"`
+	ColumnArgs  []ColumnReferenceFact `json:"columnArgs"`
 }
 
 type CTEFact struct {
@@ -158,6 +165,9 @@ type RelationFact struct {
 	Alias   *string  `json:"alias"`
 	Kind    string   `json:"kind"`
 	Columns []string `json:"columns"`
+	Catalog *string  `json:"catalog"`
+	Schema  *string  `json:"schema"`
+	Table   *string  `json:"table"`
 }
 
 type SetOperationFact struct {

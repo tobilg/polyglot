@@ -25,6 +25,9 @@ type Library struct {
 	AnnotateTypes            func(string, string, string) Result
 	Diff                     func(string, string, string) Result
 	QualifyTables            func(string, string) Result
+	SetLimit                 func(string, uint64) Result
+	SetOffset                func(string, uint64) Result
+	SetOrderBy               func(string, string) Result
 	RenameTablesWithOptions  func(string, string, string) Result
 	Lineage                  func(string, string, string) Result
 	LineageWithSchema        func(string, string, string, string) Result
@@ -88,6 +91,9 @@ func (l *Library) registerAll() error {
 		{"polyglot_annotate_types", &l.AnnotateTypes},
 		{"polyglot_diff", &l.Diff},
 		{"polyglot_qualify_tables", &l.QualifyTables},
+		{"polyglot_set_limit", &l.SetLimit},
+		{"polyglot_set_offset", &l.SetOffset},
+		{"polyglot_set_order_by", &l.SetOrderBy},
 		{"polyglot_rename_tables_with_options", &l.RenameTablesWithOptions},
 		{"polyglot_lineage", &l.Lineage},
 		{"polyglot_lineage_with_schema", &l.LineageWithSchema},

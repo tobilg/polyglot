@@ -192,6 +192,9 @@ optional `ValidationSchema` shape as schema-aware validation and lineage.
 Validation uses broad type families, while query analysis preserves detailed
 schema type strings such as `DECIMAL(10,2)` for `typeHint` values when they can
 be parsed.
+For physical relations, `name` remains the qualified display name while
+`catalog`, `schema`, and `table` expose parsed identifier parts for consumers
+that need to distinguish qualifiers from table names.
 
 Validation schema JSON uses:
 

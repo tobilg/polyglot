@@ -1502,6 +1502,42 @@ def qualify_tables(
     ...
 
 
+def set_limit(
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+    limit: int,
+) -> Expression | list[Expression]:
+    """Set LIMIT on a SELECT or set operation AST.
+
+    The returned shape matches the input shape: a single AST returns a single
+    ``Expression`` and a list input returns a list.
+    """
+    ...
+
+
+def set_offset(
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+    offset: int,
+) -> Expression | list[Expression]:
+    """Set OFFSET on a SELECT or set operation AST.
+
+    The returned shape matches the input shape: a single AST returns a single
+    ``Expression`` and a list input returns a list.
+    """
+    ...
+
+
+def set_order_by(
+    ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+    order_by: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
+) -> Expression | list[Expression]:
+    """Set ORDER BY on a SELECT or set operation AST.
+
+    Bare expressions are normalized to ascending order entries. The returned
+    shape matches the input shape.
+    """
+    ...
+
+
 def rename_tables(
     ast: Expression | dict[str, TypingAny] | list[Expression] | list[dict[str, TypingAny]],
     mapping: dict[str, str],

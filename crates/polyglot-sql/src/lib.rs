@@ -12,6 +12,7 @@
 //!
 //! Each stage can be customized per dialect.
 
+pub mod ast_json;
 #[cfg(any(feature = "ast-tools", feature = "generate", feature = "semantic"))]
 pub mod ast_transforms;
 #[cfg(feature = "builder")]
@@ -66,7 +67,8 @@ pub use ast_transforms::{
     get_identifiers, get_literals, get_output_column_names, get_subqueries, get_table_names,
     get_window_functions, node_count, qualify_columns, remove_limit_offset, remove_nodes,
     remove_select_columns, remove_where, rename_columns, rename_tables, rename_tables_with_options,
-    replace_by_type, replace_nodes, set_distinct, set_limit, set_offset, RenameTablesOptions,
+    replace_by_type, replace_nodes, set_distinct, set_limit, set_limit_expr, set_offset,
+    set_offset_expr, set_order_by, RenameTablesOptions,
 };
 pub use dialects::{unregister_custom_dialect, CustomDialectBuilder, Dialect, DialectType};
 #[cfg(feature = "transpile")]
@@ -95,7 +97,8 @@ pub use parser::Parser;
 pub use query_analysis::{
     analyze_query, AnalyzeQueryOptions, ColumnReferenceFact, CteFact, ProjectionFact,
     ProjectionNullability, QueryAnalysis, QueryShape, ReferenceConfidence, RelationFact,
-    SetOperationBranchFact, SetOperationFact, StarProjectionFact, TransformKind,
+    SetOperationBranchFact, SetOperationFact, StarProjectionFact, TransformFunctionFact,
+    TransformKind,
 };
 #[cfg(feature = "semantic")]
 pub use resolver::{is_column_ambiguous, resolve_column, Resolver, ResolverError, ResolverResult};

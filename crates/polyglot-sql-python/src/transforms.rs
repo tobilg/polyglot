@@ -85,6 +85,56 @@ pub fn qualify_tables(
     wrap_transform_result(py, return_list, transformed)
 }
 
+#[pyfunction]
+pub fn set_limit(py: Python<'_>, ast: &Bound<'_, PyAny>, limit: usize) -> PyResult<Py<PyAny>> {
+    let return_list = ast.cast::<PyList>().is_ok();
+    let expressions = ast_input_to_expressions(ast)?;
+
+    let transformed = py.detach(move || {
+        expressions
+            .into_iter()
+            .map(|expression| polyglot_sql::set_limit(expression, limit))
+            .collect()
+    });
+
+    wrap_transform_result(py, return_list, transformed)
+}
+
+#[pyfunction]
+pub fn set_offset(py: Python<'_>, ast: &Bound<'_, PyAny>, offset: usize) -> PyResult<Py<PyAny>> {
+    let return_list = ast.cast::<PyList>().is_ok();
+    let expressions = ast_input_to_expressions(ast)?;
+
+    let transformed = py.detach(move || {
+        expressions
+            .into_iter()
+            .map(|expression| polyglot_sql::set_offset(expression, offset))
+            .collect()
+    });
+
+    wrap_transform_result(py, return_list, transformed)
+}
+
+#[pyfunction]
+pub fn set_order_by(
+    py: Python<'_>,
+    ast: &Bound<'_, PyAny>,
+    order_by: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyAny>> {
+    let return_list = ast.cast::<PyList>().is_ok();
+    let expressions = ast_input_to_expressions(ast)?;
+    let order_by_expressions = ast_input_to_expressions(order_by)?;
+
+    let transformed = py.detach(move || {
+        expressions
+            .into_iter()
+            .map(|expression| polyglot_sql::set_order_by(expression, order_by_expressions.clone()))
+            .collect()
+    });
+
+    wrap_transform_result(py, return_list, transformed)
+}
+
 #[pyfunction(signature = (
     ast,
     mapping,

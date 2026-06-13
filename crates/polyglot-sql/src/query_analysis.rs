@@ -60,10 +60,21 @@ pub struct ProjectionFact {
     pub is_star: bool,
     pub star_table: Option<String>,
     pub transform_kind: TransformKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform_function: Option<TransformFunctionFact>,
     pub cast_type: Option<String>,
     pub type_hint: Option<String>,
     pub nullability: ProjectionNullability,
     pub upstream: Vec<ColumnReferenceFact>,
+}
+
+/// Compact fact about a function-like projection transform.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransformFunctionFact {
+    pub name: String,
+    pub literal_args: Vec<String>,
+    pub column_args: Vec<ColumnReferenceFact>,
 }
 
 /// Compact fact about one top-level CTE definition.
@@ -106,6 +117,9 @@ pub struct RelationFact {
     pub alias: Option<String>,
     pub kind: SourceKind,
     pub columns: Vec<String>,
+    pub catalog: Option<String>,
+    pub schema: Option<String>,
+    pub table: Option<String>,
 }
 
 /// Compact fact about a set operation.
@@ -746,6 +760,7 @@ fn projection_fact(
         is_star,
         star_table: projection_star_table(inner),
         transform_kind: transform_kind(inner),
+        transform_function: transform_function_fact(inner, scope, dialect),
         cast_type: cast_type(inner, dialect),
         type_hint: projection
             .inferred_type()
@@ -753,6 +768,158 @@ fn projection_fact(
             .and_then(|data_type| render_data_type(data_type, dialect)),
         nullability: projection_nullability(inner, scope, nullability_context),
         upstream,
+    }
+}
+
+fn transform_function_fact(
+    expression: &Expression,
+    scope: &Scope,
+    dialect: DialectType,
+) -> Option<TransformFunctionFact> {
+    match expression {
+        Expression::Function(function) => Some(transform_function_from_args(
+            &function.name,
+            &function.args,
+            scope,
+            dialect,
+        )),
+        Expression::AggregateFunction(function) => Some(transform_function_from_args(
+            &function.name,
+            &function.args,
+            scope,
+            dialect,
+        )),
+        Expression::WindowFunction(function) => {
+            transform_function_fact(&function.this, scope, dialect)
+        }
+        Expression::DateTrunc(function) => Some(transform_function_from_parts(
+            "DATE_TRUNC",
+            vec![datetime_field_name(&function.unit)],
+            vec![&function.this],
+            scope,
+            dialect,
+        )),
+        Expression::TimestampTrunc(function) => Some(transform_function_from_parts(
+            "TIMESTAMP_TRUNC",
+            vec![datetime_field_name(&function.unit)],
+            vec![&function.this],
+            scope,
+            dialect,
+        )),
+        Expression::TimeTrunc(function) => {
+            let mut args = vec![function.this.as_ref()];
+            if let Some(zone) = function.zone.as_deref() {
+                args.push(zone);
+            }
+            Some(transform_function_from_parts(
+                "TIME_TRUNC",
+                vec![function.unit.clone()],
+                args,
+                scope,
+                dialect,
+            ))
+        }
+        Expression::Extract(function) => Some(transform_function_from_parts(
+            "EXTRACT",
+            vec![datetime_field_name(&function.field)],
+            vec![&function.this],
+            scope,
+            dialect,
+        )),
+        Expression::DateAdd(function) => Some(transform_function_from_parts(
+            "DATE_ADD",
+            Vec::new(),
+            vec![&function.this, &function.interval],
+            scope,
+            dialect,
+        )),
+        Expression::DateSub(function) => Some(transform_function_from_parts(
+            "DATE_SUB",
+            Vec::new(),
+            vec![&function.this, &function.interval],
+            scope,
+            dialect,
+        )),
+        Expression::DateDiff(function) => Some(transform_function_from_parts(
+            "DATE_DIFF",
+            Vec::new(),
+            vec![&function.this, &function.expression],
+            scope,
+            dialect,
+        )),
+        _ => None,
+    }
+}
+
+fn transform_function_from_args(
+    name: &str,
+    args: &[Expression],
+    scope: &Scope,
+    dialect: DialectType,
+) -> TransformFunctionFact {
+    let literal_args = args
+        .iter()
+        .filter_map(|arg| literal_argument(arg, dialect))
+        .collect();
+    transform_function_from_parts(name, literal_args, args.iter().collect(), scope, dialect)
+}
+
+fn transform_function_from_parts(
+    name: &str,
+    literal_args: Vec<String>,
+    args: Vec<&Expression>,
+    scope: &Scope,
+    _dialect: DialectType,
+) -> TransformFunctionFact {
+    let column_args = dedupe_column_refs(
+        args.into_iter()
+            .flat_map(|arg| fallback_column_references(arg, scope))
+            .collect(),
+    );
+
+    TransformFunctionFact {
+        name: name.to_string(),
+        literal_args,
+        column_args,
+    }
+}
+
+fn literal_argument(expression: &Expression, dialect: DialectType) -> Option<String> {
+    match expression {
+        Expression::Literal(literal) => Some(literal.value_str().to_string()),
+        Expression::Boolean(boolean) => Some(boolean.value.to_string()),
+        Expression::Null(_) => Some("NULL".to_string()),
+        Expression::Identifier(identifier) => Some(identifier.name.clone()),
+        Expression::Var(var) => Some(var.this.clone()),
+        Expression::DataType(data_type) => render_data_type(data_type, dialect),
+        _ => None,
+    }
+}
+
+fn datetime_field_name(field: &crate::expressions::DateTimeField) -> String {
+    match field {
+        crate::expressions::DateTimeField::Year => "year".to_string(),
+        crate::expressions::DateTimeField::Month => "month".to_string(),
+        crate::expressions::DateTimeField::Day => "day".to_string(),
+        crate::expressions::DateTimeField::Hour => "hour".to_string(),
+        crate::expressions::DateTimeField::Minute => "minute".to_string(),
+        crate::expressions::DateTimeField::Second => "second".to_string(),
+        crate::expressions::DateTimeField::Millisecond => "millisecond".to_string(),
+        crate::expressions::DateTimeField::Microsecond => "microsecond".to_string(),
+        crate::expressions::DateTimeField::DayOfWeek => "day_of_week".to_string(),
+        crate::expressions::DateTimeField::DayOfYear => "day_of_year".to_string(),
+        crate::expressions::DateTimeField::Week => "week".to_string(),
+        crate::expressions::DateTimeField::WeekWithModifier(modifier) => {
+            format!("week({modifier})")
+        }
+        crate::expressions::DateTimeField::Quarter => "quarter".to_string(),
+        crate::expressions::DateTimeField::Epoch => "epoch".to_string(),
+        crate::expressions::DateTimeField::Timezone => "timezone".to_string(),
+        crate::expressions::DateTimeField::TimezoneHour => "timezone_hour".to_string(),
+        crate::expressions::DateTimeField::TimezoneMinute => "timezone_minute".to_string(),
+        crate::expressions::DateTimeField::Date => "date".to_string(),
+        crate::expressions::DateTimeField::Time => "time".to_string(),
+        crate::expressions::DateTimeField::Custom(name) => name.clone(),
     }
 }
 
@@ -1137,20 +1304,28 @@ fn collect_relation_facts(
     seen: &mut HashSet<String>,
     relations: &mut Vec<RelationFact>,
 ) {
-    for relation in scope
-        .sources
-        .iter()
-        .map(|(source_name, source)| RelationFact {
+    for relation in scope.sources.iter().map(|(source_name, source)| {
+        let identity = source_table_identity(source);
+        RelationFact {
             name: source
                 .lineage_name
                 .clone()
-                .or_else(|| source_table_name(source))
+                .or_else(|| identity.as_ref().map(|identity| identity.name.clone()))
                 .unwrap_or_else(|| source_name.clone()),
             alias: source.alias.clone().or_else(|| source_alias(source)),
             kind: source.kind,
             columns: source_columns(source, mapping_schema),
-        })
-    {
+            catalog: identity
+                .as_ref()
+                .and_then(|identity| identity.catalog.clone()),
+            schema: identity
+                .as_ref()
+                .and_then(|identity| identity.schema.clone()),
+            table: identity
+                .as_ref()
+                .and_then(|identity| identity.table.clone()),
+        }
+    }) {
         let key = format!("{:?}|{}|{:?}", relation.kind, relation.name, relation.alias);
         if seen.insert(key) {
             relations.push(relation);
@@ -1186,16 +1361,19 @@ fn collect_base_table_facts(
             continue;
         }
 
-        let Some(table_name) = source_table_name(source) else {
+        let Some(identity) = source_table_identity(source) else {
             continue;
         };
 
-        if seen.insert(table_name.clone()) {
+        if seen.insert(identity.name.clone()) {
             relations.push(RelationFact {
-                name: table_name,
+                name: identity.name,
                 alias: source.alias.clone().or_else(|| source_alias(source)),
                 kind: SourceKind::Table,
                 columns: source_columns(source, mapping_schema),
+                catalog: identity.catalog,
+                schema: identity.schema,
+                table: identity.table,
             });
         }
     }
@@ -1236,10 +1414,7 @@ fn source_columns(
 }
 
 fn source_table_name(source: &SourceInfo) -> Option<String> {
-    match &source.expression {
-        Expression::Table(table) => Some(table_name(table)),
-        _ => None,
-    }
+    source_table_identity(source).map(|identity| identity.name)
 }
 
 fn source_alias(source: &SourceInfo) -> Option<String> {
@@ -1260,6 +1435,30 @@ fn table_name(table: &TableRef) -> String {
     }
     parts.push(table.name.name.clone());
     parts.join(".")
+}
+
+#[derive(Debug, Clone)]
+struct RelationIdentity {
+    name: String,
+    catalog: Option<String>,
+    schema: Option<String>,
+    table: Option<String>,
+}
+
+fn source_table_identity(source: &SourceInfo) -> Option<RelationIdentity> {
+    match &source.expression {
+        Expression::Table(table) => Some(table_identity(table)),
+        _ => None,
+    }
+}
+
+fn table_identity(table: &TableRef) -> RelationIdentity {
+    RelationIdentity {
+        name: table_name(table),
+        catalog: table.catalog.as_ref().map(|catalog| catalog.name.clone()),
+        schema: table.schema.as_ref().map(|schema| schema.name.clone()),
+        table: Some(table.name.name.clone()),
+    }
 }
 
 fn set_operation_facts(

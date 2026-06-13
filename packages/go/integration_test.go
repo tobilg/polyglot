@@ -260,6 +260,32 @@ func TestIntegrationCoreAPIs(t *testing.T) {
 		t.Fatalf("unexpected AnalyzeQuery projection: %#v", analysis.Projections[0])
 	}
 
+	eventsSchema := ValidationSchema{
+		Tables: []SchemaTable{
+			{
+				Name:    "events",
+				Columns: []SchemaColumn{{Name: "created_at", Type: "TIMESTAMP"}},
+			},
+		},
+	}
+	analysis, err = client.AnalyzeQuery(
+		"SELECT DATE_TRUNC('month', created_at) AS bucket FROM events",
+		AnalyzeQueryOptions{Dialect: "duckdb", Schema: &eventsSchema},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeQuery transform function: %v", err)
+	}
+	transformFunction := analysis.Projections[0].TransformFunction
+	if transformFunction == nil || transformFunction.Name != "DATE_TRUNC" {
+		t.Fatalf("unexpected AnalyzeQuery transform function: %#v", analysis.Projections[0])
+	}
+	if len(transformFunction.LiteralArgs) != 1 || transformFunction.LiteralArgs[0] != "month" {
+		t.Fatalf("unexpected AnalyzeQuery literal args: %#v", transformFunction)
+	}
+	if len(transformFunction.ColumnArgs) != 1 || transformFunction.ColumnArgs[0].Column != "created_at" {
+		t.Fatalf("unexpected AnalyzeQuery column args: %#v", transformFunction)
+	}
+
 	analysis, err = client.AnalyzeQuery(
 		"SELECT o.order_id, SUM(o.amount) AS amount_sum FROM orders AS o GROUP BY o.order_id",
 		AnalyzeQueryOptions{Schema: integrationSchemaPtr()},
@@ -269,6 +295,9 @@ func TestIntegrationCoreAPIs(t *testing.T) {
 	}
 	if len(analysis.BaseTables) != 1 || analysis.BaseTables[0].Name != "orders" {
 		t.Fatalf("unexpected AnalyzeQuery baseTables: %#v", analysis.BaseTables)
+	}
+	if analysis.BaseTables[0].Catalog != nil || analysis.BaseTables[0].Schema != nil || analysis.BaseTables[0].Table == nil || *analysis.BaseTables[0].Table != "orders" {
+		t.Fatalf("unexpected AnalyzeQuery structured base table identity: %#v", analysis.BaseTables[0])
 	}
 	if analysis.Projections[0].Upstream[0].SourceAlias == nil || *analysis.Projections[0].Upstream[0].SourceAlias != "o" {
 		t.Fatalf("unexpected AnalyzeQuery source alias: %#v", analysis.Projections[0].Upstream)
@@ -414,6 +443,45 @@ func TestIntegrationASTHelpers(t *testing.T) {
 	}
 	if len(generated) != 1 || !strings.Contains(generated[0], "new_table") {
 		t.Fatalf("unexpected generated SQL: %#v", generated)
+	}
+
+	setOperation, err := client.Parse("SELECT id FROM a UNION ALL SELECT id FROM b", "generic")
+	if err != nil {
+		t.Fatalf("Parse set operation: %v", err)
+	}
+	setOperation, err = client.SetLimit(setOperation, 5)
+	if err != nil {
+		t.Fatalf("SetLimit: %v", err)
+	}
+	setOperation, err = client.SetOffset(setOperation, 10)
+	if err != nil {
+		t.Fatalf("SetOffset: %v", err)
+	}
+
+	orderExpressionSource, err := client.Parse("SELECT id", "generic")
+	if err != nil {
+		t.Fatalf("Parse order expression source: %v", err)
+	}
+	var parsedOrderExpression []map[string]any
+	if err := json.Unmarshal(orderExpressionSource, &parsedOrderExpression); err != nil {
+		t.Fatalf("decode order expression source: %v", err)
+	}
+	selectData := parsedOrderExpression[0]["select"].(map[string]any)
+	orderExpressions := selectData["expressions"].([]any)
+	orderBy, err := json.Marshal([]any{orderExpressions[0]})
+	if err != nil {
+		t.Fatalf("encode order by: %v", err)
+	}
+	setOperation, err = client.SetOrderBy(setOperation, orderBy)
+	if err != nil {
+		t.Fatalf("SetOrderBy: %v", err)
+	}
+	generatedSetOperation, err := client.Generate(setOperation, "generic")
+	if err != nil {
+		t.Fatalf("Generate set operation: %v", err)
+	}
+	if len(generatedSetOperation) != 1 || generatedSetOperation[0] != "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id LIMIT 5 OFFSET 10" {
+		t.Fatalf("unexpected generated set operation: %#v", generatedSetOperation)
 	}
 
 	annotated, err := client.AnnotateTypes("SELECT 1", "generic", nil)
@@ -563,6 +631,24 @@ func TestIntegrationPackageLevelAPI(t *testing.T) {
 		t.Fatalf("RenameTables wrapper: %v", err)
 	}
 	assertValidJSON(t, "RenameTables wrapper", renamed)
+
+	setOperation, err := Parse("SELECT id FROM a UNION ALL SELECT id FROM b", "generic")
+	if err != nil {
+		t.Fatalf("Parse set operation wrapper: %v", err)
+	}
+	setOperation, err = SetLimit(setOperation, 5)
+	if err != nil {
+		t.Fatalf("SetLimit wrapper: %v", err)
+	}
+	setOperation, err = SetOffset(setOperation, 10)
+	if err != nil {
+		t.Fatalf("SetOffset wrapper: %v", err)
+	}
+	setOperation, err = SetOrderBy(setOperation, json.RawMessage(`[{"column":{"name":{"name":"id","quoted":false},"table":null,"join_mark":false,"trailing_comments":[]}}]`))
+	if err != nil {
+		t.Fatalf("SetOrderBy wrapper: %v", err)
+	}
+	assertValidJSON(t, "SetOrderBy wrapper", setOperation)
 
 	node, err := Lineage("total", "SELECT total FROM orders", "generic")
 	if err != nil {

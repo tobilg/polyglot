@@ -78,10 +78,13 @@ analysis["cteFacts"][0]["bodySql"]           # "SELECT id, amount FROM orders"
 analysis["starProjections"][0]["expandedColumns"]  # ["id", "amount"]
 analysis["projections"][0]["nullability"]    # "non_null"
 analysis["baseTables"][0]["name"]            # "orders"
+analysis["baseTables"][0]["table"]           # "orders"
 ```
 
 `relations` reports sources visible in the analyzed scope. `baseTables` reports
 deduplicated physical table dependencies across nested scopes.
+For physical relation facts, `name` remains the qualified display name while
+`catalog`, `schema`, and `table` expose parsed identifier parts.
 `cteFacts` reports top-level CTE definitions, `starProjections` records original
 star projections and schema-expanded columns, and each projection has
 conservative `nullability`: `"non_null"`, `"nullable"`, or `"unknown"`.

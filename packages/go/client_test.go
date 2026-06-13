@@ -100,6 +100,15 @@ func TestDefaultClientMissingReturnsError(t *testing.T) {
 	if _, err := AnalyzeQuery("SELECT 1", AnalyzeQueryOptions{}); !errors.Is(err, ErrNoDefaultClient) {
 		t.Fatalf("AnalyzeQuery err = %v, want ErrNoDefaultClient", err)
 	}
+	if _, err := SetLimit(json.RawMessage(`[]`), 1); !errors.Is(err, ErrNoDefaultClient) {
+		t.Fatalf("SetLimit err = %v, want ErrNoDefaultClient", err)
+	}
+	if _, err := SetOffset(json.RawMessage(`[]`), 1); !errors.Is(err, ErrNoDefaultClient) {
+		t.Fatalf("SetOffset err = %v, want ErrNoDefaultClient", err)
+	}
+	if _, err := SetOrderBy(json.RawMessage(`[]`), json.RawMessage(`[]`)); !errors.Is(err, ErrNoDefaultClient) {
+		t.Fatalf("SetOrderBy err = %v, want ErrNoDefaultClient", err)
+	}
 }
 
 func TestClosedClientReturnsError(t *testing.T) {

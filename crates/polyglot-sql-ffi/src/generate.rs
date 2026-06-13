@@ -2,7 +2,7 @@ use crate::helpers::{
     dialect_by_name, err_result, ok_json_result, ok_result, panic_result, required_arg,
 };
 use crate::types::{PolyglotResult, STATUS_GENERATE_ERROR, STATUS_SERIALIZATION_ERROR};
-use polyglot_sql::{DataType, Expression};
+use polyglot_sql::{ast_json, DataType, Expression};
 use std::os::raw::c_char;
 
 /// Generate SQL from AST JSON.
@@ -46,7 +46,7 @@ fn generate_impl(ast_json: *const c_char, dialect: *const c_char) -> PolyglotRes
         Err(result) => return result,
     };
 
-    let expressions: Vec<Expression> = match serde_json::from_str(&ast_json) {
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
         Ok(expressions) => expressions,
         Err(error) => {
             return err_result(

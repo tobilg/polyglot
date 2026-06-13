@@ -35,6 +35,27 @@ def test_analyze_query_accepts_schema_options():
     assert result["projections"][0]["castType"] == "TEXT"
 
 
+def test_analyze_query_reports_transform_function_arguments():
+    schema = {
+        "tables": [
+            {
+                "name": "events",
+                "columns": [{"name": "created_at", "type": "TIMESTAMP"}],
+            }
+        ]
+    }
+    result = polyglot_sql.analyze_query(
+        "SELECT DATE_TRUNC('month', created_at) AS bucket FROM events",
+        {"schema": schema, "dialect": "duckdb"},
+    )
+
+    transform_function = result["projections"][0]["transformFunction"]
+    assert transform_function["name"] == "DATE_TRUNC"
+    assert transform_function["literalArgs"] == ["month"]
+    assert transform_function["columnArgs"][0]["table"] == "events"
+    assert transform_function["columnArgs"][0]["column"] == "created_at"
+
+
 def test_analyze_query_reports_base_tables_aliases_aggregates_and_precise_types():
     schema = {
         "tables": [
@@ -60,6 +81,20 @@ def test_analyze_query_reports_base_tables_aliases_aggregates_and_precise_types(
     assert result["projections"][1]["transformKind"] == "aggregation"
     assert result["projections"][1]["typeHint"] == "DECIMAL(10, 2)"
     assert result["projections"][0]["nullability"] == "non_null"
+
+
+def test_analyze_query_reports_structured_table_identity():
+    result = polyglot_sql.analyze_query(
+        'SELECT id FROM "my.catalog"."my.schema"."orders.table" AS o',
+        dialect="duckdb",
+    )
+
+    base_table = result["baseTables"][0]
+    assert base_table["name"] == "my.catalog.my.schema.orders.table"
+    assert base_table["catalog"] == "my.catalog"
+    assert base_table["schema"] == "my.schema"
+    assert base_table["table"] == "orders.table"
+    assert base_table["alias"] == "o"
 
 
 def test_analyze_query_reports_cte_facts_and_star_projections():

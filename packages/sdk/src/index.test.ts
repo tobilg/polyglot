@@ -241,6 +241,9 @@ describe('Polyglot SDK', () => {
           name: 'orders',
           alias: 'o',
           kind: 'table',
+          catalog: null,
+          schema: null,
+          table: 'orders',
         },
       ]);
       expect(result.analysis?.projections[0].upstream[0]).toMatchObject({
@@ -255,6 +258,23 @@ describe('Polyglot SDK', () => {
       });
       expect(result.analysis?.projections[0].nullability).toBe('non_null');
       expect(result.analysis?.projections[1].nullability).toBe('unknown');
+    });
+
+    it('should expose structured physical table identity', () => {
+      const result = analyzeQuery(
+        'SELECT id FROM "my.catalog"."my.schema"."orders.table" AS o',
+        Dialect.DuckDB,
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.analysis?.baseTables[0]).toMatchObject({
+        name: 'my.catalog.my.schema.orders.table',
+        alias: 'o',
+        kind: 'table',
+        catalog: 'my.catalog',
+        schema: 'my.schema',
+        table: 'orders.table',
+      });
     });
 
     it('should expose CTE facts and star projection provenance', () => {

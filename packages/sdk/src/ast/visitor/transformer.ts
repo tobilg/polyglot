@@ -29,6 +29,8 @@ import {
   ast_add_where,
   ast_remove_where,
   ast_set_limit,
+  ast_set_offset,
+  ast_set_order_by,
   ast_set_distinct,
 } from '../../../wasm/polyglot_sql_wasm.js';
 
@@ -57,6 +59,79 @@ function exprToJson(node: Expression): string {
 function parseAstResult(json: string): Expression | null {
   const result = JSON.parse(json);
   return result.success ? JSON.parse(result.ast) : null;
+}
+
+function isQueryWithOuterClauses(node: Expression): boolean {
+  return ['select', 'union', 'intersect', 'except'].includes(getExprType(node));
+}
+
+function applyLimitExpr(node: Expression, limit: Expression): Expression {
+  const type = getExprType(node);
+  if (!isQueryWithOuterClauses(node)) {
+    return node;
+  }
+
+  const data = getExprData(node);
+  if (type === 'select') {
+    return makeExpr('select', {
+      ...data,
+      limit: { this: limit, percent: false, comments: [] },
+    });
+  }
+
+  return makeExpr(type, {
+    ...data,
+    limit,
+  });
+}
+
+function applyOffsetExpr(node: Expression, offset: Expression): Expression {
+  const type = getExprType(node);
+  if (!isQueryWithOuterClauses(node)) {
+    return node;
+  }
+
+  const data = getExprData(node);
+  if (type === 'select') {
+    return makeExpr('select', {
+      ...data,
+      offset: { this: offset, rows: null },
+    });
+  }
+
+  return makeExpr(type, {
+    ...data,
+    offset,
+  });
+}
+
+function applyOrderBy(node: Expression, orderBy: Expression[]): Expression {
+  const type = getExprType(node);
+  if (!isQueryWithOuterClauses(node)) {
+    return node;
+  }
+
+  const expressions = orderBy.map((expression) => {
+    if (getExprType(expression) === 'ordered') {
+      return getExprData(expression);
+    }
+    return {
+      this: expression,
+      desc: false,
+      nulls_first: null,
+      explicit_asc: false,
+      with_fill: null,
+    };
+  });
+
+  return makeExpr(type, {
+    ...getExprData(node),
+    order_by: {
+      expressions,
+      siblings: false,
+      comments: [],
+    },
+  });
 }
 
 // ============================================================================
@@ -454,16 +529,7 @@ export function setLimit(
     return result ?? node;
   }
 
-  // Fall back to TS for Expression limits
-  if (getExprType(node) !== 'select') {
-    return node;
-  }
-
-  const selectData = getExprData(node);
-  return makeExpr('select', {
-    ...selectData,
-    limit: { this: limit },
-  });
+  return applyLimitExpr(node, limit);
 }
 
 /**
@@ -473,22 +539,29 @@ export function setOffset(
   node: Expression,
   offset: number | Expression,
 ): Expression {
-  if (getExprType(node) !== 'select') {
-    return node;
+  if (typeof offset === 'number') {
+    const result = parseAstResult(ast_set_offset(exprToJson(node), offset));
+    return result ?? node;
   }
 
-  const selectData = getExprData(node);
+  return applyOffsetExpr(node, offset);
+}
 
-  const offsetExpr: Expression =
-    typeof offset === 'number'
-      ? makeExpr('literal', { literal_type: 'number', value: String(offset) })
-      : offset;
-
-  // Select.offset is a raw Offset struct, not an Expression envelope
-  return makeExpr('select', {
-    ...selectData,
-    offset: { this: offsetExpr },
-  });
+/**
+ * Set or update the ORDER BY clause.
+ *
+ * Bare expressions are normalized to ascending order entries. Existing
+ * `ordered` expression nodes preserve their direction and null ordering.
+ */
+export function setOrderBy(
+  node: Expression,
+  orderBy: Expression | Expression[],
+): Expression {
+  const orderByExpressions = Array.isArray(orderBy) ? orderBy : [orderBy];
+  const result = parseAstResult(
+    ast_set_order_by(exprToJson(node), JSON.stringify(orderByExpressions)),
+  );
+  return result ?? applyOrderBy(node, orderByExpressions);
 }
 
 /**

@@ -5,7 +5,8 @@ use polyglot_sql_ffi::{
     polyglot_lineage, polyglot_lineage_with_schema, polyglot_openlineage_column_lineage,
     polyglot_openlineage_job_event, polyglot_openlineage_run_event, polyglot_optimize,
     polyglot_parse, polyglot_parse_data_type, polyglot_parse_one, polyglot_qualify_tables,
-    polyglot_rename_tables_with_options, polyglot_source_tables, polyglot_transpile,
+    polyglot_rename_tables_with_options, polyglot_set_limit, polyglot_set_offset,
+    polyglot_set_order_by, polyglot_source_tables, polyglot_transpile,
     polyglot_transpile_with_options, polyglot_validate, polyglot_version, PolyglotResult,
     PolyglotValidationResult,
 };
@@ -414,6 +415,34 @@ fn test_parse_generate_roundtrip() {
 }
 
 #[test]
+fn test_generate_accepts_ast_json_compatibility_null_shapes() {
+    let dialect = c("generic");
+    let ast_json = c(r#"[{},{"null":{}}]"#);
+    let (status, data, error) =
+        consume_result(polyglot_generate(ast_json.as_ptr(), dialect.as_ptr()));
+    assert_eq!(status, 0, "error={error:?}");
+
+    let statements: Vec<String> =
+        serde_json::from_str(&data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(statements, vec!["NULL", "NULL"]);
+}
+
+#[test]
+fn test_generate_accepts_is_null_array_shorthand() {
+    let dialect = c("generic");
+    let ast_json = c(
+        r#"[{"is_null":[{"column":{"name":{"name":"deleted_at","quoted":false,"trailing_comments":[],"span":null},"table":null,"join_mark":false,"trailing_comments":[],"span":null,"inferred_type":null}}]}]"#,
+    );
+    let (status, data, error) =
+        consume_result(polyglot_generate(ast_json.as_ptr(), dialect.as_ptr()));
+    assert_eq!(status, 0, "error={error:?}");
+
+    let statements: Vec<String> =
+        serde_json::from_str(&data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(statements, vec!["deleted_at IS NULL"]);
+}
+
+#[test]
 fn test_parse_generate_postgres_prepare_and_execute() {
     let dialect = c("postgres");
     let prepare_sql = c("PREPARE leak (int) AS SELECT id FROM sensitive_table WHERE id = $1");
@@ -509,6 +538,58 @@ fn test_rename_tables_with_options_ast_transform() {
     let statements: Vec<String> =
         serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
     assert_eq!(statements[0], "SELECT a FROM new_table AS new_table");
+}
+
+#[test]
+fn test_set_query_clauses_ast_transforms() {
+    let sql = c("SELECT id FROM a UNION ALL SELECT id FROM b");
+    let dialect = c("generic");
+
+    let (parse_status, parse_data, parse_error) =
+        consume_result(polyglot_parse(sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(parse_status, 0, "parse_error={parse_error:?}");
+
+    let ast_json = c(&parse_data.expect("missing parse result"));
+    let (limit_status, limit_data, limit_error) =
+        consume_result(polyglot_set_limit(ast_json.as_ptr(), 5));
+    assert_eq!(limit_status, 0, "limit_error={limit_error:?}");
+
+    let limited_json = c(&limit_data.expect("missing limit result"));
+    let (offset_status, offset_data, offset_error) =
+        consume_result(polyglot_set_offset(limited_json.as_ptr(), 10));
+    assert_eq!(offset_status, 0, "offset_error={offset_error:?}");
+
+    let column_ast = c("SELECT id");
+    let (column_status, column_data, column_error) =
+        consume_result(polyglot_parse(column_ast.as_ptr(), dialect.as_ptr()));
+    assert_eq!(column_status, 0, "column_error={column_error:?}");
+    let parsed_column: Value =
+        serde_json::from_str(&column_data.expect("missing column parse result")).unwrap();
+    let order_by_json = c(
+        &serde_json::to_string(&vec![parsed_column[0]["select"]["expressions"][0].clone()])
+            .unwrap(),
+    );
+
+    let offset_json = c(&offset_data.expect("missing offset result"));
+    let (order_status, order_data, order_error) = consume_result(polyglot_set_order_by(
+        offset_json.as_ptr(),
+        order_by_json.as_ptr(),
+    ));
+    assert_eq!(order_status, 0, "order_error={order_error:?}");
+
+    let transformed_ast = c(&order_data.expect("missing order result"));
+    let (gen_status, gen_data, gen_error) = consume_result(polyglot_generate(
+        transformed_ast.as_ptr(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(gen_status, 0, "gen_error={gen_error:?}");
+
+    let statements: Vec<String> =
+        serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(
+        statements[0],
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id LIMIT 5 OFFSET 10"
+    );
 }
 
 #[test]
@@ -698,6 +779,9 @@ fn test_analyze_query_happy_path() {
     assert_eq!(analysis["shape"], "select");
     assert_eq!(analysis["baseTables"][0]["name"], "orders");
     assert_eq!(analysis["baseTables"][0]["alias"], "o");
+    assert!(analysis["baseTables"][0]["catalog"].is_null());
+    assert!(analysis["baseTables"][0]["schema"].is_null());
+    assert_eq!(analysis["baseTables"][0]["table"], "orders");
     assert_eq!(analysis["projections"][0]["upstream"][0]["table"], "orders");
     assert_eq!(
         analysis["projections"][0]["upstream"][0]["sourceAlias"],

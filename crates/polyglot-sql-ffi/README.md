@@ -107,6 +107,9 @@ typedef struct {
 - `polyglot_generate(ast_json, dialect)` (expects `Vec<Expression>` JSON)
 - `polyglot_generate_data_type(data_type_json, dialect)` (expects `DataType` JSON)
 - `polyglot_qualify_tables(ast_json, options_json)` (expects `Vec<Expression>` JSON)
+- `polyglot_set_limit(ast_json, limit)` (expects `Vec<Expression>` JSON)
+- `polyglot_set_offset(ast_json, offset)` (expects `Vec<Expression>` JSON)
+- `polyglot_set_order_by(ast_json, order_by_json)` (both arguments expect `Vec<Expression>` JSON)
 - `polyglot_rename_tables_with_options(ast_json, mapping_json, options_json)` (expects `Vec<Expression>` JSON)
 - `polyglot_format(sql, dialect)`
 - `polyglot_format_with_options(sql, dialect, options_json)` (`FormatGuardOptions` JSON)
@@ -119,7 +122,9 @@ typedef struct {
   returns compact `QueryAnalysis` JSON. `relations` contains sources visible in
   the analyzed scope, and `baseTables` contains deduplicated physical table
   dependencies from nested CTEs, derived tables, subqueries, and set-operation
-  branches. With a schema, parseable detailed type strings such as
+  branches. Physical relation facts keep `name` as the qualified display name
+  and expose parsed `catalog`, `schema`, and `table` fields. With a schema,
+  parseable detailed type strings such as
   `DECIMAL(10,2)` are preserved in projection `typeHint` values. `cteFacts`
   reports top-level CTE definitions, `starProjections` records original star
   projections and schema-expanded columns, and each projection includes
@@ -180,6 +185,9 @@ polyglot_result_t r = polyglot_format_with_options(sql, "generic", opts);
 - `polyglot_generate`: JSON array of SQL strings
 - `polyglot_generate_data_type`: SQL string
 - `polyglot_qualify_tables`: JSON `Vec<Expression>`
+- `polyglot_set_limit`: JSON `Vec<Expression>`
+- `polyglot_set_offset`: JSON `Vec<Expression>`
+- `polyglot_set_order_by`: JSON `Vec<Expression>`
 - `polyglot_rename_tables_with_options`: JSON `Vec<Expression>`
 - `polyglot_format`: JSON array of SQL strings
 - `polyglot_format_with_options`: JSON array of SQL strings

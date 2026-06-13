@@ -42,3 +42,16 @@ def test_transform_functions_preserve_list_inputs():
     assert isinstance(renamed, list)
     assert isinstance(renamed[0], polyglot_sql.Expression)
     assert polyglot_sql.generate(renamed)[0] == "SELECT a FROM new_table AS new_table"
+
+
+def test_set_query_clauses_on_set_operations():
+    ast = polyglot_sql.parse_one("SELECT id FROM a UNION ALL SELECT id FROM b")
+    order_expr = polyglot_sql.parse_one("SELECT id").args["expressions"][0]
+
+    transformed = polyglot_sql.set_limit(ast, 5)
+    transformed = polyglot_sql.set_offset(transformed, 10)
+    transformed = polyglot_sql.set_order_by(transformed, order_expr)
+
+    assert polyglot_sql.generate(transformed)[0] == (
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id LIMIT 5 OFFSET 10"
+    )

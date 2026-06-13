@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { col, lit } from '../../builders';
+import { col, lit, sqlNull } from '../../builders';
 import type { Expression } from '../../generated/Expression';
 import { Dialect, generate, parse } from '../../index';
 import { getExprData, getExprType, makeExpr } from '../helpers';
@@ -49,6 +49,7 @@ import {
   setDistinct,
   setLimit,
   setOffset,
+  setOrderBy,
   some,
   // Transformer functions
   transform,
@@ -283,14 +284,17 @@ describe('Convenience Finder Functions', () => {
   });
 
   describe('getTables()', () => {
-    it('should find tables when walker can traverse to them', () => {
-      // Due to current walker limitation, tables in FROM are not found
-      // because FROM wrapper doesn't have a type property
-      const ast = parseFirst('SELECT * FROM users');
+    it('should find tables in FROM and JOIN operands', () => {
+      const ast = parseFirst(
+        'SELECT t.id FROM ticket AS t JOIN team AS tm ON t.team_id = tm.id',
+      );
       const tables = getTables(ast);
 
-      // Current walker doesn't find tables in FROM clause
-      expect(tables.length).toBeGreaterThanOrEqual(0);
+      expect(tables).toHaveLength(2);
+      expect(tables.map((table) => (getExprData(table) as any).name.name)).toEqual([
+        'ticket',
+        'team',
+      ]);
     });
   });
 
@@ -671,6 +675,33 @@ describe('WHERE Clause Manipulation', () => {
       expect(sql.toUpperCase()).toContain('OR');
     });
 
+    it('should preserve builder NULL conditions', () => {
+      const ast = parseFirst('SELECT * FROM users');
+      const condition = col('deleted_at').isNull().toJSON() as Expression;
+      const newAst = addWhere(ast, condition);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT * FROM users WHERE deleted_at IS NULL');
+    });
+
+    it('should preserve nested builder NULL values', () => {
+      const ast = parseFirst('SELECT * FROM users');
+      const condition = col('deleted_at').eq(sqlNull()).toJSON() as Expression;
+      const newAst = addWhere(ast, condition);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT * FROM users WHERE deleted_at = NULL');
+    });
+
+    it('should fail closed for unrepairable condition ASTs', () => {
+      const ast = parseFirst('SELECT * FROM users');
+      const condition = makeExpr('not_a_real_expression', {}) as Expression;
+      const newAst = addWhere(ast, condition);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT * FROM users WHERE FALSE');
+    });
+
     it('should not modify non-SELECT nodes', () => {
       const literalAst = makeExpr('literal', {
         literal_type: 'number',
@@ -768,6 +799,14 @@ describe('Limit/Offset Manipulation', () => {
 
       expect(sql).toContain('20');
     });
+
+    it('should set LIMIT on set operations', () => {
+      const ast = parseFirst('SELECT id FROM a UNION ALL SELECT id FROM b');
+      const newAst = setLimit(ast, 5);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT id FROM a UNION ALL SELECT id FROM b LIMIT 5');
+    });
   });
 
   describe('setOffset()', () => {
@@ -778,6 +817,24 @@ describe('Limit/Offset Manipulation', () => {
 
       expect(sql.toUpperCase()).toContain('OFFSET');
       expect(sql).toContain('5');
+    });
+
+    it('should set OFFSET on set operations', () => {
+      const ast = parseFirst('SELECT id FROM a UNION ALL SELECT id FROM b');
+      const newAst = setOffset(ast, 10);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT id FROM a UNION ALL SELECT id FROM b OFFSET 10');
+    });
+  });
+
+  describe('setOrderBy()', () => {
+    it('should set ORDER BY on set operations', () => {
+      const ast = parseFirst('SELECT id FROM a UNION ALL SELECT id FROM b');
+      const newAst = setOrderBy(ast, col('id').toJSON() as Expression);
+      const sql = toSql(newAst);
+
+      expect(sql).toBe('SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id');
     });
   });
 

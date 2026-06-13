@@ -1,12 +1,13 @@
 use crate::errors::{parse_statement_count_error, unknown_dialect_error, GenerateError};
 use crate::expr::PyExpression;
 use polyglot_sql::dialects::Dialect;
-use polyglot_sql::{DataType, Expression, UnsupportedLevel};
+use polyglot_sql::{ast_json, DataType, Expression, UnsupportedLevel};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use pythonize::{depythonize, pythonize};
 use serde::Serialize;
+use serde_json::Value;
 use std::sync::{mpsc, Mutex, OnceLock};
 
 /// Stack size for the persistent worker thread (64 MB).
@@ -181,7 +182,10 @@ pub fn ast_input_to_expressions(ast: &Bound<'_, PyAny>) -> PyResult<Vec<Expressi
     }
 
     if ast.cast::<PyDict>().is_ok() {
-        let expr: Expression = depythonize(ast).map_err(|err| {
+        let value: Value = depythonize(ast).map_err(|err| {
+            GenerateError::new_err(format!("Failed to decode AST expression: {err}"))
+        })?;
+        let expr = ast_json::expression_from_value(value).map_err(|err| {
             GenerateError::new_err(format!("Failed to decode AST expression: {err}"))
         })?;
         return Ok(vec![expr]);
@@ -196,7 +200,10 @@ pub fn ast_input_to_expressions(ast: &Bound<'_, PyAny>) -> PyResult<Vec<Expressi
                 continue;
             }
 
-            let expr: Expression = depythonize(&item).map_err(|err| {
+            let value: Value = depythonize(&item).map_err(|err| {
+                GenerateError::new_err(format!("Failed to decode AST expression list item: {err}"))
+            })?;
+            let expr = ast_json::expression_from_value(value).map_err(|err| {
                 GenerateError::new_err(format!("Failed to decode AST expression list item: {err}"))
             })?;
             expressions.push(expr);

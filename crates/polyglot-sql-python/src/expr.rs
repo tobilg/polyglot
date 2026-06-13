@@ -1,6 +1,7 @@
 use crate::errors::{map_generate_error, GenerateError};
 use crate::expr_types::{wrap_expression, wrap_expression_with_parent};
 use crate::helpers::{resolve_dialect, to_python_object};
+use polyglot_sql::ast_json;
 use polyglot_sql::traversal::ExpressionWalk;
 use polyglot_sql::Expression;
 use pyo3::exceptions::PyValueError;
@@ -244,11 +245,11 @@ fn should_skip(value: &Value) -> bool {
 }
 
 fn value_to_python_object(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
-    if let Ok(expr) = serde_json::from_value::<Expression>(value.clone()) {
+    if let Ok(expr) = ast_json::expression_from_value(value.clone()) {
         return wrap_expression(py, expr);
     }
 
-    if let Ok(expressions) = serde_json::from_value::<Vec<Expression>>(value.clone()) {
+    if let Ok(expressions) = ast_json::expressions_from_value(value.clone()) {
         let objects = expressions
             .into_iter()
             .map(|expr| wrap_expression(py, expr))
@@ -692,7 +693,7 @@ impl PyExpression {
                     Value::Null => Ok(String::new()),
                     Value::Object(map) => {
                         // Could be a tagged Expression variant or an inline struct (like Identifier)
-                        if let Ok(expr) = serde_json::from_value::<Expression>(value.clone()) {
+                        if let Ok(expr) = ast_json::expression_from_value(value.clone()) {
                             return Ok(expr.get_name().to_string());
                         }
                         // Inline struct — look for a "name" key

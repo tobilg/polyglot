@@ -293,6 +293,11 @@ describe('Expr operators', () => {
     expect(json).toBeDefined();
     expect(typeof json).toBe('object');
   });
+
+  it('toJSON serializes NULL as canonical AST JSON', () => {
+    expect(JSON.stringify(sqlNull().toJSON())).toBe('{"null":null}');
+    expect(JSON.stringify(col('x').eq(sqlNull()).toJSON())).toContain('"right":{"null":null}');
+  });
 });
 
 // ============================================================================

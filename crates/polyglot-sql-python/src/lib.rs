@@ -44,6 +44,9 @@ fn _polyglot_sql(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize::tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(annotate_types::annotate_types, m)?)?;
     m.add_function(wrap_pyfunction!(transforms::qualify_tables, m)?)?;
+    m.add_function(wrap_pyfunction!(transforms::set_limit, m)?)?;
+    m.add_function(wrap_pyfunction!(transforms::set_offset, m)?)?;
+    m.add_function(wrap_pyfunction!(transforms::set_order_by, m)?)?;
     m.add_function(wrap_pyfunction!(transforms::rename_tables, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::dialects, m)?)?;
     m.add_function(wrap_pyfunction!(dialects::version, m)?)?;

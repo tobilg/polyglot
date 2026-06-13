@@ -318,6 +318,8 @@ scope, while `base_tables` reports deduplicated physical table dependencies
 across CTEs, derived tables, subqueries, and set-operation branches. When a
 `ValidationSchema` is supplied, detailed type strings such as `DECIMAL(10,2)`
 are preserved in projection `type_hint` values when parseable.
+For physical table relations, `name` remains the qualified display name and
+`catalog`, `schema`, and `table` expose parsed identifier parts.
 `cte_facts` reports top-level CTE names, declared columns, original CTE body SQL,
 and CTE output columns. `star_projections` reports the original top-level star
 projection index, optional table qualifier, and schema-expanded columns when
@@ -353,6 +355,7 @@ assert_eq!(analysis.cte_facts[0].body_sql, "SELECT id, amount FROM orders");
 assert_eq!(analysis.star_projections[0].expanded_columns, vec!["id", "amount"]);
 assert_eq!(analysis.projections[0].nullability, ProjectionNullability::NonNull);
 assert_eq!(analysis.base_tables[0].name, "orders");
+assert_eq!(analysis.base_tables[0].table.as_deref(), Some("orders"));
 ```
 
 External JSON schemas use this shape:

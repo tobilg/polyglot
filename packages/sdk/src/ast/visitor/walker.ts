@@ -18,6 +18,7 @@ import type { NodePredicate, VisitorCallback, VisitorConfig } from './types';
 import {
   ast_get_column_names,
   ast_get_table_names,
+  ast_get_tables,
   ast_get_aggregate_functions,
   ast_get_window_functions,
   ast_get_functions,
@@ -293,7 +294,8 @@ export function getColumns(node: Expression): Expression[] {
  * Get all table references in the AST
  */
 export function getTables(node: Expression): Expression[] {
-  return findByType(node, 'table');
+  const result = JSON.parse(ast_get_tables(exprToJson(node)));
+  return result.success ? JSON.parse(result.ast) : [];
 }
 
 /**

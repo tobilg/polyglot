@@ -347,9 +347,9 @@ Walk, search, and transform parsed AST nodes.
 
 ```typescript
 import {
-  parse, Dialect, walk, transform, findAll, findFirst, findByType,
+  parse, Dialect, col, walk, transform, findAll, findFirst, findByType,
   getColumns, getColumnNames, getTableNames, renameColumns, renameTables,
-  addWhere, removeWhere, setLimit, setDistinct, qualifyColumns,
+  addWhere, removeWhere, setLimit, setOffset, setOrderBy, setDistinct, qualifyColumns,
   getAggregateFunctions, hasSubqueries, nodeCount,
 } from '@polyglot-sql/sdk';
 
@@ -382,6 +382,8 @@ const qualified = qualifyColumns(ast, 'users');
 
 // Modify query structure
 const withLimit = setLimit(ast, 100);
+const withOffset = setOffset(withLimit, 10);
+const ordered = setOrderBy(withOffset, col('a').toJSON());
 const distinct = setDistinct(ast, true);
 const noWhere = removeWhere(ast);
 ```
@@ -612,6 +614,8 @@ projection `typeHint` values. `cteFacts` reports top-level CTE definitions,
 `starProjections` records original star projections and schema-expanded
 columns, and each projection includes conservative `nullability`: `'non_null'`,
 `'nullable'`, or `'unknown'`.
+For physical relation facts, `name` remains the qualified display name while
+`catalog`, `schema`, and `table` expose parsed identifier parts.
 
 ```typescript
 import { analyzeQuery, Dialect } from '@polyglot-sql/sdk';
@@ -639,6 +643,7 @@ if (result.success) {
   console.log(result.analysis.starProjections[0].expandedColumns); // ['id', 'amount']
   console.log(result.analysis.projections[0].nullability);         // 'non_null'
   console.log(result.analysis.baseTables[0].name);                 // 'orders'
+  console.log(result.analysis.baseTables[0].table);                // 'orders'
 }
 
 const duckdbSummary = analyzeQuery('SELECT 1', Dialect.DuckDB);
@@ -880,6 +885,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | `removeSelectColumns(node, predicate)` | Remove columns from SELECT |
 | `setLimit(node, limit)` | Set LIMIT clause |
 | `setOffset(node, offset)` | Set OFFSET clause |
+| `setOrderBy(node, orderBy)` | Set ORDER BY clause |
 | `removeLimitOffset(node)` | Remove LIMIT and OFFSET |
 | `setDistinct(node, distinct?)` | Set SELECT DISTINCT |
 | `clone(node)` | Deep clone AST |

@@ -220,12 +220,19 @@ export interface ColumnReferenceFact {
   confidence: ReferenceConfidence;
 }
 
+export interface TransformFunctionFact {
+  name: string;
+  literalArgs: string[];
+  columnArgs: ColumnReferenceFact[];
+}
+
 export interface ProjectionFact {
   index: number;
   name?: string;
   isStar: boolean;
   starTable?: string;
   transformKind: TransformKind;
+  transformFunction?: TransformFunctionFact;
   castType?: string;
   typeHint?: string;
   nullability: ProjectionNullability;
@@ -247,9 +254,12 @@ export interface StarProjectionFact {
 
 export interface RelationFact {
   name: string;
-  alias?: string;
+  alias?: string | null;
   kind: QueryAnalysisSourceKind;
   columns: string[];
+  catalog?: string | null;
+  schema?: string | null;
+  table?: string | null;
 }
 
 export interface SetOperationBranchFact {

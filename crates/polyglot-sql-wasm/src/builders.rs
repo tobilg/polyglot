@@ -5,6 +5,7 @@
 //! `&self` (cloning internally) or `&mut self` (with `Option<Inner>` pattern) instead
 //! of move semantics, since JavaScript cannot express Rust ownership.
 
+use polyglot_sql::ast_json;
 use polyglot_sql::builder::{
     self as core_builder, CaseBuilder as CoreCaseBuilder, DeleteBuilder as CoreDeleteBuilder,
     Expr as CoreExpr, InsertBuilder as CoreInsertBuilder, MergeBuilder as CoreMergeBuilder,
@@ -14,6 +15,7 @@ use polyglot_sql::builder::{
 use polyglot_sql::dialects::{Dialect, DialectType};
 use polyglot_sql::expressions::Expression;
 use polyglot_sql::generator::{Generator, GeneratorConfig, NotInStyle};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -196,7 +198,7 @@ impl WasmExpr {
 
     /// Return the expression AST as a JSON value.
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&self.inner.0).map_err(|e| JsValue::from_str(&e.to_string()))
+        build_json(&self.inner.0)
     }
 }
 
@@ -448,7 +450,11 @@ fn take_owned<T>(slot: &mut Option<T>, name: &str) -> Result<T, JsValue> {
 }
 
 fn build_json(expr: &Expression) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(expr).map_err(|e| JsValue::from_str(&e.to_string()))
+    let value = ast_json::expression_to_value(expr).map_err(|e| JsValue::from_str(&e))?;
+    let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+    value
+        .serialize(&serializer)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

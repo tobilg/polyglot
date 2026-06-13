@@ -23,6 +23,7 @@ export {
   setDistinct,
   setLimit,
   setOffset,
+  setOrderBy,
   transform,
 } from './transformer';
 // Types

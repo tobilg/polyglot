@@ -96,6 +96,43 @@ fn analyze_query_reports_projection_relations_and_types() {
 }
 
 #[test]
+fn analyze_query_reports_function_projection_arguments() {
+    let analysis = analyze_query(
+        "SELECT DATE_TRUNC('month', created_at) AS bucket FROM events",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: Some(
+                serde_json::from_value(json!({
+                    "tables": [
+                        {
+                            "name": "events",
+                            "columns": [
+                                {"name": "created_at", "type": "TIMESTAMP"}
+                            ]
+                        }
+                    ]
+                }))
+                .unwrap(),
+            ),
+        },
+    )
+    .unwrap();
+
+    let transform_function = analysis.projections[0]
+        .transform_function
+        .as_ref()
+        .expect("expected transform function fact");
+    assert_eq!(transform_function.name, "DATE_TRUNC");
+    assert_eq!(transform_function.literal_args, vec!["month"]);
+    assert_eq!(transform_function.column_args.len(), 1);
+    assert_eq!(
+        transform_function.column_args[0].table.as_deref(),
+        Some("events")
+    );
+    assert_eq!(transform_function.column_args[0].column, "created_at");
+}
+
+#[test]
 fn analyze_query_follows_cte_lineage() {
     let analysis = analyze_query(
         "WITH base AS (SELECT id FROM users) SELECT id FROM base",
@@ -466,6 +503,64 @@ fn analyze_query_reports_transitive_base_tables() {
         .relations
         .iter()
         .any(|relation| relation.kind == SourceKind::DerivedTable));
+}
+
+#[test]
+fn analyze_query_reports_structured_physical_table_identity() {
+    let analysis = analyze_query(
+        r#"SELECT id FROM "my.catalog"."my.schema"."orders.table" AS o"#,
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: None,
+        },
+    )
+    .unwrap();
+
+    let relation = analysis
+        .relations
+        .iter()
+        .find(|relation| relation.kind == SourceKind::Table)
+        .unwrap();
+    assert_eq!(relation.name, "my.catalog.my.schema.orders.table");
+    assert_eq!(relation.catalog.as_deref(), Some("my.catalog"));
+    assert_eq!(relation.schema.as_deref(), Some("my.schema"));
+    assert_eq!(relation.table.as_deref(), Some("orders.table"));
+    assert_eq!(relation.alias.as_deref(), Some("o"));
+
+    assert_eq!(analysis.base_tables.len(), 1);
+    assert_eq!(analysis.base_tables[0].name, relation.name);
+    assert_eq!(analysis.base_tables[0].catalog, relation.catalog);
+    assert_eq!(analysis.base_tables[0].schema, relation.schema);
+    assert_eq!(analysis.base_tables[0].table, relation.table);
+}
+
+#[test]
+fn analyze_query_reports_structured_table_identity_for_qualified_and_derived_sources() {
+    let analysis = analyze_query(
+        "SELECT x FROM (SELECT id AS x FROM mycatalog.myschema.orders) d",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: None,
+        },
+    )
+    .unwrap();
+
+    let derived = analysis
+        .relations
+        .iter()
+        .find(|relation| relation.name == "d")
+        .unwrap();
+    assert_eq!(derived.kind, SourceKind::DerivedTable);
+    assert_eq!(derived.catalog, None);
+    assert_eq!(derived.schema, None);
+    assert_eq!(derived.table, None);
+
+    assert_eq!(analysis.base_tables.len(), 1);
+    let base_table = &analysis.base_tables[0];
+    assert_eq!(base_table.name, "mycatalog.myschema.orders");
+    assert_eq!(base_table.catalog.as_deref(), Some("mycatalog"));
+    assert_eq!(base_table.schema.as_deref(), Some("myschema"));
+    assert_eq!(base_table.table.as_deref(), Some("orders"));
 }
 
 #[test]

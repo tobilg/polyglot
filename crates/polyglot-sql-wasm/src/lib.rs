@@ -6,11 +6,11 @@
 pub mod builders;
 
 use polyglot_sql::{
-    analyze_query as core_analyze_query, ast_transforms,
+    analyze_query as core_analyze_query, ast_json as ast_json_compat, ast_transforms,
     dialects::{Dialect, DialectType, TranspileOptions},
     diff::{diff_with_config, DiffConfig, Edit},
-    expressions::{DataType, Expression},
-    format as core_format, format_with_options as core_format_with_options,
+    expressions::{BooleanLiteral, DataType, Expression},
+    format as core_format, format_with_options as core_format_with_options, get_all_tables,
     lineage::{self, LineageNode},
     mapping_schema_from_validation_schema,
     openlineage::{
@@ -531,7 +531,21 @@ pub fn generate_value(ast: JsValue, dialect: &str) -> JsValue {
         }
     };
 
-    let expressions: Vec<Expression> = match serde_wasm_bindgen::from_value(ast) {
+    let ast_value: serde_json::Value = match serde_wasm_bindgen::from_value(ast) {
+        Ok(value) => value,
+        Err(e) => {
+            return serialize_result_value(&TranspileResult {
+                success: false,
+                sql: None,
+                error: Some(format!("Invalid AST value: {}", e)),
+                error_line: None,
+                error_column: None,
+                error_start: None,
+                error_end: None,
+            });
+        }
+    };
+    let expressions: Vec<Expression> = match ast_json_compat::expressions_from_value(ast_value) {
         Ok(e) => e,
         Err(e) => {
             return serialize_result_value(&TranspileResult {
@@ -614,7 +628,7 @@ fn generate_internal(ast_json: &str, dialect: &str) -> TranspileResult {
         }
     };
 
-    let expressions: Vec<Expression> = match serde_json::from_str(ast_json) {
+    let expressions: Vec<Expression> = match ast_json_compat::expressions_from_str(ast_json) {
         Ok(e) => e,
         Err(e) => {
             return TranspileResult {
@@ -2018,7 +2032,7 @@ fn serialize_error_json(e: impl std::fmt::Display) -> String {
 #[wasm_bindgen]
 pub fn ast_get_column_names(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let names = ast_transforms::get_column_names(&expr);
             StringArrayResult {
@@ -2040,7 +2054,7 @@ pub fn ast_get_column_names(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_get_table_names(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let names = ast_transforms::get_table_names(&expr);
             StringArrayResult {
@@ -2058,11 +2072,40 @@ pub fn ast_get_table_names(ast_json: &str) -> String {
     serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
 }
 
+/// Get all table nodes from an AST (as JSON string).
+#[wasm_bindgen]
+pub fn ast_get_tables(ast_json: &str) -> String {
+    set_panic_hook();
+    let result = match ast_json_compat::expression_from_str(ast_json) {
+        Ok(expr) => {
+            let tables = get_all_tables(&expr);
+            match serde_json::to_string(&tables) {
+                Ok(json) => AstResult {
+                    success: true,
+                    ast: Some(json),
+                    error: None,
+                },
+                Err(e) => AstResult {
+                    success: false,
+                    ast: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        Err(e) => AstResult {
+            success: false,
+            ast: None,
+            error: Some(e.to_string()),
+        },
+    };
+    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+}
+
 /// Get all aggregate functions from an AST (as JSON string).
 #[wasm_bindgen]
 pub fn ast_get_aggregate_functions(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let exprs = ast_transforms::get_aggregate_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
@@ -2092,7 +2135,7 @@ pub fn ast_get_aggregate_functions(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_get_window_functions(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let exprs = ast_transforms::get_window_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
@@ -2122,7 +2165,7 @@ pub fn ast_get_window_functions(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_get_functions(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let exprs = ast_transforms::get_functions(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
@@ -2152,7 +2195,7 @@ pub fn ast_get_functions(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_get_subqueries(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let exprs = ast_transforms::get_subqueries(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
@@ -2182,7 +2225,7 @@ pub fn ast_get_subqueries(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_get_literals(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let exprs = ast_transforms::get_literals(&expr);
             let cloned: Vec<Expression> = exprs.into_iter().cloned().collect();
@@ -2212,7 +2255,7 @@ pub fn ast_get_literals(ast_json: &str) -> String {
 #[wasm_bindgen]
 pub fn ast_node_count(ast_json: &str) -> String {
     set_panic_hook();
-    let result = match serde_json::from_str::<Expression>(ast_json) {
+    let result = match ast_json_compat::expression_from_str(ast_json) {
         Ok(expr) => {
             let count = ast_transforms::node_count(&expr);
             ScalarResult {
@@ -2239,7 +2282,7 @@ pub fn ast_node_count(ast_json: &str) -> String {
 pub fn ast_rename_columns(ast_json: &str, mapping_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let mapping: HashMap<String, String> =
             serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::rename_columns(expr, &mapping);
@@ -2263,7 +2306,7 @@ pub fn ast_rename_columns(ast_json: &str, mapping_json: &str) -> String {
 pub fn ast_rename_tables(ast_json: &str, mapping_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let mapping: HashMap<String, String> =
             serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
         let transformed = ast_transforms::rename_tables(expr, &mapping);
@@ -2291,7 +2334,7 @@ pub fn ast_rename_tables_with_options(
 ) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let mapping: HashMap<String, String> =
             serde_json::from_str(mapping_json).map_err(|e| e.to_string())?;
         let options: WasmRenameTablesOptions =
@@ -2318,7 +2361,7 @@ pub fn ast_rename_tables_with_options(
 pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let transformed = ast_transforms::qualify_columns(expr, table_name);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
@@ -2340,7 +2383,7 @@ pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
 pub fn ast_qualify_tables(ast_json: &str, options_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let options: WasmQualifyTablesOptions =
             serde_json::from_str(options_json).map_err(|e| e.to_string())?;
         let transformed = polyglot_sql::qualify_tables(expr, &options.into_core()?);
@@ -2364,9 +2407,9 @@ pub fn ast_qualify_tables(ast_json: &str, options_json: &str) -> String {
 pub fn ast_add_where(ast_json: &str, condition_json: &str, use_or: bool) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
-        let condition: Expression =
-            serde_json::from_str(condition_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
+        let condition = ast_json_compat::expression_from_str(condition_json)
+            .unwrap_or_else(|_| Expression::Boolean(BooleanLiteral { value: false }));
         let transformed = ast_transforms::add_where(expr, condition, use_or);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
@@ -2388,7 +2431,7 @@ pub fn ast_add_where(ast_json: &str, condition_json: &str, use_or: bool) -> Stri
 pub fn ast_remove_where(ast_json: &str) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let transformed = ast_transforms::remove_where(expr);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
@@ -2410,8 +2453,53 @@ pub fn ast_remove_where(ast_json: &str) -> String {
 pub fn ast_set_limit(ast_json: &str, limit: u32) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let transformed = ast_transforms::set_limit(expr, limit as usize);
+        let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
+    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+}
+
+/// Set the OFFSET on a SELECT or set-operation AST.
+#[wasm_bindgen]
+pub fn ast_set_offset(ast_json: &str, offset: u32) -> String {
+    set_panic_hook();
+    let result = (|| -> Result<AstResult, String> {
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
+        let transformed = ast_transforms::set_offset(expr, offset as usize);
+        let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
+        Ok(AstResult {
+            success: true,
+            ast: Some(json),
+            error: None,
+        })
+    })()
+    .unwrap_or_else(|e| AstResult {
+        success: false,
+        ast: None,
+        error: Some(e),
+    });
+    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+}
+
+/// Set the ORDER BY clause on a SELECT or set-operation AST.
+#[wasm_bindgen]
+pub fn ast_set_order_by(ast_json: &str, order_by_json: &str) -> String {
+    set_panic_hook();
+    let result = (|| -> Result<AstResult, String> {
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
+        let order_by = ast_json_compat::expressions_from_str(order_by_json)?;
+        let transformed = ast_transforms::set_order_by(expr, order_by);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
             success: true,
@@ -2432,7 +2520,7 @@ pub fn ast_set_limit(ast_json: &str, limit: u32) -> String {
 pub fn ast_set_distinct(ast_json: &str, distinct: bool) -> String {
     set_panic_hook();
     let result = (|| -> Result<AstResult, String> {
-        let expr: Expression = serde_json::from_str(ast_json).map_err(|e| e.to_string())?;
+        let expr = ast_json_compat::expression_from_str(ast_json)?;
         let transformed = ast_transforms::set_distinct(expr, distinct);
         let json = serde_json::to_string(&transformed).map_err(|e| e.to_string())?;
         Ok(AstResult {
@@ -2871,6 +2959,23 @@ mod tests {
         // Valid JSON but not a valid AST structure
         let result = generate("{\"foo\": \"bar\"}", "generic");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_generate_accepts_legacy_empty_object_as_null() {
+        let result = generate("[{}]", "generic");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+        assert_eq!(parsed["sql"][0].as_str(), Some("NULL"));
+    }
+
+    #[test]
+    fn test_generate_accepts_is_null_array_shorthand() {
+        let ast_json = r#"[{"is_null":[{"column":{"name":{"name":"deleted_at","quoted":false,"trailing_comments":[],"span":null},"table":null,"join_mark":false,"trailing_comments":[],"span":null,"inferred_type":null}}]}]"#;
+        let result = generate(ast_json, "generic");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+        assert_eq!(parsed["sql"][0].as_str(), Some("deleted_at IS NULL"));
     }
 
     // ============================================================================
@@ -3337,6 +3442,9 @@ mod tests {
         assert_eq!(parsed["analysis"]["shape"], "select");
         assert_eq!(parsed["analysis"]["baseTables"][0]["name"], "orders");
         assert_eq!(parsed["analysis"]["baseTables"][0]["alias"], "o");
+        assert!(parsed["analysis"]["baseTables"][0]["catalog"].is_null());
+        assert!(parsed["analysis"]["baseTables"][0]["schema"].is_null());
+        assert_eq!(parsed["analysis"]["baseTables"][0]["table"], "orders");
         assert_eq!(
             parsed["analysis"]["projections"][0]["upstream"][0]["table"],
             "orders"
@@ -3550,6 +3658,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ast_get_tables_includes_join_operands() {
+        let ast =
+            parse_first_ast("SELECT t.id FROM ticket AS t JOIN team AS tm ON t.team_id = tm.id");
+        let result = ast_get_tables(&ast);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+        let tables: Vec<Expression> =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        assert_eq!(tables.len(), 2);
+    }
+
+    #[test]
     fn test_ast_get_aggregate_functions() {
         let ast = parse_first_ast("SELECT COUNT(*), SUM(x) FROM t");
         let result = ast_get_aggregate_functions(&ast);
@@ -3698,6 +3818,43 @@ mod tests {
     }
 
     #[test]
+    fn test_ast_add_where_repairs_null_in_condition() {
+        let ast = parse_first_ast("SELECT a FROM t");
+        let condition = r#"{"eq":{"left":{"column":{"name":{"name":"x","quoted":false,"trailing_comments":[],"span":null},"table":null,"join_mark":false,"trailing_comments":[],"span":null,"inferred_type":null}},"right":{},"left_comments":[],"operator_comments":[],"trailing_comments":[],"inferred_type":null}}"#;
+        let result = ast_add_where(&ast, condition, false);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+
+        let generated = generate(
+            &format!("[{}]", parsed["ast"].as_str().expect("ast result")),
+            "generic",
+        );
+        let generated: serde_json::Value = serde_json::from_str(&generated).unwrap();
+        assert_eq!(
+            generated["sql"][0].as_str(),
+            Some("SELECT a FROM t WHERE x = NULL")
+        );
+    }
+
+    #[test]
+    fn test_ast_add_where_fails_closed_for_unrepairable_condition() {
+        let ast = parse_first_ast("SELECT a FROM t");
+        let result = ast_add_where(&ast, r#"{"not_a_real_expression":{}}"#, false);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+
+        let generated = generate(
+            &format!("[{}]", parsed["ast"].as_str().expect("ast result")),
+            "generic",
+        );
+        let generated: serde_json::Value = serde_json::from_str(&generated).unwrap();
+        assert_eq!(
+            generated["sql"][0].as_str(),
+            Some("SELECT a FROM t WHERE FALSE")
+        );
+    }
+
+    #[test]
     fn test_ast_remove_where() {
         let ast = parse_first_ast("SELECT a FROM t WHERE x = 1");
         let result = ast_remove_where(&ast);
@@ -3711,6 +3868,35 @@ mod tests {
         let result = ast_set_limit(&ast, 10);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_ast_set_limit_offset_and_order_by_on_set_operation() {
+        let ast = parse_first_ast("SELECT a FROM t UNION ALL SELECT a FROM u");
+        let result = ast_set_limit(&ast, 10);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+        let limited = parsed["ast"].as_str().unwrap().to_string();
+
+        let result = ast_set_offset(&limited, 5);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+        let offset = parsed["ast"].as_str().unwrap().to_string();
+
+        let order_by = serde_json::to_string(&vec![Expression::column("a")]).unwrap();
+        let result = ast_set_order_by(&offset, &order_by);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["success"].as_bool().unwrap(), "Result: {}", result);
+
+        let transformed: Expression =
+            serde_json::from_str(parsed["ast"].as_str().unwrap()).unwrap();
+        let sql = Dialect::get(DialectType::Generic)
+            .generate(&transformed)
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT a FROM t UNION ALL SELECT a FROM u ORDER BY a LIMIT 10 OFFSET 5"
+        );
     }
 
     #[test]

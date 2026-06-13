@@ -286,6 +286,39 @@ func (c *Client) QualifyTables(ast json.RawMessage, options QualifyTablesOptions
 	})
 }
 
+func (c *Client) SetLimit(ast json.RawMessage, limit int) (json.RawMessage, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("polyglot: limit must be non-negative")
+	}
+	if err := rejectNUL(string(ast)); err != nil {
+		return nil, err
+	}
+	return c.callRaw("set_limit", func(lib *ffi.Library) ffi.Result {
+		return lib.SetLimit(string(ast), uint64(limit))
+	})
+}
+
+func (c *Client) SetOffset(ast json.RawMessage, offset int) (json.RawMessage, error) {
+	if offset < 0 {
+		return nil, fmt.Errorf("polyglot: offset must be non-negative")
+	}
+	if err := rejectNUL(string(ast)); err != nil {
+		return nil, err
+	}
+	return c.callRaw("set_offset", func(lib *ffi.Library) ffi.Result {
+		return lib.SetOffset(string(ast), uint64(offset))
+	})
+}
+
+func (c *Client) SetOrderBy(ast json.RawMessage, orderBy json.RawMessage) (json.RawMessage, error) {
+	if err := rejectNUL(string(ast), string(orderBy)); err != nil {
+		return nil, err
+	}
+	return c.callRaw("set_order_by", func(lib *ffi.Library) ffi.Result {
+		return lib.SetOrderBy(string(ast), string(orderBy))
+	})
+}
+
 func (c *Client) RenameTables(ast json.RawMessage, mapping map[string]string, options RenameTablesOptions) (json.RawMessage, error) {
 	mappingJSON, err := marshalOptions(mapping)
 	if err != nil {

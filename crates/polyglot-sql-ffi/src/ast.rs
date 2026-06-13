@@ -1,6 +1,6 @@
 use crate::helpers::{err_result, ok_json_result, panic_result, required_arg};
 use crate::types::{PolyglotResult, STATUS_INVALID_ARGUMENT, STATUS_SERIALIZATION_ERROR};
-use polyglot_sql::{Expression, QualifyTablesOptions, RenameTablesOptions};
+use polyglot_sql::{ast_json, Expression, QualifyTablesOptions, RenameTablesOptions};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::os::raw::c_char;
@@ -117,7 +117,7 @@ fn qualify_tables_impl(ast_json: *const c_char, options_json: *const c_char) -> 
         Err(result) => return result,
     };
 
-    let expressions: Vec<Expression> = match serde_json::from_str(&ast_json) {
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
         Ok(expressions) => expressions,
         Err(error) => {
             return err_result(
@@ -144,6 +144,124 @@ fn qualify_tables_impl(ast_json: *const c_char, options_json: *const c_char) -> 
         .map(|expression| polyglot_sql::qualify_tables(expression, &options))
         .collect();
     ok_json_result(&qualified)
+}
+
+/// Set LIMIT on AST JSON.
+///
+/// `ast_json` must encode `Vec<Expression>`, matching `polyglot_parse` output.
+#[no_mangle]
+pub extern "C" fn polyglot_set_limit(ast_json: *const c_char, limit: u64) -> PolyglotResult {
+    match std::panic::catch_unwind(|| set_limit_impl(ast_json, limit)) {
+        Ok(result) => result,
+        Err(panic) => panic_result(panic),
+    }
+}
+
+fn set_limit_impl(ast_json: *const c_char, limit: u64) -> PolyglotResult {
+    let ast_json = match unsafe { required_arg(ast_json, "ast_json") } {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
+        Ok(expressions) => expressions,
+        Err(error) => {
+            return err_result(
+                STATUS_SERIALIZATION_ERROR,
+                format!("Invalid AST JSON: {error}"),
+            )
+        }
+    };
+
+    let transformed: Vec<Expression> = expressions
+        .into_iter()
+        .map(|expression| polyglot_sql::set_limit(expression, limit as usize))
+        .collect();
+    ok_json_result(&transformed)
+}
+
+/// Set OFFSET on AST JSON.
+///
+/// `ast_json` must encode `Vec<Expression>`, matching `polyglot_parse` output.
+#[no_mangle]
+pub extern "C" fn polyglot_set_offset(ast_json: *const c_char, offset: u64) -> PolyglotResult {
+    match std::panic::catch_unwind(|| set_offset_impl(ast_json, offset)) {
+        Ok(result) => result,
+        Err(panic) => panic_result(panic),
+    }
+}
+
+fn set_offset_impl(ast_json: *const c_char, offset: u64) -> PolyglotResult {
+    let ast_json = match unsafe { required_arg(ast_json, "ast_json") } {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
+        Ok(expressions) => expressions,
+        Err(error) => {
+            return err_result(
+                STATUS_SERIALIZATION_ERROR,
+                format!("Invalid AST JSON: {error}"),
+            )
+        }
+    };
+
+    let transformed: Vec<Expression> = expressions
+        .into_iter()
+        .map(|expression| polyglot_sql::set_offset(expression, offset as usize))
+        .collect();
+    ok_json_result(&transformed)
+}
+
+/// Set ORDER BY on AST JSON.
+///
+/// `ast_json` and `order_by_json` must encode `Vec<Expression>`.
+#[no_mangle]
+pub extern "C" fn polyglot_set_order_by(
+    ast_json: *const c_char,
+    order_by_json: *const c_char,
+) -> PolyglotResult {
+    match std::panic::catch_unwind(|| set_order_by_impl(ast_json, order_by_json)) {
+        Ok(result) => result,
+        Err(panic) => panic_result(panic),
+    }
+}
+
+fn set_order_by_impl(ast_json: *const c_char, order_by_json: *const c_char) -> PolyglotResult {
+    let ast_json = match unsafe { required_arg(ast_json, "ast_json") } {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let order_by_json = match unsafe { required_arg(order_by_json, "order_by_json") } {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
+        Ok(expressions) => expressions,
+        Err(error) => {
+            return err_result(
+                STATUS_SERIALIZATION_ERROR,
+                format!("Invalid AST JSON: {error}"),
+            )
+        }
+    };
+    let order_by: Vec<Expression> = match ast_json::expressions_from_str(&order_by_json) {
+        Ok(expressions) => expressions,
+        Err(error) => {
+            return err_result(
+                STATUS_SERIALIZATION_ERROR,
+                format!("Invalid order_by JSON: {error}"),
+            )
+        }
+    };
+
+    let transformed: Vec<Expression> = expressions
+        .into_iter()
+        .map(|expression| polyglot_sql::set_order_by(expression, order_by.clone()))
+        .collect();
+    ok_json_result(&transformed)
 }
 
 /// Rename tables in AST JSON with options.
@@ -181,7 +299,7 @@ fn rename_tables_with_options_impl(
         Err(result) => return result,
     };
 
-    let expressions: Vec<Expression> = match serde_json::from_str(&ast_json) {
+    let expressions: Vec<Expression> = match ast_json::expressions_from_str(&ast_json) {
         Ok(expressions) => expressions,
         Err(error) => {
             return err_result(
