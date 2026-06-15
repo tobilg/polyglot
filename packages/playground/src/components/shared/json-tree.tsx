@@ -156,7 +156,7 @@ interface JsonTreeProps {
 export function JsonTree({ data, defaultExpanded = 2, className }: JsonTreeProps) {
   return (
     <div className={cn("rounded-md border border-code-border bg-code-bg flex flex-col", className)}>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 h-full">
         <div className="p-3 text-xs font-mono text-code-text">
           <JsonNode value={data} depth={0} defaultExpanded={defaultExpanded} />
         </div>
