@@ -2,7 +2,8 @@
 
 use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::{
-    get_all_tables, parse, transpile, validate, DialectType, Expression, ExpressionWalk, Parser,
+    get_all_tables, parse, transpile, validate, Dialect, DialectType, Expression, ExpressionWalk,
+    Parser, TokenType,
 };
 
 fn pg_to_tsql(sql: &str) -> String {
@@ -31,6 +32,45 @@ END TRY
 BEGIN CATCH
     INSERT INTO error_log (msg) VALUES (ERROR_MESSAGE());
 END CATCH"#;
+
+// ---------------------------------------------------------------------------
+// T-SQL hex literals
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsql_hex_literals_tokenize_as_hex_strings() {
+    let dialect = Dialect::get(DialectType::TSQL);
+    let tokens = dialect
+        .tokenize("SELECT * FROM Employees WHERE EmployeeId = 0x1")
+        .expect("T-SQL hex literal should tokenize");
+
+    let hex = tokens
+        .iter()
+        .find(|token| token.token_type == TokenType::HexString)
+        .expect("expected a HexString token for 0x1");
+
+    assert_eq!(hex.text, "1");
+}
+
+#[test]
+fn tsql_hex_literals_parse_and_roundtrip() {
+    for sql in [
+        "SELECT * FROM Employees WHERE EmployeeId = 0x1",
+        "INSERT INTO t (bin) VALUES (0xFF)",
+        "SELECT 0xCAFE + 1",
+    ] {
+        let ast = parse(sql, DialectType::TSQL)
+            .unwrap_or_else(|error| panic!("T-SQL hex literal should parse for {sql:?}: {error}"));
+        assert_eq!(ast.len(), 1);
+        assert_eq!(generate_tsql(&ast[0]), sql);
+
+        let roundtrip =
+            transpile(sql, DialectType::TSQL, DialectType::TSQL).unwrap_or_else(|error| {
+                panic!("T-SQL hex literal should transpile for {sql:?}: {error}")
+            });
+        assert_eq!(roundtrip, vec![sql.to_string()]);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // T-SQL SET options

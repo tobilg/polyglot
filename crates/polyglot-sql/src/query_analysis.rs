@@ -776,6 +776,23 @@ fn transform_function_fact(
     scope: &Scope,
     dialect: DialectType,
 ) -> Option<TransformFunctionFact> {
+    let mut matches = expression
+        .find_all(|candidate| transform_function_fact_for_node(candidate, scope, dialect).is_some())
+        .into_iter();
+
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+
+    transform_function_fact_for_node(first, scope, dialect)
+}
+
+fn transform_function_fact_for_node(
+    expression: &Expression,
+    scope: &Scope,
+    dialect: DialectType,
+) -> Option<TransformFunctionFact> {
     match expression {
         Expression::Function(function) => Some(transform_function_from_args(
             &function.name,
@@ -789,9 +806,6 @@ fn transform_function_fact(
             scope,
             dialect,
         )),
-        Expression::WindowFunction(function) => {
-            transform_function_fact(&function.this, scope, dialect)
-        }
         Expression::DateTrunc(function) => Some(transform_function_from_parts(
             "DATE_TRUNC",
             vec![datetime_field_name(&function.unit)],

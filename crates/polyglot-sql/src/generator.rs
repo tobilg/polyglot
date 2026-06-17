@@ -14733,8 +14733,13 @@ impl Generator {
                 }
             }
             Literal::HexString(h) => {
-                // Most dialects use lowercase x'...' for hex literals; Spark/Databricks/Teradata use uppercase X'...'
+                // Most dialects use lowercase x'...' for hex literals.
                 match self.config.dialect {
+                    Some(DialectType::TSQL) | Some(DialectType::Fabric) => {
+                        self.write("0x");
+                        self.write(h);
+                        return Ok(());
+                    }
                     Some(DialectType::Spark)
                     | Some(DialectType::Databricks)
                     | Some(DialectType::Teradata) => self.write("X'"),

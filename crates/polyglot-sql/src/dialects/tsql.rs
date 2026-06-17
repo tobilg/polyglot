@@ -36,6 +36,8 @@ impl DialectImpl for TSQLDialect {
         config.identifiers.insert('[', ']');
         // SQL Server also supports double quotes (when QUOTED_IDENTIFIER is ON)
         config.identifiers.insert('"', '"');
+        // SQL Server uses 0x-prefixed binary/varbinary hex literals.
+        config.hex_number_strings = true;
         config
     }
 
