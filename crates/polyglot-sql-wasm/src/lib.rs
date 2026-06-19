@@ -2541,6 +2541,19 @@ pub fn ast_set_distinct(ast_json: &str, distinct: bool) -> String {
 mod tests {
     use super::*;
 
+    fn collect_lineage_names(node: &serde_json::Value) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Some(name) = node["name"].as_str() {
+            names.push(name.to_string());
+        }
+        if let Some(children) = node["downstream"].as_array() {
+            for child in children {
+                names.extend(collect_lineage_names(child));
+            }
+        }
+        names
+    }
+
     // ============================================================================
     // Basic Success Tests
     // ============================================================================
@@ -3257,6 +3270,24 @@ mod tests {
         let result = lineage_sql("SELECT a FROM t", "a", "generic", false);
         assert!(result.contains("\"success\":true"), "Result: {}", result);
         assert!(result.contains("\"name\":\"a\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_lineage_schema_less_cte_star_passthrough() {
+        let result = lineage_sql(
+            "WITH c AS (SELECT * FROM t) SELECT SUM(c.x) AS s FROM c GROUP BY 1",
+            "s",
+            "generic",
+            false,
+        );
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        let result: serde_json::Value = serde_json::from_str(&result).expect("valid wrapper json");
+        let lineage = result["lineage"].as_object().expect("lineage object");
+        let names = collect_lineage_names(&serde_json::Value::Object(lineage.clone()));
+        assert!(
+            names.iter().any(|name| name == "t.x"),
+            "expected t.x in lineage names, got {names:?}"
+        );
     }
 
     #[test]

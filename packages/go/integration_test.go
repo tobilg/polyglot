@@ -80,6 +80,14 @@ func assertValidJSON(t *testing.T, name string, payload json.RawMessage) {
 	}
 }
 
+func collectLineageNames(node LineageNode) []string {
+	names := []string{node.Name}
+	for _, child := range node.Downstream {
+		names = append(names, collectLineageNames(child)...)
+	}
+	return names
+}
+
 func TestIntegrationExplicitOpenAndLifecycle(t *testing.T) {
 	path := integrationLibraryPath(t)
 
@@ -339,6 +347,26 @@ func TestIntegrationLineageAndOpenLineage(t *testing.T) {
 	}
 	if node.Name == "" {
 		t.Fatalf("unexpected lineage node: %#v", node)
+	}
+
+	cteNode, err := client.Lineage(
+		"s",
+		"WITH c AS (SELECT * FROM t) SELECT SUM(c.x) AS s FROM c GROUP BY 1",
+		"generic",
+	)
+	if err != nil {
+		t.Fatalf("CTE star Lineage: %v", err)
+	}
+	cteNames := collectLineageNames(cteNode)
+	hasBaseColumn := false
+	for _, name := range cteNames {
+		if name == "t.x" {
+			hasBaseColumn = true
+			break
+		}
+	}
+	if !hasBaseColumn {
+		t.Fatalf("expected t.x in CTE star lineage, got %#v", cteNames)
 	}
 
 	bigQueryNode, err := client.Lineage(

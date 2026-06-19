@@ -3,11 +3,26 @@ import pytest
 import polyglot_sql
 
 
+def collect_names(node: dict) -> list[str]:
+    names = [node.get("name", "")]
+    for child in node.get("downstream", []):
+        names.extend(collect_names(child))
+    return names
+
+
 def test_lineage_returns_dict():
     sql = "SELECT o.total FROM orders o JOIN users u ON o.user_id = u.id"
     result = polyglot_sql.lineage("total", sql, dialect="postgres")
     assert isinstance(result, dict)
     assert "name" in result
+
+
+def test_lineage_schema_less_cte_star_passthrough():
+    sql = "WITH c AS (SELECT * FROM t) SELECT SUM(c.x) AS s FROM c GROUP BY 1"
+    result = polyglot_sql.lineage("s", sql, dialect="generic")
+
+    names = collect_names(result)
+    assert "t.x" in names
 
 
 def test_source_tables_returns_orders():
@@ -59,12 +74,6 @@ def test_lineage_with_schema_resolves_ambiguous_column():
     }
     sql = "SELECT id FROM users u JOIN orders o ON u.id = o.user_id"
     result = polyglot_sql.lineage_with_schema("id", sql, schema, dialect="generic")
-
-    def collect_names(node: dict) -> list[str]:
-        names = [node.get("name", "")]
-        for child in node.get("downstream", []):
-            names.extend(collect_names(child))
-        return names
 
     names = collect_names(result)
     assert any(name == "u.id" for name in names), f"expected u.id in lineage tree, got: {names}"

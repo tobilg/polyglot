@@ -45,6 +45,17 @@ fn consume_validation(
     (status, valid, errors_json, error)
 }
 
+fn collect_lineage_names(node: &Value, names: &mut Vec<String>) {
+    if let Some(name) = node["name"].as_str() {
+        names.push(name.to_string());
+    }
+    if let Some(children) = node["downstream"].as_array() {
+        for child in children {
+            collect_lineage_names(child, names);
+        }
+    }
+}
+
 #[test]
 fn test_transpile_happy_path() {
     let sql = c("SELECT IFNULL(a, b) FROM t");
@@ -694,6 +705,27 @@ fn test_lineage_happy_path() {
     assert_eq!(status, 0, "error={error:?}");
     let node: Value = serde_json::from_str(&data.expect("missing lineage")).expect("invalid json");
     assert!(node.is_object());
+}
+
+#[test]
+fn test_lineage_schema_less_cte_star_passthrough() {
+    let column = c("s");
+    let sql = c("WITH c AS (SELECT * FROM t) SELECT SUM(c.x) AS s FROM c GROUP BY 1");
+    let dialect = c("generic");
+    let (status, data, error) = consume_result(polyglot_lineage(
+        column.as_ptr(),
+        sql.as_ptr(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let node: Value = serde_json::from_str(&data.expect("missing lineage")).expect("invalid json");
+
+    let mut names = Vec::new();
+    collect_lineage_names(&node, &mut names);
+    assert!(
+        names.iter().any(|name| name == "t.x"),
+        "expected t.x in lineage names, got {names:?}"
+    );
 }
 
 #[test]

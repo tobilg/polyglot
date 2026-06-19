@@ -176,6 +176,24 @@ describe('Polyglot SDK', () => {
   });
 
   describe('lineage helpers', () => {
+    const collectNames = (node: { name?: string; downstream?: unknown[] }): string[] => [
+      node.name ?? '',
+      ...(node.downstream ?? []).flatMap((child) =>
+        collectNames(child as { name?: string; downstream?: unknown[] }),
+      ),
+    ];
+
+    it('should trace schema-less CTE star passthrough to the base table column', () => {
+      const result = lineage(
+        's',
+        'WITH c AS (SELECT * FROM t) SELECT SUM(c.x) AS s FROM c GROUP BY 1',
+        Dialect.Generic,
+      );
+
+      expect(result.success).toBe(true);
+      expect(collectNames(result.lineage!)).toContain('t.x');
+    });
+
     it('should mark BigQuery UNNEST aliases as virtual lineage sources', () => {
       const result = lineage(
         'week_start',

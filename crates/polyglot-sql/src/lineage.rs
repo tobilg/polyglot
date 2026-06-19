@@ -541,6 +541,13 @@ fn get_expression_output_name(expr: &Expression) -> Option<String> {
 /// Source info extracted from a SELECT's FROM/JOIN clauses in a single pass.
 struct SourceInfo {
     alias: String,
+    /// Whether this source was introduced through a quoted identifier.
+    ///
+    /// The schema-less star passthrough heuristic must stay conservative for
+    /// quoted sources because unresolved quoted table names can be distinct
+    /// from similarly named CTEs that older scope paths still compare
+    /// case-insensitively.
+    quoted: bool,
     /// Normalized name for CTE lookup: unquoted → lowercased, quoted → as-is.
     normalized: String,
     /// Fully-qualified table name for schema lookup (e.g., "db.schema.table").
@@ -556,6 +563,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
         fn virtual_source_info(alias: &Identifier) -> SourceInfo {
             SourceInfo {
                 alias: alias.name.clone(),
+                quoted: alias.quoted,
                 normalized: normalize_cte_name(alias),
                 fq_name: alias.name.clone(),
             }
@@ -564,6 +572,7 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
         fn named_virtual_source_info(alias: &str) -> SourceInfo {
             SourceInfo {
                 alias: alias.to_string(),
+                quoted: false,
                 normalized: alias.to_lowercase(),
                 fq_name: alias.to_string(),
             }
@@ -588,16 +597,19 @@ fn get_select_sources(select: &Select) -> Vec<SourceInfo> {
                 let fq_name = parts.join(".");
                 Some(SourceInfo {
                     alias,
+                    quoted: t.name.quoted,
                     normalized,
                     fq_name,
                 })
             }
             Expression::Subquery(s) => {
-                let alias = s.alias.as_ref()?.name.clone();
+                let alias_identifier = s.alias.as_ref()?;
+                let alias = alias_identifier.name.clone();
                 let normalized = alias.to_lowercase();
                 let fq_name = alias.clone();
                 Some(SourceInfo {
                     alias,
+                    quoted: alias_identifier.quoted,
                     normalized,
                     fq_name,
                 })
@@ -1388,6 +1400,9 @@ fn find_select_expr(
                         }
                     }
                 }
+                if let Some(expr) = synthesize_star_passthrough_expr(select, name) {
+                    return Ok(expr);
+                }
                 Err(crate::error::Error::parse(
                     format!("Cannot find column '{}' in query", name),
                     0,
@@ -1408,6 +1423,103 @@ fn find_select_expr(
             0,
             0,
         ))
+    }
+}
+
+fn synthesize_star_passthrough_expr(select: &Select, name: &str) -> Option<Expression> {
+    let sources = get_select_sources(select);
+    if sources.is_empty() {
+        return None;
+    }
+
+    let mut candidate_aliases = Vec::new();
+    let mut seen = HashSet::new();
+
+    for expr in &select.expressions {
+        let aliases = match star_passthrough_source_aliases(expr, &sources) {
+            StarPassthroughSources::None => continue,
+            StarPassthroughSources::Ambiguous => return None,
+            StarPassthroughSources::Aliases(aliases) => aliases,
+        };
+
+        for alias in aliases {
+            if seen.insert(alias.clone()) {
+                candidate_aliases.push(alias);
+            }
+        }
+    }
+
+    match candidate_aliases.as_slice() {
+        [alias] => {
+            let table = Identifier::new(alias.clone());
+            Some(make_column_expr(name, Some(&table)))
+        }
+        _ => None,
+    }
+}
+
+enum StarPassthroughSources {
+    None,
+    Ambiguous,
+    Aliases(Vec<String>),
+}
+
+fn star_passthrough_source_aliases(
+    expr: &Expression,
+    sources: &[SourceInfo],
+) -> StarPassthroughSources {
+    match expr {
+        Expression::Star(star) => star_source_aliases(star.table.as_ref(), sources),
+        Expression::Column(column) if column.name.name == "*" => {
+            star_source_aliases(column.table.as_ref(), sources)
+        }
+        Expression::Annotated(annotated) => {
+            star_passthrough_source_aliases(&annotated.this, sources)
+        }
+        _ => StarPassthroughSources::None,
+    }
+}
+
+fn star_source_aliases(
+    qualifier: Option<&Identifier>,
+    sources: &[SourceInfo],
+) -> StarPassthroughSources {
+    if let Some(qualifier) = qualifier {
+        let mut aliases = Vec::new();
+
+        for source in sources {
+            if source_matches_star_qualifier(source, qualifier) {
+                aliases.push(source.alias.clone());
+            }
+        }
+
+        return match aliases.len() {
+            0 => StarPassthroughSources::None,
+            1 => StarPassthroughSources::Aliases(aliases),
+            _ => StarPassthroughSources::Ambiguous,
+        };
+    }
+
+    match sources {
+        // Do not synthesize a source column for unresolved quoted table stars.
+        // This keeps quoted CTE/table case semantics intact while still allowing
+        // the schema-less fallback for common unquoted SELECT * passthroughs.
+        [source] if source.quoted => StarPassthroughSources::None,
+        [source] => StarPassthroughSources::Aliases(vec![source.alias.clone()]),
+        [] => StarPassthroughSources::None,
+        _ => StarPassthroughSources::Ambiguous,
+    }
+}
+
+fn source_matches_star_qualifier(source: &SourceInfo, qualifier: &Identifier) -> bool {
+    if source.normalized == normalize_cte_name(qualifier) {
+        return true;
+    }
+
+    if qualifier.quoted {
+        source.alias == qualifier.name
+    } else {
+        source.alias.eq_ignore_ascii_case(&qualifier.name)
     }
 }
 
@@ -3819,6 +3931,88 @@ SELECT json_data FROM transform_cte
         assert!(
             !node.downstream.is_empty(),
             "Expected downstream nodes tracing through CTE, got none"
+        );
+    }
+
+    #[test]
+    fn test_lineage_schema_less_cte_star_passthrough_resolves_base_column() {
+        let expr = parse("WITH c AS (SELECT * FROM t) SELECT c.x FROM c");
+        let node = lineage("x", &expr, None, false).unwrap();
+
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|name| name == "t.x"),
+            "Expected schema-less CTE star passthrough to reach t.x, got: {:?}",
+            all_names
+        );
+
+        let cte_node = node
+            .walk()
+            .find(|child| child.source_kind == SourceKind::Cte && child.source_name == "c")
+            .expect("expected CTE hop with source_name c");
+        assert_eq!(cte_node.source_kind, SourceKind::Cte);
+        assert_eq!(cte_node.source_name, "c");
+    }
+
+    #[test]
+    fn test_lineage_schema_less_cte_star_passthrough_with_aggregation() {
+        let expr = parse(
+            "WITH c AS (SELECT * FROM t) \
+             SELECT SUM(c.x) AS s FROM c GROUP BY 1",
+        );
+        let node = lineage("s", &expr, None, false).unwrap();
+
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|name| name == "t.x"),
+            "Expected aggregate over CTE star passthrough to reach t.x, got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_schema_less_cte_star_passthrough_with_join_and_alias() {
+        let expr = parse(
+            "WITH a AS (SELECT * FROM t1), b AS (SELECT * FROM t2) \
+             SELECT SUM(b.x) AS s FROM a LEFT JOIN b ON b.id = a.id GROUP BY a.k",
+        );
+        let node = lineage("s", &expr, None, false).unwrap();
+
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|name| name == "t2.x"),
+            "Expected joined CTE star passthrough to reach t2.x, got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_schema_less_chained_cte_star_passthrough() {
+        let expr = parse(
+            "WITH c1 AS (SELECT * FROM t), \
+             c2 AS (SELECT * FROM c1), \
+             c3 AS (SELECT * FROM c2) \
+             SELECT c3.x FROM c3",
+        );
+        let node = lineage("x", &expr, None, false).unwrap();
+
+        let all_names: Vec<_> = node.walk().map(|n| n.name.clone()).collect();
+        assert!(
+            all_names.iter().any(|name| name == "t.x"),
+            "Expected chained CTE star passthrough to reach t.x, got: {:?}",
+            all_names
+        );
+    }
+
+    #[test]
+    fn test_lineage_schema_less_unqualified_star_with_multiple_sources_does_not_guess() {
+        let expr = parse("SELECT * FROM t1 JOIN t2 ON t1.id = t2.id");
+        let result = lineage("x", &expr, None, false);
+
+        assert!(
+            result.is_err(),
+            "Unqualified star over multiple sources should remain ambiguous, got: {:?}",
+            result
         );
     }
 

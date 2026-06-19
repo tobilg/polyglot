@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.6] - 2026-06-19
+
+### Added
+- Regression coverage for schema-less CTE star passthrough lineage across Rust
+  core, C FFI, WASM/TypeScript, Python, and Go.
+
+### Fixed
+- Lineage now traces schema-less CTE `SELECT *` passthroughs when a single
+  unambiguous source exists, so projections and aggregates such as
+  `WITH c AS (SELECT * FROM t) SELECT SUM(c.x)` resolve back to `t.x` instead
+  of stopping at the CTE column.
+- The schema-less star fallback remains conservative for ambiguous multi-source
+  stars and unresolved quoted table references, preserving quoted CTE/table case
+  semantics.
+
 ## [0.5.5] - 2026-06-17
 
 ### Added
