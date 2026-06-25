@@ -3286,6 +3286,29 @@ where
             Expression::ArrayPosition(f)
         }
 
+        // LEAD/LAG (LeadLagFunc): recurse into the value argument, offset, and default so
+        // transforms (e.g. column qualification) reach columns inside `LAG(col) OVER (...)`.
+        Expression::Lag(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            if let Some(offset) = f.offset.take() {
+                f.offset = Some(transform_recursive(offset, transform_fn)?);
+            }
+            if let Some(default) = f.default.take() {
+                f.default = Some(transform_recursive(default, transform_fn)?);
+            }
+            Expression::Lag(f)
+        }
+        Expression::Lead(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            if let Some(offset) = f.offset.take() {
+                f.offset = Some(transform_recursive(offset, transform_fn)?);
+            }
+            if let Some(default) = f.default.take() {
+                f.default = Some(transform_recursive(default, transform_fn)?);
+            }
+            Expression::Lead(f)
+        }
+
         // Pass through leaf nodes unchanged
         other => other,
     };
