@@ -3308,6 +3308,41 @@ where
             }
             Expression::Lead(f)
         }
+        // FIRST_VALUE/LAST_VALUE (ValueFunc): recurse into the value argument and any in-function
+        // ORDER BY so transforms reach their columns.
+        Expression::FirstValue(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            for ord in &mut f.order_by {
+                ord.this = transform_recursive(
+                    std::mem::replace(&mut ord.this, Expression::Null(crate::expressions::Null)),
+                    transform_fn,
+                )?;
+            }
+            Expression::FirstValue(f)
+        }
+        Expression::LastValue(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            for ord in &mut f.order_by {
+                ord.this = transform_recursive(
+                    std::mem::replace(&mut ord.this, Expression::Null(crate::expressions::Null)),
+                    transform_fn,
+                )?;
+            }
+            Expression::LastValue(f)
+        }
+        // NTH_VALUE (NthValueFunc): recurse into the value argument and the offset.
+        Expression::NthValue(mut f) => {
+            f.this = transform_recursive(f.this, transform_fn)?;
+            f.offset = transform_recursive(f.offset, transform_fn)?;
+            Expression::NthValue(f)
+        }
+        // NTILE (NTileFunc): recurse into the bucket-count argument.
+        Expression::NTile(mut f) => {
+            if let Some(n) = f.num_buckets.take() {
+                f.num_buckets = Some(transform_recursive(n, transform_fn)?);
+            }
+            Expression::NTile(f)
+        }
 
         // Pass through leaf nodes unchanged
         other => other,
