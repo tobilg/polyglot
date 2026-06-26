@@ -3436,6 +3436,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_qualify_columns_inside_lag_lead_window() {
+        // Regression: transform_recursive must recurse into LEAD/LAG arguments
+        // (value, offset, default) so qualify_columns reaches columns inside
+        // `LAG(col) OVER (...)` / `LEAD(col, n, fallback) OVER (...)`. Before the
+        // fix the value column was left unqualified.
+        let expr = parse(
+            "SELECT LAG(val) OVER (PARTITION BY grp ORDER BY id) AS prev, \
+             LEAD(val, 1, fallback) OVER (ORDER BY id) AS nxt \
+             FROM t1",
+        );
+
+        let mut schema = MappingSchema::new();
+        schema
+            .add_table(
+                "t1",
+                &[
+                    ("id".to_string(), DataType::BigInt { length: None }),
+                    ("grp".to_string(), DataType::BigInt { length: None }),
+                    ("val".to_string(), DataType::BigInt { length: None }),
+                    ("fallback".to_string(), DataType::BigInt { length: None }),
+                ],
+                None,
+            )
+            .expect("schema setup");
+
+        let result =
+            qualify_columns(expr, &schema, &QualifyColumnsOptions::new()).expect("qualify");
+        let sql = gen(&result);
+
+        assert!(
+            sql.contains("t1.val"),
+            "value column inside LAG/LEAD should be qualified: {sql}"
+        );
+        assert!(
+            sql.contains("t1.fallback"),
+            "default column inside LEAD should be qualified: {sql}"
+        );
+    }
+
     // ======================================================================
     // quote_identifiers tests
     // ======================================================================
