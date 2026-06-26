@@ -433,6 +433,28 @@ func TestIntegrationCoreAPIs(t *testing.T) {
 	if !hasUpstream(analysis.Projections[0].Upstream, "t", "arr") {
 		t.Fatalf("unexpected AnalyzeQuery UNNEST upstream: %#v", analysis.Projections[0].Upstream)
 	}
+
+	partialSchema := ValidationSchema{
+		Tables: []SchemaTable{
+			{Name: "t", Columns: []SchemaColumn{{Name: "amount", Type: "INT"}}},
+		},
+	}
+	analysis, err = client.AnalyzeQuery(
+		"SELECT order_id, amount FROM t",
+		AnalyzeQueryOptions{Dialect: "duckdb", Schema: &partialSchema},
+	)
+	if err != nil {
+		t.Fatalf("AnalyzeQuery partial schema: %v", err)
+	}
+	if len(analysis.Projections) != 2 {
+		t.Fatalf("unexpected AnalyzeQuery partial schema projections: %#v", analysis.Projections)
+	}
+	if !hasUpstream(analysis.Projections[0].Upstream, "t", "order_id") {
+		t.Fatalf("unexpected AnalyzeQuery unknown-column upstream: %#v", analysis.Projections[0].Upstream)
+	}
+	if !hasUpstream(analysis.Projections[1].Upstream, "t", "amount") {
+		t.Fatalf("unexpected AnalyzeQuery known-column upstream: %#v", analysis.Projections[1].Upstream)
+	}
 }
 
 func TestIntegrationLineageAndOpenLineage(t *testing.T) {
@@ -561,6 +583,24 @@ func TestIntegrationLineageAndOpenLineage(t *testing.T) {
 	}
 	if schemaNode.Name == "" {
 		t.Fatalf("unexpected schema lineage node: %#v", schemaNode)
+	}
+
+	partialSchema := ValidationSchema{
+		Tables: []SchemaTable{
+			{Name: "t", Columns: []SchemaColumn{{Name: "amount", Type: "INT"}}},
+		},
+	}
+	partialSchemaNode, err := client.LineageWithSchema(
+		"amount",
+		"SELECT order_id, amount FROM t",
+		partialSchema,
+		"duckdb",
+	)
+	if err != nil {
+		t.Fatalf("LineageWithSchema partial schema: %v", err)
+	}
+	if !containsString(collectLineageNames(partialSchemaNode), "t.amount") {
+		t.Fatalf("unexpected partial-schema lineage node: %#v", partialSchemaNode)
 	}
 
 	options := integrationOpenLineageOptions()

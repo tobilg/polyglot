@@ -20369,6 +20369,7 @@ impl Generator {
 
     fn generate_listagg(&mut self, f: &ListAggFunc) -> Result<()> {
         use crate::dialects::DialectType;
+        let order_inside_args = matches!(self.config.dialect, Some(DialectType::DuckDB));
         self.write_keyword("LISTAGG");
         self.write("(");
         if f.distinct {
@@ -20408,20 +20409,35 @@ impl Generator {
                 }
             }
         }
-        self.write(")");
-        if let Some(ref order_by) = f.order_by {
-            self.write_space();
-            self.write_keyword("WITHIN GROUP");
-            self.write(" (");
-            self.write_keyword("ORDER BY");
-            self.write_space();
-            for (i, ord) in order_by.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
+        if order_inside_args {
+            if let Some(ref order_by) = f.order_by {
+                self.write_space();
+                self.write_keyword("ORDER BY");
+                self.write_space();
+                for (i, ord) in order_by.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_ordered(ord)?;
                 }
-                self.generate_ordered(ord)?;
             }
-            self.write(")");
+        }
+        self.write(")");
+        if !order_inside_args {
+            if let Some(ref order_by) = f.order_by {
+                self.write_space();
+                self.write_keyword("WITHIN GROUP");
+                self.write(" (");
+                self.write_keyword("ORDER BY");
+                self.write_space();
+                for (i, ord) in order_by.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_ordered(ord)?;
+                }
+                self.write(")");
+            }
         }
         if let Some(ref filter) = f.filter {
             self.write_space();

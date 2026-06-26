@@ -35,6 +35,36 @@ def test_analyze_query_accepts_schema_options():
     assert result["projections"][0]["castType"] == "TEXT"
 
 
+def test_analyze_query_tolerates_partial_schema():
+    schema = {
+        "tables": [
+            {
+                "name": "t",
+                "columns": [{"name": "amount", "type": "INT"}],
+            }
+        ]
+    }
+    result = polyglot_sql.analyze_query(
+        "SELECT order_id, amount FROM t",
+        {"schema": schema, "dialect": "duckdb"},
+    )
+
+    assert [projection["name"] for projection in result["projections"]] == [
+        "order_id",
+        "amount",
+    ]
+    assert any(
+        reference["column"] == "order_id"
+        and reference["table"] == "t"
+        and reference["confidence"] == "resolved"
+        for reference in result["projections"][0]["upstream"]
+    )
+    assert any(
+        reference["column"] == "amount" and reference["table"] == "t"
+        for reference in result["projections"][1]["upstream"]
+    )
+
+
 def test_analyze_query_reports_transform_function_arguments():
     schema = {
         "tables": [

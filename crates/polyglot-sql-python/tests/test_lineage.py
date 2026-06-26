@@ -113,6 +113,23 @@ def test_lineage_with_schema_resolves_ambiguous_column():
     assert any(name == "u.id" for name in names), f"expected u.id in lineage tree, got: {names}"
 
 
+def test_lineage_with_schema_tolerates_partial_schema():
+    schema = {
+        "tables": [
+            {
+                "name": "t",
+                "columns": [{"name": "amount", "type": "INT"}],
+            }
+        ]
+    }
+    result = polyglot_sql.lineage_with_schema(
+        "amount", "SELECT order_id, amount FROM t", schema, dialect="duckdb"
+    )
+
+    names = collect_names(result)
+    assert "t.amount" in names
+
+
 def test_bigquery_unnest_lineage_marks_virtual_source():
     sql = """
 SELECT date_val AS week_start

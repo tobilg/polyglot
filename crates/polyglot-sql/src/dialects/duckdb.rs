@@ -1068,6 +1068,11 @@ impl DialectImpl for DuckDBDialect {
             // WithinGroup: PERCENTILE_CONT/DISC WITHIN GROUP (ORDER BY ...) -> QUANTILE_CONT/DISC(col, quantile ORDER BY ...)
             Expression::WithinGroup(wg) => {
                 match &wg.this {
+                    Expression::ListAgg(listagg) => {
+                        let mut listagg = listagg.clone();
+                        listagg.order_by = Some(wg.order_by.clone());
+                        Ok(Expression::ListAgg(listagg))
+                    }
                     Expression::PercentileCont(p) => {
                         let column = wg
                             .order_by
@@ -7496,7 +7501,11 @@ mod tests {
     use crate::dialects::Dialect;
 
     fn transpile_to_duckdb(sql: &str) -> String {
-        let dialect = Dialect::get(DialectType::Generic);
+        transpile_to_duckdb_from(sql, DialectType::Generic)
+    }
+
+    fn transpile_to_duckdb_from(sql: &str, read: DialectType) -> String {
+        let dialect = Dialect::get(read);
         let result = dialect
             .transpile(sql, DialectType::DuckDB)
             .expect("Transpile failed");
@@ -7548,6 +7557,36 @@ mod tests {
             "Expected LISTAGG, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_ordered_string_agg_uses_duckdb_listagg_order_syntax() {
+        let result = transpile_to_duckdb_from(
+            "SELECT string_agg(nm, ',' ORDER BY id) AS v FROM t",
+            DialectType::PostgreSQL,
+        );
+        assert_eq!(result, "SELECT LISTAGG(nm, ',' ORDER BY id) AS v FROM t");
+    }
+
+    #[test]
+    fn test_ordered_listagg_uses_duckdb_order_syntax() {
+        let result = transpile_to_duckdb_from(
+            "SELECT LISTAGG(col, '|SEPARATOR|') WITHIN GROUP (ORDER BY col2) FROM t",
+            DialectType::Snowflake,
+        );
+        assert_eq!(
+            result,
+            "SELECT LISTAGG(col, '|SEPARATOR|' ORDER BY col2) FROM t"
+        );
+    }
+
+    #[test]
+    fn test_ordered_group_concat_uses_duckdb_listagg_order_syntax() {
+        let result = transpile_to_duckdb_from(
+            "SELECT GROUP_CONCAT(nm ORDER BY id SEPARATOR ',') AS v FROM t",
+            DialectType::MySQL,
+        );
+        assert_eq!(result, "SELECT LISTAGG(nm, ',' ORDER BY id) AS v FROM t");
     }
 
     #[test]

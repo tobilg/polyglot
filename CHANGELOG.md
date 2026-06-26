@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.10] - 2026-06-26
+
+### Added
+- Regression coverage for partial-schema `analyze_query` and
+  `lineage_with_schema` calls across Rust core, C FFI, WASM/TypeScript, Python,
+  and Go.
+- Regression coverage for ordered `STRING_AGG`, `GROUP_CONCAT`, and `LISTAGG`
+  transpilation to DuckDB.
+
+### Fixed
+- `analyze_query` and `lineage_with_schema` now tolerate partial schemas by
+  resolving known columns while preserving unknown columns as best-effort
+  lineage facts instead of aborting the analysis with `Unknown column`.
+- DuckDB transpilation now emits ordered `STRING_AGG`, `GROUP_CONCAT`, and
+  `LISTAGG` as `LISTAGG(expr, separator ORDER BY ...)` instead of the
+  unsupported `WITHIN GROUP` form.
+
 ## [0.5.9] - 2026-06-23
 
 ### Added

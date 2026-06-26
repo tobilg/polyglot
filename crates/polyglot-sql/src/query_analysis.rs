@@ -187,7 +187,9 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
     let star_projections = star_projection_facts(&original_expression, mapping_schema.as_ref());
 
     if let Some(schema) = mapping_schema.as_ref() {
-        let qualify_options = QualifyColumnsOptions::new().with_dialect(options.dialect);
+        let qualify_options = QualifyColumnsOptions::new()
+            .with_dialect(options.dialect)
+            .with_allow_partial(true);
         expression = qualify_columns(expression, schema, &qualify_options)
             .map_err(|e| Error::internal(format!("query analysis qualification failed: {e}")))?;
     }

@@ -994,6 +994,37 @@ fn test_analyze_query_nested_set_and_unnest_with_schema() {
 }
 
 #[test]
+fn test_analyze_query_tolerates_partial_schema() {
+    let sql = c("SELECT order_id, amount FROM t");
+    let options = c(
+        r#"{"dialect":"duckdb","schema":{"tables":[{"name":"t","columns":[{"name":"amount","type":"INT"}]}]}}"#,
+    );
+    let (status, data, error) =
+        consume_result(polyglot_analyze_query(sql.as_ptr(), options.as_ptr()));
+    assert_eq!(status, 0, "error={error:?}");
+    let analysis: Value =
+        serde_json::from_str(&data.expect("missing analyze_query payload")).expect("invalid json");
+    let projections = analysis["projections"]
+        .as_array()
+        .expect("projections array");
+    assert_eq!(projections.len(), 2);
+    assert!(projections[0]["upstream"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reference| {
+            reference["column"] == "order_id"
+                && reference["table"] == "t"
+                && reference["confidence"] == "resolved"
+        }));
+    assert!(projections[1]["upstream"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reference| reference["column"] == "amount" && reference["table"] == "t"));
+}
+
+#[test]
 fn test_analyze_query_invalid_options_json() {
     let sql = c("SELECT 1");
     let options = c("{not json}");
@@ -1035,6 +1066,35 @@ fn test_lineage_with_schema_resolves_ambiguous_column() {
     assert!(
         payload.contains("u.id"),
         "expected qualified lineage edge u.id, got: {}",
+        payload
+    );
+}
+
+#[test]
+fn test_lineage_with_schema_tolerates_partial_schema() {
+    let column = c("amount");
+    let sql = c("SELECT order_id, amount FROM t");
+    let dialect = c("duckdb");
+    let schema = c(r#"{
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [{"name": "amount", "type": "INT"}]
+                }
+            ]
+        }"#);
+    let (status, data, error) = consume_result(polyglot_lineage_with_schema(
+        column.as_ptr(),
+        sql.as_ptr(),
+        schema.as_ptr(),
+        dialect.as_ptr(),
+    ));
+    assert_eq!(status, 0, "error={error:?}");
+    let node: Value = serde_json::from_str(&data.expect("missing lineage")).expect("invalid json");
+    let payload = node.to_string();
+    assert!(
+        payload.contains("t.amount"),
+        "expected qualified lineage edge t.amount, got: {}",
         payload
     );
 }

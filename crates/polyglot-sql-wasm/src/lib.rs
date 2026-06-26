@@ -3373,6 +3373,33 @@ mod tests {
     }
 
     #[test]
+    fn test_lineage_with_schema_tolerates_partial_schema() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [{"name": "amount", "type": "INT"}]
+                }
+            ]
+        }"#;
+
+        let result = lineage_sql_with_schema(
+            "SELECT order_id, amount FROM t",
+            "amount",
+            schema,
+            "duckdb",
+            false,
+        );
+
+        assert!(result.contains("\"success\":true"), "Result: {}", result);
+        assert!(
+            result.contains("\"name\":\"t.amount\""),
+            "Expected qualified downstream lineage with partial schema: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_source_tables() {
         let result = source_tables("SELECT t.a FROM t JOIN s ON t.id = s.id", "a", "generic");
         assert!(result.contains("\"success\":true"), "Result: {}", result);
@@ -3619,6 +3646,34 @@ mod tests {
         assert!(upstream
             .iter()
             .any(|reference| reference["table"] == "t" && reference["column"] == "arr"));
+    }
+
+    #[test]
+    fn test_analyze_query_tolerates_partial_schema() {
+        let result = analyze_query(
+            "SELECT order_id, amount FROM t",
+            r#"{"dialect":"duckdb","schema":{"tables":[{"name":"t","columns":[{"name":"amount","type":"INT"}]}]}}"#,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json");
+        assert_eq!(parsed["success"], true);
+        let projections = parsed["analysis"]["projections"]
+            .as_array()
+            .expect("projections array");
+        assert_eq!(projections.len(), 2);
+        assert!(projections[0]["upstream"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reference| {
+                reference["column"] == "order_id"
+                    && reference["table"] == "t"
+                    && reference["confidence"] == "resolved"
+            }));
+        assert!(projections[1]["upstream"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reference| reference["column"] == "amount" && reference["table"] == "t"));
     }
 
     #[test]

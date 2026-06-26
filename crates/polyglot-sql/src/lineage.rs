@@ -194,9 +194,11 @@ pub fn lineage_with_schema(
     let normalized_expression = lineage_normalized_expression(sql);
     let mut qualified_expression = if let Some(schema) = schema {
         let options = if let Some(dialect_type) = dialect.or_else(|| schema.dialect()) {
-            QualifyColumnsOptions::new().with_dialect(dialect_type)
-        } else {
             QualifyColumnsOptions::new()
+                .with_dialect(dialect_type)
+                .with_allow_partial(true)
+        } else {
+            QualifyColumnsOptions::new().with_allow_partial(true)
         };
 
         qualify_columns(normalized_expression.clone(), schema, &options).map_err(|e| {
@@ -3703,6 +3705,88 @@ mod tests {
         annotate_types(&mut expr_with, Some(&schema), Some(DialectType::BigQuery));
 
         assert_eq!(expr_with.inferred_type(), Some(&DataType::Text));
+    }
+
+    #[test]
+    fn test_lineage_with_schema_tolerates_partial_schema_for_known_column() {
+        let expr = parse_dialect("SELECT order_id, amount FROM t", DialectType::DuckDB);
+        let mut schema = MappingSchema::with_dialect(DialectType::DuckDB);
+        schema
+            .add_table(
+                "t",
+                &[("amount".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "amount",
+            &expr,
+            Some(&schema),
+            Some(DialectType::DuckDB),
+            false,
+        )
+        .expect("lineage_with_schema should tolerate unrelated unknown columns");
+
+        assert_lineage_contains(&node, "t.amount");
+    }
+
+    #[test]
+    fn test_lineage_with_schema_tolerates_partial_schema_for_unknown_column() {
+        let expr = parse_dialect("SELECT order_id, amount FROM t", DialectType::DuckDB);
+        let mut schema = MappingSchema::with_dialect(DialectType::DuckDB);
+        schema
+            .add_table(
+                "t",
+                &[("amount".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "order_id",
+            &expr,
+            Some(&schema),
+            Some(DialectType::DuckDB),
+            false,
+        )
+        .expect("lineage_with_schema should keep unknown selected columns");
+
+        assert_lineage_contains(&node, "t.order_id");
+    }
+
+    #[test]
+    fn test_lineage_with_schema_tolerates_partial_schema_for_join_conditions() {
+        let expr = parse_dialect(
+            "SELECT a.order_id, b.amount FROM t a JOIN u b ON a.id = b.id",
+            DialectType::DuckDB,
+        );
+        let mut schema = MappingSchema::with_dialect(DialectType::DuckDB);
+        schema
+            .add_table(
+                "t",
+                &[("order_id".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+        schema
+            .add_table(
+                "u",
+                &[("amount".into(), DataType::BigInt { length: None })],
+                None,
+            )
+            .expect("schema setup");
+
+        let node = lineage_with_schema(
+            "amount",
+            &expr,
+            Some(&schema),
+            Some(DialectType::DuckDB),
+            false,
+        )
+        .expect("lineage_with_schema should tolerate unknown join keys");
+
+        assert_lineage_contains(&node, "b.amount");
     }
 
     #[test]

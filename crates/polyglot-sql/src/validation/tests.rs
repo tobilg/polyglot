@@ -218,6 +218,29 @@ fn test_validate_with_schema_unknown_column() {
 }
 
 #[test]
+fn test_validate_with_schema_partial_schema_stays_strict() {
+    let mut schema = base_schema();
+    let users = schema
+        .tables
+        .iter_mut()
+        .find(|table| table.name == "users")
+        .expect("users table");
+    users.columns.retain(|column| column.name == "id");
+
+    let opts = SchemaValidationOptions::default();
+    let result = validate_with_schema(
+        "SELECT id, name FROM users",
+        DialectType::Generic,
+        &schema,
+        &opts,
+    );
+    assert!(!result.valid);
+    assert!(result.errors.iter().any(|error| {
+        error.code == validation_codes::E_UNKNOWN_COLUMN && error.message.contains("name")
+    }));
+}
+
+#[test]
 fn test_validate_with_schema_function_catalog_unknown_function() {
     let schema = base_schema();
     let opts = SchemaValidationOptions {

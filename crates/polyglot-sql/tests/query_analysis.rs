@@ -737,6 +737,118 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
 }
 
 #[test]
+fn analyze_query_tolerates_partial_schema_for_unknown_columns() {
+    let analysis = analyze_query(
+        "SELECT order_id, amount FROM t",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: Some(single_column_schema(&["t"], "amount")),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(analysis.projections.len(), 2);
+    assert_eq!(analysis.projections[0].name.as_deref(), Some("order_id"));
+    assert_eq!(analysis.projections[1].name.as_deref(), Some("amount"));
+
+    let order_id = &analysis.projections[0].upstream;
+    assert!(
+        order_id.iter().any(|reference| {
+            reference.column == "order_id"
+                && reference.confidence == ReferenceConfidence::Resolved
+                && reference.source_name.as_deref() == Some("t")
+                && reference.table.as_deref() == Some("t")
+        }),
+        "expected best-effort order_id reference, got {order_id:?}"
+    );
+
+    let amount = &analysis.projections[1].upstream;
+    assert!(
+        amount.iter().any(|reference| {
+            reference.column == "amount"
+                && reference.confidence == ReferenceConfidence::Resolved
+                && reference.table.as_deref() == Some("t")
+        }),
+        "expected schema-backed amount reference, got {amount:?}"
+    );
+}
+
+#[test]
+fn analyze_query_tolerates_partial_schema_for_qualified_unknown_columns() {
+    let analysis = analyze_query(
+        "SELECT t.order_id, t.amount FROM t",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: Some(single_column_schema(&["t"], "amount")),
+        },
+    )
+    .unwrap();
+
+    assert!(
+        analysis.projections[0].upstream.iter().any(|reference| {
+            reference.column == "order_id"
+                && reference.confidence == ReferenceConfidence::Resolved
+                && reference.table.as_deref() == Some("t")
+        }),
+        "expected qualified unknown column to stay as best-effort t.order_id, got {:?}",
+        analysis.projections[0].upstream
+    );
+    assert!(
+        analysis.projections[1].upstream.iter().any(|reference| {
+            reference.column == "amount" && reference.table.as_deref() == Some("t")
+        }),
+        "expected known t.amount to resolve, got {:?}",
+        analysis.projections[1].upstream
+    );
+}
+
+#[test]
+fn analyze_query_tolerates_partial_schema_for_join_conditions() {
+    let schema: ValidationSchema = serde_json::from_value(json!({
+        "tables": [
+            {
+                "name": "t",
+                "columns": [{"name": "order_id", "type": "INT"}]
+            },
+            {
+                "name": "u",
+                "columns": [{"name": "amount", "type": "INT"}]
+            }
+        ]
+    }))
+    .unwrap();
+
+    let analysis = analyze_query(
+        "SELECT a.order_id, b.amount FROM t a JOIN u b ON a.id = b.id",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: Some(schema),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(analysis.projections.len(), 2);
+    assert!(
+        analysis.projections[0].upstream.iter().any(|reference| {
+            reference.column == "order_id"
+                && reference.source_alias.as_deref() == Some("a")
+                && reference.table.as_deref() == Some("t")
+        }),
+        "expected a.order_id to resolve, got {:?}",
+        analysis.projections[0].upstream
+    );
+    assert!(
+        analysis.projections[1].upstream.iter().any(|reference| {
+            reference.column == "amount"
+                && reference.source_alias.as_deref() == Some("b")
+                && reference.table.as_deref() == Some("u")
+        }),
+        "expected b.amount to resolve, got {:?}",
+        analysis.projections[1].upstream
+    );
+}
+
+#[test]
 fn analyze_query_resolves_same_select_alias_reference() {
     let analysis = analyze_query(
         "WITH c AS (SELECT x FROM t) SELECT c.x AS a, a + 1 AS b FROM c",

@@ -12,6 +12,7 @@ import {
   init,
   isInitialized,
   lineage,
+  lineageWithSchema,
   openLineageColumnLineage,
   openLineageJobEvent,
   openLineageRunEvent,
@@ -234,6 +235,22 @@ describe('Polyglot SDK', () => {
       );
     });
 
+    it('should tolerate partial schemas in lineageWithSchema', () => {
+      const result = lineageWithSchema(
+        'amount',
+        'SELECT order_id, amount FROM t',
+        {
+          tables: [
+            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
+          ],
+        },
+        Dialect.DuckDB,
+      );
+
+      expect(result.success).toBe(true);
+      expect(collectNames(result.lineage!)).toContain('t.amount');
+    });
+
     it('should trace unpivot value columns to input columns', () => {
       const result = lineage(
         'val',
@@ -426,6 +443,37 @@ describe('Polyglot SDK', () => {
       expect(result.analysis?.projections[0].upstream).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ table: 't', column: 'arr' }),
+        ]),
+      );
+    });
+
+    it('should tolerate partial schemas in analyzeQuery', () => {
+      const result = analyzeQuery('SELECT order_id, amount FROM t', {
+        dialect: Dialect.DuckDB,
+        schema: {
+          tables: [
+            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
+          ],
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.analysis?.projections.map((projection) => projection.name)).toEqual([
+        'order_id',
+        'amount',
+      ]);
+      expect(result.analysis?.projections[0].upstream).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            column: 'order_id',
+            table: 't',
+            confidence: 'resolved',
+          }),
+        ]),
+      );
+      expect(result.analysis?.projections[1].upstream).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ column: 'amount', table: 't' }),
         ]),
       );
     });
