@@ -4879,6 +4879,15 @@ impl Dialect {
                 Self::push_unsupported_diagnostic(&mut diagnostics, "ARRAY_AGG");
             }
 
+            if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                && Self::node_is_regex_predicate(node)
+            {
+                Self::push_unsupported_diagnostic(
+                    &mut diagnostics,
+                    "regular expression predicates",
+                );
+            }
+
             if matches!(source, DialectType::PostgreSQL | DialectType::CockroachDB)
                 && !matches!(target, DialectType::PostgreSQL | DialectType::CockroachDB)
             {
@@ -5016,6 +5025,15 @@ impl Dialect {
 
     fn node_is_array_agg(expr: &Expression) -> bool {
         matches!(expr, Expression::ArrayAgg(_)) || Self::node_is_function_named(expr, "ARRAY_AGG")
+    }
+
+    fn node_is_regex_predicate(expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::SimilarTo(_) | Expression::RegexpLike(_) | Expression::RegexpILike(_)
+        ) || Self::node_is_function_named(expr, "REGEXP_LIKE")
+            || Self::node_is_function_named(expr, "REGEXP_I_LIKE")
+            || Self::node_is_function_named(expr, "REGEXP_ILIKE")
     }
 
     fn node_is_function_named(expr: &Expression, name: &str) -> bool {

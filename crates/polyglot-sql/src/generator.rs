@@ -17924,7 +17924,7 @@ impl Generator {
         {
             self.write_keyword("DATEPART");
             self.write("(");
-            self.generate_expression(&func.args[0])?;
+            self.write_tsql_date_part(&func.args[0])?;
             self.write(", ");
             self.generate_expression(&func.args[1])?;
             self.write(")");
@@ -18886,6 +18886,22 @@ impl Generator {
             // If we can't extract a date part string, fall back to generating the expression
             let _ = self.generate_expression(expr);
         }
+    }
+
+    fn write_tsql_date_part(&mut self, expr: &Expression) -> Result<()> {
+        if let Some(part) = self.extract_date_part_string(expr) {
+            let upper = part.to_ascii_uppercase();
+            let unmapped = match upper.as_str() {
+                "DAYOFWEEK" => "WEEKDAY",
+                "WEEKISO" => "ISO_WEEK",
+                "TIMEZONE_MINUTE" => "TZOFFSET",
+                _ => part.as_str(),
+            };
+            self.write_keyword(unmapped);
+        } else {
+            self.generate_expression(expr)?;
+        }
+        Ok(())
     }
 
     /// Extract date part string from expression (handles string literals and identifiers)

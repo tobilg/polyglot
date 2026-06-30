@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.11] - 2026-06-30
+
+### Added
+- Regression coverage for strict-mode rejection of PostgreSQL regex predicates
+  when targeting Fabric or T-SQL.
+- Regression coverage for T-SQL/Fabric `DATEPART` weekday, ISO week, and
+  timezone-offset date-part generation.
+
+### Fixed
+- Strict Fabric/T-SQL transpilation now rejects remaining regular-expression
+  predicates such as `SIMILAR TO`, `~`, `!~`, `~*`, `!~*`, and `REGEXP_LIKE`
+  instead of reporting success with unsupported target SQL.
+- T-SQL/Fabric `DATEPART` generation now maps internal canonical date parts
+  back to valid target names such as `WEEKDAY`, `ISO_WEEK`, and `TZOFFSET`
+  instead of emitting unsupported names like `DAYOFWEEK`.
+
 ## [0.5.10] - 2026-06-26
 
 ### Added

@@ -139,6 +139,31 @@ fn strict_transpile_rejects_array_agg_for_lossy_targets() {
 }
 
 #[test]
+fn strict_transpile_rejects_regex_predicates_for_tsql_targets() {
+    let sqls = [
+        "SELECT 1 FROM t WHERE p_brand SIMILAR TO 'Brand#[1-3][0-9]'",
+        "SELECT 1 FROM t WHERE c_phone ~ '^1[0-9]'",
+        "SELECT 1 FROM t WHERE c_phone !~ '^1[0-9]'",
+        "SELECT 1 FROM t WHERE c_phone ~* '^1[0-9]'",
+        "SELECT 1 FROM t WHERE c_phone !~* '^1[0-9]'",
+        "SELECT 1 FROM t WHERE REGEXP_LIKE(c_phone, '^1[0-9]')",
+    ];
+
+    for sql in sqls {
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            let err =
+                transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
+                    .expect_err("strict TSQL/Fabric transpile should reject regex predicates");
+
+            assert!(
+                err.to_string().contains("regular expression predicates"),
+                "unexpected error for PostgreSQL -> {write:?}: {err}"
+            );
+        }
+    }
+}
+
+#[test]
 fn strict_transpile_rejects_postgres_only_functions() {
     let err = transpile_with_level(
         "SELECT JSONB_BUILD_OBJECT('k', v), TO_TSVECTOR(body) FROM docs",

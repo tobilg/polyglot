@@ -2,8 +2,8 @@
 
 use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::{
-    get_all_tables, parse, transpile, validate, Dialect, DialectType, Expression, ExpressionWalk,
-    Parser, TokenType,
+    generate, get_all_tables, parse, transpile, validate, Dialect, DialectType, Expression,
+    ExpressionWalk, Parser, TokenType,
 };
 
 fn pg_to_tsql(sql: &str) -> String {
@@ -70,6 +70,51 @@ fn tsql_hex_literals_parse_and_roundtrip() {
             });
         assert_eq!(roundtrip, vec![sql.to_string()]);
     }
+}
+
+#[test]
+fn tsql_datepart_dayofweek_generates_valid_tsql_datepart() {
+    let cases = [
+        ("WEEKDAY", "WEEKDAY"),
+        ("dw", "WEEKDAY"),
+        ("DAYOFWEEK", "WEEKDAY"),
+        ("isowk", "ISO_WEEK"),
+        ("WEEKISO", "ISO_WEEK"),
+        ("tz", "TZOFFSET"),
+        ("TIMEZONE_MINUTE", "TZOFFSET"),
+    ];
+
+    for dialect in [DialectType::TSQL, DialectType::Fabric] {
+        for (input, expected) in cases {
+            let sql = format!("SELECT DATEPART({input}, o.order_date) AS dow FROM orders o");
+            let ast = parse(&sql, dialect)
+                .unwrap_or_else(|error| panic!("{dialect:?} DATEPART should parse: {error}"));
+            assert_eq!(ast.len(), 1);
+
+            let generated = generate(&ast[0], dialect)
+                .unwrap_or_else(|error| panic!("{dialect:?} DATEPART should generate: {error}"));
+
+            assert_eq!(
+                generated,
+                format!("SELECT DATEPART({expected}, o.order_date) AS dow FROM orders AS o"),
+                "failed for {dialect:?} DATEPART({input}, ...)"
+            );
+        }
+    }
+}
+
+#[test]
+fn tsql_datepart_dayofweek_transpiles_to_valid_tsql_datepart() {
+    let sql = "SELECT DATEPART(WEEKDAY, o.order_date) AS dow FROM orders o";
+
+    assert_eq!(
+        transpile(sql, DialectType::TSQL, DialectType::TSQL).expect("TSQL identity transpile"),
+        vec!["SELECT DATEPART(WEEKDAY, o.order_date) AS dow FROM orders AS o"]
+    );
+    assert_eq!(
+        transpile(sql, DialectType::TSQL, DialectType::Fabric).expect("TSQL to Fabric transpile"),
+        vec!["SELECT DATEPART(WEEKDAY, o.order_date) AS dow FROM orders AS o"]
+    );
 }
 
 // ---------------------------------------------------------------------------
