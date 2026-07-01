@@ -8929,7 +8929,7 @@ impl Dialect {
                                 | "SAFE_ADD" | "SAFE_SUBTRACT" | "SAFE_MULTIPLY"
                                 | "SAFE_CAST"
                                 | "GENERATE_DATE_ARRAY"
-                                | "PARSE_DATE" | "PARSE_TIMESTAMP"
+                                | "PARSE_DATE" | "PARSE_DATETIME" | "PARSE_TIMESTAMP"
                                 | "FORMAT_DATE" | "FORMAT_DATETIME" | "FORMAT_TIMESTAMP"
                                 | "ARRAY_CONCAT"
                                 | "JSON_QUERY" | "JSON_VALUE_ARRAY"
@@ -9058,7 +9058,8 @@ impl Dialect {
                                 | "CONVERT" | "TRY_CONVERT"
                                 | "STRFTIME" | "STRPTIME"
                                 | "DATE_FORMAT" | "FORMAT_DATE"
-                                | "PARSE_TIMESTAMP" | "PARSE_DATE"
+                                | "PARSE_TIMESTAMP" | "PARSE_DATETIME" | "PARSE_DATE"
+                                | "FROM_ISO8601_TIMESTAMP" | "FROM_ISO8601_DATE"
                                 | "FROM_BASE64" | "TO_BASE64"
                                 | "GETDATE"
                                 | "TO_HEX" | "FROM_HEX" | "UNHEX" | "HEX"
@@ -14587,6 +14588,108 @@ impl Dialect {
                                     )))),
                                 }
                             }
+                            // BigQuery PARSE_DATETIME(format, value) -> target-specific parsing calls.
+                            "PARSE_DATETIME"
+                                if matches!(source, DialectType::BigQuery) && f.args.len() == 2 =>
+                            {
+                                fn expand_bigquery_datetime_format(expr: Expression) -> Expression {
+                                    match expr {
+                                        Expression::Literal(lit) => match lit.as_ref() {
+                                            Literal::String(s) => Expression::string(
+                                                s.replace("%F", "%Y-%m-%d")
+                                                    .replace("%T", "%H:%M:%S"),
+                                            ),
+                                            _ => Expression::Literal(lit),
+                                        },
+                                        other => other,
+                                    }
+                                }
+
+                                let mut args = f.args;
+                                let format = expand_bigquery_datetime_format(args.remove(0));
+                                let value = args.remove(0);
+                                match target {
+                                    DialectType::DuckDB => {
+                                        let value_with_year = Expression::Concat(Box::new(
+                                            crate::expressions::BinaryOp::new(
+                                                Expression::string("1970 "),
+                                                value,
+                                            ),
+                                        ));
+                                        let format_with_year = Expression::Concat(Box::new(
+                                            crate::expressions::BinaryOp::new(
+                                                Expression::string("%Y "),
+                                                format,
+                                            ),
+                                        ));
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "STRPTIME".to_string(),
+                                            vec![value_with_year, format_with_year],
+                                        ))))
+                                    }
+                                    DialectType::Snowflake => {
+                                        Ok(Expression::Function(Box::new(Function::new(
+                                            "PARSE_DATETIME".to_string(),
+                                            vec![value, format],
+                                        ))))
+                                    }
+                                    _ => Ok(Expression::Function(Box::new(Function::new(
+                                        "PARSE_DATETIME".to_string(),
+                                        vec![format, value],
+                                    )))),
+                                }
+                            }
+                            // Presto/Trino ISO-8601 helpers become casts outside Presto-family targets.
+                            "FROM_ISO8601_TIMESTAMP"
+                                if matches!(
+                                    source,
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena
+                                ) && f.args.len() == 1
+                                    && !matches!(
+                                        target,
+                                        DialectType::Presto
+                                            | DialectType::Trino
+                                            | DialectType::Athena
+                                    ) =>
+                            {
+                                Ok(Expression::Cast(Box::new(crate::expressions::Cast {
+                                    this: f.args.into_iter().next().unwrap(),
+                                    to: DataType::Timestamp {
+                                        precision: None,
+                                        timezone: matches!(
+                                            target,
+                                            DialectType::DuckDB | DialectType::Snowflake
+                                        ),
+                                    },
+                                    trailing_comments: Vec::new(),
+                                    double_colon_syntax: false,
+                                    format: None,
+                                    default: None,
+                                    inferred_type: None,
+                                })))
+                            }
+                            "FROM_ISO8601_DATE"
+                                if matches!(
+                                    source,
+                                    DialectType::Presto | DialectType::Trino | DialectType::Athena
+                                ) && f.args.len() == 1
+                                    && !matches!(
+                                        target,
+                                        DialectType::Presto
+                                            | DialectType::Trino
+                                            | DialectType::Athena
+                                    ) =>
+                            {
+                                Ok(Expression::Cast(Box::new(crate::expressions::Cast {
+                                    this: f.args.into_iter().next().unwrap(),
+                                    to: DataType::Date,
+                                    trailing_comments: Vec::new(),
+                                    double_colon_syntax: false,
+                                    format: None,
+                                    default: None,
+                                    inferred_type: None,
+                                })))
+                            }
                             // MAP(keys_array, vals_array) from Presto (2-arg form) -> target-specific
                             "MAP"
                                 if f.args.len() == 2
@@ -14724,6 +14827,7 @@ impl Dialect {
                                             | DialectType::Spark
                                             | DialectType::Databricks
                                             | DialectType::ClickHouse
+                                            | DialectType::StarRocks
                                     ) =>
                             {
                                 let args = f.args;
@@ -37108,6 +37212,41 @@ impl Dialect {
                     }
                     _ => Ok(Expression::Function(Box::new(Function::new(
                         "PARSE_DATE".to_string(),
+                        vec![format, str_expr],
+                    )))),
+                }
+            }
+
+            // PARSE_DATETIME(format, str) -> target-specific
+            "PARSE_DATETIME" if args.len() == 2 => {
+                let format = args.remove(0);
+                let str_expr = args.remove(0);
+                let c_format = Self::bq_format_to_duckdb(&format);
+                match target {
+                    DialectType::DuckDB => {
+                        // DuckDB STRPTIME needs a date-bearing format for DATETIME parsing.
+                        let str_with_year = Expression::Concat(Box::new(BinaryOp::new(
+                            Expression::string("1970 "),
+                            str_expr,
+                        )));
+                        let format_with_year = Expression::Concat(Box::new(BinaryOp::new(
+                            Expression::string("%Y "),
+                            c_format,
+                        )));
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "STRPTIME".to_string(),
+                            vec![str_with_year, format_with_year],
+                        ))))
+                    }
+                    DialectType::Snowflake => {
+                        // SQLGlot emits PARSE_DATETIME(value, format) with expanded C-style format tokens.
+                        Ok(Expression::Function(Box::new(Function::new(
+                            "PARSE_DATETIME".to_string(),
+                            vec![str_expr, c_format],
+                        ))))
+                    }
+                    _ => Ok(Expression::Function(Box::new(Function::new(
+                        "PARSE_DATETIME".to_string(),
                         vec![format, str_expr],
                     )))),
                 }

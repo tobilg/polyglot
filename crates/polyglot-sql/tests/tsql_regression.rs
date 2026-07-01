@@ -2,8 +2,8 @@
 
 use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::{
-    generate, get_all_tables, parse, transpile, validate, Dialect, DialectType, Expression,
-    ExpressionWalk, Parser, TokenType,
+    generate, generate_data_type, get_all_tables, parse, parse_data_type, transpile, validate,
+    DataType, Dialect, DialectType, Expression, ExpressionWalk, Parser, TokenType,
 };
 
 fn pg_to_tsql(sql: &str) -> String {
@@ -70,6 +70,68 @@ fn tsql_hex_literals_parse_and_roundtrip() {
             });
         assert_eq!(roundtrip, vec![sql.to_string()]);
     }
+}
+
+#[test]
+fn tsql_max_length_types_parse_generate_and_transpile() {
+    for type_name in ["VARBINARY(MAX)", "VARCHAR(MAX)", "NVARCHAR(MAX)"] {
+        let data_type = parse_data_type(type_name, DialectType::TSQL).unwrap_or_else(|error| {
+            panic!("{type_name} should parse as a standalone type: {error}")
+        });
+        assert_eq!(
+            data_type,
+            DataType::Custom {
+                name: type_name.to_string()
+            }
+        );
+        assert_eq!(
+            generate_data_type(&data_type, DialectType::TSQL)
+                .unwrap_or_else(|error| panic!("{type_name} should generate as T-SQL: {error}")),
+            type_name
+        );
+
+        let create_sql = format!("CREATE TABLE t (c {type_name})");
+        let ast = parse(&create_sql, DialectType::TSQL)
+            .unwrap_or_else(|error| panic!("{create_sql} should parse: {error}"));
+        let Expression::CreateTable(create) = &ast[0] else {
+            panic!(
+                "expected CreateTable for {create_sql}, got {}",
+                ast[0].variant_name()
+            );
+        };
+        assert_eq!(create.columns.len(), 1);
+        assert_eq!(
+            create.columns[0].data_type,
+            DataType::Custom {
+                name: type_name.to_string()
+            }
+        );
+        assert_eq!(generate_tsql(&ast[0]), create_sql);
+        assert_eq!(
+            transpile(&create_sql, DialectType::TSQL, DialectType::TSQL)
+                .unwrap_or_else(|error| panic!("{create_sql} should identity-transpile: {error}")),
+            vec![create_sql]
+        );
+
+        let cast_sql = format!("SELECT CAST(x AS {type_name})");
+        let ast = parse(&cast_sql, DialectType::TSQL)
+            .unwrap_or_else(|error| panic!("{cast_sql} should parse: {error}"));
+        assert_eq!(generate_tsql(&ast[0]), cast_sql);
+        assert_eq!(
+            transpile(&cast_sql, DialectType::TSQL, DialectType::TSQL)
+                .unwrap_or_else(|error| panic!("{cast_sql} should identity-transpile: {error}")),
+            vec![cast_sql]
+        );
+    }
+
+    let postgres = transpile(
+        "SELECT CAST(x AS VARBINARY(MAX))",
+        DialectType::TSQL,
+        DialectType::PostgreSQL,
+    )
+    .expect("VARBINARY(MAX) should no longer fail before target generation");
+    assert_eq!(postgres.len(), 1);
+    assert!(!postgres[0].is_empty());
 }
 
 #[test]

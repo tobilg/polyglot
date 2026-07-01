@@ -244,19 +244,6 @@ impl DialectImpl for DuckDBDialect {
             // UNNEST is native to DuckDB
             Expression::Unnest(f) => Ok(Expression::Unnest(f)),
 
-            // ArrayContainedBy (<@) -> ArrayContainsAll (@>) with swapped operands
-            // a <@ b becomes b @> a
-            Expression::ArrayContainedBy(op) => {
-                Ok(Expression::ArrayContainsAll(Box::new(BinaryOp {
-                    left: op.right,
-                    right: op.left,
-                    left_comments: Vec::new(),
-                    operator_comments: Vec::new(),
-                    trailing_comments: Vec::new(),
-                    inferred_type: None,
-                })))
-            }
-
             // DATE_ADD -> date + INTERVAL in DuckDB
             Expression::DateAdd(f) => {
                 // Reconstruct INTERVAL expression from value and unit

@@ -3269,10 +3269,10 @@ impl Generator {
             Expression::JSONBContainsAllTopKeys(op) => self.generate_binary_op(op, "?&"),
             Expression::JSONBContainsAnyTopKeys(op) => self.generate_binary_op(op, "?|"),
             Expression::JSONBContains(f) => {
-                // PostgreSQL JSONB contains key operator: a ? b
+                // PostgreSQL JSONB contains key/path operators: a ? b, a @? b
                 self.generate_expression(&f.this)?;
                 self.write_space();
-                self.write("?");
+                self.write(f.original_name.as_deref().unwrap_or("?"));
                 self.write_space();
                 self.generate_expression(&f.expression)
             }
@@ -3351,6 +3351,17 @@ impl Generator {
             Expression::TryCatch(try_catch) => self.generate_try_catch(try_catch),
             Expression::Command(cmd) => {
                 self.write(&cmd.this);
+                if matches!(self.config.dialect, Some(DialectType::ClickHouse))
+                    && cmd
+                        .this
+                        .trim_start()
+                        .get(..7)
+                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("EXPLAIN"))
+                {
+                    for _ in 0..Self::missing_closing_parens_outside_quotes(&cmd.this) {
+                        self.write(")");
+                    }
+                }
                 Ok(())
             }
             Expression::Kill(kill) => {
@@ -10394,6 +10405,12 @@ impl Generator {
         }
         self.write_space();
         self.generate_table(&u.name)?;
+        if let Some(rename_to) = &u.rename_to {
+            self.write_space();
+            self.write_keyword("RENAME TO");
+            self.write_space();
+            self.generate_table(rename_to)?;
+        }
         Ok(())
     }
 
@@ -12817,7 +12834,7 @@ impl Generator {
                 }
                 self.write_keyword("RETURNS");
                 self.write_space();
-                self.generate_data_type(return_type)?;
+                self.generate_function_return_type(return_type)?;
             }
         } else {
             // RETURNS first (default)
@@ -12851,7 +12868,7 @@ impl Generator {
                     if is_table_return {
                         self.write_keyword("TABLE");
                     } else {
-                        self.generate_data_type(return_type)?;
+                        self.generate_function_return_type(return_type)?;
                     }
                 }
             }
@@ -12863,6 +12880,10 @@ impl Generator {
             let is_bigquery = matches!(
                 self.config.dialect,
                 Some(crate::dialects::DialectType::BigQuery)
+            );
+            let is_postgres = matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::PostgreSQL)
             );
             let property_order = if is_bigquery {
                 // Move Options before As if both are present
@@ -12891,6 +12912,18 @@ impl Generator {
                 } else {
                     cf.property_order.clone()
                 }
+            } else if is_postgres
+                && cf.property_order.contains(&FunctionPropertyKind::As)
+                && cf.property_order.contains(&FunctionPropertyKind::NullInput)
+            {
+                let mut reordered: Vec<_> = cf
+                    .property_order
+                    .iter()
+                    .copied()
+                    .filter(|prop| *prop != FunctionPropertyKind::As)
+                    .collect();
+                reordered.push(FunctionPropertyKind::As);
+                reordered
             } else {
                 cf.property_order.clone()
             };
@@ -13118,6 +13151,22 @@ impl Generator {
         }
 
         Ok(())
+    }
+
+    fn generate_function_return_type(&mut self, return_type: &DataType) -> Result<()> {
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::PostgreSQL)
+        ) {
+            if let DataType::Custom { name } = return_type {
+                if name.eq_ignore_ascii_case("integer") {
+                    self.write_keyword("INT");
+                    return Ok(());
+                }
+            }
+        }
+
+        self.generate_data_type(return_type)
     }
 
     /// Generate SET options for CREATE FUNCTION
@@ -17585,7 +17634,13 @@ impl Generator {
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
         // Normalize function name based on dialect settings
-        let normalized_name = self.normalize_func_name(&func.name);
+        let normalized_name = if matches!(self.config.dialect, Some(DialectType::Snowflake))
+            && func.name.to_ascii_uppercase().starts_with("IDENTIFIER(")
+        {
+            Cow::Borrowed(func.name.as_str())
+        } else {
+            self.normalize_func_name(&func.name)
+        };
 
         // DuckDB: ARRAY_CONSTRUCT_COMPACT(a, b, c) -> LIST_FILTER([a, b, c], _u -> NOT _u IS NULL)
         if matches!(self.config.dialect, Some(DialectType::DuckDB))
@@ -22607,6 +22662,36 @@ impl Generator {
         }
     }
 
+    fn missing_closing_parens_outside_quotes(sql: &str) -> usize {
+        let mut depth = 0usize;
+        let mut quote: Option<char> = None;
+        let mut chars = sql.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if let Some(quote_char) = quote {
+                if ch == '\\' {
+                    chars.next();
+                } else if ch == quote_char {
+                    if quote_char == '\'' && chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        quote = None;
+                    }
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' | '`' => quote = Some(ch),
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+
+        depth
+    }
+
     /// Generate LIKE/ILIKE operation with optional ESCAPE clause
     fn generate_like_op(&mut self, op: &LikeOp, operator: &str) -> Result<()> {
         self.generate_like_op_inner(op, operator, false)
@@ -22629,6 +22714,51 @@ impl Generator {
             self.write_keyword("NOT");
             self.write_space();
             return self.generate_like_op_inner(op, operator, false);
+        }
+
+        if matches!(self.config.dialect, Some(DialectType::ClickHouse)) {
+            if let Expression::Star(star) = &op.left {
+                if star
+                    .except
+                    .as_ref()
+                    .is_some_and(|except| !except.is_empty())
+                {
+                    if let Some(table) = &star.table {
+                        self.generate_identifier(table)?;
+                        self.write(".");
+                    }
+                    self.write("*");
+                    self.write_space();
+                    self.write_keyword(operator);
+                    if let Some(quantifier) = &op.quantifier {
+                        self.write_space();
+                        self.write_keyword(quantifier);
+                        self.write_space();
+                    } else {
+                        self.write_space();
+                    }
+                    self.generate_expression(&op.right)?;
+                    if let Some(escape) = &op.escape {
+                        self.write_space();
+                        self.write_keyword("ESCAPE");
+                        self.write_space();
+                        self.generate_expression(escape)?;
+                    }
+                    if let Some(except) = &star.except {
+                        self.write_space();
+                        self.write_keyword("EXCEPT");
+                        self.write(" (");
+                        for (i, col) in except.iter().enumerate() {
+                            if i > 0 {
+                                self.write(", ");
+                            }
+                            self.generate_identifier(col)?;
+                        }
+                        self.write(")");
+                    }
+                    return Ok(());
+                }
+            }
         }
 
         self.generate_expression(&op.left)?;

@@ -23,10 +23,10 @@
 # =============================================================================
 
 SQLGLOT_REPO := https://github.com/tobymao/sqlglot.git
-SQLGLOT_REF := v30.11.0
+SQLGLOT_REF := v30.12.0
 
 CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
-CLICKHOUSE_REF := v26.5.2.39-stable
+CLICKHOUSE_REF := v26.6.1.1193-stable
 
 # Default target
 help:

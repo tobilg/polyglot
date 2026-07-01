@@ -8060,17 +8060,20 @@ impl DropTable {
     }
 }
 
-/// UNDROP TABLE/SCHEMA/DATABASE statement (Snowflake, ClickHouse)
+/// UNDROP object statement (Snowflake, ClickHouse)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Undrop {
-    /// The object kind: "TABLE", "SCHEMA", or "DATABASE"
+    /// The object kind, e.g. "TABLE", "SCHEMA", "DATABASE", "DYNAMIC TABLE"
     pub kind: String,
     /// The object name
     pub name: TableRef,
     /// IF EXISTS clause
     #[serde(default)]
     pub if_exists: bool,
+    /// Snowflake: optional RENAME TO target
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<TableRef>,
 }
 
 /// ALTER TABLE statement

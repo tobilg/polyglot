@@ -320,22 +320,6 @@ impl DialectImpl for PostgresDialect {
             }
 
             // ============================================
-            // ARRAY OPERATORS
-            // ============================================
-            // ArrayContainedBy (<@) -> ArrayContainsAll (@>) with swapped operands
-            // a <@ b -> b @> a (PostgreSQL prefers @> syntax)
-            Expression::ArrayContainedBy(op) => {
-                Ok(Expression::ArrayContainsAll(Box::new(BinaryOp {
-                    left: op.right,
-                    right: op.left,
-                    left_comments: Vec::new(),
-                    operator_comments: Vec::new(),
-                    trailing_comments: Vec::new(),
-                    inferred_type: None,
-                })))
-            }
-
-            // ============================================
             // REGEXP OPERATIONS (PostgreSQL uses ~ and ~* operators)
             // ============================================
             // RegexpLike -> keep as-is, generator handles ~ operator output

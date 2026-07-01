@@ -1409,23 +1409,44 @@ impl Parser {
                     return self.fallback_to_command(statement_start);
                 }
                 self.skip(); // consume UNDROP
-                let kind = if self.match_token(TokenType::Table) {
-                    "TABLE"
+                let kind = if self.match_text_seq(&["DYNAMIC", "TABLE"]) {
+                    "DYNAMIC TABLE".to_string()
+                } else if self.match_text_seq(&["EXTERNAL", "VOLUME"]) {
+                    "EXTERNAL VOLUME".to_string()
+                } else if self.match_text_seq(&["ICEBERG", "TABLE"]) {
+                    "ICEBERG TABLE".to_string()
+                } else if self.match_token(TokenType::Table) {
+                    "TABLE".to_string()
                 } else if self.match_token(TokenType::Schema) {
-                    "SCHEMA"
+                    "SCHEMA".to_string()
                 } else if self.match_token(TokenType::Database) {
-                    "DATABASE"
+                    "DATABASE".to_string()
+                } else if self.match_texts(&[
+                    "ACCOUNT",
+                    "NOTEBOOK",
+                    "SNAPSHOT",
+                    "STREAMLIT",
+                    "TAG",
+                    "TYPE",
+                ]) {
+                    self.previous().text.to_ascii_uppercase()
                 } else {
-                    return Err(
-                        self.parse_error("Expected TABLE, SCHEMA, or DATABASE after UNDROP")
-                    );
+                    return Err(self.parse_error(
+                        "Expected TABLE, SCHEMA, DATABASE, or Snowflake object kind after UNDROP",
+                    ));
                 };
                 let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
                 let name = self.parse_table_ref()?;
+                let rename_to = if self.match_keywords(&[TokenType::Rename, TokenType::To]) {
+                    Some(self.parse_table_ref()?)
+                } else {
+                    None
+                };
                 Ok(Expression::Undrop(Box::new(crate::expressions::Undrop {
-                    kind: kind.to_string(),
+                    kind,
                     name,
                     if_exists,
+                    rename_to,
                 })))
             }
             // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
@@ -3231,10 +3252,16 @@ impl Parser {
 
             // Handle star
             if self.check(TokenType::Star) {
-                self.skip();
-                let star_trailing_comments = self.previous_trailing_comments().to_vec();
-                let star = self.parse_star_modifiers_with_comments(None, star_trailing_comments)?;
-                let mut star_expr = Expression::Star(star);
+                let mut star_expr =
+                    if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
+                        star_like
+                    } else {
+                        self.skip();
+                        let star_trailing_comments = self.previous_trailing_comments().to_vec();
+                        let star =
+                            self.parse_star_modifiers_with_comments(None, star_trailing_comments)?;
+                        Expression::Star(star)
+                    };
                 // ClickHouse: * APPLY(func) or * APPLY func or * APPLY(x -> expr) column transformer
                 if matches!(
                     self.config.dialect,
@@ -11120,7 +11147,17 @@ impl Parser {
 
         // Parse optional conflict target (column list)
         let conflict_keys = if constraint.is_none() && self.match_token(TokenType::LParen) {
-            let keys = self.parse_expression_list()?;
+            let mut keys = Vec::new();
+            while !self.check(TokenType::RParen) && !self.is_at_end() {
+                if let Some(ordered) = self.parse_ordered_item()? {
+                    keys.push(Expression::Ordered(Box::new(ordered)));
+                } else {
+                    keys.push(self.parse_expression()?);
+                }
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
             self.expect(TokenType::RParen)?;
             Some(Box::new(Expression::Tuple(Box::new(Tuple {
                 expressions: keys,
@@ -12730,7 +12767,7 @@ impl Parser {
         }
 
         // Generic WITH properties (e.g., CREATE TABLE z WITH (FORMAT='parquet') AS SELECT 1)
-        let with_properties = if self.match_token(TokenType::With) {
+        let mut with_properties = if self.match_token(TokenType::With) {
             self.parse_with_properties()?
         } else {
             Vec::new()
@@ -12785,6 +12822,23 @@ impl Parser {
                 with_partition_columns: Vec::new(),
                 with_connection: None,
             })));
+        }
+
+        let mut snowflake_inline_properties = Vec::new();
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            let pre_column_options = self.parse_snowflake_inline_table_options()?;
+            if is_special_modifier {
+                with_properties.extend(pre_column_options);
+            } else {
+                snowflake_inline_properties.extend(
+                    pre_column_options
+                        .into_iter()
+                        .map(Self::snowflake_table_option_to_raw),
+                );
+            }
         }
 
         // Redshift: Parse DISTKEY, SORTKEY, DISTSTYLE, BACKUP before AS SELECT (CTAS without columns)
@@ -13778,6 +13832,17 @@ impl Parser {
             }
         }
 
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            snowflake_inline_properties.extend(
+                self.parse_snowflake_inline_table_options()?
+                    .into_iter()
+                    .map(Self::snowflake_table_option_to_raw),
+            );
+        }
+
         // Parse MySQL table options: ENGINE=val, AUTO_INCREMENT=val, DEFAULT CHARSET=val, etc.
         let mysql_table_options = if is_clickhouse {
             Vec::new()
@@ -13859,6 +13924,7 @@ impl Parser {
 
         // Parse table properties like DEFAULT COLLATE (BigQuery)
         let mut table_properties = hive_properties;
+        table_properties.extend(snowflake_inline_properties);
 
         // If COMMENT was found before WITH, add it to table_properties as SchemaCommentProperty
         if let Some(comment_text) = pre_with_comment {
@@ -14991,6 +15057,92 @@ impl Parser {
         }
 
         Ok(col_def)
+    }
+
+    fn is_snowflake_inline_table_option_start(&self) -> bool {
+        self.check(TokenType::Warehouse)
+            || self.check_identifier("TARGET_LAG")
+            || self.check_identifier("CHANGE_TRACKING")
+            || self.check_identifier("DATA_RETENTION_TIME_IN_DAYS")
+            || self.check_identifier("CATALOG")
+            || self.check_identifier("EXTERNAL_VOLUME")
+            || self.check_identifier("BASE_LOCATION")
+            || self.check_identifier("REFRESH_MODE")
+            || self.check_identifier("INITIALIZE")
+            || self.check_identifier("LOCATION")
+            || self.check_identifier("PARTITION")
+            || self.check_identifier("PARTITION_TYPE")
+            || self.check_identifier("FILE_FORMAT")
+            || self.check_identifier("AUTO_REFRESH")
+    }
+
+    fn parse_snowflake_inline_table_options(&mut self) -> Result<Vec<(String, String)>> {
+        let mut options = Vec::new();
+
+        while self.is_snowflake_inline_table_option_start() {
+            let saved = self.current;
+            let key = self.advance().text.clone();
+            let value = if self.match_token(TokenType::Eq) {
+                self.parse_snowflake_inline_table_option_value()?
+            } else if self.is_identifier_token()
+                || self.is_safe_keyword_as_identifier()
+                || self.check_keyword()
+                || self.check(TokenType::Number)
+                || self.check(TokenType::String)
+            {
+                self.parse_snowflake_inline_table_option_value()?
+            } else {
+                self.current = saved;
+                break;
+            };
+            options.push((key, value));
+        }
+
+        Ok(options)
+    }
+
+    fn parse_snowflake_inline_table_option_value(&mut self) -> Result<String> {
+        if self.check(TokenType::String) {
+            let value = format!("'{}'", self.peek().text);
+            self.skip();
+            return Ok(value);
+        }
+
+        if self.check(TokenType::LParen) {
+            let start = self.current;
+            self.skip();
+            let mut depth = 1;
+            while !self.is_at_end() && depth > 0 {
+                if self.check(TokenType::LParen) {
+                    depth += 1;
+                } else if self.check(TokenType::RParen) {
+                    depth -= 1;
+                    self.skip();
+                    if depth == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                self.skip();
+            }
+            return Ok(self.tokens_to_sql(start, self.current));
+        }
+
+        if self.check(TokenType::Number)
+            || self.is_identifier_token()
+            || self.is_safe_keyword_as_identifier()
+            || self.check_keyword()
+        {
+            return Ok(self.advance().text.clone());
+        }
+
+        Err(self.parse_error("Expected Snowflake table option value"))
+    }
+
+    fn snowflake_table_option_to_raw((key, value): (String, String)) -> Expression {
+        Expression::Raw(Raw {
+            sql: format!("{}={}", key, value),
+        })
     }
 
     /// Parse WITH properties for CREATE TABLE (e.g., WITH (FORMAT='parquet', x='2'))
@@ -17915,6 +18067,17 @@ impl Parser {
         // Snowflake: COPY GRANTS (before column list)
         let copy_grants = self.match_text_seq(&["COPY", "GRANTS"]);
         let mut row_access_policy = self.parse_snowflake_row_access_policy_clause();
+        let mut table_properties = Vec::new();
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            table_properties.extend(
+                self.parse_snowflake_inline_table_options()?
+                    .into_iter()
+                    .map(Self::snowflake_table_option_to_raw),
+            );
+        }
 
         // For materialized views, column definitions can include data types: (c1 INT, c2 INT)
         // This applies to Doris, ClickHouse, and potentially other dialects
@@ -17980,55 +18143,37 @@ impl Parser {
             row_access_policy = self.parse_snowflake_row_access_policy_clause();
         }
 
-        // Presto/Trino/StarRocks: SECURITY DEFINER/INVOKER/NONE (after view name, before AS)
-        // MySQL also allows SQL SECURITY DEFINER/INVOKER after the view name
-        // This differs from MySQL's SQL SECURITY which can also come before VIEW keyword
-        let (security, security_sql_style, security_after_name) = if security.is_some() {
-            // MySQL-style SQL SECURITY was parsed before VIEW keyword
-            (security, true, false)
-        } else if self.check_identifier("SQL")
-            && self.current + 1 < self.tokens.len()
-            && self.tokens[self.current + 1]
-                .text
-                .eq_ignore_ascii_case("SECURITY")
-        {
-            // SQL SECURITY after view name
-            self.skip(); // consume SQL
-            self.skip(); // consume SECURITY
-            let sec = if self.match_identifier("DEFINER") {
-                Some(FunctionSecurity::Definer)
-            } else if self.match_identifier("INVOKER") {
-                Some(FunctionSecurity::Invoker)
-            } else if self.match_identifier("NONE") {
-                Some(FunctionSecurity::None)
-            } else {
-                None
-            };
-            (sec, true, true)
-        } else if self.match_identifier("SECURITY") {
-            // Presto-style SECURITY after view name
-            let sec = if self.match_identifier("DEFINER") {
-                Some(FunctionSecurity::Definer)
-            } else if self.match_identifier("INVOKER") {
-                Some(FunctionSecurity::Invoker)
-            } else if self.match_identifier("NONE") {
-                Some(FunctionSecurity::None)
-            } else {
-                None
-            };
-            (sec, false, false)
-        } else {
-            (None, true, false)
-        };
+        let mut security = security;
+        // MySQL-style SQL SECURITY can appear before VIEW, or after the view name.
+        let mut security_sql_style = security.is_some();
+        let mut security_after_name = false;
+        let mut view_comment = None;
 
-        // Snowflake: COMMENT = 'text'
-        let view_comment = if self.match_token(TokenType::Comment) {
-            // Match = or skip if not present (some dialects use COMMENT='text')
-            let _ = self.match_token(TokenType::Eq);
-            Some(self.expect_string()?)
-        } else {
-            None
-        };
+        loop {
+            if view_comment.is_none() && self.match_token(TokenType::Comment) {
+                // Snowflake supports COMMENT = 'text'; Trino/Presto use COMMENT 'text'.
+                let _ = self.match_token(TokenType::Eq);
+                view_comment = Some(self.expect_string()?);
+            } else if security.is_none()
+                && self.check_identifier("SQL")
+                && self.current + 1 < self.tokens.len()
+                && self.tokens[self.current + 1]
+                    .text
+                    .eq_ignore_ascii_case("SECURITY")
+            {
+                self.skip(); // consume SQL
+                self.skip(); // consume SECURITY
+                security = self.parse_create_view_security();
+                security_sql_style = true;
+                security_after_name = true;
+            } else if security.is_none() && self.match_identifier("SECURITY") {
+                security = self.parse_create_view_security();
+                security_sql_style = false;
+                security_after_name = false;
+            } else {
+                break;
+            }
+        }
 
         // Snowflake: TAG (name='value', ...)
         let tags = if self.match_identifier("TAG") {
@@ -18140,9 +18285,19 @@ impl Parser {
             None
         };
 
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::Snowflake)
+        ) {
+            table_properties.extend(
+                self.parse_snowflake_inline_table_options()?
+                    .into_iter()
+                    .map(Self::snowflake_table_option_to_raw),
+            );
+        }
+
         // ClickHouse: Parse table properties (ENGINE, ORDER BY, SAMPLE, SETTINGS, TTL, etc.)
         // These appear after column definitions but before AS clause for materialized views
-        let mut table_properties = Vec::new();
         if materialized
             && matches!(
                 self.config.dialect,
@@ -18288,6 +18443,18 @@ impl Parser {
             to_table,
             table_properties,
         })))
+    }
+
+    fn parse_create_view_security(&mut self) -> Option<FunctionSecurity> {
+        if self.match_identifier("DEFINER") {
+            Some(FunctionSecurity::Definer)
+        } else if self.match_identifier("INVOKER") {
+            Some(FunctionSecurity::Invoker)
+        } else if self.match_identifier("NONE") {
+            Some(FunctionSecurity::None)
+        } else {
+            None
+        }
     }
 
     /// Parse view column list: (col1, col2 OPTIONS(...) COMMENT 'text', ...)
@@ -28818,6 +28985,15 @@ impl Parser {
                 // PostgreSQL JSONB contains any top key operator (?|)
                 let right = self.parse_bitwise_or()?;
                 Expression::JSONBContainsAnyTopKeys(Box::new(BinaryOp::new(left, right)))
+            } else if self.match_token(TokenType::AtQMark) {
+                // PostgreSQL JSON path existence predicate (@?)
+                let right = self.parse_bitwise_or()?;
+                Expression::JSONBContains(Box::new(BinaryFunc {
+                    original_name: Some("@?".to_string()),
+                    this: left,
+                    expression: right,
+                    inferred_type: None,
+                }))
             } else if !matches!(
                 self.config.dialect,
                 Some(crate::dialects::DialectType::ClickHouse)
@@ -29935,12 +30111,18 @@ impl Parser {
                         path_string.push(']');
                     } else if self.check(TokenType::String) {
                         // Single-quoted string key access: ['bicycle']
-                        // Convert to dot notation for simple keys, keep bracket notation for keys with spaces
+                        // Databricks preserves string-key access as bracket notation, even
+                        // for safe identifiers. Other dialects keep the older normalization
+                        // to dot notation for simple keys.
                         let key = self.advance().text;
                         self.expect(TokenType::RBracket)?;
                         // Check if the key contains spaces or special characters that require bracket notation
-                        let needs_brackets =
-                            key.contains(' ') || key.contains('"') || key.contains('\'');
+                        let needs_brackets = matches!(
+                            self.config.dialect,
+                            Some(crate::dialects::DialectType::Databricks)
+                        ) || key.contains(' ')
+                            || key.contains('"')
+                            || key.contains('\'');
                         if needs_brackets {
                             // Keep bracket notation with double quotes: ["zip code"]
                             path_string.push_str("[\"");
@@ -30880,6 +31062,7 @@ impl Parser {
             return self.maybe_parse_subscript(func);
         }
 
+        let name_start = self.peek().span.start;
         let ident = self.expect_identifier_with_quoted()?;
         let name = ident.name.clone();
         let quoted = ident.quoted;
@@ -30912,6 +31095,29 @@ impl Parser {
             }
             let func_expr = self.parse_typed_function(&name, &upper_name, quoted)?;
             let func_expr = self.maybe_parse_clickhouse_parameterized_agg(func_expr)?;
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::Snowflake)
+            ) && upper_name == "IDENTIFIER"
+                && self.check(TokenType::LParen)
+            {
+                let name_end = self.previous().span.end;
+                let dynamic_name = self.source_text_range(name_start, name_end);
+                self.skip(); // consume outer (
+                let args = self.parse_function_args_list()?;
+                self.expect(TokenType::RParen)?;
+                return self.maybe_parse_over(Expression::Function(Box::new(Function {
+                    name: dynamic_name,
+                    args,
+                    distinct: false,
+                    trailing_comments: Vec::new(),
+                    use_bracket_syntax: false,
+                    no_parens: false,
+                    quoted: false,
+                    span: None,
+                    inferred_type: None,
+                })));
+            }
             return self.maybe_parse_over(func_expr);
         }
 
@@ -32101,6 +32307,14 @@ impl Parser {
         if self.check(TokenType::String) {
             let token = self.advance();
             let first_literal = Expression::Literal(Box::new(Literal::String(token.text)));
+            let first_literal = if token.trailing_comments.is_empty() {
+                first_literal
+            } else {
+                Expression::Annotated(Box::new(Annotated {
+                    this: first_literal,
+                    trailing_comments: token.trailing_comments,
+                }))
+            };
 
             // Check for adjacent string literals (PostgreSQL and SQL standard feature)
             // 'x' 'y' 'z' should be treated as string concatenation
@@ -32108,9 +32322,16 @@ impl Parser {
                 let mut expressions = vec![first_literal];
                 while self.check(TokenType::String) {
                     let next_token = self.advance();
-                    expressions.push(Expression::Literal(Box::new(Literal::String(
-                        next_token.text,
-                    ))));
+                    let literal = Expression::Literal(Box::new(Literal::String(next_token.text)));
+                    let literal = if next_token.trailing_comments.is_empty() {
+                        literal
+                    } else {
+                        Expression::Annotated(Box::new(Annotated {
+                            this: literal,
+                            trailing_comments: next_token.trailing_comments,
+                        }))
+                    };
+                    expressions.push(literal);
                 }
                 // Create CONCAT function call with all adjacent strings
                 let concat_func =
@@ -32256,6 +32477,10 @@ impl Parser {
                         }))),
                     })));
                 }
+            }
+
+            if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
+                return self.maybe_parse_subscript(star_like);
             }
 
             // Regular star
@@ -37245,6 +37470,8 @@ impl Parser {
 
         let (mut args, distinct) = if self.check(TokenType::RParen) {
             (Vec::new(), false)
+        } else if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
+            (vec![star_like], false)
         } else if self.check(TokenType::Star) {
             // Check for DuckDB *COLUMNS(...) syntax first
             if self.check_next_identifier("COLUMNS")
@@ -40697,14 +40924,24 @@ impl Parser {
                 }
             }
             "VARBINARY" => {
-                let length = if self.match_token(TokenType::LParen) {
-                    let len = self.expect_number()? as u32;
-                    self.expect(TokenType::RParen)?;
-                    Some(len)
+                if self.match_token(TokenType::LParen) {
+                    if self.check(TokenType::RParen) {
+                        self.skip();
+                        Ok(DataType::VarBinary { length: None })
+                    } else if self.check_identifier("MAX") {
+                        self.skip();
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::Custom {
+                            name: "VARBINARY(MAX)".to_string(),
+                        })
+                    } else {
+                        let len = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::VarBinary { length: Some(len) })
+                    }
                 } else {
-                    None
-                };
-                Ok(DataType::VarBinary { length })
+                    Ok(DataType::VarBinary { length: None })
+                }
             }
             // Generic types with angle bracket or parentheses syntax: ARRAY<T>, ARRAY(T), MAP<K,V>, MAP(K,V)
             "ARRAY" => {
@@ -44096,7 +44333,9 @@ impl Parser {
         loop {
             // Check if this is a named argument: identifier => value or identifier := value
             // Also check for safe keywords (like TYPE, FORMAT, etc.) that can be used as named arg names
-            let expr = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
+            let expr = if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
+                star_like
+            } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                 let start_pos = self.current;
                 let name = self.expect_identifier_or_keyword_with_quoted()?;
 
@@ -49299,7 +49538,9 @@ impl Parser {
             let expr_start = self.current;
 
             // Try to parse expression with optional alias
-            let expr = if is_table_or_model_arg {
+            let expr = if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
+                Some(star_like)
+            } else if is_table_or_model_arg {
                 let prefix = self.peek().text.to_ascii_uppercase();
                 let saved_pos = self.current;
                 self.skip(); // consume TABLE or MODEL
@@ -55035,7 +55276,11 @@ impl Parser {
                         // Parse all expressions inside the parentheses
                         let mut inner_exprs = Vec::new();
                         loop {
-                            let expr = self.parse_expression()?;
+                            let expr = if let Some(ordered) = self.parse_ordered_item()? {
+                                Expression::Ordered(Box::new(ordered))
+                            } else {
+                                self.parse_expression()?
+                            };
                             inner_exprs.push(expr);
                             if !self.match_token(TokenType::Comma) {
                                 break;
@@ -57351,6 +57596,48 @@ impl Parser {
         } else {
             None
         }
+    }
+
+    fn parse_clickhouse_bare_star_like(&mut self) -> Result<Option<Expression>> {
+        if !matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::ClickHouse)
+        ) || !self.check(TokenType::Star)
+            || !(self.check_next(TokenType::Like) || self.check_next(TokenType::ILike))
+        {
+            return Ok(None);
+        }
+
+        self.skip(); // consume *
+        let is_ilike = self.match_token(TokenType::ILike);
+        if !is_ilike {
+            self.expect(TokenType::Like)?;
+        }
+
+        let pattern = self.parse_bitwise_or()?;
+        let except = self.parse_star_except()?;
+        let left = Expression::Star(Star {
+            table: None,
+            except,
+            replace: None,
+            rename: None,
+            trailing_comments: Vec::new(),
+            span: None,
+        });
+        let like = LikeOp {
+            left,
+            right: pattern,
+            escape: None,
+            quantifier: None,
+            inferred_type: None,
+        };
+        let expr = if is_ilike {
+            Expression::ILike(Box::new(like))
+        } else {
+            Expression::Like(Box::new(like))
+        };
+
+        Ok(Some(expr))
     }
 
     /// parse_star_except - Parse EXCEPT/EXCLUDE clause for Star

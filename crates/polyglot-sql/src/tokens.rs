@@ -171,6 +171,7 @@ pub enum TokenType {
     LrArrow,
     DAt,
     AtAt,
+    AtQMark,
     LtAt,
     AtGt,
     Dollar,
@@ -2213,6 +2214,7 @@ impl<'a> TokenizerState<'a> {
             ('&', '<') => Some(TokenType::AmpLt), // PostgreSQL range operator
             ('&', '>') => Some(TokenType::AmpGt), // PostgreSQL range operator
             ('@', '@') => Some(TokenType::AtAt),  // Text search match
+            ('@', '?') => Some(TokenType::AtQMark), // JSON path exists - PostgreSQL
             ('?', '|') => Some(TokenType::QMarkPipe), // JSONB contains any key
             ('?', '&') => Some(TokenType::QMarkAmp), // JSONB contains all keys
             ('?', '?') => Some(TokenType::DQMark), // Double question mark
@@ -2501,6 +2503,13 @@ impl<'a> TokenizerState<'a> {
                     self.start,
                     self.current,
                 ));
+            }
+            if end_quote == '`' && self.peek() == '\\' && self.peek_next() == end_quote {
+                // ClickHouse allows escaped backticks inside backtick-quoted identifiers.
+                value.push(end_quote);
+                self.advance(); // skip backslash
+                self.advance(); // skip escaped quote
+                continue;
             }
             if self.peek() == end_quote {
                 if self.peek_next() == end_quote {

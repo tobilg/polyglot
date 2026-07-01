@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.12] - 2026-07-01
+
+### Added
+- Regression coverage for Trino/Presto `CREATE VIEW` parsing with `COMMENT`
+  before `SECURITY`.
+- Regression coverage for T-SQL `VARBINARY(MAX)`, `VARCHAR(MAX)`, and
+  `NVARCHAR(MAX)` types across standalone datatype parsing, `CREATE TABLE`,
+  `CAST`, and identity transpilation.
+- Regression coverage for updated ClickHouse `* LIKE` / `* ILIKE` wildcard
+  filters with trailing `EXCEPT` modifiers and nested wildcard filters inside
+  `tuple(...)`.
+
+### Changed
+- Rust verification fixtures now track SQLGlot `v30.12.0` and ClickHouse
+  `v26.6.1.1193-stable`.
+
+### Fixed
+- Trino/Presto `CREATE VIEW` parsing now accepts documented `COMMENT ...
+  SECURITY ...` clause order while preserving the previously accepted
+  `SECURITY ... COMMENT ...` order.
+- T-SQL datatype parsing now accepts `VARBINARY(MAX)` consistently with the
+  existing `VARCHAR(MAX)` and `NVARCHAR(MAX)` handling, so casts and DDL no
+  longer fail with `Expected number`.
+- SQLGlot identity verification compatibility for updated dialect fixtures,
+  including DuckDB/PostgreSQL array contained-by operators, Databricks bracketed
+  JSON path string keys, PostgreSQL JSON path `@?` predicates, SQLite ordered
+  `ON CONFLICT` targets, BigQuery adjacent string literal comments, PostgreSQL
+  function return/property normalization, and Snowflake `UNDROP`,
+  `IDENTIFIER(...)()` calls, and inline table/view options.
+- ClickHouse parser and normalized round-trip compatibility for updated
+  fixtures, including escaped backticks in quoted identifiers, descending
+  expressions inside table-property `ORDER BY (...)`, wildcard
+  `LIKE`/`ILIKE ... EXCEPT` filters, nested wildcard filters in `tuple(...)`,
+  and stable raw `EXPLAIN` subquery normalization.
+
 ## [0.5.11] - 2026-06-30
 
 ### Added
