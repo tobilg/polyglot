@@ -17980,55 +17980,76 @@ impl Parser {
             row_access_policy = self.parse_snowflake_row_access_policy_clause();
         }
 
-        // Presto/Trino/StarRocks: SECURITY DEFINER/INVOKER/NONE (after view name, before AS)
-        // MySQL also allows SQL SECURITY DEFINER/INVOKER after the view name
-        // This differs from MySQL's SQL SECURITY which can also come before VIEW keyword
-        let (security, security_sql_style, security_after_name) = if security.is_some() {
-            // MySQL-style SQL SECURITY was parsed before VIEW keyword
-            (security, true, false)
-        } else if self.check_identifier("SQL")
-            && self.current + 1 < self.tokens.len()
-            && self.tokens[self.current + 1]
-                .text
-                .eq_ignore_ascii_case("SECURITY")
-        {
-            // SQL SECURITY after view name
-            self.skip(); // consume SQL
-            self.skip(); // consume SECURITY
-            let sec = if self.match_identifier("DEFINER") {
-                Some(FunctionSecurity::Definer)
-            } else if self.match_identifier("INVOKER") {
-                Some(FunctionSecurity::Invoker)
-            } else if self.match_identifier("NONE") {
-                Some(FunctionSecurity::None)
-            } else {
-                None
-            };
-            (sec, true, true)
-        } else if self.match_identifier("SECURITY") {
-            // Presto-style SECURITY after view name
-            let sec = if self.match_identifier("DEFINER") {
-                Some(FunctionSecurity::Definer)
-            } else if self.match_identifier("INVOKER") {
-                Some(FunctionSecurity::Invoker)
-            } else if self.match_identifier("NONE") {
-                Some(FunctionSecurity::None)
-            } else {
-                None
-            };
-            (sec, false, false)
-        } else {
-            (None, true, false)
-        };
+        // View SECURITY and COMMENT clauses, parsed in either order.
+        //
+        // Trino/Presto document the canonical ordering as COMMENT before SECURITY:
+        //     CREATE VIEW v COMMENT 'c' SECURITY DEFINER AS ...
+        // while MySQL/other tooling emit SECURITY before COMMENT:
+        //     CREATE VIEW v SECURITY DEFINER COMMENT 'c' AS ...
+        // Parsing them in a loop accepts both orderings (previously SECURITY was
+        // consumed first, so the canonical Trino form failed to parse once a
+        // COMMENT preceded SECURITY). Snowflake's `COMMENT = 'text'` and MySQL's
+        // `SQL SECURITY` (which may already have been parsed before the VIEW
+        // keyword) are handled here too.
+        let mut security = security;
+        // `security_sql_style` / `security_after_name` only influence generation
+        // when `security` is Some; the initial values preserve the previous
+        // defaults for the "no SECURITY clause after the name" case.
+        let mut security_sql_style = true;
+        let mut security_after_name = false;
+        let mut view_comment: Option<String> = None;
 
-        // Snowflake: COMMENT = 'text'
-        let view_comment = if self.match_token(TokenType::Comment) {
-            // Match = or skip if not present (some dialects use COMMENT='text')
-            let _ = self.match_token(TokenType::Eq);
-            Some(self.expect_string()?)
-        } else {
-            None
-        };
+        loop {
+            // SECURITY / SQL SECURITY DEFINER|INVOKER|NONE. Skipped when a
+            // MySQL-style `SQL SECURITY` was already parsed before VIEW.
+            if security.is_none() {
+                if self.check_identifier("SQL")
+                    && self.current + 1 < self.tokens.len()
+                    && self.tokens[self.current + 1]
+                        .text
+                        .eq_ignore_ascii_case("SECURITY")
+                {
+                    // SQL SECURITY after view name
+                    self.skip(); // consume SQL
+                    self.skip(); // consume SECURITY
+                    security = if self.match_identifier("DEFINER") {
+                        Some(FunctionSecurity::Definer)
+                    } else if self.match_identifier("INVOKER") {
+                        Some(FunctionSecurity::Invoker)
+                    } else if self.match_identifier("NONE") {
+                        Some(FunctionSecurity::None)
+                    } else {
+                        None
+                    };
+                    security_sql_style = true;
+                    security_after_name = true;
+                    continue;
+                } else if self.match_identifier("SECURITY") {
+                    // Presto/Trino-style SECURITY after view name
+                    security = if self.match_identifier("DEFINER") {
+                        Some(FunctionSecurity::Definer)
+                    } else if self.match_identifier("INVOKER") {
+                        Some(FunctionSecurity::Invoker)
+                    } else if self.match_identifier("NONE") {
+                        Some(FunctionSecurity::None)
+                    } else {
+                        None
+                    };
+                    security_sql_style = false;
+                    security_after_name = false;
+                    continue;
+                }
+            }
+
+            // COMMENT 'text' (Trino/Presto) or COMMENT = 'text' (Snowflake).
+            if view_comment.is_none() && self.match_token(TokenType::Comment) {
+                let _ = self.match_token(TokenType::Eq);
+                view_comment = Some(self.expect_string()?);
+                continue;
+            }
+
+            break;
+        }
 
         // Snowflake: TAG (name='value', ...)
         let tags = if self.match_identifier("TAG") {
