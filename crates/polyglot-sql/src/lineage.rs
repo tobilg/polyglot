@@ -7,6 +7,7 @@
 
 use crate::dialects::DialectType;
 use crate::expressions::{Expression, Identifier, JoinKind, NamedWindow, Select};
+#[cfg(feature = "generate")]
 use crate::generator::Generator;
 use crate::optimizer::annotate_types::annotate_types;
 use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
@@ -236,6 +237,7 @@ fn lineage_from_expression(
     )
 }
 
+#[cfg(feature = "generate")]
 pub(crate) fn lineage_by_index_from_expression(
     column_index: usize,
     sql: &Expression,
@@ -1544,9 +1546,19 @@ fn pivot_aggregation_expressions(pivot: &crate::expressions::Pivot) -> &[Express
 fn pivot_aggregation_output_suffix(expr: &Expression, needs_suffix: bool) -> Option<String> {
     match expr {
         Expression::Alias(alias) => Some(alias.alias.name.clone()),
-        _ if needs_suffix => Generator::sql(expr).ok().map(|sql| sql.to_lowercase()),
+        _ if needs_suffix => pivot_generated_aggregation_suffix(expr),
         _ => None,
     }
+}
+
+#[cfg(feature = "generate")]
+fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
+    Generator::sql(expr).ok().map(|sql| sql.to_lowercase())
+}
+
+#[cfg(not(feature = "generate"))]
+fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
+    pivot_expr_output_name(expr).or_else(|| Some(expr.variant_name().to_string()))
 }
 
 fn pivot_field_output_names(pivot: &crate::expressions::Pivot) -> Vec<String> {

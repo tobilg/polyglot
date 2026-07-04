@@ -27,6 +27,7 @@ pub mod function_catalog;
 mod function_registry;
 #[cfg(feature = "generate")]
 pub mod generator;
+pub mod guard;
 #[cfg(feature = "semantic")]
 pub mod helper;
 #[cfg(feature = "semantic")]
@@ -53,6 +54,8 @@ pub mod tokens;
 pub mod transforms;
 #[cfg(any(feature = "ast-tools", feature = "generate", feature = "semantic"))]
 pub mod traversal;
+#[cfg(not(any(feature = "ast-tools", feature = "generate", feature = "semantic")))]
+mod traversal;
 #[cfg(any(feature = "semantic", feature = "time"))]
 pub mod trie;
 #[cfg(feature = "semantic")]
@@ -83,6 +86,7 @@ pub use function_catalog::{
 };
 #[cfg(feature = "generate")]
 pub use generator::{Generator, UnsupportedLevel};
+pub use guard::ComplexityGuardOptions;
 #[cfg(feature = "semantic")]
 pub use helper::{
     csv, find_new_name, is_date_unit, is_float, is_int, is_iso_date, is_iso_datetime, merge_ranges,
@@ -332,8 +336,15 @@ fn parse_with_token_guard(
     }
     enforce_set_op_chain_guard(&tokens, options)?;
 
+    let complexity_guard = ComplexityGuardOptions {
+        max_input_bytes: options.max_input_bytes,
+        max_tokens: options.max_tokens,
+        max_ast_nodes: options.max_ast_nodes,
+        ..Default::default()
+    };
     let config = crate::parser::ParserConfig {
         dialect: Some(dialect.dialect_type()),
+        complexity_guard,
         ..Default::default()
     };
     let mut parser = Parser::with_source(tokens, config, sql.to_string());

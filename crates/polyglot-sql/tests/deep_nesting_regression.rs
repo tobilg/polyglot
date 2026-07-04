@@ -2,6 +2,7 @@ use polyglot_sql::dialects::{transform_recursive, Dialect, DialectType};
 use polyglot_sql::expressions::{
     Array, Expression, Function, Identifier, Literal, Select, Subquery, TableRef, Union,
 };
+use polyglot_sql::{ComplexityGuardOptions, TranspileOptions};
 
 fn select_star_from(source: Expression) -> Expression {
     Expression::Select(Box::new(
@@ -119,6 +120,14 @@ fn build_clickhouse_nested_function_sql(depth: usize) -> String {
         expr = format!("bitOr(bitShiftLeft({expr}, 1), b{i})");
     }
     format!("SELECT {expr} AS n_")
+}
+
+fn build_nested_unary_function_sql(depth: usize, name: &str) -> String {
+    let mut expr = "id".to_string();
+    for _ in 0..depth {
+        expr = format!("{name}({expr})");
+    }
+    format!("SELECT {expr} FROM t")
 }
 
 const CLICKHOUSE_DEEP_TUPLE_SQL: &str = "SELECT * FROM ( SELECT 1 AS a GROUP BY GROUPING SETS ((tuple(toUInt128(67)))) UNION ALL SELECT materialize(2) ) WHERE a ORDER BY (75, ((tuple(((67, (67, (tuple((tuple(toLowCardinality(toLowCardinality(1))), 1)), toNullable(1))), (tuple(toUInt256(1)), 1)), 1)), 1), 1), toNullable(1)) ASC";
@@ -264,4 +273,62 @@ fn clickhouse_generates_deep_function_chain_sql_without_large_stack() {
         .generate(&parsed[0])
         .expect("clickhouse deep function chain sql should generate");
     assert!(!generated.is_empty());
+}
+
+#[test]
+fn postgres_parses_reasonable_nested_simple_unary_functions_without_large_stack() {
+    let dialect = Dialect::get(DialectType::PostgreSQL);
+
+    for name in ["abs", "sqrt", "upper", "lower"] {
+        let sql = build_nested_unary_function_sql(20, name);
+        let parsed = dialect
+            .parse(&sql)
+            .unwrap_or_else(|err| panic!("{name} nesting should parse: {err}"));
+        assert_eq!(parsed.len(), 1);
+    }
+}
+
+#[test]
+fn postgres_rejects_excessive_function_call_nesting_before_parse_recursion() {
+    let sql = build_nested_unary_function_sql(100, "abs");
+    let dialect = Dialect::get(DialectType::PostgreSQL);
+    let err = dialect
+        .parse(&sql)
+        .expect_err("excessive function nesting should return an error");
+
+    assert!(
+        err.to_string()
+            .contains("E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn postgres_to_fabric_strict_rejects_excessive_function_call_nesting_without_abort() {
+    let sql = build_nested_unary_function_sql(100, "abs");
+    let postgres = Dialect::get(DialectType::PostgreSQL);
+    let err = postgres
+        .transpile_with(&sql, DialectType::Fabric, TranspileOptions::strict())
+        .expect_err("excessive function nesting should return an error");
+
+    assert!(
+        err.to_string()
+            .contains("E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn transpile_options_can_raise_function_call_nesting_budget() {
+    let sql = build_nested_unary_function_sql(80, "abs");
+    let postgres = Dialect::get(DialectType::PostgreSQL);
+    let options = TranspileOptions::strict().with_complexity_guard(ComplexityGuardOptions {
+        max_function_call_depth: Some(128),
+        ..Default::default()
+    });
+
+    let transpiled = postgres
+        .transpile_with(&sql, DialectType::Fabric, options)
+        .expect("raised function nesting budget should allow this query");
+    assert_eq!(transpiled.len(), 1);
 }

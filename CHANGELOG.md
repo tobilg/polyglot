@@ -4,6 +4,59 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.5.13] - 2026-07-04
+
+### Added
+- Configurable complexity guards for recursion-heavy parse, transpile,
+  transform, and generation paths, including limits for SQL input size, token
+  count, AST node count, AST depth, parenthesis nesting, and function-call
+  nesting.
+- `TranspileOptions.complexityGuard` / `complexity_guard` support across Rust,
+  C FFI JSON options, WASM/TypeScript, and Go, allowing callers to raise or
+  disable individual guard limits for trusted inputs.
+- Regression coverage for deeply nested unary functions such as PostgreSQL
+  `abs(abs(...))` when transpiling to Fabric, including guard override coverage
+  through Rust, C FFI, Go option encoding, and TypeScript typings.
+- Regression coverage for PostgreSQL lateral joins targeting T-SQL and Fabric,
+  including parenthesized join groups, comma-style `LATERAL` sources,
+  non-trivial `ON` predicates, column alias preservation, and strict-mode
+  rejection of residual unsupported lateral joins.
+- Regression coverage for PostgreSQL function-style type casts targeting
+  T-SQL and Fabric, including `numeric(...)`, `int4(...)`, `float8(...)`,
+  `bool(...)`, `text(...)`, and unsafe strict-mode residuals.
+- Regression coverage for PostgreSQL scalar-array membership with outer
+  array casts targeting T-SQL and Fabric, including PostgreSQL
+  `pg_get_querydef` / ruleutils-style `= ANY((ARRAY[...])::type[])` output.
+
+### Fixed
+- Excessively nested function-call inputs now fail with a regular
+  `E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED` error instead of risking stack
+  overflow or process aborts during parsing/transpilation.
+- Moderate nested unary functions now parse more reliably through stack-growth
+  protection and a lightweight parser fast path for common unary functions such
+  as `ABS`, `SQRT`, `LOWER`, and `UPPER`.
+- AST-depth guarding now preserves existing behavior for deep commentless
+  `AND` / `OR` connector chains that are generated iteratively, avoiding
+  regressions in optimizer and generator stress tests.
+- Minimal `semantic` / `openlineage` feature builds no longer require the
+  generator module for pivot suffix helpers.
+- PostgreSQL `JOIN LATERAL` and `LEFT JOIN LATERAL` inside parenthesized
+  `FROM` groups now transpile to valid T-SQL/Fabric `CROSS APPLY` and
+  `OUTER APPLY` instead of emitting unsupported `JOIN LATERAL` SQL.
+- PostgreSQL comma-style `FROM t, LATERAL (...)` now maps to T-SQL/Fabric
+  `CROSS APPLY`, and lateral joins with non-trivial `ON` predicates now push
+  the predicate into a filtered APPLY right-hand derived table while preserving
+  the user-facing lateral alias.
+- PostgreSQL function-style type casts now transpile to real T-SQL/Fabric
+  `CAST(...)` expressions instead of invalid type-keyword function calls such
+  as `NUMERIC(...)`, `INT4(...)`, or `FLOAT8(...)`; strict mode now rejects
+  residual unsafe type-name calls that cannot be safely converted.
+- PostgreSQL `= ANY((ARRAY[...])::type[])` scalar-array membership now
+  transpiles to valid T-SQL/Fabric `IN (...)` predicates with the outer array
+  element type pushed down to the individual values, and strict mode now
+  rejects residual non-subquery `ANY` expressions for T-SQL/Fabric instead of
+  returning invalid SQL.
+
 ## [0.5.12] - 2026-07-01
 
 ### Added

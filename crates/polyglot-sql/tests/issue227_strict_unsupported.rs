@@ -204,3 +204,16 @@ fn transpile_options_deserialize_unsupported_level_from_json() {
     assert_eq!(opts.max_unsupported, 2);
     assert!(!opts.pretty);
 }
+
+#[test]
+fn transpile_options_deserialize_complexity_guard_from_json() {
+    let opts: TranspileOptions =
+        serde_json::from_str(r#"{"complexityGuard":{"maxFunctionCallDepth":128}}"#)
+            .expect("options JSON should deserialize");
+
+    assert_eq!(opts.complexity_guard.max_function_call_depth, Some(128));
+    assert_eq!(
+        opts.complexity_guard.max_parenthesis_depth,
+        polyglot_sql::ComplexityGuardOptions::default().max_parenthesis_depth
+    );
+}

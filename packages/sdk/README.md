@@ -791,6 +791,8 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | `getDialects()` | List supported dialect names |
 | `getVersion()` | Get library version |
 
+`transpile` accepts `TranspileOptions` with `pretty`, `unsupportedLevel`, `maxUnsupported`, and optional `complexityGuard` limits (`maxInputBytes`, `maxTokens`, `maxAstNodes`, `maxAstDepth`, `maxParenthesisDepth`, `maxFunctionCallDepth`) for recursion-heavy inputs.
+
 ### Analysis Functions
 
 | Function | Description |

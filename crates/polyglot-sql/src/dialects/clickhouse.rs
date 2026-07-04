@@ -56,10 +56,15 @@ impl DialectImpl for ClickHouseDialect {
 
     fn generator_config(&self) -> GeneratorConfig {
         use crate::generator::{IdentifierQuoteStyle, NormalizeFunctions};
+        let mut complexity_guard = crate::guard::ComplexityGuardOptions::default();
+        complexity_guard.max_ast_depth = Some(4_096);
+        complexity_guard.max_function_call_depth = Some(512);
+
         GeneratorConfig {
             identifier_quote: '"',
             identifier_quote_style: IdentifierQuoteStyle::DOUBLE_QUOTE,
             dialect: Some(DialectType::ClickHouse),
+            complexity_guard,
             // ClickHouse uses uppercase keywords (matching Python SQLGlot behavior)
             uppercase_keywords: true,
             // ClickHouse function names are case-sensitive and typically camelCase

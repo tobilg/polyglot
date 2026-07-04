@@ -63,6 +63,23 @@ export interface TranspileOptions {
   unsupportedLevel?: UnsupportedLevel;
   /** Maximum number of unsupported diagnostics to include in raised errors */
   maxUnsupported?: number;
+  /** Complexity limits for recursive parse/transpile/generate paths */
+  complexityGuard?: ComplexityGuardOptions;
+}
+
+export interface ComplexityGuardOptions {
+  /** Maximum SQL input size in bytes */
+  maxInputBytes?: number | null;
+  /** Maximum token count after tokenization */
+  maxTokens?: number | null;
+  /** Maximum AST node count after parsing */
+  maxAstNodes?: number | null;
+  /** Maximum AST depth after parsing */
+  maxAstDepth?: number | null;
+  /** Maximum nested parenthesis depth before parsing */
+  maxParenthesisDepth?: number | null;
+  /** Maximum nested function-call depth before parsing */
+  maxFunctionCallDepth?: number | null;
 }
 
 /**

@@ -11,6 +11,7 @@
 
 use crate::dialects::DialectType;
 use crate::expressions::{Expression, Identifier, TableRef};
+#[cfg(feature = "generate")]
 use crate::generator::Generator;
 use crate::schema::{normalize_name, Schema};
 use crate::scope::{Scope, SourceInfo};
@@ -695,9 +696,19 @@ fn pivot_field_output_names(pivot: &crate::expressions::Pivot) -> Vec<String> {
 fn pivot_aggregation_output_suffix(expr: &Expression, needs_suffix: bool) -> Option<String> {
     match expr {
         Expression::Alias(alias) => Some(alias.alias.name.clone()),
-        _ if needs_suffix => Generator::sql(expr).ok().map(|sql| sql.to_lowercase()),
+        _ if needs_suffix => pivot_generated_aggregation_suffix(expr),
         _ => None,
     }
+}
+
+#[cfg(feature = "generate")]
+fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
+    Generator::sql(expr).ok().map(|sql| sql.to_lowercase())
+}
+
+#[cfg(not(feature = "generate"))]
+fn pivot_generated_aggregation_suffix(expr: &Expression) -> Option<String> {
+    expression_name(expr).or_else(|| Some(expr.variant_name().to_string()))
 }
 
 fn expression_name(expr: &Expression) -> Option<String> {

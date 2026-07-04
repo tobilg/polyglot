@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::expressions::*;
+use crate::guard::{enforce_generate_ast, ComplexityGuardOptions};
 use crate::DialectType;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +212,8 @@ pub struct GeneratorConfig {
     pub unsupported_level: UnsupportedLevel,
     /// Maximum number of unsupported diagnostics to include in raised errors.
     pub max_unsupported: usize,
+    /// Complexity guard limits for recursive generation paths.
+    pub complexity_guard: ComplexityGuardOptions,
     /// How to output function names (UPPER, lower, or as-is)
     pub normalize_functions: NormalizeFunctions,
     /// String escape character
@@ -516,6 +519,7 @@ impl Default for GeneratorConfig {
             source_dialect: None,
             unsupported_level: UnsupportedLevel::Warn,
             max_unsupported: 3,
+            complexity_guard: ComplexityGuardOptions::default(),
             normalize_functions: NormalizeFunctions::Upper,
             string_escape: '\'',
             case_sensitive_identifiers: false,
@@ -2365,6 +2369,7 @@ impl Generator {
     pub fn generate(&mut self, expr: &Expression) -> Result<String> {
         self.output.clear();
         self.unsupported_messages.clear();
+        enforce_generate_ast(expr, &self.config.complexity_guard)?;
         self.generate_expression(expr)?;
         if self.config.unsupported_level == UnsupportedLevel::Raise
             && !self.unsupported_messages.is_empty()

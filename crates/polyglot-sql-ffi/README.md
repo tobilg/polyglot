@@ -99,7 +99,7 @@ typedef struct {
 ### Exported Functions
 
 - `polyglot_transpile(sql, from_dialect, to_dialect)`
-- `polyglot_transpile_with_options(sql, from_dialect, to_dialect, options_json)` (`TranspileOptions` JSON, e.g. `{"pretty": true, "unsupportedLevel": "raise"}`)
+- `polyglot_transpile_with_options(sql, from_dialect, to_dialect, options_json)` (`TranspileOptions` JSON, e.g. `{"pretty": true, "unsupportedLevel": "raise", "complexityGuard": {"maxFunctionCallDepth": 128}}`)
 - `polyglot_parse(sql, dialect)`
 - `polyglot_parse_one(sql, dialect)`
 - `polyglot_parse_data_type(sql, dialect)`

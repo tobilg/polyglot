@@ -23,6 +23,7 @@
 
 use crate::error::{Error, Result};
 use crate::expressions::*;
+use crate::guard::{enforce_ast, enforce_input, enforce_tokens, ComplexityGuardOptions};
 use crate::tokens::{Span, Token, TokenType, Tokenizer, TokenizerConfig};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -513,6 +514,8 @@ pub struct Parser {
     /// These are leading comments from the first token of an expression that need
     /// to be placed by the caller (e.g., after an alias, or after an AND operand).
     pending_leading_comments: Vec<String>,
+    /// Whether token-level complexity guards have been applied to this token stream.
+    guards_checked: bool,
 }
 
 /// Configuration for the SQL [`Parser`].
@@ -527,6 +530,8 @@ pub struct ParserConfig {
     pub allow_trailing_commas: bool,
     /// Dialect type for dialect-specific parsing behavior.
     pub dialect: Option<crate::dialects::DialectType>,
+    /// Complexity guards for recursion-heavy parse paths.
+    pub complexity_guard: ComplexityGuardOptions,
 }
 
 struct SelectBodyHead {
@@ -554,6 +559,7 @@ impl Parser {
             config: ParserConfig::default(),
             source: None,
             pending_leading_comments: Vec::new(),
+            guards_checked: false,
         }
     }
 
@@ -565,6 +571,7 @@ impl Parser {
             config,
             source: None,
             pending_leading_comments: Vec::new(),
+            guards_checked: false,
         }
     }
 
@@ -579,6 +586,7 @@ impl Parser {
             config,
             source: Some(source),
             pending_leading_comments: Vec::new(),
+            guards_checked: false,
         }
     }
 
@@ -599,6 +607,7 @@ impl Parser {
     /// let stmts = Parser::parse_sql("SELECT a FROM t WHERE x = 1")?;
     /// ```
     pub fn parse_sql(sql: &str) -> Result<Vec<Expression>> {
+        enforce_input(sql, &ComplexityGuardOptions::default())?;
         let tokenizer = Tokenizer::default();
         let tokens = tokenizer.tokenize(sql)?;
         let mut parser = Parser::with_source(tokens, ParserConfig::default(), sql.to_string());
@@ -613,10 +622,21 @@ impl Parser {
         sql: &str,
         tokenizer_config: TokenizerConfig,
     ) -> Result<Vec<Expression>> {
+        enforce_input(sql, &ComplexityGuardOptions::default())?;
         let tokenizer = Tokenizer::new(tokenizer_config);
         let tokens = tokenizer.tokenize(sql)?;
         let mut parser = Parser::with_source(tokens, ParserConfig::default(), sql.to_string());
         parser.parse()
+    }
+
+    fn ensure_complexity_guards(&mut self) -> Result<()> {
+        if self.guards_checked {
+            return Ok(());
+        }
+
+        enforce_tokens(&self.tokens, &self.config.complexity_guard)?;
+        self.guards_checked = true;
+        Ok(())
     }
 
     fn is_bigquery_safe_namespace_receiver(expr: &Expression) -> bool {
@@ -657,6 +677,7 @@ impl Parser {
     /// Consumes tokens until the end of input, splitting on semicolons.
     /// Returns one `Expression` per statement.
     pub fn parse(&mut self) -> Result<Vec<Expression>> {
+        self.ensure_complexity_guards()?;
         let mut statements = Vec::new();
 
         while !self.is_at_end() {
@@ -737,6 +758,7 @@ impl Parser {
             statements.push(stmt);
         }
 
+        enforce_ast(&statements, &self.config.complexity_guard)?;
         Ok(statements)
     }
 
@@ -746,6 +768,7 @@ impl Parser {
     /// strings such as `DECIMAL(10, 2)` without wrapping them in a SQL statement
     /// or `CAST(...)` expression.
     pub fn parse_standalone_data_type(&mut self) -> Result<DataType> {
+        self.ensure_complexity_guards()?;
         let data_type = self.parse_data_type()?;
 
         if self.check(TokenType::Semicolon) {
@@ -768,6 +791,7 @@ impl Parser {
     /// (SELECT, INSERT, CREATE, etc.). Unknown or dialect-specific statements
     /// fall through to a `Command` expression that preserves the raw SQL text.
     pub fn parse_statement(&mut self) -> Result<Expression> {
+        self.ensure_complexity_guards()?;
         let start_pos = self.current;
         #[cfg(feature = "stacker")]
         {
@@ -27750,6 +27774,22 @@ impl Parser {
     /// Assignment (:=) has lower precedence than OR, matching Python sqlglot's
     /// _parse_expression -> _parse_assignment -> _parse_disjunction chain
     fn parse_expression(&mut self) -> Result<Expression> {
+        #[cfg(feature = "stacker")]
+        {
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || self.parse_expression_inner())
+        }
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.parse_expression_inner()
+        }
+    }
+
+    fn parse_expression_inner(&mut self) -> Result<Expression> {
         let mut left = self.parse_or()?;
 
         // Handle := assignment operator (MySQL @var := val, DuckDB named args/settings)
@@ -35789,6 +35829,10 @@ impl Parser {
             })));
         }
 
+        if let Some(expr) = self.try_parse_simple_unary_typed_function(canonical_upper_name)? {
+            return Ok(expr);
+        }
+
         if let Some(expr) =
             self.try_parse_registry_typed_function(name, upper_name, canonical_upper_name, quoted)?
         {
@@ -36524,6 +36568,72 @@ impl Parser {
                 canonical_upper_name
             ),
         }
+    }
+
+    fn try_parse_simple_unary_typed_function(
+        &mut self,
+        canonical_upper_name: &str,
+    ) -> Result<Option<Expression>> {
+        let use_clickhouse_alias = matches!(canonical_upper_name, "ABS" | "LOWER" | "UPPER");
+        let this = match canonical_upper_name {
+            "ABS" | "LOWER" | "UPPER" | "SQRT" | "EXP" | "LN" | "SIN" | "COS" | "TAN" | "ASIN"
+            | "ACOS" | "RADIANS" | "DEGREES" | "DAYOFWEEK" | "DAYOFYEAR" | "DAYOFMONTH"
+            | "WEEKOFYEAR" | "YEAR" | "MONTH" | "DAY" | "HOUR" | "MINUTE" | "SECOND"
+            | "DAYOFWEEK_ISO" | "QUARTER" | "EPOCH" | "EPOCH_MS" | "CARDINALITY"
+            | "ARRAY_REVERSE" | "ARRAY_DISTINCT" | "ARRAY_COMPACT" | "EXPLODE"
+            | "EXPLODE_OUTER" | "MAP_FROM_ENTRIES" | "MAP_KEYS" | "MAP_VALUES" => {
+                if use_clickhouse_alias {
+                    self.parse_expression_with_clickhouse_alias()?
+                } else {
+                    self.parse_expression()?
+                }
+            }
+            _ => return Ok(None),
+        };
+        self.expect(TokenType::RParen)?;
+
+        let func = UnaryFunc::new(this);
+        let expr = match canonical_upper_name {
+            "ABS" => Expression::Abs(Box::new(func)),
+            "LOWER" => Expression::Lower(Box::new(func)),
+            "UPPER" => Expression::Upper(Box::new(func)),
+            "SQRT" => Expression::Sqrt(Box::new(func)),
+            "EXP" => Expression::Exp(Box::new(func)),
+            "LN" => Expression::Ln(Box::new(func)),
+            "SIN" => Expression::Sin(Box::new(func)),
+            "COS" => Expression::Cos(Box::new(func)),
+            "TAN" => Expression::Tan(Box::new(func)),
+            "ASIN" => Expression::Asin(Box::new(func)),
+            "ACOS" => Expression::Acos(Box::new(func)),
+            "RADIANS" => Expression::Radians(Box::new(func)),
+            "DEGREES" => Expression::Degrees(Box::new(func)),
+            "DAYOFWEEK" => Expression::DayOfWeek(Box::new(func)),
+            "DAYOFYEAR" => Expression::DayOfYear(Box::new(func)),
+            "DAYOFMONTH" => Expression::DayOfMonth(Box::new(func)),
+            "WEEKOFYEAR" => Expression::WeekOfYear(Box::new(func)),
+            "YEAR" => Expression::Year(Box::new(func)),
+            "MONTH" => Expression::Month(Box::new(func)),
+            "DAY" => Expression::Day(Box::new(func)),
+            "HOUR" => Expression::Hour(Box::new(func)),
+            "MINUTE" => Expression::Minute(Box::new(func)),
+            "SECOND" => Expression::Second(Box::new(func)),
+            "DAYOFWEEK_ISO" => Expression::DayOfWeekIso(Box::new(func)),
+            "QUARTER" => Expression::Quarter(Box::new(func)),
+            "EPOCH" => Expression::Epoch(Box::new(func)),
+            "EPOCH_MS" => Expression::EpochMs(Box::new(func)),
+            "CARDINALITY" => Expression::Cardinality(Box::new(func)),
+            "ARRAY_REVERSE" => Expression::ArrayReverse(Box::new(func)),
+            "ARRAY_DISTINCT" => Expression::ArrayDistinct(Box::new(func)),
+            "ARRAY_COMPACT" => Expression::ArrayCompact(Box::new(func)),
+            "EXPLODE" => Expression::Explode(Box::new(func)),
+            "EXPLODE_OUTER" => Expression::ExplodeOuter(Box::new(func)),
+            "MAP_FROM_ENTRIES" => Expression::MapFromEntries(Box::new(func)),
+            "MAP_KEYS" => Expression::MapKeys(Box::new(func)),
+            "MAP_VALUES" => Expression::MapValues(Box::new(func)),
+            _ => unreachable!("simple unary typed function already matched"),
+        };
+
+        Ok(Some(expr))
     }
 
     fn parse_typed_window_family(

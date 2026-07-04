@@ -14,8 +14,8 @@ use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
     Alias, BinaryOp, Cast, Column, Cte, DataType, Exists, Expression, Function, Identifier, In,
-    Join, JoinKind, LikeOp, Literal, Null, Over, QuantifiedOp, Select, StringAggFunc, Subquery,
-    UnaryFunc, Where,
+    Join, JoinKind, LikeOp, Literal, Null, Over, QuantifiedOp, Select, Star, StringAggFunc,
+    Subquery, UnaryFunc, Where,
 };
 #[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
@@ -185,6 +185,8 @@ impl DialectImpl for TSQLDialect {
                         .map(|cte| self.transform_cte_inner(cte))
                         .collect();
                 }
+
+                Self::rewrite_comma_lateral_sources_to_joins(&mut select);
 
                 Ok(Expression::Select(select))
             }
@@ -356,7 +358,7 @@ impl DialectImpl for TSQLDialect {
 
             // PostgreSQL LATERAL join forms -> SQL Server APPLY.
             Expression::Join(join) => Ok(Expression::Join(Box::new(
-                Self::transform_lateral_join_to_apply(*join),
+                Self::transform_lateral_join_to_apply(*join)?,
             ))),
 
             // LENGTH -> LEN in SQL Server
@@ -654,14 +656,7 @@ impl DialectImpl for TSQLDialect {
             // PostgreSQL pg_get_querydef can emit scalar array comparisons for
             // literal arrays/tuples. T-SQL/Fabric require IN for this shape.
             Expression::Any(ref q) if matches!(&q.op, Some(QuantifiedOp::Eq)) => {
-                let values: Option<Vec<Expression>> = match &q.subquery {
-                    Expression::ArrayFunc(a) => Some(a.expressions.clone()),
-                    Expression::Array(a) => Some(a.expressions.clone()),
-                    Expression::Tuple(t) => Some(t.expressions.clone()),
-                    _ => None,
-                };
-
-                match values {
+                match Self::scalar_array_comparison_values(&q.subquery) {
                     Some(expressions) if expressions.is_empty() => {
                         Ok(Expression::Eq(Box::new(crate::expressions::BinaryOp::new(
                             Expression::Literal(Box::new(Literal::Number("1".to_string()))),
@@ -689,6 +684,52 @@ impl DialectImpl for TSQLDialect {
 
 #[cfg(feature = "transpile")]
 impl TSQLDialect {
+    fn scalar_array_comparison_values(expr: &Expression) -> Option<Vec<Expression>> {
+        let (mut values, element_type) = Self::scalar_array_comparison_values_inner(expr)?;
+        if let Some(to) = element_type {
+            values = values
+                .into_iter()
+                .map(|value| Self::cast_scalar_array_comparison_value(value, to.clone()))
+                .collect();
+        }
+        Some(values)
+    }
+
+    fn scalar_array_comparison_values_inner(
+        expr: &Expression,
+    ) -> Option<(Vec<Expression>, Option<DataType>)> {
+        match expr {
+            Expression::ArrayFunc(a) => Some((a.expressions.clone(), None)),
+            Expression::Array(a) => Some((a.expressions.clone(), None)),
+            Expression::Tuple(t) => Some((t.expressions.clone(), None)),
+            Expression::Paren(p) => Self::scalar_array_comparison_values_inner(&p.this),
+            Expression::Cast(c) | Expression::TryCast(c) | Expression::SafeCast(c) => {
+                let DataType::Array { element_type, .. } = &c.to else {
+                    return None;
+                };
+                let (values, _) = Self::scalar_array_comparison_values_inner(&c.this)?;
+                Some((values, Some((**element_type).clone())))
+            }
+            _ => None,
+        }
+    }
+
+    fn cast_scalar_array_comparison_value(value: Expression, to: DataType) -> Expression {
+        if matches!(&value, Expression::Cast(c) if c.to == to) {
+            return value;
+        }
+
+        Expression::Cast(Box::new(Cast {
+            this: value,
+            to,
+            trailing_comments: Vec::new(),
+            double_colon_syntax: false,
+            format: None,
+            default: None,
+            inferred_type: None,
+        }))
+    }
+
     fn normalize_frame_incompatible_window_functions(select: &mut Select) {
         let window_map: HashMap<String, Over> = select
             .windows
@@ -901,13 +942,25 @@ impl TSQLDialect {
         }
     }
 
-    fn transform_lateral_join_to_apply(mut join: Join) -> Join {
+    const LATERAL_WRAPPER_SOURCE_ALIAS: &'static str = "_polyglot_lateral_source";
+    const LATERAL_WRAPPER_OUTPUT_ALIAS: &'static str = "_polyglot_lateral";
+
+    fn transform_lateral_join_to_apply(mut join: Join) -> Result<Join> {
         let Some(apply_kind) = Self::lateral_apply_kind(&join) else {
-            return join;
+            return Ok(join);
         };
 
-        join.this = Self::remove_lateral_marker(join.this);
-        join.on = None;
+        let original_alias = Self::table_expression_alias(&join.this);
+        let on = join.on.take();
+        let rhs = Self::remove_lateral_marker(join.this);
+        join.this = if on
+            .as_ref()
+            .is_some_and(|expr| !Self::is_true_condition(expr))
+        {
+            Self::wrap_lateral_apply_rhs(rhs, on.expect("checked as Some"), original_alias)?
+        } else {
+            rhs
+        };
         join.using.clear();
         join.kind = apply_kind;
         join.use_inner_keyword = false;
@@ -916,33 +969,77 @@ impl TSQLDialect {
         join.join_hint = None;
         join.match_condition = None;
         join.directed = false;
-        join
+        Ok(join)
     }
 
-    fn lateral_apply_kind(join: &Join) -> Option<JoinKind> {
-        let has_apply_condition = join.using.is_empty() && Self::has_no_or_true_on(&join.on);
+    fn rewrite_comma_lateral_sources_to_joins(select: &mut Select) {
+        let Some(from) = select.from.as_mut() else {
+            return;
+        };
+        if from.expressions.len() < 2
+            || !from
+                .expressions
+                .iter()
+                .skip(1)
+                .any(Self::is_lateral_table_expression)
+        {
+            return;
+        }
 
-        match join.kind {
-            JoinKind::Lateral if has_apply_condition => Some(JoinKind::CrossApply),
-            JoinKind::LeftLateral if has_apply_condition => Some(JoinKind::OuterApply),
-            JoinKind::Cross | JoinKind::Inner
-                if has_apply_condition && Self::is_lateral_table_expression(&join.this) =>
-            {
-                Some(JoinKind::CrossApply)
-            }
-            JoinKind::Left
-                if has_apply_condition && Self::is_lateral_table_expression(&join.this) =>
-            {
-                Some(JoinKind::OuterApply)
-            }
-            _ => None,
+        let mut expressions = std::mem::take(&mut from.expressions).into_iter();
+        let Some(first) = expressions.next() else {
+            return;
+        };
+        from.expressions = vec![first];
+
+        let mut joins = expressions
+            .map(|source| {
+                if Self::is_lateral_table_expression(&source) {
+                    Self::new_join(Self::remove_lateral_marker(source), JoinKind::CrossApply)
+                } else {
+                    Self::new_join(source, JoinKind::Cross)
+                }
+            })
+            .collect::<Vec<_>>();
+        joins.append(&mut select.joins);
+        select.joins = joins;
+    }
+
+    fn new_join(this: Expression, kind: JoinKind) -> Join {
+        Join {
+            this,
+            on: None,
+            using: Vec::new(),
+            kind,
+            use_inner_keyword: false,
+            use_outer_keyword: false,
+            deferred_condition: false,
+            join_hint: None,
+            match_condition: None,
+            pivots: Vec::new(),
+            comments: Vec::new(),
+            nesting_group: 0,
+            directed: false,
         }
     }
 
-    fn has_no_or_true_on(on: &Option<Expression>) -> bool {
-        match on {
-            None => true,
-            Some(expr) => Self::is_true_condition(expr),
+    fn lateral_apply_kind(join: &Join) -> Option<JoinKind> {
+        if !join.using.is_empty() {
+            return None;
+        }
+
+        match join.kind {
+            JoinKind::Lateral => Some(JoinKind::CrossApply),
+            JoinKind::LeftLateral => Some(JoinKind::OuterApply),
+            JoinKind::Cross | JoinKind::Inner | JoinKind::Implicit
+                if Self::is_lateral_table_expression(&join.this) =>
+            {
+                Some(JoinKind::CrossApply)
+            }
+            JoinKind::Left if Self::is_lateral_table_expression(&join.this) => {
+                Some(JoinKind::OuterApply)
+            }
+            _ => None,
         }
     }
 
@@ -957,6 +1054,150 @@ impl TSQLDialect {
             }
             Expression::Paren(paren) => Self::is_true_condition(&paren.this),
             _ => false,
+        }
+    }
+
+    fn table_expression_alias(expr: &Expression) -> Option<(Identifier, Vec<Identifier>)> {
+        match expr {
+            Expression::Subquery(subquery) => subquery
+                .alias
+                .clone()
+                .map(|alias| (alias, subquery.column_aliases.clone())),
+            Expression::Alias(alias) if !alias.alias.is_empty() => {
+                Some((alias.alias.clone(), alias.column_aliases.clone()))
+            }
+            Expression::Lateral(lateral) => lateral.alias.as_ref().map(|alias| {
+                (
+                    if lateral.alias_quoted {
+                        Identifier::quoted(alias)
+                    } else {
+                        Identifier::new(alias)
+                    },
+                    lateral
+                        .column_aliases
+                        .iter()
+                        .map(|column| Identifier::new(column.clone()))
+                        .collect(),
+                )
+            }),
+            _ => None,
+        }
+    }
+
+    fn wrap_lateral_apply_rhs(
+        rhs: Expression,
+        predicate: Expression,
+        original_alias: Option<(Identifier, Vec<Identifier>)>,
+    ) -> Result<Expression> {
+        let (outer_alias, column_aliases) = original_alias.unwrap_or_else(|| {
+            (
+                Identifier::new(Self::LATERAL_WRAPPER_OUTPUT_ALIAS),
+                Vec::new(),
+            )
+        });
+        let inner_alias = Identifier::new(Self::LATERAL_WRAPPER_SOURCE_ALIAS);
+        let source =
+            Self::with_table_expression_alias(rhs, inner_alias.clone(), column_aliases.clone());
+        let predicate = Self::rewrite_column_qualifier(predicate, &outer_alias, &inner_alias)?;
+
+        let mut select = Select::new();
+        select.expressions = vec![Expression::Star(Star {
+            table: None,
+            except: None,
+            replace: None,
+            rename: None,
+            trailing_comments: Vec::new(),
+            span: None,
+        })];
+        select.from = Some(crate::expressions::From {
+            expressions: vec![source],
+        });
+        select.where_clause = Some(Where { this: predicate });
+
+        Ok(Expression::Subquery(Box::new(Subquery {
+            this: Expression::Select(Box::new(select)),
+            alias: Some(outer_alias),
+            column_aliases,
+            alias_explicit_as: true,
+            alias_keyword: None,
+            order_by: None,
+            limit: None,
+            offset: None,
+            distribute_by: None,
+            sort_by: None,
+            cluster_by: None,
+            lateral: false,
+            modifiers_inside: false,
+            trailing_comments: Vec::new(),
+            inferred_type: None,
+        })))
+    }
+
+    fn with_table_expression_alias(
+        expr: Expression,
+        alias: Identifier,
+        column_aliases: Vec<Identifier>,
+    ) -> Expression {
+        match expr {
+            Expression::Subquery(mut subquery) => {
+                subquery.alias = Some(alias);
+                subquery.column_aliases = column_aliases;
+                subquery.alias_explicit_as = true;
+                subquery.alias_keyword = None;
+                Expression::Subquery(subquery)
+            }
+            Expression::Alias(mut aliased) => {
+                aliased.alias = alias;
+                aliased.column_aliases = column_aliases;
+                aliased.alias_explicit_as = true;
+                aliased.alias_keyword = None;
+                Expression::Alias(aliased)
+            }
+            Expression::Table(mut table) => {
+                table.alias = Some(alias);
+                table.alias_explicit_as = true;
+                table.column_aliases = column_aliases;
+                Expression::Table(table)
+            }
+            other => Expression::Alias(Box::new(Alias {
+                this: other,
+                alias,
+                column_aliases,
+                alias_explicit_as: true,
+                alias_keyword: None,
+                pre_alias_comments: Vec::new(),
+                trailing_comments: Vec::new(),
+                inferred_type: None,
+            })),
+        }
+    }
+
+    fn rewrite_column_qualifier(
+        expr: Expression,
+        from: &Identifier,
+        to: &Identifier,
+    ) -> Result<Expression> {
+        super::transform_recursive(expr, &|expr| {
+            Ok(match expr {
+                Expression::Column(mut column)
+                    if column
+                        .table
+                        .as_ref()
+                        .is_some_and(|table| Self::same_identifier(table, from)) =>
+                {
+                    column.table = Some(to.clone());
+                    Expression::Column(column)
+                }
+                other => other,
+            })
+        })
+    }
+
+    fn same_identifier(left: &Identifier, right: &Identifier) -> bool {
+        if left.quoted || right.quoted {
+            left.quoted == right.quoted && left.name == right.name
+        } else {
+            left.name.eq_ignore_ascii_case(&right.name)
         }
     }
 

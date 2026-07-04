@@ -4,6 +4,7 @@ use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::{
     generate, generate_data_type, get_all_tables, parse, parse_data_type, transpile, validate,
     DataType, Dialect, DialectType, Expression, ExpressionWalk, Parser, TokenType,
+    TranspileOptions,
 };
 
 fn pg_to_tsql(sql: &str) -> String {
@@ -316,6 +317,74 @@ fn postgres_lateral_joins_map_to_tsql_apply() {
     for (sql, expected) in cases {
         assert_eq!(pg_to_tsql(&sql), expected, "failed for {sql}");
     }
+}
+
+#[test]
+fn postgres_parenthesized_lateral_joins_map_to_tsql_apply() {
+    let cases = [
+        (
+            "SELECT * FROM (orders o JOIN LATERAL (SELECT 1 AS x) a ON true)",
+            "SELECT * FROM (orders AS o CROSS APPLY (SELECT 1 AS x) AS a)",
+        ),
+        (
+            "SELECT * FROM (orders o LEFT JOIN LATERAL (SELECT 1 AS x) a ON true)",
+            "SELECT * FROM (orders AS o OUTER APPLY (SELECT 1 AS x) AS a)",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_comma_lateral_maps_to_tsql_cross_apply() {
+    assert_eq!(
+        pg_to_tsql("SELECT o.id, t.v FROM orders o, LATERAL (SELECT v FROM lineitem WHERE l_orderkey = o.id) t"),
+        "SELECT o.id, t.v FROM orders AS o CROSS APPLY (SELECT v AS v FROM lineitem WHERE l_orderkey = o.id) AS t"
+    );
+}
+
+#[test]
+fn postgres_lateral_join_on_predicate_pushes_into_tsql_apply_rhs() {
+    let cases = [
+        (
+            "SELECT o.id, t.v FROM orders o JOIN LATERAL (SELECT v FROM lineitem WHERE lineitem.l_orderkey = o.id) t ON t.v > 0",
+            "SELECT o.id, t.v FROM orders AS o CROSS APPLY (SELECT * FROM (SELECT v AS v FROM lineitem WHERE lineitem.l_orderkey = o.id) AS _polyglot_lateral_source WHERE _polyglot_lateral_source.v > 0) AS t",
+        ),
+        (
+            "SELECT o.id, t.v FROM orders o LEFT JOIN LATERAL (SELECT v FROM lineitem WHERE lineitem.l_orderkey = o.id) t ON t.v > 0",
+            "SELECT o.id, t.v FROM orders AS o OUTER APPLY (SELECT * FROM (SELECT v AS v FROM lineitem WHERE lineitem.l_orderkey = o.id) AS _polyglot_lateral_source WHERE _polyglot_lateral_source.v > 0) AS t",
+        ),
+        (
+            "SELECT o.id, t.x FROM orders o JOIN LATERAL (SELECT v FROM lineitem WHERE lineitem.l_orderkey = o.id) t(x) ON t.x > 0",
+            "SELECT o.id, t.x FROM orders AS o CROSS APPLY (SELECT * FROM (SELECT v FROM lineitem WHERE lineitem.l_orderkey = o.id) AS _polyglot_lateral_source(x) WHERE _polyglot_lateral_source.x > 0) AS t(x)",
+        ),
+        (
+            "SELECT o.id, t.v FROM orders o JOIN LATERAL (SELECT v FROM lineitem WHERE lineitem.l_orderkey = o.id) t ON o.id > 0",
+            "SELECT o.id, t.v FROM orders AS o CROSS APPLY (SELECT * FROM (SELECT v AS v FROM lineitem WHERE lineitem.l_orderkey = o.id) AS _polyglot_lateral_source WHERE o.id > 0) AS t",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_lateral_using_inside_joined_table_fails_tsql_strict_mode() {
+    let err = Dialect::get(DialectType::PostgreSQL)
+        .transpile_with(
+            "SELECT * FROM (orders o JOIN LATERAL (SELECT 1 AS id) a USING (id))",
+            DialectType::TSQL,
+            TranspileOptions::strict(),
+        )
+        .expect_err("strict mode should reject residual LATERAL");
+
+    assert!(
+        err.to_string().contains("LATERAL joins and subqueries"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -746,6 +815,63 @@ fn declare_scalar_keeps_following_select_as_second_statement() {
 }
 
 // ---------------------------------------------------------------------------
+// PostgreSQL function-style type casts -> T-SQL CAST
+// ---------------------------------------------------------------------------
+
+#[test]
+fn postgres_type_function_casts_map_to_tsql_casts() {
+    let cases = [
+        (
+            "SELECT s, sum(v) + numeric(sum(g)) AS mixed FROM t GROUP BY s",
+            "SELECT s, SUM(v) + CAST(SUM(g) AS NUMERIC) AS mixed FROM t GROUP BY s",
+        ),
+        (
+            "SELECT decimal(5) AS d, numeric(5) AS n",
+            "SELECT CAST(5 AS NUMERIC) AS d, CAST(5 AS NUMERIC) AS n",
+        ),
+        (
+            "SELECT int4(1.5) AS a, float8(4) AS b",
+            "SELECT CAST(1.5 AS INTEGER) AS a, CAST(4 AS FLOAT) AS b",
+        ),
+        (
+            "SELECT int8(1) AS a, float4(4) AS b, bool(1) AS c, text(1) AS d",
+            "SELECT CAST(1 AS BIGINT) AS a, CAST(4 AS REAL) AS b, CAST(1 AS BIT) AS c, CAST(1 AS VARCHAR(MAX)) AS d",
+        ),
+        (
+            "SELECT smallint(1) AS s, integer(1) AS i, varchar(1) AS v, uuid(id) AS u FROM t",
+            "SELECT CAST(1 AS SMALLINT) AS s, CAST(1 AS INTEGER) AS i, CAST(1 AS VARCHAR) AS v, CAST(id AS UNIQUEIDENTIFIER) AS u FROM t",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_type_function_cast_with_unsafe_arity_fails_tsql_strict_mode() {
+    let err = Dialect::get(DialectType::PostgreSQL)
+        .transpile_with(
+            "SELECT numeric(1, 2) AS n",
+            DialectType::TSQL,
+            TranspileOptions::strict(),
+        )
+        .expect_err("strict mode should reject residual PostgreSQL type-name function casts");
+
+    assert!(
+        err.to_string()
+            .contains("PostgreSQL type-name function casts"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn postgres_qualified_or_quoted_type_named_functions_are_not_casts_for_tsql() {
+    let out = pg_to_tsql(r#"SELECT public.numeric(1) AS q, "numeric"(1) AS quoted"#);
+    assert_eq!(out, "SELECT public.numeric(1) AS q, NUMERIC(1) AS quoted");
+}
+
+// ---------------------------------------------------------------------------
 // BPCHAR → CHAR normalisation
 // ---------------------------------------------------------------------------
 
@@ -808,9 +934,51 @@ fn any_eq_empty_array_rewrites_to_always_false() {
 }
 
 #[test]
+fn any_eq_outer_array_cast_rewrites_to_in_with_element_casts() {
+    let out = pg_to_tsql("SELECT * FROM t WHERE col = ANY((ARRAY['a', 'b'])::text[])");
+    assert_eq!(
+        out,
+        "SELECT * FROM t WHERE col IN (CAST('a' AS VARCHAR(MAX)), CAST('b' AS VARCHAR(MAX)))"
+    );
+}
+
+#[test]
+fn any_eq_outer_array_cast_empty_rewrites_to_always_false() {
+    let out = pg_to_tsql("SELECT * FROM t WHERE col = ANY((ARRAY[])::text[])");
+    assert_eq!(out, "SELECT * FROM t WHERE 1 = 0");
+}
+
+#[test]
+fn any_eq_ruleutils_outer_array_cast_rewrites_to_in() {
+    let out = pg_to_tsql(
+        "SELECT s FROM t WHERE ((s)::text = ANY ((ARRAY['a'::character varying, 'b'::character varying])::text[]))",
+    );
+    assert_eq!(
+        out,
+        "SELECT s FROM t WHERE (CAST((s) AS VARCHAR(MAX)) IN (CAST(CAST('a' AS VARCHAR) AS VARCHAR(MAX)), CAST(CAST('b' AS VARCHAR) AS VARCHAR(MAX))))"
+    );
+}
+
+#[test]
 fn any_neq_array_not_rewritten() {
     let out = pg_to_tsql("SELECT * FROM t WHERE col <> ANY(ARRAY['a', 'b'])");
     assert_eq!(out, "SELECT * FROM t WHERE col <> ANY(ARRAY['a', 'b'])");
+}
+
+#[test]
+fn strict_any_neq_array_rejects_non_subquery_rhs() {
+    let pg = Dialect::get(DialectType::PostgreSQL);
+    let err = pg
+        .transpile_with(
+            "SELECT * FROM t WHERE col <> ANY(ARRAY['a', 'b'])",
+            DialectType::TSQL,
+            TranspileOptions::strict(),
+        )
+        .expect_err("strict T-SQL transpilation should reject ANY over array literals");
+
+    assert!(err
+        .to_string()
+        .contains("ANY over non-subquery expressions"));
 }
 
 #[test]

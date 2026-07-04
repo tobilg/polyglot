@@ -32,6 +32,21 @@ func TestTranspileOptionsJSON(t *testing.T) {
 	}
 }
 
+func TestTranspileOptionsComplexityGuardJSON(t *testing.T) {
+	limit := 128
+	payload, err := marshalOptions(TranspileOptions{
+		ComplexityGuard: &ComplexityGuardOptions{
+			MaxFunctionCallDepth: &limit,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload != `{"complexityGuard":{"maxFunctionCallDepth":128}}` {
+		t.Fatalf("payload = %s", payload)
+	}
+}
+
 func TestFormatOptionsJSON(t *testing.T) {
 	limit := 128
 	payload, err := marshalOptions(FormatOptions{MaxSetOpChain: &limit})

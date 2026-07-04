@@ -1201,8 +1201,8 @@ impl PostgresDialect {
                 vec![],
             )))),
 
-            // UUID -> GEN_RANDOM_UUID in PostgreSQL
-            "UUID" => Ok(Expression::Function(Box::new(Function::new(
+            // UUID() -> GEN_RANDOM_UUID in PostgreSQL
+            "UUID" if f.args.is_empty() => Ok(Expression::Function(Box::new(Function::new(
                 "GEN_RANDOM_UUID".to_string(),
                 vec![],
             )))),

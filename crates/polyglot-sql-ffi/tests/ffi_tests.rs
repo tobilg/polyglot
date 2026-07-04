@@ -18,6 +18,14 @@ fn c(s: &str) -> CString {
     CString::new(s).expect("CString conversion failed")
 }
 
+fn nested_unary_function_sql(depth: usize, name: &str) -> String {
+    let mut expr = "id".to_string();
+    for _ in 0..depth {
+        expr = format!("{name}({expr})");
+    }
+    format!("SELECT {expr} FROM t")
+}
+
 unsafe fn opt_string(ptr: *const std::os::raw::c_char) -> Option<String> {
     if ptr.is_null() {
         None
@@ -222,6 +230,26 @@ fn test_transpile_with_options_unsupported_raise() {
 
     assert_eq!(status, 3); // STATUS_TRANSPILE_ERROR
     assert!(error.unwrap_or_default().contains("recursive CTEs"));
+}
+
+#[test]
+fn test_transpile_with_options_complexity_guard_override() {
+    let sql = c(&nested_unary_function_sql(70, "abs"));
+    let from = c("postgres");
+    let to = c("fabric");
+    let opts = c(r#"{"complexityGuard":{"maxFunctionCallDepth":128}}"#);
+
+    let (status, data, error) = consume_result(polyglot_transpile_with_options(
+        sql.as_ptr(),
+        from.as_ptr(),
+        to.as_ptr(),
+        opts.as_ptr(),
+    ));
+
+    assert_eq!(status, 0, "error={error:?}");
+    let statements: Vec<String> =
+        serde_json::from_str(&data.expect("missing data")).expect("invalid JSON");
+    assert_eq!(statements.len(), 1);
 }
 
 #[test]

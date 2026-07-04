@@ -34,6 +34,11 @@
 //!
 //! Based on traversal patterns from `sqlglot/expressions.py`.
 
+#![cfg_attr(
+    not(any(feature = "ast-tools", feature = "generate", feature = "semantic")),
+    allow(dead_code)
+)]
+
 use crate::expressions::{Expression, TableRef};
 use std::collections::{HashMap, VecDeque};
 
@@ -918,6 +923,12 @@ pub trait ExpressionWalk {
     /// Children are transformed first, then `fun` is called on the resulting node.
     /// Return `Ok(None)` from `fun` to replace a node with `NULL`.
     /// Return `Ok(Some(expr))` to substitute the node with `expr`.
+    #[cfg(any(
+        feature = "transpile",
+        feature = "ast-tools",
+        feature = "generate",
+        feature = "semantic"
+    ))]
     fn transform_owned<F>(self, fun: F) -> crate::Result<Expression>
     where
         F: Fn(Expression) -> crate::Result<Option<Expression>>,
@@ -996,6 +1007,12 @@ impl ExpressionWalk for Expression {
         max_depth
     }
 
+    #[cfg(any(
+        feature = "transpile",
+        feature = "ast-tools",
+        feature = "generate",
+        feature = "semantic"
+    ))]
     fn transform_owned<F>(self, fun: F) -> crate::Result<Expression>
     where
         F: Fn(Expression) -> crate::Result<Option<Expression>>,
@@ -1024,6 +1041,12 @@ impl ExpressionWalk for Expression {
 ///     other => Ok(Some(other)),
 /// })?;
 /// ```
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 pub fn transform<F>(expr: Expression, fun: &F) -> crate::Result<Expression>
 where
     F: Fn(Expression) -> crate::Result<Option<Expression>>,
@@ -1054,6 +1077,12 @@ where
 ///     other => Ok(other),
 /// })?;
 /// ```
+#[cfg(any(
+    feature = "transpile",
+    feature = "ast-tools",
+    feature = "generate",
+    feature = "semantic"
+))]
 pub fn transform_map<F>(expr: Expression, fun: &F) -> crate::Result<Expression>
 where
     F: Fn(Expression) -> crate::Result<Expression>,

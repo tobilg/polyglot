@@ -159,7 +159,7 @@ pub use tsql::TSQLDialect;
 
 use crate::error::Result;
 #[cfg(feature = "transpile")]
-use crate::expressions::{ColumnConstraint, Function, Identifier, Literal};
+use crate::expressions::{Cast, ColumnConstraint, Function, Identifier, Literal};
 use crate::expressions::{DataType, Expression};
 #[cfg(any(
     feature = "transpile",
@@ -172,6 +172,9 @@ use crate::expressions::{From, FunctionBody, Join, Null, OrderBy, OutputClause, 
 use crate::generator::UnsupportedLevel;
 #[cfg(feature = "generate")]
 use crate::generator::{Generator, GeneratorConfig};
+#[cfg(feature = "transpile")]
+use crate::guard::enforce_generate_ast;
+use crate::guard::{enforce_input, ComplexityGuardOptions};
 use crate::parser::Parser;
 #[cfg(feature = "transpile")]
 use crate::tokens::TokenType;
@@ -3168,15 +3171,26 @@ where
         // JoinedTable: (tbl1 JOIN tbl2 ON ...) - recurse into left and join tables
         Expression::JoinedTable(mut jt) => {
             jt.left = transform_recursive(jt.left, transform_fn)?;
-            for join in &mut jt.joins {
-                join.this = transform_recursive(
-                    std::mem::replace(&mut join.this, Expression::Null(crate::expressions::Null)),
-                    transform_fn,
-                )?;
-                if let Some(on) = join.on.take() {
-                    join.on = Some(transform_recursive(on, transform_fn)?);
-                }
-            }
+            jt.joins = jt
+                .joins
+                .into_iter()
+                .map(|mut join| {
+                    join.this = transform_recursive(join.this, transform_fn)?;
+                    if let Some(on) = join.on.take() {
+                        join.on = Some(transform_recursive(on, transform_fn)?);
+                    }
+                    match transform_fn(Expression::Join(Box::new(join)))? {
+                        Expression::Join(j) => Ok(*j),
+                        _ => Err(crate::error::Error::parse(
+                            "Join transformation returned non-join expression",
+                            0,
+                            0,
+                            0,
+                            0,
+                        )),
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
             jt.lateral_views = jt
                 .lateral_views
                 .into_iter()
@@ -3747,6 +3761,8 @@ pub struct TranspileOptions {
     pub unsupported_level: UnsupportedLevel,
     /// Maximum number of unsupported diagnostics to include in raised errors.
     pub max_unsupported: usize,
+    /// Complexity guard limits used while parsing, transforming, and generating.
+    pub complexity_guard: ComplexityGuardOptions,
 }
 
 #[cfg(feature = "transpile")]
@@ -3756,6 +3772,7 @@ impl Default for TranspileOptions {
             pretty: false,
             unsupported_level: UnsupportedLevel::Warn,
             max_unsupported: 3,
+            complexity_guard: ComplexityGuardOptions::default(),
         }
     }
 }
@@ -3787,6 +3804,12 @@ impl TranspileOptions {
     /// Set the maximum number of unsupported diagnostics to include in raised errors.
     pub fn with_max_unsupported(mut self, max: usize) -> Self {
         self.max_unsupported = max;
+        self
+    }
+
+    /// Set complexity guard limits for parse/transpile/generate recursion-heavy paths.
+    pub fn with_complexity_guard(mut self, guard: ComplexityGuardOptions) -> Self {
+        self.complexity_guard = guard;
         self
     }
 }
@@ -3927,13 +3950,54 @@ impl Dialect {
     /// produces a separate element in the returned vector. Tokenization uses
     /// this dialect's configured tokenizer, and parsing uses the dialect-aware parser.
     pub fn parse(&self, sql: &str) -> Result<Vec<Expression>> {
+        self.parse_with_guard(sql, self.default_complexity_guard())
+    }
+
+    fn parse_with_guard(
+        &self,
+        sql: &str,
+        complexity_guard: ComplexityGuardOptions,
+    ) -> Result<Vec<Expression>> {
+        enforce_input(sql, &complexity_guard)?;
         let tokens = self.tokenizer.tokenize(sql)?;
         let config = crate::parser::ParserConfig {
             dialect: Some(self.dialect_type),
+            complexity_guard,
             ..Default::default()
         };
         let mut parser = Parser::with_source(tokens, config, sql.to_string());
         parser.parse()
+    }
+
+    fn default_complexity_guard(&self) -> ComplexityGuardOptions {
+        let mut guard = ComplexityGuardOptions::default();
+        if matches!(self.dialect_type, DialectType::ClickHouse) {
+            guard.max_ast_depth = Some(4_096);
+            guard.max_function_call_depth = Some(512);
+        }
+        guard
+    }
+
+    #[cfg(feature = "transpile")]
+    fn default_transpile_complexity_guard(
+        &self,
+        target_dialect: &Dialect,
+        guard: ComplexityGuardOptions,
+    ) -> ComplexityGuardOptions {
+        if guard != ComplexityGuardOptions::default() {
+            return guard;
+        }
+
+        if matches!(self.dialect_type, DialectType::ClickHouse)
+            || matches!(target_dialect.dialect_type, DialectType::ClickHouse)
+        {
+            let mut guard = guard;
+            guard.max_ast_depth = Some(4_096);
+            guard.max_function_call_depth = Some(512);
+            guard
+        } else {
+            guard
+        }
     }
 
     /// Parse a standalone SQL data type using this dialect's tokenizer and parser.
@@ -3941,9 +4005,12 @@ impl Dialect {
     /// This accepts type strings such as `DECIMAL(10, 2)`, `INT[]`, or
     /// `STRUCT(a INT, b VARCHAR)` without requiring a surrounding statement.
     pub fn parse_data_type(&self, sql: &str) -> Result<DataType> {
+        let complexity_guard = self.default_complexity_guard();
+        enforce_input(sql, &complexity_guard)?;
         let tokens = self.tokenizer.tokenize(sql)?;
         let config = crate::parser::ParserConfig {
             dialect: Some(self.dialect_type),
+            complexity_guard,
             ..Default::default()
         };
         let mut parser = Parser::with_source(tokens, config, sql.to_string());
@@ -4028,6 +4095,7 @@ impl Dialect {
         config.pretty = opts.pretty;
         config.unsupported_level = opts.unsupported_level;
         config.max_unsupported = opts.max_unsupported.max(1);
+        config.complexity_guard = opts.complexity_guard;
         let mut generator = Generator::with_config(config);
         generator.generate(expr)
     }
@@ -4076,6 +4144,16 @@ impl Dialect {
     /// and for identity transforms (normalizing SQL within the same dialect).
     #[cfg(feature = "transpile")]
     pub fn transform(&self, expr: Expression) -> Result<Expression> {
+        self.transform_with_guard(expr, self.default_complexity_guard())
+    }
+
+    #[cfg(feature = "transpile")]
+    fn transform_with_guard(
+        &self,
+        expr: Expression,
+        complexity_guard: ComplexityGuardOptions,
+    ) -> Result<Expression> {
+        enforce_generate_ast(&expr, &complexity_guard)?;
         // Apply preprocessing transforms based on dialect
         let preprocessed = self.preprocess(expr)?;
         // Then apply recursive transformation
@@ -4318,13 +4396,17 @@ impl Dialect {
         target_dialect: &Dialect,
         opts: &TranspileOptions,
     ) -> Result<Vec<String>> {
+        let mut effective_opts = opts.clone();
+        effective_opts.complexity_guard =
+            self.default_transpile_complexity_guard(target_dialect, opts.complexity_guard);
+        let opts = &effective_opts;
         let target = target_dialect.dialect_type;
         if matches!(self.dialect_type, DialectType::PostgreSQL)
             && matches!(target, DialectType::SQLite)
         {
             self.reject_pgvector_distance_operators_for_sqlite(sql)?;
         }
-        let expressions = self.parse(sql)?;
+        let expressions = self.parse_with_guard(sql, opts.complexity_guard)?;
         let generic_identity =
             self.dialect_type == DialectType::Generic && target == DialectType::Generic;
 
@@ -4362,7 +4444,7 @@ impl Dialect {
                 // This handles cases like Snowflake's SQUARE -> POWER, DIV0 -> CASE, etc.
                 let normalized =
                     if self.dialect_type != target && self.dialect_type != DialectType::Generic {
-                        self.transform(expr)?
+                        self.transform_with_guard(expr, opts.complexity_guard)?
                     } else {
                         expr
                     };
@@ -4634,6 +4716,17 @@ impl Dialect {
                 let normalized =
                     Self::cross_dialect_normalize(normalized, self.dialect_type, target)?;
 
+                let normalized =
+                    if matches!(
+                        self.dialect_type,
+                        DialectType::PostgreSQL | DialectType::CockroachDB
+                    ) && !matches!(target, DialectType::PostgreSQL | DialectType::CockroachDB)
+                    {
+                        Self::normalize_postgres_type_function_casts(normalized)?
+                    } else {
+                        normalized
+                    };
+
                 let normalized = if matches!(self.dialect_type, DialectType::SQLite)
                     && !matches!(target, DialectType::SQLite)
                 {
@@ -4799,7 +4892,8 @@ impl Dialect {
                     normalized
                 };
 
-                let transformed = target_dialect.transform(normalized)?;
+                let transformed =
+                    target_dialect.transform_with_guard(normalized, opts.complexity_guard)?;
 
                 // T-SQL and Fabric do not support aggregate FILTER clauses. Rewrite any
                 // remaining filters after target transforms so special aggregate rewrites
@@ -4888,6 +4982,15 @@ impl Dialect {
                 );
             }
 
+            if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                && Self::node_is_non_subquery_any(node)
+            {
+                Self::push_unsupported_diagnostic(
+                    &mut diagnostics,
+                    "ANY over non-subquery expressions",
+                );
+            }
+
             if matches!(source, DialectType::PostgreSQL | DialectType::CockroachDB)
                 && !matches!(target, DialectType::PostgreSQL | DialectType::CockroachDB)
             {
@@ -4899,6 +5002,14 @@ impl Dialect {
                 }
                 if Self::node_is_function_named(node, "TO_TSVECTOR") {
                     Self::push_unsupported_diagnostic(&mut diagnostics, "PostgreSQL TO_TSVECTOR");
+                }
+                if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                    && Self::node_is_postgres_type_function_cast(node)
+                {
+                    Self::push_unsupported_diagnostic(
+                        &mut diagnostics,
+                        "PostgreSQL type-name function casts",
+                    );
                 }
             }
 
@@ -4953,28 +5064,41 @@ impl Dialect {
     }
 
     fn node_has_lateral(expr: &Expression) -> bool {
+        fn join_has_lateral(join: &Join) -> bool {
+            matches!(
+                join.kind,
+                crate::expressions::JoinKind::Lateral | crate::expressions::JoinKind::LeftLateral
+            ) || Dialect::node_has_lateral(&join.this)
+                || join.on.as_ref().is_some_and(Dialect::node_has_lateral)
+                || join
+                    .match_condition
+                    .as_ref()
+                    .is_some_and(Dialect::node_has_lateral)
+                || join.pivots.iter().any(Dialect::node_has_lateral)
+        }
+
         fn joins_have_lateral(joins: &[Join]) -> bool {
-            joins.iter().any(|join| {
-                matches!(
-                    join.kind,
-                    crate::expressions::JoinKind::Lateral
-                        | crate::expressions::JoinKind::LeftLateral
-                )
-            })
+            joins.iter().any(join_has_lateral)
         }
 
         match expr {
-            Expression::Subquery(subquery) => subquery.lateral,
+            Expression::Subquery(subquery) => {
+                subquery.lateral || Dialect::node_has_lateral(&subquery.this)
+            }
             Expression::Lateral(_) | Expression::LateralView(_) => true,
-            Expression::Join(join) => matches!(
-                join.kind,
-                crate::expressions::JoinKind::Lateral | crate::expressions::JoinKind::LeftLateral
-            ),
+            Expression::Join(join) => join_has_lateral(join),
             Expression::Select(select) => {
-                !select.lateral_views.is_empty() || joins_have_lateral(&select.joins)
+                !select.lateral_views.is_empty()
+                    || joins_have_lateral(&select.joins)
+                    || select
+                        .from
+                        .as_ref()
+                        .is_some_and(|from| from.expressions.iter().any(Dialect::node_has_lateral))
             }
             Expression::JoinedTable(joined) => {
-                !joined.lateral_views.is_empty() || joins_have_lateral(&joined.joins)
+                !joined.lateral_views.is_empty()
+                    || Dialect::node_has_lateral(&joined.left)
+                    || joins_have_lateral(&joined.joins)
             }
             Expression::Update(update) => {
                 joins_have_lateral(&update.table_joins) || joins_have_lateral(&update.from_joins)
@@ -5036,11 +5160,102 @@ impl Dialect {
             || Self::node_is_function_named(expr, "REGEXP_ILIKE")
     }
 
+    fn node_is_non_subquery_any(expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::Any(q) if !Self::quantified_rhs_is_subquery(&q.subquery)
+        )
+    }
+
+    fn quantified_rhs_is_subquery(expr: &Expression) -> bool {
+        match expr {
+            Expression::Select(_) | Expression::Subquery(_) => true,
+            Expression::Paren(paren) => Self::quantified_rhs_is_subquery(&paren.this),
+            _ => false,
+        }
+    }
+
     fn node_is_function_named(expr: &Expression, name: &str) -> bool {
         match expr {
             Expression::Function(function) => function.name.eq_ignore_ascii_case(name),
             Expression::AggregateFunction(function) => function.name.eq_ignore_ascii_case(name),
             _ => false,
+        }
+    }
+
+    fn normalize_postgres_type_function_casts(expr: Expression) -> Result<Expression> {
+        transform_recursive(expr, &|e| match e {
+            Expression::Function(function) => {
+                let mut function = *function;
+                if function.args.len() == 1
+                    && !function.distinct
+                    && !function.quoted
+                    && !function.use_bracket_syntax
+                    && !function.name.contains('.')
+                {
+                    if let Some(to) = Self::postgres_type_function_data_type(&function.name) {
+                        let this = function.args.remove(0);
+                        return Ok(Expression::Cast(Box::new(Cast {
+                            this,
+                            to,
+                            trailing_comments: function.trailing_comments,
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: function.inferred_type,
+                        })));
+                    }
+                }
+                Ok(Expression::Function(Box::new(function)))
+            }
+            _ => Ok(e),
+        })
+    }
+
+    fn node_is_postgres_type_function_cast(expr: &Expression) -> bool {
+        matches!(
+            expr,
+            Expression::Function(function)
+                if !function.quoted
+                    && !function.use_bracket_syntax
+                    && !function.name.contains('.')
+                    && Self::postgres_type_function_data_type(&function.name).is_some()
+        )
+    }
+
+    fn postgres_type_function_data_type(name: &str) -> Option<DataType> {
+        match name.to_ascii_uppercase().as_str() {
+            "NUMERIC" | "DECIMAL" | "DEC" => Some(DataType::Decimal {
+                precision: None,
+                scale: None,
+            }),
+            "INT2" | "SMALLINT" => Some(DataType::SmallInt { length: None }),
+            "INT4" | "INT" => Some(DataType::Int {
+                length: None,
+                integer_spelling: false,
+            }),
+            "INTEGER" => Some(DataType::Int {
+                length: None,
+                integer_spelling: true,
+            }),
+            "INT8" | "BIGINT" => Some(DataType::BigInt { length: None }),
+            "FLOAT4" | "REAL" => Some(DataType::Float {
+                precision: None,
+                scale: None,
+                real_spelling: true,
+            }),
+            "FLOAT8" => Some(DataType::Double {
+                precision: None,
+                scale: None,
+            }),
+            "BOOL" | "BOOLEAN" => Some(DataType::Boolean),
+            "TEXT" => Some(DataType::Text),
+            "VARCHAR" => Some(DataType::VarChar {
+                length: None,
+                parenthesized_length: false,
+            }),
+            "UUID" => Some(DataType::Uuid),
+            _ => None,
         }
     }
 
