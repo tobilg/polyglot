@@ -18,6 +18,11 @@ fn tsql_to_fabric(sql: &str) -> String {
         .expect("expected at least one statement")
 }
 
+#[test]
+fn postgres_positional_parameters_render_as_tsql_style_placeholders_for_fabric() {
+    assert_eq!(pg_to_fabric("SELECT $1, $2"), "SELECT @P1, @P2");
+}
+
 // ---------------------------------------------------------------------------
 // PostgreSQL LATERAL joins -> Fabric APPLY
 // ---------------------------------------------------------------------------

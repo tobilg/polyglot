@@ -22122,12 +22122,23 @@ impl Generator {
         match f.style {
             ParameterStyle::Question => self.write("?"),
             ParameterStyle::Dollar => {
-                self.write("$");
                 if let Some(idx) = f.index {
-                    self.write(&idx.to_string());
-                } else if let Some(ref name) = f.name {
-                    // Session variable like $x or $query_id
-                    self.write(name);
+                    if matches!(
+                        self.config.dialect,
+                        Some(DialectType::TSQL) | Some(DialectType::Fabric)
+                    ) {
+                        self.write("@P");
+                        self.write(&idx.to_string());
+                    } else {
+                        self.write("$");
+                        self.write(&idx.to_string());
+                    }
+                } else {
+                    self.write("$");
+                    if let Some(ref name) = f.name {
+                        // Session variable like $x or $query_id
+                        self.write(name);
+                    }
                 }
             }
             ParameterStyle::DollarBrace => {

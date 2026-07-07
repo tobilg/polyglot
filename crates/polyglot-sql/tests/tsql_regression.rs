@@ -136,6 +136,11 @@ fn tsql_max_length_types_parse_generate_and_transpile() {
 }
 
 #[test]
+fn postgres_positional_parameters_render_as_tsql_style_placeholders() {
+    assert_eq!(pg_to_tsql("SELECT $1, $2"), "SELECT @P1, @P2");
+}
+
+#[test]
 fn tsql_datepart_dayofweek_generates_valid_tsql_datepart() {
     let cases = [
         ("WEEKDAY", "WEEKDAY"),
