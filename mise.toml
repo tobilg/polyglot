@@ -1,0 +1,4 @@
+[tools]
+bun = "latest"
+opencode = "latest"
+rust = { version = "latest", components = ["rustfmt", "clippy"] }

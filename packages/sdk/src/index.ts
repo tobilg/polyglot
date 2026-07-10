@@ -49,6 +49,7 @@ export enum Dialect {
   Dremio = 'dremio',
   Exasol = 'exasol',
   DataFusion = 'datafusion',
+  HANA = 'hana',
 }
 
 /**
@@ -501,7 +502,12 @@ export function transpile(
       }
       if (typeof wasm.transpile_with_options === 'function') {
         return JSON.parse(
-          wasm.transpile_with_options(sql, read, write, JSON.stringify(options)),
+          wasm.transpile_with_options(
+            sql,
+            read,
+            write,
+            JSON.stringify(options),
+          ),
         ) as TranspileResult;
       }
       return {

@@ -1,8 +1,8 @@
 # Polyglot
 
-Rust/Wasm-powered SQL transpiler for 32+ dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
+Rust/Wasm-powered SQL transpiler for 33+ dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
 
-Polyglot parses, generates, transpiles, and formats SQL across 32+ database dialects. It ships as:
+Polyglot parses, generates, transpiles, and formats SQL across 33+ database dialects. It ships as:
 - a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/))
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
@@ -14,7 +14,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Features
 
-- **Transpile** SQL between any pair of 32 dialects
+- **Transpile** SQL between any pair of 33 dialects
 - **Parse** SQL into a fully-typed AST
 - **Generate** SQL back from AST nodes
 - **Format** / pretty-print SQL
@@ -27,17 +27,17 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
 - **Python bindings** powered by PyO3 (`polyglot-sql` on PyPI)
 
-## Supported Dialects (32)
+## Supported Dialects (33)
 
 | | | | | |
 |---|---|---|---|---|
 | Athena | BigQuery | ClickHouse | CockroachDB | Databricks |
 | Doris | Dremio | Drill | Druid | DuckDB |
-| Dune | Exasol | Fabric | Hive | Materialize |
-| MySQL | Oracle | PostgreSQL | Presto | Redshift |
-| RisingWave | SingleStore | Snowflake | Solr | Spark |
-| SQLite | StarRocks | Tableau | Teradata | TiDB |
-| Trino | TSQL | | | |
+| Dune | Exasol | Fabric | HANA | Hive |
+| Materialize | MySQL | Oracle | PostgreSQL | Presto |
+| Redshift | RisingWave | SingleStore | Snowflake | Solr |
+| Spark | SQLite | StarRocks | Tableau | Teradata |
+| TiDB | Trino | TSQL | | |
 
 ## Quick Start
 

@@ -186,7 +186,7 @@ Use `polyglot_sql.dialects()` to retrieve supported dialect names at runtime.
 ```python
 polyglot_sql.dialects()
 # ["athena", "bigquery", "clickhouse", "databricks", "doris", "drill",
-#  "duckdb", "generic", "hive", "materialize", "mysql", "oracle",
+#  "duckdb", "generic", "hana", "hive", "materialize", "mysql", "oracle",
 #  "postgres", "presto", "redshift", "snowflake", "spark", "sqlite",
 #  "starrocks", "tableau", "teradata", "trino", "tsql", ...]
 ```

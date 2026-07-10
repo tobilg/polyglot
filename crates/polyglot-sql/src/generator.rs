@@ -24273,7 +24273,8 @@ impl Generator {
                         | Some(DialectType::Presto)
                         | Some(DialectType::Trino)
                         | Some(DialectType::SQLite)
-                        | Some(DialectType::Redshift) => true,
+                        | Some(DialectType::Redshift)
+                        | Some(DialectType::HANA) => true,
                         _ => false,
                     };
                     if use_integer {
@@ -25677,6 +25678,12 @@ impl Generator {
                                             self.write(_args_str.unwrap());
                                         } else {
                                             self.write_keyword("STRING");
+                                        }
+                                    }
+                                    Some(DialectType::HANA) => {
+                                        self.write_keyword("NVARCHAR");
+                                        if let Some(args) = _args_str {
+                                            self.write(args);
                                         }
                                     }
                                     _ => {

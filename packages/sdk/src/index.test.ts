@@ -170,14 +170,17 @@ describe('Polyglot SDK', () => {
 
       expect(parsed.success).toBe(true);
       expect(parsed.dataType?.data_type).toBe('array');
-      expect(polyglot.generateDataType(parsed.dataType!, Dialect.DuckDB).sql).toBe(
-        'INT[]',
-      );
+      expect(
+        polyglot.generateDataType(parsed.dataType!, Dialect.DuckDB).sql,
+      ).toBe('INT[]');
     });
   });
 
   describe('lineage helpers', () => {
-    const collectNames = (node: { name?: string; downstream?: unknown[] }): string[] => [
+    const collectNames = (node: {
+      name?: string;
+      downstream?: unknown[];
+    }): string[] => [
       node.name ?? '',
       ...(node.downstream ?? []).flatMap((child) =>
         collectNames(child as { name?: string; downstream?: unknown[] }),
@@ -240,9 +243,7 @@ describe('Polyglot SDK', () => {
         'amount',
         'SELECT order_id, amount FROM t',
         {
-          tables: [
-            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'amount', type: 'INT' }] }],
         },
         Dialect.DuckDB,
       );
@@ -433,9 +434,7 @@ describe('Polyglot SDK', () => {
       const result = analyzeQuery('SELECT i FROM t, UNNEST(t.arr) AS i', {
         dialect: Dialect.DuckDB,
         schema: {
-          tables: [
-            { name: 't', columns: [{ name: 'arr', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'arr', type: 'INT' }] }],
         },
       });
 
@@ -451,17 +450,14 @@ describe('Polyglot SDK', () => {
       const result = analyzeQuery('SELECT order_id, amount FROM t', {
         dialect: Dialect.DuckDB,
         schema: {
-          tables: [
-            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'amount', type: 'INT' }] }],
         },
       });
 
       expect(result.success).toBe(true);
-      expect(result.analysis?.projections.map((projection) => projection.name)).toEqual([
-        'order_id',
-        'amount',
-      ]);
+      expect(
+        result.analysis?.projections.map((projection) => projection.name),
+      ).toEqual(['order_id', 'amount']);
       expect(result.analysis?.projections[0].upstream).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

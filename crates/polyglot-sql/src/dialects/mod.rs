@@ -49,6 +49,8 @@ mod dune;
 mod exasol;
 #[cfg(feature = "dialect-fabric")]
 mod fabric;
+#[cfg(feature = "dialect-hana")]
+mod hana;
 #[cfg(feature = "dialect-hive")]
 mod hive;
 #[cfg(feature = "dialect-materialize")]
@@ -118,6 +120,8 @@ pub use dune::DuneDialect;
 pub use exasol::ExasolDialect;
 #[cfg(feature = "dialect-fabric")]
 pub use fabric::FabricDialect;
+#[cfg(feature = "dialect-hana")]
+pub use hana::HanaDialect;
 #[cfg(feature = "dialect-hive")]
 pub use hive::HiveDialect;
 #[cfg(feature = "dialect-materialize")]
@@ -264,6 +268,8 @@ pub enum DialectType {
     Exasol,
     /// Apache DataFusion -- Arrow-based query engine with modern SQL extensions.
     DataFusion,
+    /// SAP HANA Cloud -- enterprise in-memory database (also accepts "saphana", "sap_hana").
+    HANA,
 }
 
 impl Default for DialectType {
@@ -309,6 +315,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Dremio => write!(f, "dremio"),
             DialectType::Exasol => write!(f, "exasol"),
             DialectType::DataFusion => write!(f, "datafusion"),
+            DialectType::HANA => write!(f, "hana"),
         }
     }
 }
@@ -352,6 +359,7 @@ impl std::str::FromStr for DialectType {
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
+            "hana" | "saphana" | "sap_hana" => Ok(DialectType::HANA),
             _ => Err(crate::error::Error::parse(
                 format!("Unknown dialect: {}", s),
                 0,
@@ -3400,6 +3408,7 @@ cached_dialect!(CACHED_DRILL, DrillDialect, "dialect-drill");
 cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
+cached_dialect!(CACHED_HANA, HanaDialect, "dialect-hana");
 
 fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -3482,6 +3491,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::Exasol => from_cache!(CACHED_EXASOL, ExasolDialect),
         #[cfg(feature = "dialect-datafusion")]
         DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
+        #[cfg(feature = "dialect-hana")]
+        DialectType::HANA => from_cache!(CACHED_HANA, HanaDialect),
         _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
@@ -39551,6 +39562,26 @@ mod tests {
             "bigquery".parse::<DialectType>().unwrap(),
             DialectType::BigQuery
         );
+    }
+
+    #[test]
+    fn test_hana_dialect_type_from_str_aliases() {
+        assert_eq!("hana".parse::<DialectType>().unwrap(), DialectType::HANA);
+        assert_eq!("saphana".parse::<DialectType>().unwrap(), DialectType::HANA);
+        assert_eq!(
+            "sap_hana".parse::<DialectType>().unwrap(),
+            DialectType::HANA
+        );
+        // Case-insensitive lookup
+        assert_eq!("HANA".parse::<DialectType>().unwrap(), DialectType::HANA);
+        assert_eq!("SapHANA".parse::<DialectType>().unwrap(), DialectType::HANA);
+        // Unknown names still error
+        assert!("hanacloud".parse::<DialectType>().is_err());
+    }
+
+    #[test]
+    fn test_hana_dialect_type_display() {
+        assert_eq!(DialectType::HANA.to_string(), "hana");
     }
 
     #[test]

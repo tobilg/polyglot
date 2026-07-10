@@ -1,0 +1,128 @@
+{
+  "dialect": "hana",
+  "category": "select",
+  "identity": [
+    {
+      "sql": "SELECT DISTINCT x FROM t",
+      "description": "SELECT DISTINCT"
+    },
+    {
+      "sql": "SELECT ALL x FROM t",
+      "expected": "SELECT x FROM t",
+      "description": "SELECT ALL"
+    },
+    {
+      "sql": "SELECT x AS alias_name FROM t",
+      "description": "Column alias"
+    },
+    {
+      "sql": "SELECT * FROM t",
+      "description": "Star select"
+    },
+    {
+      "sql": "SELECT a + b * c FROM t",
+      "description": "Arithmetic expression"
+    },
+    {
+      "sql": "SELECT a, b, a + b AS sum FROM t",
+      "description": "Multiple columns with expression alias"
+    },
+    {
+      "sql": "SELECT CASE WHEN x > 1 THEN 'a' WHEN x > 2 THEN 'b' ELSE 'c' END FROM t",
+      "description": "CASE WHEN with multiple branches"
+    },
+    {
+      "sql": "SELECT CASE x WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END FROM t",
+      "description": "Simple CASE expression"
+    },
+    {
+      "sql": "SELECT COALESCE(a, b) FROM t",
+      "description": "COALESCE in SELECT"
+    },
+    {
+      "sql": "SELECT 'hello world' FROM t",
+      "description": "String literal"
+    },
+    {
+      "sql": "SELECT 'it''s a test' FROM t",
+      "description": "Escaped quote in string literal"
+    },
+    {
+      "sql": "SELECT 1, 2, 3 FROM t",
+      "description": "Multiple literal select"
+    },
+    {
+      "sql": "SELECT 1.5, 2.5 FROM t",
+      "description": "Float literals"
+    },
+    {
+      "sql": "SELECT -1 FROM t",
+      "description": "Negative literal"
+    },
+    {
+      "sql": "SELECT TRUE FROM t",
+      "description": "Boolean TRUE literal"
+    },
+    {
+      "sql": "SELECT FALSE FROM t",
+      "description": "Boolean FALSE literal"
+    },
+    {
+      "sql": "SELECT t.* FROM t",
+      "description": "Qualified star"
+    },
+    {
+      "sql": "SELECT a, b FROM t AS t1",
+      "description": "Table alias"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE a IS NOT NULL",
+      "description": "IS NOT NULL filter"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE a BETWEEN 1 AND 100",
+      "description": "BETWEEN filter"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE a NOT BETWEEN 1 AND 100",
+      "description": "NOT BETWEEN filter"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE a NOT IN (1, 2, 3)",
+      "description": "NOT IN list"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE NOT (a = 1)",
+      "description": "NOT with parenthesized expression"
+    },
+    {
+      "sql": "SELECT COUNT(*) FROM t",
+      "description": "COUNT star"
+    },
+    {
+      "sql": "SELECT LENGTH(s) FROM t",
+      "description": "LENGTH function"
+    },
+    {
+      "sql": "SELECT UPPER(s), LOWER(s) FROM t",
+      "description": "UPPER and LOWER functions"
+    },
+    {
+      "sql": "SELECT TRIM(s) FROM t",
+      "description": "TRIM function"
+    },
+    {
+      "sql": "SELECT a, b FROM t ORDER BY a ASC, b DESC",
+      "description": "ORDER BY with mixed ASC/DESC"
+    },
+    {
+      "sql": "SELECT a FROM t GROUP BY a",
+      "description": "GROUP BY single column"
+    },
+    {
+      "sql": "SELECT a, COUNT(*) FROM t GROUP BY a HAVING COUNT(*) > 5",
+      "description": "GROUP BY with HAVING"
+    }
+  ],
+  "transpilation": []
+}

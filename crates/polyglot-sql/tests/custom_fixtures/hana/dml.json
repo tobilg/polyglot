@@ -1,0 +1,51 @@
+{
+  "dialect": "hana",
+  "category": "dml",
+  "identity": [
+    {
+      "sql": "INSERT INTO t (a, b) VALUES (1, 'x')",
+      "description": "INSERT with VALUES and explicit column list"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+      "description": "INSERT with multiple rows"
+    },
+    {
+      "sql": "INSERT INTO t SELECT a, b FROM s",
+      "description": "INSERT with SELECT"
+    },
+    {
+      "sql": "INSERT INTO t (a, b) SELECT x, y FROM s",
+      "description": "INSERT with explicit column list and SELECT"
+    },
+    {
+      "sql": "INSERT INTO t SELECT * FROM s",
+      "description": "INSERT SELECT star"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1, NULL)",
+      "description": "INSERT with NULL value"
+    },
+    {
+      "sql": "UPDATE t SET x = 1 WHERE y = 2",
+      "description": "UPDATE with WHERE"
+    },
+    {
+      "sql": "UPDATE t SET x = 1, y = 2 WHERE z = 3",
+      "description": "UPDATE multiple columns with WHERE"
+    },
+    {
+      "sql": "DELETE FROM t WHERE x = 1",
+      "description": "DELETE with WHERE"
+    },
+    {
+      "sql": "DELETE FROM t",
+      "description": "DELETE all rows"
+    },
+    {
+      "sql": "INSERT INTO t (a, b, c) VALUES (1, 'hello', 3.14)",
+      "description": "INSERT with mixed type values"
+    }
+  ],
+  "transpilation": []
+}
