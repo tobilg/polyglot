@@ -19525,15 +19525,10 @@ impl Generator {
     }
 
     fn generate_substring(&mut self, f: &SubstringFunc) -> Result<()> {
-        // Oracle and Presto-family dialects use SUBSTR; most others use SUBSTRING
+        // Oracle and Presto-family dialects use SUBSTR; Trino uses SUBSTRING
         let use_substr = matches!(
             self.config.dialect,
-            Some(
-                DialectType::Oracle
-                    | DialectType::Presto
-                    | DialectType::Trino
-                    | DialectType::Athena
-            )
+            Some(DialectType::Oracle | DialectType::Presto | DialectType::Athena)
         );
         if use_substr {
             self.write_keyword("SUBSTR");
@@ -25858,6 +25853,38 @@ impl Generator {
                                         }
                                     }
                                 }
+                            }
+                            // HANA SMALLDECIMAL → DECIMAL (with args preserved)
+                            "SMALLDECIMAL"
+                                if !matches!(self.config.dialect, Some(DialectType::HANA)) =>
+                            {
+                                self.write_keyword("DECIMAL");
+                                if let Some(args) = _args_str {
+                                    self.write(args);
+                                }
+                            }
+                            // HANA SECONDDATE → TIMESTAMP
+                            "SECONDDATE"
+                                if !matches!(self.config.dialect, Some(DialectType::HANA)) =>
+                            {
+                                self.write_keyword("TIMESTAMP");
+                            }
+                            // HANA ALPHANUM → VARCHAR (with length preserved)
+                            "ALPHANUM"
+                                if !matches!(self.config.dialect, Some(DialectType::HANA)) =>
+                            {
+                                self.write_keyword("VARCHAR");
+                                if let Some(args) = _args_str {
+                                    self.write(args);
+                                }
+                            }
+                            // HANA CLOB → VARCHAR
+                            "CLOB" if !matches!(self.config.dialect, Some(DialectType::HANA)) => {
+                                self.write_keyword("VARCHAR");
+                            }
+                            // HANA NCLOB → VARCHAR
+                            "NCLOB" if !matches!(self.config.dialect, Some(DialectType::HANA)) => {
+                                self.write_keyword("VARCHAR");
                             }
                             _ => self.write(name),
                         }

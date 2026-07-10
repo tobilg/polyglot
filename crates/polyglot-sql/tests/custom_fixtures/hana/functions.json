@@ -1,0 +1,166 @@
+{
+  "dialect": "hana",
+  "category": "functions",
+  "identity": [
+    {
+      "sql": "SELECT ADD_DAYS(d, 7) FROM t",
+      "expected": "SELECT DATE_ADD('day', 7, d) FROM t",
+      "description": "ADD_DAYS transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_MONTHS(d, 3) FROM t",
+      "expected": "SELECT DATE_ADD('month', 3, d) FROM t",
+      "description": "ADD_MONTHS transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_SECONDS(ts, 30) FROM t",
+      "expected": "SELECT DATE_ADD('second', 30, ts) FROM t",
+      "description": "ADD_SECONDS transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_YEARS(d, 1) FROM t",
+      "expected": "SELECT DATE_ADD('year', 1, d) FROM t",
+      "description": "ADD_YEARS transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT DAYS_BETWEEN(d1, d2) FROM t",
+      "expected": "SELECT DATE_DIFF('day', d1, d2) FROM t",
+      "description": "DAYS_BETWEEN transformed to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT MONTHS_BETWEEN(d1, d2) FROM t",
+      "expected": "SELECT DATE_DIFF('month', d1, d2) FROM t",
+      "description": "MONTHS_BETWEEN transformed to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT SECONDS_BETWEEN(d1, d2) FROM t",
+      "expected": "SELECT DATE_DIFF('second', d1, d2) FROM t",
+      "description": "SECONDS_BETWEEN transformed to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT YEARS_BETWEEN(d1, d2) FROM t",
+      "expected": "SELECT DATE_DIFF('year', d1, d2) FROM t",
+      "description": "YEARS_BETWEEN transformed to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(x) FROM t",
+      "expected": "SELECT CAST(x AS VARCHAR) FROM t",
+      "description": "TO_VARCHAR without format transformed to CAST"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD') FROM t",
+      "expected": "SELECT DATE_FORMAT(d, 'yyyy-MM-dd') FROM t",
+      "description": "TO_VARCHAR with format transformed to DATE_FORMAT"
+    },
+    {
+      "sql": "SELECT TO_INTEGER(s) FROM t",
+      "expected": "SELECT CAST(s AS INTEGER) FROM t",
+      "description": "TO_INTEGER transformed to CAST"
+    },
+    {
+      "sql": "SELECT TO_DECIMAL(s) FROM t",
+      "expected": "SELECT CAST(s AS DECIMAL) FROM t",
+      "description": "TO_DECIMAL/TO_NUMBER transformed to CAST AS DECIMAL"
+    },
+    {
+      "sql": "SELECT NVL(a, b) FROM t",
+      "expected": "SELECT COALESCE(a, b) FROM t",
+      "description": "NVL transformed to COALESCE"
+    },
+    {
+      "sql": "SELECT SUBSTR(s, 1, 3) FROM t",
+      "expected": "SELECT SUBSTRING(s, 1, 3) FROM t",
+      "description": "SUBSTR canonicalized to SUBSTRING"
+    },
+    {
+      "sql": "SELECT LCASE(s) FROM t",
+      "expected": "SELECT LOWER(s) FROM t",
+      "description": "LCASE canonicalized to LOWER by parser"
+    },
+    {
+      "sql": "SELECT UCASE(s) FROM t",
+      "expected": "SELECT UPPER(s) FROM t",
+      "description": "UCASE canonicalized to UPPER by parser"
+    },
+    {
+      "sql": "SELECT LOCATE('abc', s) FROM t",
+      "expected": "SELECT STRPOS(s, 'abc') FROM t",
+      "description": "LOCATE canonicalized to STRPOS with arg swap by parser"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIMESTAMP FROM t",
+      "expected": "SELECT CURRENT_TIMESTAMP FROM t",
+      "description": "CURRENT_UTCTIMESTAMP transformed to CURRENT_TIMESTAMP"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCDATE FROM t",
+      "expected": "SELECT CURRENT_DATE FROM t",
+      "description": "CURRENT_UTCDATE transformed to CURRENT_DATE"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIME FROM t",
+      "expected": "SELECT CURRENT_TIME FROM t",
+      "description": "CURRENT_UTCTIME transformed to CURRENT_TIME"
+    },
+    {
+      "sql": "SELECT TRUNC(x, 2) FROM t",
+      "expected": "SELECT TRUNCATE(x, 2) FROM t",
+      "description": "TRUNC transformed to TRUNCATE"
+    },
+    {
+      "sql": "SELECT BITAND(a, b) FROM t",
+      "expected": "SELECT BITWISE_AND(a, b) FROM t",
+      "description": "BITAND transformed to BITWISE_AND"
+    },
+    {
+      "sql": "SELECT BITOR(a, b) FROM t",
+      "expected": "SELECT BITWISE_OR(a, b) FROM t",
+      "description": "BITOR transformed to BITWISE_OR"
+    },
+    {
+      "sql": "SELECT BITNOT(a) FROM t",
+      "expected": "SELECT BITWISE_NOT(a) FROM t",
+      "description": "BITNOT transformed to BITWISE_NOT"
+    },
+    {
+      "sql": "SELECT HEX_TO_VARCHAR('414243') FROM t",
+      "expected": "SELECT FROM_HEX('414243') FROM t",
+      "description": "HEX_TO_VARCHAR transformed to FROM_HEX"
+    },
+    {
+      "sql": "SELECT IFNULL(a, b) FROM t",
+      "expected": "SELECT COALESCE(a, b) FROM t",
+      "description": "IFNULL transformed to COALESCE"
+    },
+    {
+      "sql": "SELECT IF(cond, a, b) FROM t",
+      "expected": "SELECT CASE WHEN cond THEN a ELSE b END FROM t",
+      "description": "IF transformed to CASE WHEN"
+    },
+    {
+      "sql": "SELECT add_days(d, 7) FROM t",
+      "expected": "SELECT DATE_ADD('day', 7, d) FROM t",
+      "description": "Mixed-case add_days transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT Add_Months(d, 3) FROM t",
+      "expected": "SELECT DATE_ADD('month', 3, d) FROM t",
+      "description": "Mixed-case Add_Months transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT lcase(s) FROM t",
+      "expected": "SELECT LOWER(s) FROM t",
+      "description": "Mixed-case lcase canonicalized to LOWER by parser"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS INTEGER) FROM t",
+      "description": "TRY_CAST identity (pass-through)"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE name ILIKE '%john%'",
+      "expected": "SELECT * FROM t WHERE LOWER(name) LIKE LOWER('%john%')",
+      "description": "ILIKE transformed to LOWER LIKE"
+    }
+  ],
+  "transpilation": []
+}

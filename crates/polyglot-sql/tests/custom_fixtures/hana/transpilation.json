@@ -1,0 +1,350 @@
+{
+  "dialect": "hana",
+  "category": "transpilation",
+  "identity": [],
+  "transpilation": [
+    {
+      "sql": "SELECT ADD_DAYS(CURRENT_DATE, 7) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('day', 7, CURRENT_DATE) FROM t" },
+      "description": "ADD_DAYS to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_DAYS(d, -1) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('day', -1, d) FROM t" },
+      "description": "ADD_DAYS with negative value"
+    },
+    {
+      "sql": "SELECT ADD_DAYS(d, 0) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('day', 0, d) FROM t" },
+      "description": "ADD_DAYS with zero"
+    },
+    {
+      "sql": "SELECT UPPER(ADD_DAYS(d, 7)) FROM t",
+      "write": { "trino": "SELECT UPPER(DATE_ADD('day', 7, d)) FROM t" },
+      "description": "ADD_DAYS nested in another function"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE d > ADD_DAYS(CURRENT_DATE, -30)",
+      "write": { "trino": "SELECT * FROM t WHERE d > DATE_ADD('day', -30, CURRENT_DATE)" },
+      "description": "ADD_DAYS in WHERE clause"
+    },
+    {
+      "sql": "SELECT ADD_MONTHS(CURRENT_DATE, 3) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('month', 3, CURRENT_DATE) FROM t" },
+      "description": "ADD_MONTHS to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_SECONDS(ts, 30) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('second', 30, ts) FROM t" },
+      "description": "ADD_SECONDS to DATE_ADD"
+    },
+    {
+      "sql": "SELECT ADD_YEARS(d, 1) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('year', 1, d) FROM t" },
+      "description": "ADD_YEARS to DATE_ADD"
+    },
+    {
+      "sql": "SELECT add_days(d, 7) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('day', 7, d) FROM t" },
+      "description": "Mixed case function name add_days"
+    },
+    {
+      "sql": "SELECT DAYS_BETWEEN(d1, d2) FROM t",
+      "write": { "trino": "SELECT DATE_DIFF('day', d1, d2) FROM t" },
+      "description": "DAYS_BETWEEN to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT MONTHS_BETWEEN(d1, d2) FROM t",
+      "write": { "trino": "SELECT DATE_DIFF('month', d1, d2) FROM t" },
+      "description": "MONTHS_BETWEEN to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT SECONDS_BETWEEN(d1, d2) FROM t",
+      "write": { "trino": "SELECT DATE_DIFF('second', d1, d2) FROM t" },
+      "description": "SECONDS_BETWEEN to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT YEARS_BETWEEN(d1, d2) FROM t",
+      "write": { "trino": "SELECT DATE_DIFF('year', d1, d2) FROM t" },
+      "description": "YEARS_BETWEEN to DATE_DIFF"
+    },
+    {
+      "sql": "SELECT DAYS_BETWEEN(start_date, end_date) AS duration FROM events",
+      "write": { "trino": "SELECT DATE_DIFF('day', start_date, end_date) AS duration FROM events" },
+      "description": "DAYS_BETWEEN with column expressions"
+    },
+
+    {
+      "sql": "SELECT SUBSTR(s, 1, 5) FROM t",
+      "write": { "trino": "SELECT SUBSTRING(s, 1, 5) FROM t" },
+      "description": "SUBSTR to SUBSTRING"
+    },
+    {
+      "sql": "SELECT SUBSTR(s, 3) FROM t",
+      "write": { "trino": "SELECT SUBSTRING(s, 3) FROM t" },
+      "description": "SUBSTR with two args (no length)"
+    },
+    {
+      "sql": "SELECT LCASE(s) FROM t",
+      "write": { "trino": "SELECT LOWER(s) FROM t" },
+      "description": "LCASE to LOWER"
+    },
+    {
+      "sql": "SELECT UCASE(s) FROM t",
+      "write": { "trino": "SELECT UPPER(s) FROM t" },
+      "description": "UCASE to UPPER"
+    },
+    {
+      "sql": "SELECT LOCATE('abc', s) FROM t",
+      "write": { "trino": "SELECT STRPOS(s, 'abc') FROM t" },
+      "description": "LOCATE arg swap to STRPOS"
+    },
+    {
+      "sql": "SELECT UCASE(LCASE(s)) FROM t",
+      "write": { "trino": "SELECT UPPER(LOWER(s)) FROM t" },
+      "description": "LCASE nested in UCASE"
+    },
+
+    {
+      "sql": "SELECT NVL(a, b) FROM t",
+      "write": { "trino": "SELECT COALESCE(a, b) FROM t" },
+      "description": "NVL to COALESCE"
+    },
+    {
+      "sql": "SELECT IFNULL(a, b) FROM t",
+      "write": { "trino": "SELECT COALESCE(a, b) FROM t" },
+      "description": "IFNULL to COALESCE"
+    },
+    {
+      "sql": "SELECT NVL(NULL, b) FROM t",
+      "write": { "trino": "SELECT COALESCE(NULL, b) FROM t" },
+      "description": "NVL with NULL literal as first arg"
+    },
+    {
+      "sql": "SELECT NVL(name, 'unknown') FROM employees",
+      "write": { "trino": "SELECT COALESCE(name, 'unknown') FROM employees" },
+      "description": "NVL with column and literal"
+    },
+    {
+      "sql": "SELECT IF(cond, a, b) FROM t",
+      "write": { "trino": "SELECT CASE WHEN cond THEN a ELSE b END FROM t" },
+      "description": "IF to CASE WHEN"
+    },
+    {
+      "sql": "SELECT NVL(NVL(a, b), c) FROM t",
+      "write": { "trino": "SELECT COALESCE(COALESCE(a, b), c) FROM t" },
+      "description": "Nested NVL"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE NVL(status, 0) = 1",
+      "write": { "trino": "SELECT * FROM t WHERE COALESCE(status, 0) = 1" },
+      "description": "NVL in WHERE clause"
+    },
+
+    {
+      "sql": "SELECT TO_VARCHAR(x) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR) FROM t" },
+      "description": "TO_VARCHAR without format"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(123) FROM t",
+      "write": { "trino": "SELECT CAST(123 AS VARCHAR) FROM t" },
+      "description": "TO_VARCHAR with numeric value (no format)"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy-MM-dd') FROM t" },
+      "description": "TO_VARCHAR with date format"
+    },
+    {
+      "sql": "SELECT TO_DATE('2024-01-15', 'YYYY-MM-DD') FROM t",
+      "write": { "trino": "SELECT DATE_PARSE('2024-01-15', 'yyyy-MM-dd') FROM t" },
+      "description": "TO_DATE with format"
+    },
+    {
+      "sql": "SELECT TO_DATE('2024-01-15') FROM t",
+      "write": { "trino": "SELECT CAST('2024-01-15' AS DATE) FROM t" },
+      "description": "TO_DATE without format (single arg)"
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP('2024-01-15 10:30:00', 'YYYY-MM-DD HH24:MI:SS') FROM t",
+      "write": { "trino": "SELECT DATE_PARSE('2024-01-15 10:30:00', 'yyyy-MM-dd HH:mm:ss') FROM t" },
+      "description": "TO_TIMESTAMP with format"
+    },
+    {
+      "sql": "SELECT TO_TIMESTAMP('2024-01-15 10:30:00') FROM t",
+      "write": { "trino": "SELECT CAST('2024-01-15 10:30:00' AS TIMESTAMP) FROM t" },
+      "description": "TO_TIMESTAMP without format (single arg)"
+    },
+    {
+      "sql": "SELECT TO_INTEGER(s) FROM t",
+      "write": { "trino": "SELECT CAST(s AS INTEGER) FROM t" },
+      "description": "TO_INTEGER to CAST"
+    },
+    {
+      "sql": "SELECT TO_DECIMAL(s) FROM t",
+      "write": { "trino": "SELECT CAST(s AS DECIMAL) FROM t" },
+      "description": "TO_DECIMAL to CAST"
+    },
+    {
+      "sql": "SELECT TO_REAL(s) FROM t",
+      "write": { "trino": "SELECT CAST(s AS REAL) FROM t" },
+      "description": "TO_REAL to CAST"
+    },
+    {
+      "sql": "SELECT TO_DOUBLE(s) FROM t",
+      "write": { "trino": "SELECT CAST(s AS DOUBLE) FROM t" },
+      "description": "TO_DOUBLE to CAST"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE TO_VARCHAR(d, 'YYYY-MM') = '2024-01'",
+      "write": { "trino": "SELECT * FROM t WHERE DATE_FORMAT(d, 'yyyy-MM') = '2024-01'" },
+      "description": "TO_VARCHAR with format in WHERE clause"
+    },
+    {
+      "sql": "SELECT ADD_DAYS(TO_DATE('2024-01-15', 'YYYY-MM-DD'), 7) FROM t",
+      "write": { "trino": "SELECT DATE_ADD('day', 7, DATE_PARSE('2024-01-15', 'yyyy-MM-dd')) FROM t" },
+      "description": "Nested TO_DATE inside ADD_DAYS"
+    },
+
+    {
+      "sql": "SELECT CURRENT_UTCTIMESTAMP FROM t",
+      "write": { "trino": "SELECT CURRENT_TIMESTAMP FROM t" },
+      "description": "CURRENT_UTCTIMESTAMP"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIMESTAMP() FROM t",
+      "write": { "trino": "SELECT CURRENT_TIMESTAMP FROM t" },
+      "description": "CURRENT_UTCTIMESTAMP with parentheses"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCDATE FROM t",
+      "write": { "trino": "SELECT CURRENT_DATE FROM t" },
+      "description": "CURRENT_UTCDATE"
+    },
+    {
+      "sql": "SELECT CURRENT_UTCTIME FROM t",
+      "write": { "trino": "SELECT CURRENT_TIME FROM t" },
+      "description": "CURRENT_UTCTIME"
+    },
+    {
+      "sql": "SELECT NOW() FROM t",
+      "write": { "trino": "SELECT CURRENT_TIMESTAMP FROM t" },
+      "description": "NOW"
+    },
+    {
+      "sql": "SELECT SYSDATE FROM t",
+      "write": { "trino": "SELECT CURRENT_TIMESTAMP FROM t" },
+      "description": "SYSDATE"
+    },
+    {
+      "sql": "SELECT EXTRACT(YEAR FROM CURRENT_UTCTIMESTAMP) FROM t",
+      "write": { "trino": "SELECT EXTRACT(YEAR FROM CURRENT_TIMESTAMP) FROM t" },
+      "description": "CURRENT_UTCTIMESTAMP used in expression"
+    },
+
+    {
+      "sql": "SELECT * FROM t WHERE name ILIKE '%john%'",
+      "write": { "trino": "SELECT * FROM t WHERE LOWER(name) LIKE LOWER('%john%')" },
+      "description": "ILIKE to LOWER LIKE"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE name NOT ILIKE '%test%'",
+      "write": { "trino": "SELECT * FROM t WHERE LOWER(name) NOT LIKE LOWER('%test%')" },
+      "description": "NOT ILIKE"
+    },
+
+    {
+      "sql": "SELECT TRUNC(x, 2) FROM t",
+      "write": { "trino": "SELECT TRUNCATE(x, 2) FROM t" },
+      "description": "TRUNC to TRUNCATE"
+    },
+    {
+      "sql": "SELECT BITAND(a, b) FROM t",
+      "write": { "trino": "SELECT BITWISE_AND(a, b) FROM t" },
+      "description": "BITAND to BITWISE_AND"
+    },
+    {
+      "sql": "SELECT BITOR(a, b) FROM t",
+      "write": { "trino": "SELECT BITWISE_OR(a, b) FROM t" },
+      "description": "BITOR to BITWISE_OR"
+    },
+    {
+      "sql": "SELECT BITNOT(a) FROM t",
+      "write": { "trino": "SELECT BITWISE_NOT(a) FROM t" },
+      "description": "BITNOT to BITWISE_NOT"
+    },
+    {
+      "sql": "SELECT HEX_TO_VARCHAR('414243') FROM t",
+      "write": { "trino": "SELECT FROM_HEX('414243') FROM t" },
+      "description": "HEX_TO_VARCHAR to FROM_HEX"
+    },
+
+    {
+      "sql": "SELECT TRY_CAST(x AS INTEGER) FROM t",
+      "write": { "trino": "SELECT TRY_CAST(x AS INTEGER) FROM t" },
+      "description": "TRY_CAST to Trino (pass-through)"
+    },
+    {
+      "sql": "SELECT TRY_CAST(x AS VARCHAR) FROM t",
+      "write": { "trino": "SELECT TRY_CAST(x AS VARCHAR) FROM t" },
+      "description": "TRY_CAST with VARCHAR type"
+    },
+
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD HH24:MI:SS') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy-MM-dd HH:mm:ss') FROM t" },
+      "description": "Format with 24-hour time"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'HH12:MI:SS AM') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'hh:mm:ss a') FROM t" },
+      "description": "Format with 12-hour time and AM/PM"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'DD MON YYYY') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'dd MMM yyyy') FROM t" },
+      "description": "Format with month name"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'DAY, DD MONTH YYYY') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'EEEE, dd MMMM yyyy') FROM t" },
+      "description": "Format with full day name"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD HH24:MI:SS.FF3') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy-MM-dd HH:mm:ss.SSS') FROM t" },
+      "description": "Format with fractional seconds (millisecond)"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'DD-MM-YY') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'dd-MM-yy') FROM t" },
+      "description": "Format with two-digit year"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY/MM/DD HH24:MI:SS') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy/MM/dd HH:mm:ss') FROM t" },
+      "description": "Format with slash separators preserved"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-FOO-DD') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy-FOO-dd') FROM t" },
+      "description": "Unknown format token passes through"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'YYYY-MM-DD HH24:MI:SS.FF6') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'yyyy-MM-dd HH:mm:ss.SSSSSS') FROM t" },
+      "description": "Format with fractional seconds (microsecond)"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'DY') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'EEE') FROM t" },
+      "description": "Format with abbreviated day name"
+    },
+    {
+      "sql": "SELECT TO_VARCHAR(d, 'hello world') FROM t",
+      "write": { "trino": "SELECT DATE_FORMAT(d, 'hello world') FROM t" },
+      "description": "Format with no tokens (literal only)"
+    }
+  ]
+}

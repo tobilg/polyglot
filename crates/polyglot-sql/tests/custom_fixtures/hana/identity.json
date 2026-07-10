@@ -72,7 +72,8 @@
     },
     {
       "sql": "SELECT ADD_DAYS(d, 7), NVL(a, b) FROM t",
-      "description": "HANA native function pass-through (uppercase)"
+      "expected": "SELECT DATE_ADD('day', 7, d), COALESCE(a, b) FROM t",
+      "description": "HANA functions transformed (ADD_DAYS→DATE_ADD, NVL→COALESCE)"
     },
     {
       "sql": "SELECT SUBSTR(s, 1, 3) FROM t",
@@ -81,7 +82,8 @@
     },
     {
       "sql": "SELECT add_days(d, 7) FROM t",
-      "description": "Mixed-case function name identity"
+      "expected": "SELECT DATE_ADD('day', 7, d) FROM t",
+      "description": "Mixed-case function name transformed to DATE_ADD"
     },
     {
       "sql": "SELECT * FROM t WHERE x IS NULL",

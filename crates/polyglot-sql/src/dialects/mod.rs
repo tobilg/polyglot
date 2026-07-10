@@ -18634,7 +18634,11 @@ impl Dialect {
                                     | DialectType::Athena => {
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "DATE_DIFF".to_string(),
-                                            vec![Expression::string(&unit_str), arg1, arg2],
+                                            vec![
+                                                Expression::string(&unit_str.to_ascii_lowercase()),
+                                                arg1,
+                                                arg2,
+                                            ],
                                         ))))
                                     }
                                     DialectType::ClickHouse => {
@@ -19131,7 +19135,11 @@ impl Dialect {
                                     | DialectType::Athena => {
                                         Ok(Expression::Function(Box::new(Function::new(
                                             "DATE_ADD".to_string(),
-                                            vec![Expression::string(&unit_str), arg1, arg2],
+                                            vec![
+                                                Expression::string(&unit_str.to_ascii_lowercase()),
+                                                arg1,
+                                                arg2,
+                                            ],
                                         ))))
                                     }
                                     DialectType::DuckDB => {
