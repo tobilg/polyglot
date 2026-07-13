@@ -1,0 +1,59 @@
+{
+  "dialect": "hana",
+  "category": "ddl",
+  "identity": [
+    {
+      "sql": "CREATE TABLE t (id INTEGER, name NVARCHAR(100), salary SMALLDECIMAL, created SECONDDATE)",
+      "description": "CREATE TABLE with HANA types"
+    },
+    {
+      "sql": "CREATE TABLE t (id INTEGER NOT NULL PRIMARY KEY, name VARCHAR(100) NOT NULL)",
+      "description": "CREATE TABLE with constraints"
+    },
+    {
+      "sql": "CREATE TABLE t (a NVARCHAR(255), b SMALLDECIMAL(10, 2))",
+      "description": "Types with precision and length args"
+    },
+    {
+      "sql": "CREATE TABLE t (a ALPHANUM(20), b CLOB)",
+      "description": "ALPHANUM and CLOB types"
+    },
+    {
+      "sql": "CREATE TABLE t (id BIGINT, name TEXT, val DECIMAL(15, 2), ts TIMESTAMP)",
+      "description": "Various HANA column types"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTEGER, b NVARCHAR(50) NOT NULL, c DECIMAL(10, 2))",
+      "description": "Mixed constraints and types"
+    },
+    {
+      "sql": "CREATE TABLE IF NOT EXISTS t (a INTEGER)",
+      "description": "CREATE TABLE IF NOT EXISTS"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "description": "DROP TABLE"
+    },
+    {
+      "sql": "DROP TABLE IF EXISTS t",
+      "description": "DROP TABLE IF EXISTS"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN x INTEGER",
+      "description": "ALTER TABLE ADD COLUMN"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTEGER, b INTEGER, PRIMARY KEY (a))",
+      "description": "CREATE TABLE with table-level PRIMARY KEY"
+    },
+    {
+      "sql": "CREATE VIEW v AS SELECT a, b FROM t WHERE x > 1",
+      "description": "CREATE VIEW"
+    },
+    {
+      "sql": "CREATE TABLE t AS SELECT a, b FROM s",
+      "description": "CREATE TABLE AS SELECT"
+    }
+  ],
+  "transpilation": []
+}

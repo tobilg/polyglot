@@ -9,7 +9,7 @@ Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 - **Parse** SQL into a fully-typed AST with 200+ expression types
 - **Parse standalone data types** such as `DECIMAL(10, 2)` without a statement wrapper
 - **Generate** SQL from AST nodes for any target dialect
-- **Transpile** between any pair of 32 dialects in one call
+- **Transpile** between any pair of 33 dialects in one call
 - **Format** / pretty-print SQL
 - **Fluent builder API** for constructing queries programmatically
 - **AST traversal** utilities (DFS/BFS iterators, transform, walk)
@@ -448,7 +448,7 @@ assert_eq!(err.line(), None);
 
 ## Supported Dialects
 
-Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
+Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, HANA, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
 
 ## Feature Flags
 

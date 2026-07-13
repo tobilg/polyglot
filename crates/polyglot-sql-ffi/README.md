@@ -275,6 +275,7 @@ Dialect identifiers are string names used in core `polyglot-sql`, for example:
 - `snowflake`
 - `duckdb`
 - `clickhouse`
+- `hana`
 
 For a complete runtime list, call `polyglot_dialect_list()`.
 

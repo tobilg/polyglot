@@ -1,0 +1,166 @@
+{
+  "dialect": "hana",
+  "category": "identity",
+  "identity": [
+    {
+      "sql": "SELECT a, b FROM t WHERE x > 1",
+      "description": "Simple SELECT with WHERE"
+    },
+    {
+      "sql": "SELECT \"MyColumn\" FROM \"MyTable\"",
+      "description": "Double-quoted mixed-case identifiers"
+    },
+    {
+      "sql": "SELECT \"SELECT\" FROM \"ORDER\"",
+      "description": "Double-quoted reserved words as identifiers"
+    },
+    {
+      "sql": "SELECT 'it''s' AS val FROM t",
+      "description": "Escaped single quote in string literal"
+    },
+    {
+      "sql": "SELECT NULL AS x FROM t",
+      "description": "NULL literal in SELECT"
+    },
+    {
+      "sql": "SELECT dept, COUNT(*) FROM employees GROUP BY dept ORDER BY dept",
+      "description": "Aggregate with GROUP BY"
+    },
+    {
+      "sql": "SELECT a.x, b.y FROM a INNER JOIN b ON a.id = b.id",
+      "description": "INNER JOIN"
+    },
+    {
+      "sql": "SELECT a.x, b.y FROM a LEFT JOIN b ON a.id = b.id WHERE b.y IS NULL",
+      "description": "LEFT JOIN with IS NULL"
+    },
+    {
+      "sql": "SELECT * FROM a JOIN b ON a.id = b.id JOIN c ON b.id = c.id",
+      "description": "Multiple JOINs"
+    },
+    {
+      "sql": "SELECT * FROM (SELECT x FROM t WHERE x > 0) AS sub",
+      "description": "Subquery in FROM"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IN (SELECT y FROM s)",
+      "description": "Nested subquery in WHERE"
+    },
+    {
+      "sql": "WITH cte AS (SELECT x FROM t) SELECT * FROM cte",
+      "description": "CTE"
+    },
+    {
+      "sql": "SELECT x, ROW_NUMBER() OVER (PARTITION BY y ORDER BY z) AS rn FROM t",
+      "description": "Window function with PARTITION BY and ORDER BY"
+    },
+    {
+      "sql": "SELECT 1 UNION ALL SELECT 2",
+      "description": "UNION ALL"
+    },
+    {
+      "sql": "SELECT * FROM t LIMIT 10 OFFSET 5",
+      "description": "LIMIT and OFFSET"
+    },
+    {
+      "sql": "SELECT CASE WHEN x > 1 THEN 'a' ELSE 'b' END FROM t",
+      "description": "CASE WHEN"
+    },
+    {
+      "sql": "SELECT COALESCE(a, b, c) FROM t",
+      "description": "COALESCE"
+    },
+    {
+      "sql": "SELECT ADD_DAYS(d, 7), NVL(a, b) FROM t",
+      "expected": "SELECT DATE_ADD('day', 7, d), COALESCE(a, b) FROM t",
+      "description": "HANA functions transformed (ADD_DAYS→DATE_ADD, NVL→COALESCE)"
+    },
+    {
+      "sql": "SELECT SUBSTR(s, 1, 3) FROM t",
+      "expected": "SELECT SUBSTRING(s, 1, 3) FROM t",
+      "description": "SUBSTR canonicalized to SUBSTRING by parser (Phase 2 transform will restore SUBSTR)"
+    },
+    {
+      "sql": "SELECT add_days(d, 7) FROM t",
+      "expected": "SELECT DATE_ADD('day', 7, d) FROM t",
+      "description": "Mixed-case function name transformed to DATE_ADD"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IS NULL",
+      "description": "IS NULL in WHERE"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IS NOT NULL",
+      "description": "IS NOT NULL in WHERE"
+    },
+    {
+      "sql": "SELECT a, b FROM t ORDER BY a, b DESC",
+      "description": "ORDER BY multiple columns"
+    },
+    {
+      "sql": "SELECT a, b FROM t WHERE x = 1 AND y = 2 OR z = 3",
+      "description": "Boolean logic in WHERE"
+    },
+    {
+      "sql": "SELECT a, COUNT(*) AS cnt FROM t GROUP BY a HAVING COUNT(*) > 1",
+      "description": "GROUP BY with HAVING"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x BETWEEN 1 AND 10",
+      "description": "BETWEEN"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x IN (1, 2, 3)",
+      "description": "IN list"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE x LIKE '%foo%'",
+      "description": "LIKE pattern"
+    },
+    {
+      "sql": "SELECT a || b FROM t",
+      "description": "String concatenation"
+    },
+    {
+      "sql": "SELECT COUNT(DISTINCT a) FROM t",
+      "description": "COUNT DISTINCT"
+    },
+    {
+      "sql": "SELECT SUM(a), AVG(a), MIN(a), MAX(a) FROM t",
+      "description": "Aggregate functions"
+    },
+    {
+      "sql": "WITH cte1 AS (SELECT 1 AS x), cte2 AS (SELECT 2 AS y) SELECT * FROM cte1, cte2",
+      "description": "Multiple CTEs"
+    },
+    {
+      "sql": "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM s WHERE s.id = t.id)",
+      "expected": "SELECT * FROM t WHERE EXISTS(SELECT 1 FROM s WHERE s.id = t.id)",
+      "description": "EXISTS subquery"
+    },
+    {
+      "sql": "SELECT a, ROW_NUMBER() OVER (PARTITION BY b ORDER BY c DESC) AS rn FROM t",
+      "description": "Window function with DESC ordering"
+    },
+    {
+      "sql": "SELECT a FROM t -- trailing comment",
+      "expected": "SELECT a FROM t /* trailing comment */",
+      "description": "Single-line comment preserved as block comment"
+    },
+    {
+      "sql": "SELECT a /* inline comment */ FROM t",
+      "description": "Multi-line comment preserved in identity round-trip"
+    },
+    {
+      "sql": "SELECT a FROM t WHERE /* outer /* inner */ x = 1",
+      "expected": "SELECT a FROM t WHERE x = 1",
+      "description": "No nested comments: first */ closes the comment"
+    },
+    {
+      "sql": "select a, b from t where x > 1",
+      "expected": "SELECT a, b FROM t WHERE x > 1",
+      "description": "Lowercase keywords normalized to uppercase"
+    }
+  ],
+  "transpilation": []
+}

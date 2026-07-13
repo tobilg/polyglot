@@ -1257,8 +1257,9 @@ fn test_dialect_list_and_count() {
     let list: Vec<String> = serde_json::from_str(&json).expect("invalid dialect list json");
     let count = polyglot_dialect_count();
     assert_eq!(list.len() as i32, count);
-    assert!(count >= 32);
+    assert!(count >= 35);
     assert!(list.iter().any(|d| d == "generic"));
+    assert!(list.iter().any(|d| d == "hana"));
 }
 
 #[test]

@@ -76,7 +76,7 @@ Default guard values: `maxInputBytes=16 MiB`, `maxTokens=1_000_000`, `maxAstNode
 
 ## Supported Dialects
 
-Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL (SQL Server), and Doris.
+Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, HANA, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL (SQL Server), and Doris.
 
 ## Links
 

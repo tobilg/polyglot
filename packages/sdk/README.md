@@ -910,6 +910,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | Dune | `Dialect.Dune` |
 | Exasol | `Dialect.Exasol` |
 | Fabric | `Dialect.Fabric` |
+| HANA | `Dialect.HANA` |
 | Hive | `Dialect.Hive` |
 | Materialize | `Dialect.Materialize` |
 | MySQL | `Dialect.MySQL` |

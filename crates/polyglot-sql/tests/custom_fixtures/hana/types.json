@@ -1,0 +1,106 @@
+{
+  "dialect": "hana",
+  "category": "types",
+  "identity": [
+    {
+      "sql": "SELECT CAST(x AS SMALLDECIMAL) FROM t",
+      "description": "CAST to SMALLDECIMAL (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS SECONDDATE) FROM t",
+      "description": "CAST to SECONDDATE (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS ALPHANUM) FROM t",
+      "description": "CAST to ALPHANUM (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS NVARCHAR(255)) FROM t",
+      "description": "CAST to NVARCHAR(255) (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS CLOB) FROM t",
+      "description": "CAST to CLOB (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS NCLOB) FROM t",
+      "description": "CAST to NCLOB (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS BINARY) FROM t",
+      "description": "CAST to BINARY (HANA identity)"
+    },
+    {
+      "sql": "SELECT CAST(x AS FLOAT) FROM t",
+      "expected": "SELECT CAST(x AS DOUBLE) FROM t",
+      "description": "CAST to FLOAT transformed to DOUBLE (HANA FLOAT is 64-bit)"
+    }
+  ],
+  "transpilation": [
+    {
+      "sql": "SELECT CAST(x AS SMALLDECIMAL) FROM t",
+      "write": { "trino": "SELECT CAST(x AS DECIMAL) FROM t" },
+      "description": "SMALLDECIMAL to DECIMAL"
+    },
+    {
+      "sql": "SELECT CAST(x AS SMALLDECIMAL(10,2)) FROM t",
+      "write": { "trino": "SELECT CAST(x AS DECIMAL(10, 2)) FROM t" },
+      "description": "SMALLDECIMAL with precision args"
+    },
+    {
+      "sql": "SELECT CAST(x AS SECONDDATE) FROM t",
+      "write": { "trino": "SELECT CAST(x AS TIMESTAMP) FROM t" },
+      "description": "SECONDDATE to TIMESTAMP"
+    },
+    {
+      "sql": "SELECT CAST(x AS ALPHANUM) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR) FROM t" },
+      "description": "ALPHANUM to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS ALPHANUM(10)) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR(10)) FROM t" },
+      "description": "ALPHANUM with length"
+    },
+    {
+      "sql": "SELECT CAST(x AS NVARCHAR) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR) FROM t" },
+      "description": "NVARCHAR to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS NVARCHAR(255)) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR(255)) FROM t" },
+      "description": "NVARCHAR with length"
+    },
+    {
+      "sql": "SELECT CAST(x AS CLOB) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR) FROM t" },
+      "description": "CLOB to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS NCLOB) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARCHAR) FROM t" },
+      "description": "NCLOB to VARCHAR"
+    },
+    {
+      "sql": "SELECT CAST(x AS BINARY) FROM t",
+      "write": { "trino": "SELECT CAST(x AS VARBINARY) FROM t" },
+      "description": "BINARY to VARBINARY"
+    },
+    {
+      "sql": "SELECT CAST(x AS FLOAT) FROM t",
+      "write": { "trino": "SELECT CAST(x AS DOUBLE) FROM t" },
+      "description": "FLOAT to DOUBLE"
+    },
+    {
+      "sql": "SELECT CAST(x AS INTEGER) FROM t",
+      "write": { "trino": "SELECT CAST(x AS INTEGER) FROM t" },
+      "description": "Standard type INTEGER passes through"
+    },
+    {
+      "sql": "CREATE TABLE t (id INTEGER, name NVARCHAR(100), salary SMALLDECIMAL, created SECONDDATE)",
+      "write": { "trino": "CREATE TABLE t (id INTEGER, name VARCHAR(100), salary DECIMAL, created TIMESTAMP)" },
+      "description": "HANA types in CREATE TABLE transpilation"
+    }
+  ]
+}

@@ -10,6 +10,7 @@ def test_dialects_contains_known_values():
     assert "snowflake" in values
     assert "bigquery" in values
     assert "duckdb" in values
+    assert "hana" in values
 
 
 def test_version_is_exposed():
