@@ -20171,6 +20171,14 @@ impl Generator {
             self.generate_expression(&f.this)?;
             self.write(" ~ ");
             self.generate_expression(&f.pattern)?;
+        } else if matches!(self.config.dialect, Some(DialectType::ClickHouse)) && f.flags.is_none()
+        {
+            // ClickHouse has no REGEXP_LIKE; the regex-match operator is match(haystack, pattern).
+            self.write("match(");
+            self.generate_expression(&f.this)?;
+            self.write(", ");
+            self.generate_expression(&f.pattern)?;
+            self.write(")");
         } else if matches!(self.config.dialect, Some(DialectType::Exasol)) && f.flags.is_none() {
             // Exasol uses REGEXP_LIKE as infix binary operator
             self.generate_expression(&f.this)?;
@@ -34936,6 +34944,26 @@ impl Generator {
             self.generate_expression(&e.this)?;
             self.write(" ~* ");
             self.generate_expression(&e.expression)?;
+        } else if matches!(self.config.dialect, Some(DialectType::ClickHouse)) && e.flag.is_none() {
+            // ClickHouse has no case-insensitive regex operator; use match() with an inline
+            // (?i) flag. Inline it into a string-literal pattern for readable output, and fall
+            // back to concat() so the flag also applies to a non-literal pattern expression.
+            self.write("match(");
+            self.generate_expression(&e.this)?;
+            self.write(", ");
+            if let Expression::Literal(lit) = e.expression.as_ref() {
+                if let Literal::String(s) = lit.as_ref() {
+                    let insensitive =
+                        Expression::Literal(Box::new(Literal::String(format!("(?i){s}"))));
+                    self.generate_expression(&insensitive)?;
+                    self.write(")");
+                    return Ok(());
+                }
+            }
+            self.write("concat('(?i)', ");
+            self.generate_expression(&e.expression)?;
+            self.write("))");
+            return Ok(());
         } else if matches!(self.config.dialect, Some(DialectType::Snowflake)) {
             // Snowflake uses REGEXP_LIKE(x, pattern, 'i')
             self.write_keyword("REGEXP_LIKE");
