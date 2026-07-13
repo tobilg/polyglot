@@ -21947,6 +21947,7 @@ impl Parser {
     fn parse_describe(&mut self) -> Result<Expression> {
         // Accept DESCRIBE, DESC, and EXPLAIN (Var token)
         // Capture leading comments from the first token
+        let mut is_explain = false;
         let leading_comments = if self.check(TokenType::Describe) {
             let token = self.advance();
             token.comments
@@ -21954,11 +21955,61 @@ impl Parser {
             let token = self.advance();
             token.comments
         } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN") {
+            is_explain = true;
             let token = self.advance(); // consume EXPLAIN
             token.comments
         } else {
             return Err(self.parse_error("Expected DESCRIBE, DESC, or EXPLAIN"));
         };
+
+        // PostgreSQL-family: EXPLAIN ( option [, ...] ) statement
+        // e.g. EXPLAIN (VERBOSE, COSTS OFF, FORMAT JSON) SELECT ...
+        // These are planner/output directives (COSTS, BUFFERS, VERBOSE, FORMAT,
+        // SETTINGS, WAL, TIMING, SUMMARY, MEMORY, GENERIC_PLAN, SERIALIZE) with no
+        // cross-dialect meaning, so they are parsed and discarded here - consistent
+        // with the way EXPLAIN is normalized to DESCRIBE. ANALYZE is folded into the
+        // DESCRIBE style below so `EXPLAIN (ANALYZE) ...` matches bare `EXPLAIN ANALYZE ...`.
+        // A parenthesized subquery (`EXPLAIN (SELECT ...)`) is left for the target parser.
+        let mut analyze_option = false;
+        if is_explain
+            && self.check(TokenType::LParen)
+            && matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::PostgreSQL)
+                    | Some(crate::dialects::DialectType::CockroachDB)
+                    | Some(crate::dialects::DialectType::RisingWave)
+                    | Some(crate::dialects::DialectType::Materialize)
+            )
+            && !matches!(
+                self.peek_nth(1).map(|t| t.token_type),
+                Some(TokenType::Select) | Some(TokenType::With) | Some(TokenType::LParen)
+            )
+        {
+            self.advance(); // consume '('
+            loop {
+                if self.check(TokenType::RParen) || self.is_at_end() {
+                    break;
+                }
+                // option name (identifier or keyword, e.g. ANALYZE, VERBOSE, FORMAT)
+                let name = self.advance().text.to_ascii_uppercase();
+                // optional single-token argument (boolean, or a word for FORMAT/SERIALIZE)
+                let value = if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) {
+                    Some(self.advance().text.to_ascii_uppercase())
+                } else {
+                    None
+                };
+                if name == "ANALYZE" {
+                    analyze_option = match value.as_deref() {
+                        None => true,
+                        Some(v) => matches!(v, "TRUE" | "ON" | "1"),
+                    };
+                }
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenType::RParen)?;
+        }
 
         // Check for EXTENDED or FORMATTED keywords
         let extended = self.match_identifier("EXTENDED");
@@ -22038,6 +22089,14 @@ impl Parser {
             Some("DETAIL".to_string())
         } else {
             None
+        };
+
+        // Fold a parenthesized ANALYZE option (EXPLAIN (ANALYZE) ...) into the
+        // DESCRIBE style, matching bare `EXPLAIN ANALYZE ...`.
+        let style = if analyze_option && style.is_none() {
+            Some("ANALYZE".to_string())
+        } else {
+            style
         };
 
         // Check for object kind like SEMANTIC VIEW, TABLE, INPUT, OUTPUT, etc.
