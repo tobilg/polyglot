@@ -41,8 +41,11 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   of requiring a second full scan; the public owned `Token` API is unchanged.
 - Python native calls now execute directly while the GIL is detached instead
   of serializing through one global worker. Published Python artifacts use a
-  dedicated `opt-level=2`/thin-LTO profile, while FFI and WASM release profiles
-  retain their existing size-oriented settings.
+  dedicated `opt-level=2`/thin-LTO profile.
+- Repository-built native artifacts now use the `opt-level=3` `native_release`
+  profile. FFI/Go release artifacts use `opt-level=2` with thin LTO for higher
+  query throughput while retaining unwind protection; WASM remains
+  size-optimized.
 - The benchmark comparison now uses the same production Python profile as
   published wheels.
 - TypeScript now publishes one full WASM SDK containing all supported dialects;

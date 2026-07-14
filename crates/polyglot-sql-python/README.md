@@ -244,8 +244,9 @@ Each `ValidationErrorInfo` has:
 The package uses Rust internals directly via PyO3 and has zero runtime Python dependencies for SQL processing.
 Published wheels use the dedicated Cargo `python_release` profile with
 `opt-level=2` and thin LTO. This favors Python query throughput without changing
-the size-oriented release profile used by WASM and other artifacts. Editable
-development installs continue to use Cargo's `dev` profile.
+the size-oriented release profile used by WASM. FFI/Go artifacts use their own
+native throughput profile. Editable development installs continue to use
+Cargo's `dev` profile.
 
 ## Development
 

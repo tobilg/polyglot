@@ -65,4 +65,6 @@ lto = "thin"
 
 [profile.ffi_release]
 inherits = "release"
+opt-level = 2
+lto = "thin"
 panic = "unwind"

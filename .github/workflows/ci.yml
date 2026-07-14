@@ -355,6 +355,8 @@ jobs:
 
       - name: Build Python wheels (Windows x86_64)
         uses: PyO3/maturin-action@v1
+        env:
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         with:
           target: x86_64-pc-windows-msvc
           args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml

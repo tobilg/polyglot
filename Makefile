@@ -103,7 +103,7 @@ help:
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
 	@echo "  make copy-bindings       - Copy bindings from Rust crate to TypeScript SDK"
 	@echo "  make build-wasm          - Build WASM package"
-	@echo "  make cargo-build-release - Build core Rust crate in release mode"
+	@echo "  make cargo-build-release - Build core Rust crate with the native performance profile"
 	@echo "  make build-ffi           - Build C FFI shared/static library"
 	@echo "  make build-ffi-static    - Build C FFI static library"
 	@echo "  make generate-ffi-header - Generate C header via cbindgen/build.rs"
@@ -484,9 +484,9 @@ build-all:
 	@$(MAKE) generate-bindings
 	@$(MAKE) build-wasm
 
-# Build core Rust crate in release mode
+# Build core Rust crate with the native performance profile
 cargo-build-release:
-	cargo build -p polyglot-sql --release
+	cargo build -p polyglot-sql --profile native_release
 
 # Build C FFI shared/static libraries with unwind panic strategy
 build-ffi:

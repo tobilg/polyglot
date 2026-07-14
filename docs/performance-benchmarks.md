@@ -79,7 +79,7 @@ Parallel parse/transpile correctness and concurrent error tests are part of the 
 
 Six FFI candidates were measured across five parse shapes and transpilation. Timings include
 PureGo and FFI overhead and are medians of three Go benchmark runs. Speedups are geometric means
-relative to the existing `z`/fat-LTO FFI profile.
+relative to the former `z`/fat-LTO FFI profile.
 
 | Profile | Speedup | Shared library | Gzip | Clean build |
 |---|---:|---:|---:|---:|
@@ -90,9 +90,12 @@ relative to the existing `z`/fat-LTO FFI profile.
 | `2` / thin | 2.48x | 39.41 MB | 13.53 MB | 11m 25s |
 | `3` / fat | 2.46x | 41.74 MB | 14.45 MB | 11m 35s |
 
-Every faster FFI candidate exceeds the balanced artifact-growth threshold, so production FFI
-remains on `z`/fat LTO. The `native_release` profile remains available for explicit local builds,
-and `make bench-native-profiles` reproduces the matrix.
+The original artifact-growth threshold favored the `z`/fat-LTO baseline. For the 0.6.0 release,
+runtime throughput was prioritized for the separately distributed native engine: production FFI
+now uses `2`/thin LTO, which measured 2.48x faster while increasing the gzip-compressed library
+from 6.47 MB to 13.53 MB. Repository core builds use the existing `native_release` profile with
+`opt-level=3`; the global size-oriented release profile remains available to WASM.
+`make bench-native-profiles` reproduces the matrix.
 
 ## Python Release Profile
 
@@ -108,8 +111,9 @@ SQLGlot comparison targets explicitly select `python_release`.
 | Gzip-compressed extension | 4.97 MB | 9.66 MB | +94.5% |
 | Clean extension build | 6m 17s | 10m 10s | +62.1% |
 
-The measured macOS CPython 3.13 wheel is 9.7 MB. This speed/size tradeoff applies only to Python;
-the size-oriented global release profile, FFI artifacts, and WASM artifacts are unchanged.
+The measured macOS CPython 3.13 wheel is 9.7 MB. These measurements apply to Python specifically;
+FFI uses its independently measured `2`/thin-LTO profile, while the global release profile and
+WASM artifacts remain size-oriented.
 
 ## Current SQLGlot Comparison
 

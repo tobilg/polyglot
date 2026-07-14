@@ -24,7 +24,9 @@ Use the dedicated unwind profile for FFI builds:
 cargo build -p polyglot-sql-ffi --profile ffi_release
 ```
 
-This profile inherits from `release` and sets `panic = "unwind"` to ensure panics never unwind across FFI.
+This profile inherits the release profile's stripping and codegen settings, uses
+`opt-level=2` with thin LTO for native throughput, and sets `panic = "unwind"`
+so exported functions can catch panics before they cross the FFI boundary.
 
 ### Output Paths
 
