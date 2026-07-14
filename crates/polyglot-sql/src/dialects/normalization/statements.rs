@@ -6,6 +6,7 @@ use crate::expressions::*;
 #[derive(Debug)]
 pub(super) enum Action {
     SetToVariable,
+    EnsureValuesDerivedTableColumnAliases,
     AlterTableRenameStripSchema,
     TempTableHash,
     TablesampleReservoir,
@@ -400,6 +401,24 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::EnsureValuesDerivedTableColumnAliases => {
+                if let Expression::Subquery(mut subquery) = e {
+                    let column_count = match &subquery.this {
+                        Expression::Values(values) => values
+                            .expressions
+                            .first()
+                            .map(|row| row.expressions.len())
+                            .unwrap_or(0),
+                        _ => 0,
+                    };
+                    subquery.column_aliases = (1..=column_count)
+                        .map(|index| Identifier::new(format!("column{index}")))
+                        .collect();
+                    Ok(Expression::Subquery(subquery))
+                } else {
+                    Ok(e)
+                }
+            }
             Action::SetToVariable => {
                 // For DuckDB: SET a = 1 -> SET VARIABLE a = 1
                 if let Expression::SetStatement(mut s) = e {

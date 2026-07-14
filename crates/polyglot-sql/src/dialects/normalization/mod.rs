@@ -21,6 +21,14 @@ struct NormalizationContext {
     target: DialectType,
 }
 
+pub(super) fn rewrite_postgres_float_to_integer_cast(cast: Cast) -> Expression {
+    types::rewrite_postgres_float_to_integer_cast(cast)
+}
+
+pub(super) fn is_postgres_unknown_type(data_type: &DataType) -> bool {
+    types::is_postgres_unknown_type(data_type)
+}
+
 enum RewriteOutcome {
     // No domain action was selected. The ordered fallback may still have
     // normalized the expression before returning it.
@@ -1399,11 +1407,33 @@ pub(super) fn normalize(
                 matches!(target, DialectType::DuckDB | DialectType::PostgreSQL);
 
             match &e {
+                Expression::Subquery(subquery)
+                    if matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && subquery.alias.is_some()
+                        && subquery.column_aliases.is_empty()
+                        && matches!(&subquery.this, Expression::Values(values) if !values.expressions.is_empty()) =>
+                {
+                    Action::Statements(
+                        statements::Action::EnsureValuesDerivedTableColumnAliases,
+                    )
+                }
+                Expression::Extract(_)
+                    if matches!(source, DialectType::PostgreSQL)
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && temporal::is_postgres_time_date_part(&e) =>
+                {
+                    Action::Temporal(temporal::Action::PostgresTimeDatePartForTsql)
+                }
                 Expression::Function(f) => {
                     let name = f.name.to_ascii_uppercase();
                     // DuckDB json(x) is a synonym for CAST(x AS JSON) — parses a string.
                     // Map to JSON_PARSE(x) for Trino/Presto/Athena to preserve semantics.
-                    if name == "JSON"
+                    if matches!(source, DialectType::PostgreSQL)
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && temporal::is_postgres_time_date_part(&e)
+                    {
+                        Action::Temporal(temporal::Action::PostgresTimeDatePartForTsql)
+                    } else if name == "JSON"
                         && f.args.len() == 1
                         && matches!(source, DialectType::DuckDB)
                         && matches!(
@@ -2136,11 +2166,21 @@ pub(super) fn normalize(
                 // because BigQuery's TIMESTAMP is really TIMESTAMPTZ, and
                 // DATETIME is the timezone-unaware type
                 Expression::Cast(ref c) => {
-                    if c.format.is_some()
+                    if matches!(source, DialectType::PostgreSQL)
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && types::is_postgres_unknown_null_cast(c)
+                    {
+                        Action::Types(types::Action::PostgresUnknownNullCast)
+                    } else if c.format.is_some()
                         && (matches!(source, DialectType::BigQuery)
                             || matches!(source, DialectType::Teradata))
                     {
                         Action::Types(types::Action::BigQueryCastFormat)
+                    } else if matches!(source, DialectType::PostgreSQL)
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && types::is_postgres_float_to_integer_cast(c)
+                    {
+                        Action::Types(types::Action::PostgresFloatToIntegerCast)
                     } else if matches!(target, DialectType::BigQuery)
                         && !matches!(source, DialectType::BigQuery)
                         && matches!(

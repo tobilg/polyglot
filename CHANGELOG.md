@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.6.1] - 2026-07-15
+
+### Fixed
+- PostgreSQL `VALUES` derived tables without explicit column aliases now gain
+  deterministic `column1`, `column2`, ... aliases when targeting T-SQL or
+  Fabric, producing valid derived-table syntax while preserving user-provided
+  aliases.
+- PostgreSQL boolean operator functions, boolean literals, logical scalar
+  values, and known boolean-to-text casts now lower with the correct T-SQL and
+  Fabric value semantics, including nullable predicates. Strict mode rejects
+  column-to-text casts when the source type is unknown rather than applying an
+  unsafe boolean assumption.
+- Simple `CASE operand WHEN value` expressions now keep their `WHEN` arms as
+  scalar comparison values during T-SQL/Fabric boolean normalization, while
+  searched `CASE WHEN predicate` expressions continue to use predicate
+  rewriting.
+- PostgreSQL casts from `REAL`, `FLOAT4`, `FLOAT8`, and `DOUBLE PRECISION` to
+  integer types now apply PostgreSQL-compatible rounding before the
+  truncating T-SQL/Fabric integer cast. Numeric casts and unresolved source
+  types retain their existing behavior.
+- PostgreSQL `EXTRACT` and `date_part` over `TIME` values now preserve complete
+  fractional-second composition for `SECOND`, `MILLISECOND`, `MICROSECOND`,
+  and `EPOCH` when targeting T-SQL/Fabric instead of returning only a
+  `DATEPART` component.
+- Strict PostgreSQL-to-T-SQL/Fabric transpilation now rejects unsupported
+  scalar row/composite constructors, composite field access, and qualified
+  whole-row casts instead of emitting invalid target SQL. Valid table `VALUES`
+  constructors and supported JSON aggregation remain accepted.
+- PostgreSQL `NULL::unknown` and `CAST(NULL AS unknown)` now lower to a bare
+  `NULL` for T-SQL/Fabric. Other unresolved `unknown` casts are rejected in
+  strict mode instead of generating a cast to a nonexistent target type.
+
 ## [0.6.0] - 2026-07-14
 
 ### Added

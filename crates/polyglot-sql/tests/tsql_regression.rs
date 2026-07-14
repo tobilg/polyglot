@@ -1658,6 +1658,14 @@ fn postgres_from_values_for_tsql_stays_derived_table() {
 }
 
 #[test]
+fn postgres_from_values_for_tsql_adds_required_column_aliases() {
+    assert_eq!(
+        pg_to_tsql_strict("SELECT * FROM (VALUES (1, 2), (3, 8)) AS v"),
+        "SELECT * FROM (VALUES (1, 2), (3, 8)) AS v(column1, column2)"
+    );
+}
+
+#[test]
 fn postgres_predicate_boolean_contexts_stay_predicates_for_tsql() {
     let out = pg_to_tsql(
         "SELECT COUNT(*) AS c FROM tpch.lineitem WHERE l_quantity > 30 HAVING COUNT(*) > 0",

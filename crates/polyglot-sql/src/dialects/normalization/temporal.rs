@@ -5,6 +5,7 @@ use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
+    PostgresTimeDatePartForTsql,
     ConvertTimezoneToExpr,
     EpochConvert,
     EpochMsConvert,
@@ -50,6 +51,7 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::PostgresTimeDatePartForTsql => rewrite_postgres_time_date_part_for_tsql(e),
             Action::ConvertTimezoneToExpr => {
                 // Convert Function("CONVERT_TIMEZONE", args) to Expression::ConvertTimezone
                 // This prevents Redshift's transform_expr from expanding 2-arg to 3-arg with 'UTC'
@@ -2693,6 +2695,173 @@ pub(super) fn rewrite(
     })()?;
 
     Ok(RewriteOutcome::Rewritten(expression))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PostgresTimeDatePart {
+    Second,
+    Millisecond,
+    Microsecond,
+    Epoch,
+}
+
+pub(super) fn is_postgres_time_date_part(expression: &Expression) -> bool {
+    postgres_time_date_part(expression).is_some()
+}
+
+fn postgres_time_date_part(expression: &Expression) -> Option<(PostgresTimeDatePart, Expression)> {
+    match expression {
+        Expression::Extract(extract) if is_time_value(&extract.this) => {
+            let field = match &extract.field {
+                DateTimeField::Second => PostgresTimeDatePart::Second,
+                DateTimeField::Millisecond => PostgresTimeDatePart::Millisecond,
+                DateTimeField::Microsecond => PostgresTimeDatePart::Microsecond,
+                DateTimeField::Epoch => PostgresTimeDatePart::Epoch,
+                _ => return None,
+            };
+            Some((field, extract.this.clone()))
+        }
+        Expression::Function(function)
+            if function.args.len() == 2
+                && matches!(
+                    function.name.to_ascii_uppercase().as_str(),
+                    "DATE_PART" | "DATEPART"
+                )
+                && is_time_value(&function.args[1]) =>
+        {
+            let field = postgres_time_date_part_name(&function.args[0])?;
+            Some((field, function.args[1].clone()))
+        }
+        _ => None,
+    }
+}
+
+fn postgres_time_date_part_name(expression: &Expression) -> Option<PostgresTimeDatePart> {
+    let name = match expression {
+        Expression::Literal(literal) => match literal.as_ref() {
+            Literal::String(name) => name.as_str(),
+            _ => return None,
+        },
+        Expression::Identifier(identifier) => identifier.name.as_str(),
+        Expression::Column(column) if column.table.is_none() => column.name.name.as_str(),
+        Expression::Cast(cast)
+            if matches!(
+                cast.to,
+                DataType::Text | DataType::TextWithLength { .. } | DataType::VarChar { .. }
+            ) =>
+        {
+            return postgres_time_date_part_name(&cast.this);
+        }
+        _ => return None,
+    };
+
+    match name.trim().to_ascii_uppercase().as_str() {
+        "SECOND" | "SECONDS" | "SEC" | "SECS" | "S" | "SS" => Some(PostgresTimeDatePart::Second),
+        "MILLISECOND" | "MILLISECONDS" | "MILLISEC" | "MILLISECS" | "MS" | "MSEC" | "MSECS" => {
+            Some(PostgresTimeDatePart::Millisecond)
+        }
+        "MICROSECOND" | "MICROSECONDS" | "MICROSEC" | "MICROSECS" | "US" | "USEC" | "USECS"
+        | "MCS" => Some(PostgresTimeDatePart::Microsecond),
+        "EPOCH" | "EPOCH_SECOND" | "EPOCH_SECONDS" => Some(PostgresTimeDatePart::Epoch),
+        _ => None,
+    }
+}
+
+fn is_time_value(expression: &Expression) -> bool {
+    let is_time_type = |data_type: &DataType| {
+        matches!(data_type, DataType::Time { .. })
+            || matches!(
+                data_type,
+                DataType::Custom { name }
+                    if name.eq_ignore_ascii_case("TIME") || name.to_ascii_uppercase().starts_with("TIME(")
+            )
+    };
+
+    match expression {
+        Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+            is_time_type(&cast.to)
+        }
+        Expression::Literal(literal) => matches!(literal.as_ref(), Literal::Time(_)),
+        Expression::Paren(paren) => is_time_value(&paren.this),
+        Expression::Alias(alias) => is_time_value(&alias.this),
+        Expression::CurrentTime(_) | Expression::Localtime(_) => true,
+        other => other.inferred_type().is_some_and(is_time_type),
+    }
+}
+
+fn rewrite_postgres_time_date_part_for_tsql(expression: Expression) -> Result<Expression> {
+    let Some((field, value)) = postgres_time_date_part(&expression) else {
+        return Ok(expression);
+    };
+
+    let date_part = |name: &str, value: Expression| {
+        Expression::Function(Box::new(Function::new(
+            "DATEPART",
+            vec![Expression::Identifier(Identifier::new(name)), value],
+        )))
+    };
+    let decimal = |value: &str| Expression::Literal(Box::new(Literal::Number(value.to_string())));
+    let fractional_microseconds = date_part("MICROSECOND", value.clone());
+    let fractional_seconds = Expression::Div(Box::new(BinaryOp::new(
+        fractional_microseconds.clone(),
+        decimal("1000000.0"),
+    )));
+    let whole_seconds = date_part("SECOND", value.clone());
+
+    let rewritten = match field {
+        PostgresTimeDatePart::Second => {
+            Expression::Add(Box::new(BinaryOp::new(whole_seconds, fractional_seconds)))
+        }
+        PostgresTimeDatePart::Millisecond => {
+            let whole_milliseconds = Expression::Mul(Box::new(BinaryOp::new(
+                whole_seconds,
+                Expression::number(1000),
+            )));
+            let fractional_milliseconds = Expression::Div(Box::new(BinaryOp::new(
+                fractional_microseconds,
+                decimal("1000.0"),
+            )));
+            Expression::Add(Box::new(BinaryOp::new(
+                whole_milliseconds,
+                fractional_milliseconds,
+            )))
+        }
+        PostgresTimeDatePart::Microsecond => {
+            let whole_microseconds = Expression::Mul(Box::new(BinaryOp::new(
+                whole_seconds,
+                Expression::number(1_000_000),
+            )));
+            Expression::Add(Box::new(BinaryOp::new(
+                whole_microseconds,
+                fractional_microseconds,
+            )))
+        }
+        PostgresTimeDatePart::Epoch => {
+            let midnight = Expression::Cast(Box::new(Cast {
+                this: Expression::string("00:00:00"),
+                to: DataType::Time {
+                    precision: Some(6),
+                    timezone: false,
+                },
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+                inferred_type: None,
+            }));
+            let elapsed_seconds = Expression::Function(Box::new(Function::new(
+                "DATEDIFF",
+                vec![
+                    Expression::Identifier(Identifier::new("SECOND")),
+                    midnight,
+                    value,
+                ],
+            )));
+            Expression::Add(Box::new(BinaryOp::new(elapsed_seconds, fractional_seconds)))
+        }
+    };
+
+    Ok(rewritten)
 }
 
 pub(super) fn date_trunc_to_mysql(unit: &str, expr: &Expression) -> Result<Expression> {

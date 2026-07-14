@@ -521,6 +521,120 @@ mod strict_unsupported_regressions {
     }
 
     #[test]
+    fn strict_transpile_rejects_postgres_composite_values_for_tsql_targets() {
+        let unsupported = [
+            "SELECT ROW(a, b) FROM t",
+            "SELECT (a, b) FROM t",
+            "SELECT (ROW(a, b)).f1 FROM t",
+            "SELECT ROW(a, b) IS NOT NULL FROM t",
+            "SELECT ROW(a, ROW(b, c)) FROM t",
+            "SELECT rt.*::rt_rowtype FROM rt",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for sql in unsupported {
+                Dialect::get(DialectType::PostgreSQL)
+                    .transpile(sql, write)
+                    .expect("default transpile should preserve its best-effort output");
+
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict TSQL/Fabric transpile should reject composite values");
+                assert!(
+                    err.to_string().contains("PostgreSQL")
+                        && (err.to_string().contains("row/composite")
+                            || err.to_string().contains("qualified whole-row casts")),
+                    "unexpected error for PostgreSQL -> {write:?}: {err}"
+                );
+            }
+
+            transpile_with_level(
+                "SELECT * FROM (VALUES (1, 2), (3, 4)) AS v(a, b)",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should allow table value constructors");
+
+            let json = transpile_with_level(
+                "SELECT json_agg(x), jsonb_agg(x) FROM t",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("current TSQL/Fabric targets should support JSON_ARRAYAGG");
+            assert_eq!(json, ["SELECT JSON_ARRAYAGG(x), JSON_ARRAYAGG(x) FROM t"]);
+        }
+    }
+
+    #[test]
+    fn postgres_unknown_null_casts_lower_safely_for_tsql_targets() {
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            let direct = transpile_with_level(
+                "SELECT NULL::unknown",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should erase NULL::unknown");
+            assert_eq!(direct, ["SELECT NULL"]);
+
+            let predicate = transpile_with_level(
+                "SELECT (NULL::unknown IS NOT NULL) AS no FROM t",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should lower an UNKNOWN NULL predicate");
+            assert_eq!(
+                predicate,
+                ["SELECT CAST(CASE WHEN (NULL IS NOT NULL) THEN 1 ELSE 0 END AS BIT) AS no FROM t"]
+            );
+
+            let standard_cast = transpile_with_level(
+                "SELECT CAST(NULL AS unknown)",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("standard UNKNOWN NULL casts should use the same safe rewrite");
+            assert_eq!(standard_cast, ["SELECT NULL"]);
+
+            for sql in ["SELECT 'x'::unknown", "SELECT value::unknown FROM t"] {
+                Dialect::get(DialectType::PostgreSQL)
+                    .transpile(sql, write)
+                    .expect("default transpile should retain best-effort UNKNOWN casts");
+
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict TSQL/Fabric transpile should reject unresolved UNKNOWN casts");
+                assert!(
+                    err.to_string()
+                        .contains("PostgreSQL unresolved UNKNOWN casts"),
+                    "unexpected error for PostgreSQL -> {write:?}: {err}"
+                );
+            }
+        }
+
+        let postgres = transpile_with_level(
+            "SELECT NULL::unknown",
+            DialectType::PostgreSQL,
+            DialectType::PostgreSQL,
+            UnsupportedLevel::Raise,
+        )
+        .expect("PostgreSQL identity should retain its UNKNOWN cast");
+        assert_eq!(postgres, ["SELECT CAST(NULL AS UNKNOWN)"]);
+    }
+
+    #[test]
     fn transpile_legalizes_nested_order_by_for_tsql_targets() {
         let nested = [
             "SELECT count(*) FROM (SELECT * FROM t ORDER BY a) AS x",
@@ -1555,6 +1669,203 @@ mod tsql_fabric_regressions {
             for (sql, expected) in cases {
                 assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
             }
+        }
+    }
+
+    #[test]
+    fn postgres_boolean_literals_and_logical_values_are_materialized_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT true AS t FROM one",
+                "SELECT CAST(1 AS BIT) AS t FROM one",
+            ),
+            (
+                "SELECT (true OR false) AS r FROM one",
+                "SELECT CAST(CASE WHEN ((1 = 1) OR (1 = 0)) THEN 1 ELSE 0 END AS BIT) AS r FROM one",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn simple_case_when_values_remain_scalar_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT CASE 1 WHEN 0 THEN 1 ELSE 2 END",
+                "SELECT CASE 1 WHEN 0 THEN 1 ELSE 2 END",
+            ),
+            (
+                "SELECT CASE b WHEN true THEN 1 ELSE 2 END FROM t",
+                "SELECT CASE b WHEN CAST(1 AS BIT) THEN 1 ELSE 2 END FROM t",
+            ),
+            (
+                "SELECT CASE WHEN 1 = 0 THEN 1 ELSE 2 END",
+                "SELECT CASE WHEN 1 = 0 THEN 1 ELSE 2 END",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn postgres_float_to_integer_casts_round_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT '32767.6'::real::smallint AS c",
+                "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
+                "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
+            ),
+            (
+                "SELECT '-1.6'::double precision::bigint AS c",
+                "SELECT CAST(ROUND(CAST('-1.6' AS FLOAT), 0) AS BIGINT) AS c",
+                "SELECT CAST(ROUND(CAST('-1.6' AS FLOAT), 0) AS BIGINT) AS c",
+            ),
+            (
+                "SELECT smallint(real('32767.6')) AS c",
+                "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
+                "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
+            ),
+            (
+                "SELECT '1.6'::numeric::integer AS c",
+                "SELECT CAST(CAST('1.6' AS NUMERIC) AS INTEGER) AS c",
+                "SELECT CAST(CAST('1.6' AS DECIMAL(38, 10)) AS INT) AS c",
+            ),
+            (
+                "SELECT value::integer AS c FROM t",
+                "SELECT CAST(value AS INTEGER) AS c FROM t",
+                "SELECT CAST(value AS INT) AS c FROM t",
+            ),
+        ];
+
+        for (target, expected_index) in [(DialectType::TSQL, 0), (DialectType::Fabric, 1)] {
+            for (sql, tsql_expected, fabric_expected) in cases {
+                let expected = [tsql_expected, fabric_expected][expected_index];
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn postgres_time_date_parts_preserve_fractional_composition_for_tsql_targets() {
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            let time = match target {
+                DialectType::Fabric => "CAST('13:30:25.575401' AS TIME(6))",
+                _ => "CAST('13:30:25.575401' AS TIME)",
+            };
+            let cases = [
+                (
+                    "SELECT EXTRACT(second FROM '13:30:25.575401'::time) AS value",
+                    format!(
+                        "SELECT DATEPART(SECOND, {time}) + DATEPART(MICROSECOND, {time}) / 1000000.0 AS value"
+                    ),
+                ),
+                (
+                    "SELECT date_part('milliseconds', '13:30:25.575401'::time) AS value",
+                    format!(
+                        "SELECT DATEPART(SECOND, {time}) * 1000 + DATEPART(MICROSECOND, {time}) / 1000.0 AS value"
+                    ),
+                ),
+                (
+                    "SELECT EXTRACT(microsecond FROM '13:30:25.575401'::time) AS value",
+                    format!(
+                        "SELECT DATEPART(SECOND, {time}) * 1000000 + DATEPART(MICROSECOND, {time}) AS value"
+                    ),
+                ),
+                (
+                    "SELECT date_part('epoch', '13:30:25.575401'::time) AS value",
+                    format!(
+                        "SELECT DATEDIFF(SECOND, CAST('00:00:00' AS TIME(6)), {time}) + DATEPART(MICROSECOND, {time}) / 1000000.0 AS value"
+                    ),
+                ),
+                (
+                    "SELECT EXTRACT(second FROM ts) AS value FROM t",
+                    "SELECT DATEPART(SECOND, ts) AS value FROM t".to_string(),
+                ),
+                (
+                    "SELECT EXTRACT(hour FROM '13:30:25.575401'::time) AS value",
+                    format!("SELECT DATEPART(HOUR, {time}) AS value"),
+                ),
+            ];
+
+            for (sql, expected) in &cases {
+                assert_eq!(
+                    pg_to_target(sql, target),
+                    *expected,
+                    "failed for {target:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn postgres_boolean_operator_functions_lower_to_tsql_predicates() {
+        let cases = [
+            (
+                "SELECT b FROM tb WHERE booleq(false, b)",
+                "SELECT b FROM tb WHERE 0 = b",
+            ),
+            (
+                "SELECT b FROM tb WHERE boolne(false, b)",
+                "SELECT b FROM tb WHERE 0 <> b",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn postgres_known_boolean_text_casts_preserve_text_and_null_semantics() {
+        let cases = [
+            ("SELECT true::text", "SELECT 'true'"),
+            (
+                "SELECT (a = 1)::text FROM t",
+                "SELECT CASE WHEN (a = 1) THEN 'true' WHEN NOT (a = 1) THEN 'false' ELSE NULL END FROM t",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_postgres_unknown_column_text_cast_is_rejected_for_tsql_targets() {
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            let error = pg_to_target_with_options(
+                "SELECT (b)::text FROM tb",
+                target,
+                TranspileOptions::strict(),
+            )
+            .expect_err("strict mode should reject a text cast with unknown source type");
+            assert!(
+                error.to_string().contains("unknown source type to text"),
+                "unexpected error for {target:?}: {error}"
+            );
+
+            assert_eq!(
+                pg_to_target_with_options(
+                    "SELECT (b)::text FROM tb",
+                    target,
+                    TranspileOptions::default(),
+                )
+                .expect("default mode should retain best-effort behavior"),
+                "SELECT CAST((b) AS VARCHAR(MAX)) FROM tb"
+            );
         }
     }
 

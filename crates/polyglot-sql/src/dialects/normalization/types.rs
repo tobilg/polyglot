@@ -5,6 +5,8 @@ use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
+    PostgresUnknownNullCast,
+    PostgresFloatToIntegerCast,
     CastTimestampToDatetime,
     DateTruncWrapCast,
     ToDateToCast,
@@ -34,6 +36,22 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::PostgresUnknownNullCast => {
+                let c = if let Expression::Cast(c) = e {
+                    *c
+                } else {
+                    unreachable!("action only triggered for Cast expressions")
+                };
+                Ok(c.this)
+            }
+            Action::PostgresFloatToIntegerCast => {
+                let c = if let Expression::Cast(c) = e {
+                    *c
+                } else {
+                    unreachable!("action only triggered for Cast expressions")
+                };
+                Ok(rewrite_postgres_float_to_integer_cast(c))
+            }
             Action::CastTimestampToDatetime => {
                 let c = if let Expression::Cast(c) = e {
                     *c
@@ -786,6 +804,69 @@ pub(super) fn rewrite(
     })()?;
 
     Ok(RewriteOutcome::Rewritten(expression))
+}
+
+pub(super) fn is_postgres_unknown_type(data_type: &DataType) -> bool {
+    matches!(data_type, DataType::Unknown)
+        || matches!(data_type, DataType::Custom { name } if name.eq_ignore_ascii_case("UNKNOWN"))
+}
+
+pub(super) fn is_postgres_unknown_null_cast(cast: &Cast) -> bool {
+    matches!(cast.this, Expression::Null(_)) && is_postgres_unknown_type(&cast.to)
+}
+
+pub(super) fn is_postgres_float_to_integer_cast(cast: &Cast) -> bool {
+    let is_float_type = |data_type: &DataType| {
+        matches!(data_type, DataType::Float { .. } | DataType::Double { .. })
+            || matches!(
+                data_type,
+                DataType::Custom { name }
+                    if matches!(
+                        name.to_ascii_uppercase().as_str(),
+                        "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION"
+                    )
+            )
+    };
+    let integer_target = matches!(
+        cast.to,
+        DataType::SmallInt { .. } | DataType::Int { .. } | DataType::BigInt { .. }
+    );
+    let float_input = match &cast.this {
+        Expression::Cast(inner) | Expression::TryCast(inner) | Expression::SafeCast(inner) => {
+            is_float_type(&inner.to)
+        }
+        expression => expression.inferred_type().is_some_and(is_float_type),
+    };
+
+    integer_target && float_input
+}
+
+pub(super) fn rewrite_postgres_float_to_integer_cast(mut cast: Cast) -> Expression {
+    if is_postgres_float_to_integer_cast(&cast) {
+        if let Expression::Cast(inner) | Expression::TryCast(inner) | Expression::SafeCast(inner) =
+            &mut cast.this
+        {
+            if let DataType::Custom { name } = &inner.to {
+                inner.to = match name.to_ascii_uppercase().as_str() {
+                    "REAL" | "FLOAT4" => DataType::Float {
+                        precision: None,
+                        scale: None,
+                        real_spelling: true,
+                    },
+                    "FLOAT8" | "DOUBLE PRECISION" => DataType::Double {
+                        precision: None,
+                        scale: None,
+                    },
+                    _ => inner.to.clone(),
+                };
+            }
+        }
+        cast.this = Expression::Round(Box::new(RoundFunc {
+            this: cast.this,
+            decimals: Some(Expression::number(0)),
+        }));
+    }
+    Expression::Cast(Box::new(cast))
 }
 
 pub(super) fn has_varchar_char_type(dt: &crate::expressions::DataType) -> bool {

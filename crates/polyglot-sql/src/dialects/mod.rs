@@ -3415,6 +3415,12 @@ impl Dialect {
                     target,
                     opts,
                 )?;
+                Self::reject_postgres_tsql_strict_unknown_text_casts(
+                    &expr,
+                    self.dialect_type,
+                    target,
+                    opts,
+                )?;
 
                 // When source and target differ, first normalize the source dialect's
                 // AST constructs to standard SQL, so that the target dialect can handle them.
@@ -3704,7 +3710,7 @@ impl Dialect {
                         DialectType::PostgreSQL | DialectType::CockroachDB
                     ) && !matches!(target, DialectType::PostgreSQL | DialectType::CockroachDB)
                     {
-                        Self::normalize_postgres_type_function_casts(normalized)?
+                        Self::normalize_postgres_type_function_casts(normalized, target)?
                     } else {
                         normalized
                     };
@@ -3816,6 +3822,16 @@ impl Dialect {
                 // Wrap UNION with ORDER BY/LIMIT in a subquery for dialects that require it
                 let normalized = if matches!(target, DialectType::ClickHouse | DialectType::TSQL) {
                     crate::transforms::no_limit_order_by_union(normalized)?
+                } else {
+                    normalized
+                };
+
+                let normalized = if matches!(
+                    self.dialect_type,
+                    DialectType::PostgreSQL | DialectType::CockroachDB
+                ) && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                {
+                    Self::normalize_postgres_boolean_semantics_for_tsql(normalized)?
                 } else {
                     normalized
                 };
@@ -4265,6 +4281,20 @@ impl Dialect {
                     Self::push_unsupported_diagnostic(&mut diagnostics, "PostgreSQL TO_TSVECTOR");
                 }
                 if matches!(target, DialectType::TSQL | DialectType::Fabric) {
+                    if let Some(composite_semantics) =
+                        Self::postgres_tsql_unsupported_composite_semantics(node)
+                    {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {composite_semantics}"),
+                        );
+                    }
+                    if Self::node_is_postgres_unknown_cast(node) {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            "PostgreSQL unresolved UNKNOWN casts",
+                        );
+                    }
                     if let Some(collation_name) =
                         Self::postgres_tsql_unsupported_collation_name(node)
                     {
@@ -4347,6 +4377,38 @@ impl Dialect {
         if expr.dfs().any(Self::node_is_regex_predicate) {
             return Err(crate::error::Error::unsupported(
                 "regular expression predicates",
+                target.to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn reject_postgres_tsql_strict_unknown_text_casts(
+        expr: &Expression,
+        source: DialectType,
+        target: DialectType,
+        opts: &TranspileOptions,
+    ) -> Result<()> {
+        if !matches!(
+            opts.unsupported_level,
+            UnsupportedLevel::Raise | UnsupportedLevel::Immediate
+        ) || !matches!(source, DialectType::PostgreSQL | DialectType::CockroachDB)
+            || !matches!(target, DialectType::TSQL | DialectType::Fabric)
+        {
+            return Ok(());
+        }
+
+        if expr.dfs().any(|node| {
+            matches!(
+                node,
+                Expression::Cast(cast)
+                    if matches!(cast.to, DataType::Text)
+                        && Self::is_column_expr(&cast.this)
+            )
+        }) {
+            return Err(crate::error::Error::unsupported(
+                "PostgreSQL cast of a column with an unknown source type to text",
                 target.to_string(),
             ));
         }
@@ -4877,6 +4939,33 @@ impl Dialect {
             Some("POSIX")
         } else {
             None
+        }
+    }
+
+    fn postgres_tsql_unsupported_composite_semantics(expr: &Expression) -> Option<&'static str> {
+        match expr {
+            Expression::Tuple(_) | Expression::Struct(_) | Expression::StructFunc(_) => {
+                Some("row/composite values")
+            }
+            Expression::Function(function)
+                if !function.quoted && function.name.eq_ignore_ascii_case("ROW") =>
+            {
+                Some("row/composite values")
+            }
+            Expression::StructExtract(_) => Some("row/composite field access"),
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) if matches!(&cast.this, Expression::Star(star) if star.table.is_some()) => {
+                Some("qualified whole-row casts")
+            }
+            _ => None,
+        }
+    }
+
+    fn node_is_postgres_unknown_cast(expr: &Expression) -> bool {
+        match expr {
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+                normalization::is_postgres_unknown_type(&cast.to)
+            }
+            _ => false,
         }
     }
 
@@ -5655,7 +5744,10 @@ impl Dialect {
         }
     }
 
-    fn normalize_postgres_type_function_casts(expr: Expression) -> Result<Expression> {
+    fn normalize_postgres_type_function_casts(
+        expr: Expression,
+        target: DialectType,
+    ) -> Result<Expression> {
         transform_recursive(expr, &|e| match e {
             Expression::Function(function) => {
                 let mut function = *function;
@@ -5667,7 +5759,7 @@ impl Dialect {
                 {
                     if let Some(to) = Self::postgres_type_function_data_type(&function.name) {
                         let this = function.args.remove(0);
-                        return Ok(Expression::Cast(Box::new(Cast {
+                        let cast = Cast {
                             this,
                             to,
                             trailing_comments: function.trailing_comments,
@@ -5675,7 +5767,14 @@ impl Dialect {
                             format: None,
                             default: None,
                             inferred_type: function.inferred_type,
-                        })));
+                        };
+                        return Ok(
+                            if matches!(target, DialectType::TSQL | DialectType::Fabric) {
+                                normalization::rewrite_postgres_float_to_integer_cast(cast)
+                            } else {
+                                Expression::Cast(Box::new(cast))
+                            },
+                        );
                     }
                 }
                 Ok(Expression::Function(Box::new(function)))
@@ -6069,7 +6168,82 @@ impl Dialect {
         Ok(Expression::Select(select))
     }
 
+    fn normalize_postgres_boolean_semantics_for_tsql(expr: Expression) -> Result<Expression> {
+        transform_recursive(expr, &|e| match e {
+            Expression::Function(function)
+                if function.args.len() == 2
+                    && (function.name.eq_ignore_ascii_case("BOOLEQ")
+                        || function.name.eq_ignore_ascii_case("BOOLNE")) =>
+            {
+                let is_equal = function.name.eq_ignore_ascii_case("BOOLEQ");
+                let mut args = function.args.into_iter();
+                let op = BinaryOp {
+                    left: args.next().expect("checked boolean operator arity"),
+                    right: args.next().expect("checked boolean operator arity"),
+                    left_comments: Vec::new(),
+                    operator_comments: Vec::new(),
+                    trailing_comments: function.trailing_comments,
+                    inferred_type: None,
+                };
+                if is_equal {
+                    Ok(Expression::Eq(Box::new(op)))
+                } else {
+                    Ok(Expression::Neq(Box::new(op)))
+                }
+            }
+            Expression::Cast(cast)
+                if matches!(cast.to, DataType::Text)
+                    && Self::is_known_postgres_boolean_expression(&cast.this) =>
+            {
+                Ok(Self::postgres_boolean_text_value(cast.this))
+            }
+            other => Ok(other),
+        })
+    }
+
+    fn is_known_postgres_boolean_expression(expr: &Expression) -> bool {
+        match expr {
+            Expression::Boolean(_) => true,
+            Expression::Cast(cast) => matches!(cast.to, DataType::Boolean),
+            Expression::Paren(paren) => Self::is_known_postgres_boolean_expression(&paren.this),
+            other => Self::is_tsql_boolean_value_expression(other),
+        }
+    }
+
+    fn postgres_boolean_text_value(predicate: Expression) -> Expression {
+        if let Expression::Boolean(boolean) = predicate {
+            return Expression::string(if boolean.value { "true" } else { "false" });
+        }
+
+        let false_predicate = Expression::Not(Box::new(crate::expressions::UnaryOp {
+            this: predicate.clone(),
+            inferred_type: None,
+        }));
+        Expression::Case(Box::new(crate::expressions::Case {
+            operand: None,
+            whens: vec![
+                (predicate, Expression::string("true")),
+                (false_predicate, Expression::string("false")),
+            ],
+            else_: Some(Expression::null()),
+            comments: Vec::new(),
+            inferred_type: None,
+        }))
+    }
+
     fn rewrite_tsql_boolean_scalar_value(expr: Expression) -> Result<Expression> {
+        if let Expression::Boolean(boolean) = expr {
+            return Ok(Expression::Cast(Box::new(Cast {
+                this: Expression::Boolean(boolean),
+                to: DataType::Boolean,
+                trailing_comments: Vec::new(),
+                double_colon_syntax: false,
+                format: None,
+                default: None,
+                inferred_type: None,
+            })));
+        }
+
         if Self::is_tsql_boolean_value_expression(&expr) {
             let predicate = Self::rewrite_tsql_boolean_predicate_context(expr)?;
             return Ok(Self::tsql_boolean_value_case(predicate));
@@ -6124,6 +6298,7 @@ impl Dialect {
                 Ok(Expression::SafeCast(cast))
             }
             Expression::Case(mut case) => {
+                let is_simple_case = case.operand.is_some();
                 if let Some(operand) = case.operand.take() {
                     case.operand = Some(Self::rewrite_tsql_boolean_scalar_value(operand)?);
                 }
@@ -6131,10 +6306,12 @@ impl Dialect {
                     .whens
                     .into_iter()
                     .map(|(condition, result)| {
-                        Ok((
-                            Self::rewrite_tsql_boolean_predicate_context(condition)?,
-                            Self::rewrite_tsql_boolean_scalar_value(result)?,
-                        ))
+                        let condition = if is_simple_case {
+                            Self::rewrite_tsql_boolean_scalar_value(condition)?
+                        } else {
+                            Self::rewrite_tsql_boolean_predicate_context(condition)?
+                        };
+                        Ok((condition, Self::rewrite_tsql_boolean_scalar_value(result)?))
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if let Some(else_) = case.else_.take() {

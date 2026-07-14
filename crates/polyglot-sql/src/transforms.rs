@@ -2399,12 +2399,19 @@ pub fn ensure_bools(expr: Expression) -> Result<Expression> {
 fn ensure_bools_in_value_context(expr: Expression) -> Expression {
     match expr {
         Expression::Case(mut case) => {
+            let is_simple_case = case.operand.is_some();
+            if let Some(operand) = case.operand.take() {
+                case.operand = Some(ensure_bools_in_value_context(operand));
+            }
             case.whens = case
                 .whens
                 .into_iter()
                 .map(|(condition, result)| {
-                    let new_condition =
-                        ensure_bool_condition(ensure_bools_in_value_context(condition));
+                    let new_condition = if is_simple_case {
+                        ensure_bools_in_value_context(condition)
+                    } else {
+                        ensure_bool_condition(ensure_bools_in_value_context(condition))
+                    };
                     let new_result = ensure_bools_in_value_context(result);
                     (new_condition, new_result)
                 })
