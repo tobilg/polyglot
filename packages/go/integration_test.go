@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,70 @@ func integrationClient(t *testing.T) *Client {
 		}
 	})
 	return client
+}
+
+func benchmarkClient(b *testing.B) *Client {
+	b.Helper()
+	if os.Getenv(LibraryPathEnv) == "" {
+		b.Skipf("%s is not set", LibraryPathEnv)
+	}
+	client, err := OpenDefault()
+	if err != nil {
+		b.Fatalf("OpenDefault: %v", err)
+	}
+	b.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			b.Fatalf("Close: %v", err)
+		}
+	})
+	return client
+}
+
+func BenchmarkNativeProfileParse(b *testing.B) {
+	client := benchmarkClient(b)
+	columns := make([]string, 1_000)
+	for index := range columns {
+		columns[index] = "c" + strconv.Itoa(index)
+	}
+	numbers := make([]string, 10_000)
+	for value := range numbers {
+		numbers[value] = strconv.Itoa(value)
+	}
+	queries := []struct {
+		name string
+		sql  string
+	}{
+		{"representative", "SELECT a, b, SUM(c) AS total FROM events WHERE created_at >= '2025-01-01' GROUP BY a, b"},
+		{"many_columns", "SELECT " + strings.Join(columns, ", ") + " FROM events"},
+		{"nested_functions", "SELECT " + strings.Repeat("COALESCE(", 20) +
+			"value" + strings.Repeat(", NULL)", 20) + " FROM events"},
+		{"large_strings", "SELECT " + strings.Repeat("'"+strings.Repeat("x", 100)+"', ", 499) +
+			"'" + strings.Repeat("x", 100) + "' FROM events"},
+		{"many_numbers", "SELECT " + strings.Join(numbers, ", ") + " FROM events"},
+	}
+
+	for _, query := range queries {
+		b.Run(query.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				if _, err := client.Parse(query.sql, "postgres"); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkNativeProfileTranspile(b *testing.B) {
+	client := benchmarkClient(b)
+	const sql = "SELECT a, b, SUM(c) AS total FROM events WHERE created_at >= '2025-01-01' GROUP BY a, b"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if _, err := client.Transpile(sql, "postgres", "duckdb"); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func integrationLibraryPath(t *testing.T) string {
@@ -227,6 +292,30 @@ func TestIntegrationCoreAPIs(t *testing.T) {
 	}
 	if validation.Valid || len(validation.Errors) == 0 {
 		t.Fatalf("invalid SQL validation = %#v", validation)
+	}
+
+	validation, err = client.Validate(
+		"SELECT * FROM users LIMIT 10",
+		"generic",
+		ValidationOptions{Semantic: true},
+	)
+	if err != nil {
+		t.Fatalf("Validate semantic SQL: %v", err)
+	}
+	if !validation.Valid || len(validation.Errors) < 2 {
+		t.Fatalf("semantic SQL validation = %#v", validation)
+	}
+
+	validation, err = client.Validate(
+		"SELECT *, FROM users",
+		"generic",
+		ValidationOptions{StrictSyntax: true, Semantic: true},
+	)
+	if err != nil {
+		t.Fatalf("Validate strict SQL: %v", err)
+	}
+	if validation.Valid || len(validation.Errors) != 1 || validation.Errors[0].Code != "E005" {
+		t.Fatalf("strict SQL validation = %#v", validation)
 	}
 
 	parsed, err := client.Parse("SELECT a FROM t", "generic")

@@ -7,6 +7,17 @@
  * instead of { "type": "variant", ...data }.
  */
 
+import {
+  ast_get_aggregate_functions,
+  ast_get_column_names,
+  ast_get_functions,
+  ast_get_literals,
+  ast_get_subqueries,
+  ast_get_table_names,
+  ast_get_tables,
+  ast_get_window_functions,
+  ast_node_count,
+} from '../../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../../generated/Expression';
 import {
   type ExpressionType,
@@ -15,17 +26,6 @@ import {
   isExpressionValue,
 } from '../helpers';
 import type { NodePredicate, VisitorCallback, VisitorConfig } from './types';
-import {
-  ast_get_column_names,
-  ast_get_table_names,
-  ast_get_tables,
-  ast_get_aggregate_functions,
-  ast_get_window_functions,
-  ast_get_functions,
-  ast_get_subqueries,
-  ast_get_literals,
-  ast_node_count,
-} from '../../../wasm/polyglot_sql_wasm.js';
 
 /** Serialize Expression to JSON for WASM functions */
 function exprToJson(node: Expression): string {

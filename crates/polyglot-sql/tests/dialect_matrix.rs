@@ -232,6 +232,109 @@ mod strict_unsupported_regressions {
     }
 
     #[test]
+    fn strict_transpile_rejects_nth_value_for_tsql_targets() {
+        let nth_value = "SELECT NTH_VALUE(salary, 2) OVER (PARTITION BY depname ORDER BY empno ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM empsalary";
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            let permissive = Dialect::get(DialectType::PostgreSQL)
+                .transpile(nth_value, write)
+                .expect("default transpile should preserve unsupported NTH_VALUE");
+            assert!(permissive[0].contains("NTH_VALUE"));
+
+            let err = transpile_with_level(
+                nth_value,
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect_err("strict TSQL/Fabric transpile should reject NTH_VALUE");
+            assert!(
+                err.to_string().contains("NTH_VALUE"),
+                "unexpected error for PostgreSQL -> {write:?}: {err}"
+            );
+
+            transpile_with_level(
+                "SELECT FIRST_VALUE(salary) OVER (PARTITION BY depname ORDER BY empno) FROM empsalary",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should allow FIRST_VALUE");
+        }
+    }
+
+    #[test]
+    fn strict_transpile_validates_tsql_window_frame_capabilities() {
+        let unsupported = [
+            (
+                "SELECT SUM(x) OVER (ORDER BY x RANGE BETWEEN 10 PRECEDING AND 10 FOLLOWING) FROM t",
+                "value-offset RANGE window frames",
+            ),
+            (
+                "SELECT SUM(x) OVER (ORDER BY x GROUPS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t",
+                "GROUPS window frames",
+            ),
+            (
+                "SELECT SUM(x) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) FROM t",
+                "window frame EXCLUDE clauses",
+            ),
+            (
+                "SELECT SUM(x) OVER (ORDER BY x ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO OTHERS) FROM t",
+                "window frame EXCLUDE clauses",
+            ),
+            (
+                "SELECT SUM(x) OVER (ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) FROM t",
+                "window frames without ORDER BY",
+            ),
+            (
+                "SELECT FIRST_VALUE(x) OVER (PARTITION BY p) FROM t",
+                "FIRST_VALUE without ORDER BY",
+            ),
+            (
+                "SELECT LAST_VALUE(x) OVER (PARTITION BY p) FROM t",
+                "LAST_VALUE without ORDER BY",
+            ),
+            (
+                "SELECT SUM(x) OVER w FROM t WINDOW w AS (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                "window frames without ORDER BY",
+            ),
+            (
+                "SELECT FIRST_VALUE(x) OVER w FROM t WINDOW w AS (PARTITION BY p)",
+                "FIRST_VALUE without ORDER BY",
+            ),
+        ];
+        let supported = [
+            "SELECT SUM(x) OVER (ORDER BY x ROWS BETWEEN 10 PRECEDING AND 10 FOLLOWING) FROM t",
+            "SELECT SUM(x) OVER (ORDER BY x RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+            "SELECT SUM(x) OVER (PARTITION BY p) FROM t",
+            "SELECT FIRST_VALUE(x) OVER (PARTITION BY p ORDER BY x) FROM t",
+            "SELECT LAST_VALUE(x) OVER w FROM t WINDOW w AS (PARTITION BY p ORDER BY x)",
+            "SELECT FIRST_VALUE(x) OVER w2 FROM t WINDOW w1 AS (PARTITION BY p ORDER BY x), w2 AS (w1)",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for (sql, expected) in unsupported {
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict TSQL/Fabric transpile should reject unsupported window frame");
+                assert!(
+                    err.to_string().contains(expected),
+                    "expected {expected:?} for PostgreSQL -> {write:?}, got {err}"
+                );
+            }
+
+            for sql in supported {
+                transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
+                    .expect("strict TSQL/Fabric transpile should allow supported window frame");
+            }
+        }
+    }
+
+    #[test]
     fn strict_transpile_rejects_regex_predicates_for_tsql_targets() {
         let sqls = [
             "SELECT 1 FROM t WHERE p_brand SIMILAR TO 'Brand#[1-3][0-9]'",
@@ -240,6 +343,10 @@ mod strict_unsupported_regressions {
             "SELECT 1 FROM t WHERE c_phone ~* '^1[0-9]'",
             "SELECT 1 FROM t WHERE c_phone !~* '^1[0-9]'",
             "SELECT 1 FROM t WHERE REGEXP_LIKE(c_phone, '^1[0-9]')",
+            "SELECT count(*) FILTER (WHERE c_phone ~ '123') FROM t",
+            "SELECT count(*) FILTER (WHERE c_phone !~ '[0-9]') FROM t",
+            "SELECT sum(amount) FILTER (WHERE c_phone ~* 'abc') FROM t",
+            "SELECT sum(amount) FILTER (WHERE c_phone !~* 'abc') FROM t",
         ];
 
         for sql in sqls {
@@ -257,6 +364,408 @@ mod strict_unsupported_regressions {
                     "unexpected error for PostgreSQL -> {write:?}: {err}"
                 );
             }
+        }
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            transpile_with_level(
+                "SELECT count(*) FILTER (WHERE c_phone LIKE '123%') FROM t",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should preserve LIKE inside FILTER");
+        }
+    }
+
+    #[test]
+    fn strict_transpile_rejects_join_using_and_natural_for_tsql_targets() {
+        let unsupported = [
+            ("SELECT * FROM a JOIN b USING (i)", "JOIN USING clauses"),
+            (
+                "SELECT * FROM a LEFT JOIN b USING (i, j)",
+                "JOIN USING clauses",
+            ),
+            (
+                "SELECT * FROM (a RIGHT JOIN b USING (i)) AS ab",
+                "JOIN USING clauses",
+            ),
+            ("SELECT * FROM a NATURAL JOIN b", "NATURAL JOIN"),
+            ("SELECT * FROM a NATURAL LEFT JOIN b", "NATURAL JOIN"),
+            ("SELECT * FROM a NATURAL RIGHT JOIN b", "NATURAL JOIN"),
+            ("SELECT * FROM a NATURAL FULL JOIN b", "NATURAL JOIN"),
+        ];
+        let supported = [
+            "SELECT * FROM a JOIN b ON a.i = b.i",
+            "SELECT * FROM a LEFT JOIN b ON a.i = b.i AND a.j = b.j",
+            "SELECT * FROM a CROSS JOIN b",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for (sql, expected) in unsupported {
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict TSQL/Fabric transpile should reject implicit join keys");
+                assert!(
+                    err.to_string().contains(expected),
+                    "expected {expected:?} for PostgreSQL -> {write:?}, got {err}"
+                );
+            }
+
+            for sql in supported {
+                transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
+                    .expect("strict TSQL/Fabric transpile should allow explicit join forms");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_transpile_rejects_relation_column_alias_lists_for_tsql_targets() {
+        let unsupported = [
+            "SELECT * FROM t AS x (a, b, c)",
+            "SELECT * FROM t x (a, b, c)",
+            "SELECT * FROM t AS x (a, b), u AS y (c, d)",
+            "SELECT a, c FROM (t CROSS JOIN u) AS x (a, b, c, d)",
+            "SELECT a FROM (t JOIN u ON t.id = u.id) x (a, b, c)",
+        ];
+        let supported = [
+            "SELECT * FROM t AS x",
+            "SELECT a, b FROM (SELECT x, y FROM t) AS s(a, b)",
+            "WITH s(a, b) AS (SELECT x, y FROM t) SELECT a, b FROM s",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for sql in unsupported {
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict TSQL/Fabric transpile should reject relation column aliases");
+                assert!(
+                    err.to_string()
+                        .contains("column alias lists on base or joined table references"),
+                    "unexpected error for PostgreSQL -> {write:?}: {err}"
+                );
+            }
+
+            for sql in supported {
+                transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
+                    .expect("strict TSQL/Fabric transpile should allow supported aliases");
+            }
+        }
+
+        let postgres = transpile_with_level(
+            "SELECT a, c FROM (t CROSS JOIN u) AS x (a, b, c, d)",
+            DialectType::PostgreSQL,
+            DialectType::PostgreSQL,
+            UnsupportedLevel::Raise,
+        )
+        .expect("PostgreSQL should preserve joined-table column aliases");
+        assert_eq!(
+            postgres,
+            ["SELECT a, c FROM (t CROSS JOIN u) AS x(a, b, c, d)"]
+        );
+    }
+
+    #[test]
+    fn strict_transpile_rejects_whole_row_aggregate_arguments_for_tsql_targets() {
+        let unsupported = [
+            "SELECT count(t2.*) FROM t1 LEFT JOIN t2 ON t1.id = t2.id",
+            "SELECT sum(t.*) FROM t",
+            "SELECT avg(t.*) OVER (PARTITION BY t.group_id) FROM t",
+        ];
+        let supported = [
+            "SELECT count(*) FROM t",
+            "SELECT count(t.id) FROM t",
+            "SELECT sum(t.amount) FROM t",
+            "SELECT t.* FROM t",
+            "SELECT count(x) FILTER (WHERE EXISTS (SELECT t.* FROM t)) FROM u",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for sql in unsupported {
+                let permissive = Dialect::get(DialectType::PostgreSQL)
+                    .transpile(sql, write)
+                    .expect("default transpile should preserve its best-effort output");
+                assert!(
+                    permissive[0].contains("t.*") || permissive[0].contains("t2.*"),
+                    "unexpected permissive output for PostgreSQL -> {write:?}: {permissive:?}"
+                );
+
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err(
+                    "strict TSQL/Fabric transpile should reject whole-row aggregate arguments",
+                );
+                assert!(
+                    err.to_string()
+                        .contains("qualified whole-row aggregate arguments"),
+                    "unexpected error for PostgreSQL -> {write:?}: {err}"
+                );
+            }
+
+            for sql in supported {
+                transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
+                    .expect("strict TSQL/Fabric transpile should allow scalar aggregate arguments");
+            }
+        }
+    }
+
+    #[test]
+    fn transpile_legalizes_nested_order_by_for_tsql_targets() {
+        let nested = [
+            "SELECT count(*) FROM (SELECT * FROM t ORDER BY a) AS x",
+            "WITH x AS (SELECT * FROM t ORDER BY a) SELECT count(*) FROM x",
+            "SELECT x.a FROM u LEFT JOIN (SELECT a FROM t ORDER BY a) AS x ON x.a = u.a",
+            "CREATE VIEW ordered_t AS SELECT * FROM t ORDER BY a",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for sql in nested {
+                let output = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect("strict TSQL/Fabric transpile should legalize nested ORDER BY")
+                .join("; ");
+                assert_eq!(
+                    output.matches("OFFSET 0 ROWS").count(),
+                    1,
+                    "expected one nested OFFSET for PostgreSQL -> {write:?}: {output}"
+                );
+            }
+
+            let top_level = transpile_with_level(
+                "SELECT * FROM t ORDER BY a",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("top-level ORDER BY should remain valid")
+            .join("; ");
+            assert!(
+                !top_level.contains("OFFSET"),
+                "unexpected offset: {top_level}"
+            );
+
+            let bounded = transpile_with_level(
+                "SELECT count(*) FROM (SELECT * FROM t ORDER BY a LIMIT 5) AS x",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("LIMIT should become a legal nested TOP")
+            .join("; ");
+            assert!(bounded.contains("TOP 5"), "expected TOP: {bounded}");
+            assert!(!bounded.contains("OFFSET"), "unexpected offset: {bounded}");
+
+            let existing_offset = transpile_with_level(
+                "SELECT count(*) FROM (SELECT * FROM t ORDER BY a OFFSET 2) AS x",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("existing nested OFFSET should remain valid")
+            .join("; ");
+            assert!(
+                existing_offset.contains("OFFSET 2 ROWS"),
+                "expected original offset: {existing_offset}"
+            );
+            assert!(!existing_offset.contains("OFFSET 0 ROWS"));
+
+            let window_only = transpile_with_level(
+                "SELECT ROW_NUMBER() OVER (ORDER BY a) FROM t",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("window ordering should not create a query offset")
+            .join("; ");
+            assert!(
+                !window_only.contains("OFFSET"),
+                "unexpected offset: {window_only}"
+            );
+        }
+    }
+
+    #[test]
+    fn transpile_legalizes_unordered_offsets_for_tsql_targets() {
+        let inert = [
+            "SELECT * FROM t OFFSET 0",
+            "SELECT * FROM t OFFSET NULL",
+            "SELECT * FROM (SELECT x FROM t OFFSET 0) AS s",
+            "WITH s AS (SELECT x FROM t OFFSET 0) SELECT * FROM s",
+            "SELECT * FROM t LIMIT 5 OFFSET 0",
+            "(SELECT id FROM a UNION ALL SELECT id FROM b) OFFSET 0",
+            "SELECT x.q1, ss.y FROM int8_tbl x CROSS JOIN LATERAL (SELECT x.q1 AS y OFFSET 0) ss",
+        ];
+        let unordered = [
+            ("SELECT * FROM t OFFSET 5", "OFFSET 5 ROWS"),
+            (
+                "SELECT * FROM (SELECT x FROM t OFFSET 2) AS s",
+                "OFFSET 2 ROWS",
+            ),
+            (
+                "SELECT * FROM t OFFSET 0 ROWS FETCH FIRST 5 ROWS ONLY",
+                "OFFSET 0 ROWS FETCH FIRST 5 ROWS ONLY",
+            ),
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for sql in inert {
+                let output = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect("strict TSQL/Fabric transpile should erase inert unordered offsets")
+                .join("; ");
+                assert!(
+                    !output.contains("OFFSET"),
+                    "unexpected offset for PostgreSQL -> {write:?}: {output}"
+                );
+            }
+
+            for (sql, expected_offset) in unordered {
+                let output = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect("strict TSQL/Fabric transpile should legalize unordered offsets")
+                .join("; ");
+                assert!(
+                    output.contains("ORDER BY (SELECT NULL)"),
+                    "missing neutral order for PostgreSQL -> {write:?}: {output}"
+                );
+                assert!(
+                    output.contains(expected_offset),
+                    "missing {expected_offset:?} for PostgreSQL -> {write:?}: {output}"
+                );
+            }
+
+            let ordered = transpile_with_level(
+                "SELECT * FROM t ORDER BY id OFFSET 5",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should preserve ordered offsets")
+            .join("; ");
+            assert!(
+                ordered.contains("OFFSET 5 ROWS"),
+                "unexpected SQL: {ordered}"
+            );
+            assert!(
+                !ordered.contains("ORDER BY (SELECT NULL)"),
+                "explicit ordering was replaced: {ordered}"
+            );
+        }
+    }
+
+    #[test]
+    fn transpile_exposes_preceding_comma_sources_to_tsql_apply() {
+        let correlated = [
+            (
+                "SELECT * FROM int8_tbl a, int8_tbl x LEFT JOIN LATERAL (SELECT a.q1 FROM int4_tbl y) ss(z) ON x.q2 = ss.z",
+                "OUTER APPLY",
+                "a.q1",
+            ),
+            (
+                "SELECT * FROM int8_tbl a, int8_tbl x JOIN LATERAL (SELECT y.q1 FROM int4_tbl y) ss(z) ON a.q1 = ss.z",
+                "CROSS APPLY",
+                "a.q1",
+            ),
+            (
+                "SELECT * FROM int8_tbl a, int8_tbl x JOIN LATERAL (VALUES (a.q1)) ss(z) ON TRUE",
+                "CROSS APPLY",
+                "VALUES (a.q1)",
+            ),
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for (sql, expected_apply, expected_reference) in correlated {
+                let output = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect("strict TSQL/Fabric transpile should expose all preceding LATERAL inputs")
+                .join("; ");
+                let cross_join = output
+                    .find("CROSS JOIN")
+                    .unwrap_or_else(|| panic!("missing explicit preceding product: {output}"));
+                let apply = output
+                    .find(expected_apply)
+                    .unwrap_or_else(|| panic!("missing {expected_apply}: {output}"));
+                assert!(
+                    cross_join < apply,
+                    "preceding product must be the APPLY left operand: {output}"
+                );
+                assert!(
+                    output.contains(expected_reference),
+                    "lost sibling reference {expected_reference:?}: {output}"
+                );
+            }
+
+            let multiple = transpile_with_level(
+                "SELECT * FROM int8_tbl a, int8_tbl b, int8_tbl x CROSS JOIN LATERAL (SELECT a.q1 + b.q1 AS z) ss",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("strict TSQL/Fabric transpile should expose multiple preceding siblings")
+            .join("; ");
+            assert_eq!(
+                multiple.matches("CROSS JOIN").count(),
+                2,
+                "unexpected preceding product: {multiple}"
+            );
+            assert!(
+                multiple.contains("CROSS APPLY"),
+                "unexpected SQL: {multiple}"
+            );
+
+            let immediate_left = transpile_with_level(
+                "SELECT * FROM int8_tbl a LEFT JOIN LATERAL (SELECT a.q1 AS z) ss ON TRUE",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("immediate-left LATERAL should remain supported")
+            .join("; ");
+            assert!(
+                !immediate_left.contains("CROSS JOIN"),
+                "single-source APPLY changed shape: {immediate_left}"
+            );
+            assert!(immediate_left.contains("OUTER APPLY"));
+
+            let plain_comma = transpile_with_level(
+                "SELECT * FROM int8_tbl a, int8_tbl b",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("ordinary comma joins should remain supported")
+            .join("; ");
+            assert!(
+                !plain_comma.contains("CROSS JOIN"),
+                "ordinary comma join changed shape: {plain_comma}"
+            );
         }
     }
 
@@ -315,6 +824,11 @@ mod strict_unsupported_regressions {
             ("SELECT split_part(s, ',', 1) FROM t", "SPLIT_PART"),
             ("SELECT initcap(s) FROM t", "INITCAP"),
             ("SELECT to_jsonb(s) FROM t", "TO_JSONB"),
+            ("SELECT scale(val) FROM num_tbl", "SCALE"),
+            ("SELECT trim_scale(val) FROM num_tbl", "TRIM_SCALE"),
+            ("SELECT min_scale(val) FROM num_tbl", "MIN_SCALE"),
+            ("SELECT factorial(5) FROM num_tbl", "FACTORIAL"),
+            ("SELECT pg_lsn((23783416)::numeric) FROM num_tbl", "PG_LSN"),
         ];
 
         for (sql, function_name) in cases {
@@ -405,6 +919,7 @@ mod strict_unsupported_regressions {
 mod tsql_fabric_regressions {
     use super::*;
     use polyglot_sql::builder::{cast, col};
+    use polyglot_sql::expressions::{Expression, Grouping};
 
     fn pg_to_target(sql: &str, target: DialectType) -> String {
         Dialect::get(DialectType::PostgreSQL)
@@ -425,6 +940,67 @@ mod tsql_fabric_regressions {
             .into_iter()
             .next()
             .expect("expected one generated statement"))
+    }
+
+    #[test]
+    fn postgres_multi_argument_grouping_uses_grouping_id_for_tsql_targets() {
+        let input = "SELECT a, b, GROUPING(a, b), GROUPING(a), GROUPING_ID(a, b) FROM gs_tbl GROUP BY ROLLUP(a, b)";
+        let expected = "SELECT a, b, GROUPING_ID(a, b), GROUPING(a), GROUPING_ID(a, b) FROM gs_tbl GROUP BY ROLLUP (a, b)";
+        let typed_grouping = Expression::Grouping(Box::new(Grouping {
+            expressions: vec![col("a").0, col("b").0],
+        }));
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            assert_eq!(pg_to_target(input, target), expected);
+            assert_eq!(
+                Dialect::get(target).generate(&typed_grouping).unwrap(),
+                "GROUPING_ID(a, b)"
+            );
+        }
+    }
+
+    #[test]
+    fn postgres_distinct_advanced_grouping_expands_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT a, b, c FROM t GROUP BY DISTINCT ROLLUP(a, b), ROLLUP(a, c)",
+                "SELECT a, b, c FROM t GROUP BY GROUPING SETS ((a, b, c), (a, b), (a, c), (a), ())",
+            ),
+            (
+                "SELECT a, b FROM t GROUP BY DISTINCT CUBE(a, b)",
+                "SELECT a, b FROM t GROUP BY GROUPING SETS ((a, b), (a), (b), ())",
+            ),
+            (
+                "SELECT a FROM t GROUP BY DISTINCT GROUPING SETS ((a), (a), ())",
+                "SELECT a FROM t GROUP BY GROUPING SETS ((a), ())",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn simple_distinct_and_all_grouping_modifiers_remain_unchanged_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT a, b FROM t GROUP BY DISTINCT a, b",
+                "SELECT a, b FROM t GROUP BY DISTINCT a, b",
+            ),
+            (
+                "SELECT a, b, c FROM t GROUP BY ALL ROLLUP(a, b), ROLLUP(a, c)",
+                "SELECT a, b, c FROM t GROUP BY ALL ROLLUP (a, b), ROLLUP (a, c)",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
     }
 
     #[test]
@@ -683,6 +1259,175 @@ mod tsql_fabric_regressions {
     }
 
     #[test]
+    fn strict_transpile_disambiguates_duplicate_order_by_for_tsql_and_fabric() {
+        let cases = [
+            (
+                "SELECT a, a FROM t ORDER BY a",
+                "SELECT a, a FROM t ORDER BY CASE WHEN t.a IS NULL THEN 1 ELSE 0 END, t.a",
+            ),
+            (
+                "SELECT a, a FROM t ORDER BY 1",
+                "SELECT a, a FROM t ORDER BY CASE WHEN t.a IS NULL THEN 1 ELSE 0 END, t.a",
+            ),
+            (
+                "SELECT a, a FROM t AS src ORDER BY a",
+                "SELECT a, a FROM t AS src ORDER BY CASE WHEN src.a IS NULL THEN 1 ELSE 0 END, src.a",
+            ),
+            (
+                "SELECT t.a, t.a FROM t ORDER BY a",
+                "SELECT t.a, t.a FROM t ORDER BY CASE WHEN t.a IS NULL THEN 1 ELSE 0 END, t.a",
+            ),
+            (
+                "SELECT a AS a1, a AS a2 FROM t ORDER BY a",
+                "SELECT a AS a1, a AS a2 FROM t ORDER BY CASE WHEN a IS NULL THEN 1 ELSE 0 END, a",
+            ),
+            (
+                "SELECT a, a FROM t ORDER BY t.a",
+                "SELECT a, a FROM t ORDER BY CASE WHEN t.a IS NULL THEN 1 ELSE 0 END, t.a",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                let result = pg_to_target_with_options(sql, target, TranspileOptions::strict())
+                    .unwrap_or_else(|err| panic!("strict {target:?} transpile failed: {err}"));
+                assert_eq!(result, expected, "failed for {target:?}: {sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_transpile_drops_inert_aggregate_ordering_for_tsql_and_fabric() {
+        let cases = [
+            (
+                "SELECT SUM(two ORDER BY two), MAX(four ORDER BY four), MIN(ten ORDER BY ten) FROM tenk1",
+                "SELECT SUM(two), MAX(four), MIN(ten) FROM tenk1",
+            ),
+            (
+                "SELECT AVG(x ORDER BY y), ANY_VALUE(x ORDER BY y), APPROX_COUNT_DISTINCT(x ORDER BY y) FROM t",
+                "SELECT AVG(x), ANY_VALUE(x), APPROX_COUNT_DISTINCT(x) FROM t",
+            ),
+            (
+                "SELECT SUM(DISTINCT x ORDER BY x) FILTER (WHERE keep) FROM t",
+                "SELECT SUM(DISTINCT CASE WHEN keep THEN x END) FROM t",
+            ),
+            (
+                "SELECT SUM(x) OVER (ORDER BY y) FROM t",
+                "SELECT SUM(x) OVER (ORDER BY CASE WHEN y IS NULL THEN 1 ELSE 0 END, y) FROM t",
+            ),
+            (
+                "SELECT STRING_AGG(x, ',' ORDER BY y) FROM t",
+                "SELECT STRING_AGG(x, ',') WITHIN GROUP (ORDER BY CASE WHEN y IS NULL THEN 1 ELSE 0 END, y) FROM t",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                let result = pg_to_target_with_options(sql, target, TranspileOptions::strict())
+                    .unwrap_or_else(|err| panic!("strict {target:?} transpile failed: {err}"));
+                assert_eq!(result, expected, "failed for {target:?}: {sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_transpile_rejects_hypothetical_sets_for_tsql_and_fabric() {
+        let unsupported = ["RANK", "DENSE_RANK", "CUME_DIST", "PERCENT_RANK"];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for function in unsupported {
+                let sql = format!("SELECT {function}(3) WITHIN GROUP (ORDER BY x) FROM t");
+                let err = pg_to_target_with_options(&sql, target, TranspileOptions::strict())
+                    .expect_err("strict transpile should reject hypothetical-set aggregates");
+                assert!(
+                    err.to_string().contains("hypothetical-set aggregates"),
+                    "unexpected error for {target:?}: {sql}: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn strict_transpile_keeps_window_rank_functions_for_tsql_and_fabric() {
+        let cases = [
+            (
+                "SELECT RANK() OVER (ORDER BY x) FROM t",
+                "SELECT RANK() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) FROM t",
+            ),
+            (
+                "SELECT DENSE_RANK() OVER (ORDER BY x) FROM t",
+                "SELECT DENSE_RANK() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) FROM t",
+            ),
+            (
+                "SELECT CUME_DIST() OVER (ORDER BY x) FROM t",
+                "SELECT CUME_DIST() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) FROM t",
+            ),
+            (
+                "SELECT PERCENT_RANK() OVER (ORDER BY x) FROM t",
+                "SELECT PERCENT_RANK() OVER (ORDER BY CASE WHEN x IS NULL THEN 1 ELSE 0 END, x) FROM t",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                let result = pg_to_target_with_options(sql, target, TranspileOptions::strict())
+                    .unwrap_or_else(|err| panic!("strict {target:?} transpile failed: {err}"));
+                assert_eq!(result, expected, "failed for {target:?}: {sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn fabric_drops_constant_grouping_order_terms_for_single_level_groups() {
+        let cases = [
+            (
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY GROUPING SETS (ten) ORDER BY 2, 1",
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY GROUPING SETS (ten) ORDER BY CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten",
+            ),
+            (
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ten ORDER BY 2, 1",
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ten ORDER BY CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten",
+            ),
+            (
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ten ORDER BY GROUPING(ten)",
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ten",
+            ),
+        ];
+
+        for (sql, expected) in cases {
+            assert_eq!(
+                pg_to_target_with_options(sql, DialectType::Fabric, TranspileOptions::strict())
+                    .unwrap_or_else(|err| panic!("strict Fabric transpile failed: {err}")),
+                expected,
+                "failed for {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn fabric_keeps_grouping_order_terms_for_multi_level_groups() {
+        let cases = [
+            (
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ROLLUP (ten) ORDER BY 2, 1",
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY ROLLUP (ten) ORDER BY CASE WHEN GROUPING(ten) IS NULL THEN 1 ELSE 0 END, GROUPING(ten), CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten",
+            ),
+            (
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY GROUPING SETS (ten, ()) ORDER BY 2, 1",
+                "SELECT ten, GROUPING(ten) FROM t GROUP BY GROUPING SETS (ten, ()) ORDER BY CASE WHEN GROUPING(ten) IS NULL THEN 1 ELSE 0 END, GROUPING(ten), CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten",
+            ),
+        ];
+
+        for (sql, expected) in cases {
+            assert_eq!(
+                pg_to_target_with_options(sql, DialectType::Fabric, TranspileOptions::strict())
+                    .unwrap_or_else(|err| panic!("strict Fabric transpile failed: {err}")),
+                expected,
+                "failed for {sql}"
+            );
+        }
+    }
+
+    #[test]
     fn strict_transpile_resolves_positional_order_by_on_set_operations_for_tsql_and_fabric() {
         for target in [DialectType::TSQL, DialectType::Fabric] {
             let result = pg_to_target_with_options(
@@ -871,6 +1616,30 @@ mod tsql_fabric_regressions {
     }
 
     #[test]
+    fn projected_boolean_aliases_are_coerced_inside_scalar_predicates() {
+        let cases = [
+            (
+                "SELECT NOT x FROM (SELECT q1 = 1 AS x FROM t) AS s",
+                "SELECT CAST(CASE WHEN NOT x <> 0 THEN 1 ELSE 0 END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 ELSE 0 END AS BIT) AS x FROM t) AS s",
+            ),
+            (
+                "SELECT x AND y FROM (SELECT q1 = 1 AS x, q2 = 2 AS y FROM t) AS s",
+                "SELECT CAST(CASE WHEN x <> 0 AND y <> 0 THEN 1 ELSE 0 END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 ELSE 0 END AS BIT) AS x, CAST(CASE WHEN q2 = 2 THEN 1 ELSE 0 END AS BIT) AS y FROM t) AS s",
+            ),
+            (
+                "SELECT NOT (q1 = 1) FROM t",
+                "SELECT CAST(CASE WHEN NOT (q1 = 1) THEN 1 ELSE 0 END AS BIT) FROM t",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected) in cases {
+                assert_eq!(pg_to_target(sql, target), expected, "failed for {target:?}");
+            }
+        }
+    }
+
+    #[test]
     fn bare_boolean_join_on_predicates_are_coerced_for_tsql_and_fabric() {
         let cases = [
             (
@@ -884,6 +1653,22 @@ mod tsql_fabric_regressions {
             (
                 "SELECT o FROM t JOIN u ON t.b AND u.c",
                 "SELECT o FROM t JOIN u ON t.b <> 0 AND u.c <> 0",
+            ),
+            (
+                "SELECT a.f1 FROM (int4_tbl AS a LEFT JOIN int4_tbl AS b ON true)",
+                "SELECT a.f1 FROM (int4_tbl AS a LEFT JOIN int4_tbl AS b ON (1 = 1))",
+            ),
+            (
+                "SELECT a.f1 FROM (int4_tbl AS a LEFT JOIN int4_tbl AS b ON false)",
+                "SELECT a.f1 FROM (int4_tbl AS a LEFT JOIN int4_tbl AS b ON (1 = 0))",
+            ),
+            (
+                "SELECT a.id FROM ((a JOIN b ON true) LEFT JOIN c ON false)",
+                "SELECT a.id FROM ((a JOIN b ON (1 = 1)) LEFT JOIN c ON (1 = 0))",
+            ),
+            (
+                "SELECT a.id FROM (a JOIN b ON a.id = b.id)",
+                "SELECT a.id FROM (a JOIN b ON a.id = b.id)",
             ),
         ];
 

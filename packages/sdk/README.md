@@ -1,6 +1,6 @@
 # @polyglot-sql/sdk
 
-Rust/Wasm-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across 32 database dialects.
+Rust/Wasm-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across more than 30 SQL dialects.
 
 Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
@@ -9,6 +9,11 @@ Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 ```bash
 npm install @polyglot-sql/sdk
 ```
+
+The npm package ships one full WASM build containing all supported dialects.
+Per-dialect subpath packages such as `@polyglot-sql/sdk/clickhouse` are not
+published. Rust/WASM consumers building from source can select individual
+dialects through the crate's Cargo features.
 
 ## Quick Start
 
@@ -401,6 +406,10 @@ if (!result.valid) {
     console.log(`${err.code}: ${err.message} (line ${err.line}, col ${err.column})`);
   }
 }
+
+const strictResult = validate('SELECT name, FROM employees', 'postgresql', {
+  strictSyntax: true,
+});
 ```
 
 ### Semantic Validation
@@ -409,6 +418,10 @@ if (!result.valid) {
 const result = validate('SELECT * FROM users', 'postgresql', { semantic: true });
 // May also report warnings like "SELECT * is discouraged"
 ```
+
+Basic syntax, strict-syntax checks, and semantic warnings W001-W004 are
+computed by the Rust core in one WASM call. Semantic warnings do not make the
+result invalid.
 
 ### Schema Validation
 
@@ -901,6 +914,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | BigQuery | `Dialect.BigQuery` |
 | ClickHouse | `Dialect.ClickHouse` |
 | CockroachDB | `Dialect.CockroachDB` |
+| DataFusion | `Dialect.DataFusion` |
 | Databricks | `Dialect.Databricks` |
 | Doris | `Dialect.Doris` |
 | Dremio | `Dialect.Dremio` |
@@ -910,6 +924,7 @@ const formattedSafe = pg.formatWithOptions('SELECT a,b FROM t', Dialect.Generic,
 | Dune | `Dialect.Dune` |
 | Exasol | `Dialect.Exasol` |
 | Fabric | `Dialect.Fabric` |
+| Generic SQL | `Dialect.Generic` |
 | Hive | `Dialect.Hive` |
 | Materialize | `Dialect.Materialize` |
 | MySQL | `Dialect.MySQL` |

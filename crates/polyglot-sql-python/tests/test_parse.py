@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 import polyglot_sql
@@ -124,3 +126,24 @@ def test_parse_data_type_rejects_trailing_sql():
 def test_parse_invalid_sql_raises_parse_error():
     with pytest.raises(polyglot_sql.ParseError):
         polyglot_sql.parse("SELECT FROM", dialect="postgres")
+
+
+def test_parse_calls_execute_concurrently_with_stable_results_and_errors():
+    sql = " UNION ALL ".join(
+        f"SELECT {value} AS id FROM events_{value}" for value in range(80)
+    )
+
+    def parse_valid(_):
+        return polyglot_sql.parse_one(sql, dialect="postgres").sql("postgres")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(parse_valid, range(32)))
+
+    assert len(set(results)) == 1
+
+    def parse_invalid(_):
+        with pytest.raises(polyglot_sql.ParseError):
+            polyglot_sql.parse("SELECT FROM", dialect="postgres")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(parse_invalid, range(32)))

@@ -1,6 +1,6 @@
 {
   "name": "@polyglot-sql/sdk",
-  "version": "0.5.16",
+  "version": "0.6.0",
   "description": "SQL dialect translator powered by WebAssembly",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -52,18 +52,17 @@
     "build:cjs": "vite build --config vite.config.cjs.ts && cp dist/index.d.ts dist/index.d.cts",
     "build:manual": "vite build --config vite.config.manual.ts",
     "build:umd": "vite build --config vite.config.umd.ts",
-    "build:dialect": "vite build --config vite.config.dialect.ts",
-    "build:dialects": "for d in postgresql mysql bigquery snowflake duckdb tsql clickhouse; do POLYGLOT_DIALECT=$d pnpm run build:dialect; done",
     "build": "pnpm run build:esm && pnpm run build:node && pnpm run build:cjs && pnpm run build:manual && pnpm run build:umd",
-    "build:all": "pnpm run build && pnpm run build:dialects",
     "test": "vitest run",
     "test:bundlers": "node scripts/test-bundlers.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "coverage:summary": "node scripts/coverage-summary.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/",
     "lint:fix": "biome check --write src/",
     "format": "biome format --write src/",
+    "format:check": "biome format src/",
     "prepublishOnly": "pnpm run build:bindings && pnpm run build"
   },
   "keywords": [

@@ -4,6 +4,107 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.6.0] - 2026-07-14
+
+### Added
+- Shared, generated AST-child traversal infrastructure through the new internal
+  `polyglot-sql-ast-derive` crate, including immutable and mutable child-slot
+  metadata, path-aware traversal checks, and dedicated traversal benchmarks.
+- Optional Rust-core semantic validation through `ValidationOptions.semantic`
+  and `validate_with_dialect`, covering warnings W001-W004 for `SELECT *`,
+  mixed aggregates without `GROUP BY`, `DISTINCT` with `ORDER BY`, and `LIMIT`
+  without `ORDER BY`. The same validation path is now exposed through Python,
+  C FFI, Go, WASM, and TypeScript without changing schema-validation behavior.
+- A machine-readable cross-language API capability contract with verification
+  across Rust, Python, C FFI, Go, WASM, and TypeScript.
+- Project-consistency tooling and Make targets for checking release versions,
+  public dialect metadata, active documentation, the standalone Rust example,
+  and generated API documentation.
+- CI quality gates for Rust and TypeScript formatting, scoped Clippy checks,
+  Biome linting, consistency checks, documentation builds, benchmark
+  compilation, and TypeScript SDK coverage summaries and artifacts.
+- Focused performance and allocation benchmarks for dialect construction, AST
+  traversal, tokenization/parsing, Python concurrency, and native release
+  profiles, with reproducible Make targets and a benchmark report.
+- Regression coverage for the new T-SQL/Fabric strict-mode capability checks
+  and rewrites, including regex aggregate filters, row-value membership,
+  aggregate ordering, hypothetical-set aggregates, and supported control cases.
+
+### Changed
+- Cross-dialect normalization is now split into semantic modules for
+  aggregates, collections, JSON, operators, scalar functions, statements,
+  temporal expressions, and types while preserving the existing normalization
+  pipeline and public API.
+- Built-in dialects now share immutable tokenizer configurations. ASCII input
+  uses a byte cursor, unchanged parser token text references one shared SQL
+  source, and token guard statistics are collected during tokenization instead
+  of requiring a second full scan; the public owned `Token` API is unchanged.
+- Python native calls now execute directly while the GIL is detached instead
+  of serializing through one global worker. Published Python artifacts use a
+  dedicated `opt-level=2`/thin-LTO profile, while FFI and WASM release profiles
+  retain their existing size-oriented settings.
+- The benchmark comparison now uses the same production Python profile as
+  published wheels.
+- TypeScript now publishes one full WASM SDK containing all supported dialects;
+  dialect-specific Rust/WASM builds remain available through Cargo features.
+- Release metadata and active documentation now consistently use version
+  `0.6.0` and canonical supported-dialect names rather than hard-coded dialect
+  counts.
+
+### Fixed
+- Logical planner DAG construction now assigns globally unique preorder IDs to
+  nested dependencies, includes every leaf node, and serializes complete plans
+  through WASM. Previously ignored invalid-input WASM tests are active again.
+- Strict PostgreSQL-to-T-SQL/Fabric transpilation now rejects unsupported
+  `NTH_VALUE`, `SCALE`, `TRIM_SCALE`, `MIN_SCALE`, `FACTORIAL`, and `PG_LSN`
+  calls; `GROUPS`, value-offset `RANGE`, and `EXCLUDE` window frames; frames and
+  window functions requiring a missing `ORDER BY`; `JOIN ... USING`, `NATURAL
+  JOIN`, unsupported base/joined-table column alias lists, and qualified
+  whole-row aggregate arguments such as `COUNT(alias.*)`.
+- Multi-column PostgreSQL `GROUPING(...)` now maps to `GROUPING_ID(...)` for
+  T-SQL/Fabric, `GROUP BY DISTINCT` grouping sets are expanded and deduplicated,
+  and Fabric drops `ORDER BY` keys that become constant through single-level
+  grouping analysis.
+- PostgreSQL boolean aggregates used as window functions now keep `OVER` on
+  the aggregate inside the outer `BIT` cast. Scalar `BIT` expressions and
+  boolean literals are also normalized correctly in predicate contexts and
+  nested joined-table conditions.
+- `LAG` and `LEAD` arguments now receive recursive target transformations, so
+  numeric casts retain their precision and scale.
+- Nested T-SQL/Fabric `ORDER BY` clauses without a row bound now receive the
+  required `OFFSET 0 ROWS`. Unordered inert zero/`NULL` offsets are removed,
+  while retained offsets and `FETCH` clauses receive a neutral
+  `ORDER BY (SELECT NULL)` when needed.
+- PostgreSQL lateral joins that reference earlier comma-separated siblings now
+  build an explicit `CROSS JOIN` product before `CROSS APPLY`/`OUTER APPLY`,
+  keeping every correlated source visible to the APPLY right-hand expression.
+- PostgreSQL row-value `IN (VALUES ...)` and `NOT IN (VALUES ...)` predicates
+  now lower to `EXISTS`/`NOT EXISTS` for T-SQL/Fabric, including scalar boolean
+  contexts and null-aware `NOT IN` semantics. Strict mode rejects mismatched
+  row and `VALUES` arities.
+- T-SQL/Fabric ordering generation now disambiguates duplicate projected
+  columns before adding null-ordering expressions. PostgreSQL `ORDER BY`
+  clauses that are inert inside ordinary aggregates are removed, while window
+  ordering and ordered `STRING_AGG` semantics remain intact.
+- Strict PostgreSQL-to-T-SQL/Fabric transpilation now rejects hypothetical-set
+  `RANK`, `DENSE_RANK`, `CUME_DIST`, and `PERCENT_RANK`; internal aggregate
+  support functions such as `FLOAT8_*` and `BOOL*_STATEFUNC`; PostgreSQL array
+  casts; `STRING_AGG` with `DISTINCT`; PostgreSQL collations; and date
+  subtraction whose column type cannot be resolved safely.
+- PostgreSQL `FROM ONLY` drops its unsupported inheritance modifier when
+  targeting T-SQL/Fabric. `ANY_VALUE` lowers to `MAX` for T-SQL and remains
+  native for Fabric.
+- PostgreSQL numeric `TO_CHAR` format models now fail in strict T-SQL/Fabric
+  transpilation instead of being mistaken for .NET format strings. Text-cast
+  temporal format literals such as `'YYYY-MM-DD'::text` continue to lower to
+  valid `FORMAT` expressions.
+
+### Removed
+- The unshipped TypeScript per-dialect package exports and build configuration;
+  the supported npm surface is the full `@polyglot-sql/sdk` package.
+- Duplicate TypeScript-only semantic validation rules, now that basic semantic
+  validation is implemented consistently in the Rust core.
+
 ## [0.5.16] - 2026-07-11
 
 ### Added

@@ -8,7 +8,6 @@
 use crate::dialects::DialectType;
 use crate::expressions::Expression;
 use crate::schema::Schema;
-use crate::traversal::ExpressionWalk;
 
 use super::annotate_types::annotate_types;
 use super::canonicalize::canonicalize;
@@ -206,9 +205,11 @@ fn analyze_expression_complexity(expression: &Expression) -> ExpressionComplexit
                 stack.push((&paren.this, depth + 1, connector_depth));
             }
             _ => {
-                for child in node.children().into_iter().rev() {
+                let child_start = stack.len();
+                crate::ast_children::for_each_child(node, |_, child| {
                     stack.push((child, depth + 1, 0));
-                }
+                });
+                stack[child_start..].reverse();
             }
         }
     }

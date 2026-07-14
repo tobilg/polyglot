@@ -296,7 +296,9 @@ describe('Expr operators', () => {
 
   it('toJSON serializes NULL as canonical AST JSON', () => {
     expect(JSON.stringify(sqlNull().toJSON())).toBe('{"null":null}');
-    expect(JSON.stringify(col('x').eq(sqlNull()).toJSON())).toContain('"right":{"null":null}');
+    expect(JSON.stringify(col('x').eq(sqlNull()).toJSON())).toContain(
+      '"right":{"null":null}',
+    );
   });
 });
 
@@ -582,9 +584,7 @@ describe('CaseBuilder', () => {
       .when(col('kind').eq(lit('n')), cast(col('x'), 'NVARCHAR(MAX)'))
       .toSql('fabric');
 
-    expect(sql).toBe(
-      "CASE WHEN kind = 'n' THEN CAST(x AS VARCHAR(MAX)) END",
-    );
+    expect(sql).toBe("CASE WHEN kind = 'n' THEN CAST(x AS VARCHAR(MAX)) END");
   });
 
   it('build() returns Expr', () => {

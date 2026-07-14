@@ -73,7 +73,7 @@ fn is_true(v: &bool) -> bool {
 /// let expr = Expression::column("name");
 /// assert_eq!(expr.sql(), "name");
 /// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "bindings", ts(export))]
@@ -3176,7 +3176,7 @@ impl fmt::Display for Expression {
 /// Dialect-specific literal forms (triple-quoted strings, dollar-quoted
 /// strings, raw strings, etc.) each have a dedicated variant so that the
 /// generator can emit them with the correct syntax.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(tag = "literal_type", content = "value", rename_all = "snake_case")]
 pub enum Literal {
@@ -3280,14 +3280,14 @@ impl fmt::Display for Literal {
 }
 
 /// Boolean literal
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BooleanLiteral {
     pub value: bool,
 }
 
 /// NULL literal
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Null;
 
@@ -3297,7 +3297,7 @@ pub struct Null;
 /// (double-quoted, backtick-quoted, or bracket-quoted depending on the
 /// dialect). The generator uses this flag to decide whether to emit quoting
 /// characters.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Identifier {
     /// The raw text of the identifier, without any quoting characters.
@@ -3365,7 +3365,7 @@ impl fmt::Display for Identifier {
 /// Renders as `name` when unqualified, or `table.name` when qualified.
 /// Use [`Expression::column()`] or [`Expression::qualified_column()`] for
 /// convenient construction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Column {
     /// The column name.
@@ -3383,6 +3383,7 @@ pub struct Column {
     pub span: Option<Span>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -3402,7 +3403,7 @@ impl fmt::Display for Column {
 /// which qualifiers are present. Supports aliases, column alias lists,
 /// time-travel clauses (Snowflake, BigQuery), table hints (TSQL), and
 /// several other dialect-specific extensions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TableRef {
     /// The unqualified table name.
@@ -3546,7 +3547,7 @@ impl TableRef {
 ///
 /// Supports the EXCEPT/EXCLUDE, REPLACE, and RENAME modifiers found in
 /// DuckDB, BigQuery, and Snowflake (e.g. `SELECT * EXCEPT (id) FROM t`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Star {
     /// Optional table qualifier (e.g. `t` in `t.*`).
@@ -3568,7 +3569,7 @@ pub struct Star {
 /// Represent a complete SELECT statement.
 ///
 /// This is the most feature-rich AST node, covering the full surface area of
-/// SELECT syntax across 30+ SQL dialects. Fields that are `Option` or empty
+/// SELECT syntax across more than 30 SQL dialects. Fields that are `Option` or empty
 /// `Vec` are omitted from the generated SQL when absent.
 ///
 /// # Key Fields
@@ -3588,7 +3589,7 @@ pub struct Star {
 /// Dialect-specific extensions are supported via fields like `prewhere`
 /// (ClickHouse), `qualify` (Snowflake/BigQuery/DuckDB), `connect` (Oracle
 /// CONNECT BY), `for_xml` (TSQL), and `settings` (ClickHouse).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Select {
     /// The select-list: columns, expressions, aliases, and wildcards.
@@ -3783,7 +3784,7 @@ impl Default for Select {
 /// When `all` is true, duplicate rows are preserved (UNION ALL).
 /// ORDER BY, LIMIT, and OFFSET can be applied to the combined result.
 /// Supports DuckDB's BY NAME modifier and BigQuery's CORRESPONDING modifier.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Union {
     /// The left-hand query operand.
@@ -3852,7 +3853,7 @@ impl Drop for Union {
 ///
 /// Returns only rows that appear in both operands. When `all` is true,
 /// duplicates are preserved according to their multiplicity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Intersect {
     /// The left-hand query operand.
@@ -3919,7 +3920,7 @@ impl Drop for Intersect {
 ///
 /// Returns rows from the left operand that do not appear in the right operand.
 /// When `all` is true, duplicates are subtracted according to their multiplicity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Except {
     /// The left-hand query operand.
@@ -3983,7 +3984,7 @@ impl Drop for Except {
 }
 
 /// INTO clause for SELECT INTO statements
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SelectInto {
     /// Target table or variable (used when single target)
@@ -4011,7 +4012,7 @@ pub struct SelectInto {
 ///
 /// Subqueries appear in many SQL contexts: FROM clauses, WHERE IN/EXISTS,
 /// scalar subqueries in select-lists, and derived tables.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Subquery {
     /// The inner query expression.
@@ -4054,6 +4055,7 @@ pub struct Subquery {
     pub trailing_comments: Vec<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4061,7 +4063,7 @@ pub struct Subquery {
 ///
 /// Used in DataFusion and BigQuery pipe syntax:
 ///   FROM t |> WHERE x > 1 |> SELECT x, y |> ORDER BY x |> LIMIT 10
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PipeOperator {
     /// The input query/expression (left side of |>)
@@ -4071,7 +4073,7 @@ pub struct PipeOperator {
 }
 
 /// VALUES table constructor: VALUES (1, 'a'), (2, 'b')
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Values {
     /// The rows of values
@@ -4091,7 +4093,7 @@ pub struct Values {
 /// DuckDB simplified syntax (statement-level):
 ///   PIVOT table ON columns [IN (...)] USING agg_func [AS alias], ... [GROUP BY ...]
 ///   UNPIVOT table ON columns INTO NAME name_col VALUE val_col
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Pivot {
     /// Source table/expression
@@ -4133,7 +4135,7 @@ pub struct Pivot {
 }
 
 /// UNPIVOT operation
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Unpivot {
     pub this: Expression,
@@ -4157,7 +4159,7 @@ pub struct Unpivot {
 
 /// PIVOT alias for aliasing pivot expressions
 /// The alias can be an identifier or an expression (for Oracle/BigQuery string concatenation aliases)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PivotAlias {
     pub this: Expression,
@@ -4165,14 +4167,14 @@ pub struct PivotAlias {
 }
 
 /// PREWHERE clause (ClickHouse) - early filtering before WHERE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PreWhere {
     pub this: Expression,
 }
 
 /// STREAM definition (Snowflake) - for change data capture
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Stream {
     pub this: Expression,
@@ -4183,14 +4185,14 @@ pub struct Stream {
 }
 
 /// USING DATA clause for data import statements
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UsingData {
     pub this: Expression,
 }
 
 /// XML Namespace declaration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct XmlNamespace {
     pub this: Expression,
@@ -4199,7 +4201,7 @@ pub struct XmlNamespace {
 }
 
 /// ROW FORMAT clause for Hive/Spark
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowFormat {
     pub delimited: bool,
@@ -4211,7 +4213,7 @@ pub struct RowFormat {
 }
 
 /// Directory insert for INSERT OVERWRITE DIRECTORY (Hive/Spark)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DirectoryInsert {
     pub local: bool,
@@ -4223,7 +4225,7 @@ pub struct DirectoryInsert {
 }
 
 /// INSERT statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Insert {
     pub table: TableRef,
@@ -4300,7 +4302,7 @@ pub struct Insert {
 }
 
 /// OUTPUT clause (TSQL) - used in INSERT, UPDATE, DELETE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OutputClause {
     /// Columns/expressions to output
@@ -4311,7 +4313,7 @@ pub struct OutputClause {
 }
 
 /// UPDATE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Update {
     pub table: TableRef,
@@ -4353,7 +4355,7 @@ pub struct Update {
 }
 
 /// DELETE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Delete {
     pub table: TableRef,
@@ -4408,7 +4410,7 @@ pub struct Delete {
 }
 
 /// COPY statement (Snowflake, PostgreSQL, DuckDB, TSQL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CopyStmt {
     /// Target table or query
@@ -4432,7 +4434,7 @@ pub struct CopyStmt {
 }
 
 /// COPY parameter (e.g., FILE_FORMAT = CSV or FORMAT PARQUET)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CopyParameter {
     pub name: String,
@@ -4444,7 +4446,7 @@ pub struct CopyParameter {
 }
 
 /// Credentials for external access (S3, Azure, etc.)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Credentials {
     pub credentials: Vec<(String, String)>,
@@ -4453,7 +4455,7 @@ pub struct Credentials {
 }
 
 /// PUT statement (Snowflake)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PutStmt {
     /// Source file path
@@ -4469,7 +4471,7 @@ pub struct PutStmt {
 }
 
 /// Stage reference (Snowflake) - @stage_name or @namespace.stage/path
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StageReference {
     /// Stage name including @ prefix (e.g., "@mystage", "@namespace.mystage")
@@ -4489,7 +4491,7 @@ pub struct StageReference {
 }
 
 /// Historical data / Time travel (Snowflake) - BEFORE (STATEMENT => ...) or AT (TIMESTAMP => ...)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct HistoricalData {
     /// The time travel kind: "BEFORE", "AT", or "END" (as an Identifier expression)
@@ -4504,7 +4506,7 @@ pub struct HistoricalData {
 ///
 /// Used for column aliases in select-lists, table aliases on subqueries,
 /// and column alias lists on table-valued expressions (e.g. `AS t(c1, c2)`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Alias {
     /// The expression being aliased.
@@ -4528,6 +4530,7 @@ pub struct Alias {
     pub trailing_comments: Vec<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4567,7 +4570,7 @@ impl Alias {
 /// shorthand `expr::type`. Also used as the payload for `TryCast` and
 /// `SafeCast` variants. Supports optional FORMAT (BigQuery) and DEFAULT ON
 /// CONVERSION ERROR (Oracle) clauses.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cast {
     /// The expression being cast.
@@ -4587,11 +4590,12 @@ pub struct Cast {
     pub default: Option<Box<Expression>>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 ///// COLLATE expression: expr COLLATE 'collation_name' or expr COLLATE collation_name
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CollationExpr {
     pub this: Expression,
@@ -4609,7 +4613,7 @@ pub struct CollationExpr {
 /// When `operand` is `Some`, this is a simple CASE (`CASE x WHEN 1 THEN ...`).
 /// When `operand` is `None`, this is a searched CASE (`CASE WHEN x > 0 THEN ...`).
 /// Each entry in `whens` is a `(condition, result)` pair.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Case {
     /// The operand for simple CASE, or `None` for searched CASE.
@@ -4624,6 +4628,7 @@ pub struct Case {
     pub comments: Vec<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4634,7 +4639,7 @@ pub struct Case {
 /// comparison (`Eq`, `Neq`, `Lt`, `Gt`, etc.), logical (`And`, `Or`),
 /// bitwise, and dialect-specific operators. Comment fields enable round-trip
 /// preservation of inline comments around operators.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BinaryOp {
     pub left: Expression,
@@ -4650,6 +4655,7 @@ pub struct BinaryOp {
     pub trailing_comments: Vec<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4667,7 +4673,7 @@ impl BinaryOp {
 }
 
 /// LIKE/ILIKE operation with optional ESCAPE clause and quantifier (ANY/ALL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LikeOp {
     pub left: Expression,
@@ -4680,6 +4686,7 @@ pub struct LikeOp {
     pub quantifier: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4708,13 +4715,14 @@ impl LikeOp {
 /// Represent a unary operation (single operand with a prefix operator).
 ///
 /// Shared payload for `Not`, `Neg`, and `BitwiseNot` variants.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnaryOp {
     /// The operand expression.
     pub this: Expression,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4731,7 +4739,7 @@ impl UnaryOp {
 ///
 /// Either `expressions` (a value list) or `query` (a subquery) is populated,
 /// but not both. When `not` is true, the predicate is `NOT IN`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct In {
     /// The expression being tested.
@@ -4755,7 +4763,7 @@ pub struct In {
 }
 
 /// Represent a BETWEEN predicate (`x BETWEEN low AND high`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Between {
     /// The expression being tested.
@@ -4772,7 +4780,7 @@ pub struct Between {
 }
 
 /// IS NULL predicate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IsNull {
     pub this: Expression,
@@ -4783,7 +4791,7 @@ pub struct IsNull {
 }
 
 /// IS TRUE / IS FALSE predicate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IsTrueFalse {
     pub this: Expression,
@@ -4792,7 +4800,7 @@ pub struct IsTrueFalse {
 
 /// IS JSON predicate (SQL standard)
 /// Checks if a value is valid JSON
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IsJson {
     pub this: Expression,
@@ -4805,7 +4813,7 @@ pub struct IsJson {
 }
 
 /// JSON unique keys constraint variants
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum JsonUniqueKeys {
     /// WITH UNIQUE KEYS
@@ -4817,7 +4825,7 @@ pub enum JsonUniqueKeys {
 }
 
 /// Represent an EXISTS predicate (`EXISTS (SELECT ...)` or `NOT EXISTS (...)`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Exists {
     /// The subquery expression.
@@ -4832,7 +4840,7 @@ pub struct Exists {
 /// and built-in functions each have their own dedicated `Expression` variants
 /// (e.g. `Count`, `Sum`, `WindowFunction`). Functions that the parser does
 /// not recognize as built-ins are represented with this struct.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Function {
     /// The function name, as originally written (may be schema-qualified).
@@ -4857,6 +4865,7 @@ pub struct Function {
     pub span: Option<Span>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4898,7 +4907,9 @@ impl Function {
 /// one of the dedicated typed variants (e.g. `Count`, `Sum`). It supports
 /// SQL:2003 FILTER (WHERE ...) clauses, ordered-set aggregates, and
 /// IGNORE NULLS / RESPECT NULLS modifiers.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Default, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AggregateFunction {
     /// The aggregate function name (e.g. "JSON_AGG", "XMLAGG").
@@ -4920,6 +4931,7 @@ pub struct AggregateFunction {
     pub ignore_nulls: Option<bool>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -4929,7 +4941,7 @@ pub struct AggregateFunction {
 /// (e.g. `RowNumber`, `Rank`, `Lead`) or an aggregate used as a window
 /// function.  The `over` field carries the PARTITION BY, ORDER BY, and
 /// frame specification.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WindowFunction {
     /// The function expression (e.g. ROW_NUMBER(), SUM(amount)).
@@ -4941,12 +4953,13 @@ pub struct WindowFunction {
     pub keep: Option<Keep>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// Oracle KEEP clause for aggregate functions
 /// Syntax: aggregate_function KEEP (DENSE_RANK FIRST|LAST ORDER BY column [ASC|DESC])
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Keep {
     /// true = FIRST, false = LAST
@@ -4956,7 +4969,7 @@ pub struct Keep {
 }
 
 /// WITHIN GROUP clause (for ordered-set aggregate functions)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithinGroup {
     /// The aggregate function (LISTAGG, PERCENTILE_CONT, etc.)
@@ -4969,7 +4982,7 @@ pub struct WithinGroup {
 ///
 /// Contains one or more table sources (tables, subqueries, table-valued
 /// functions, etc.). Multiple entries represent comma-separated implicit joins.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct From {
     /// The table source expressions.
@@ -4981,7 +4994,7 @@ pub struct From {
 /// The join condition can be specified via `on` (ON predicate) or `using`
 /// (USING column list), but not both. The `kind` field determines the join
 /// type (INNER, LEFT, CROSS, etc.).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Join {
     /// The right-hand table expression being joined.
@@ -5026,7 +5039,9 @@ pub struct Join {
 /// as well as dialect-specific variants: SEMI/ANTI joins, LATERAL joins,
 /// CROSS/OUTER APPLY (TSQL), ASOF joins (DuckDB/Snowflake), ARRAY joins
 /// (ClickHouse), STRAIGHT_JOIN (MySQL), and implicit comma-joins.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum JoinKind {
     Inner,
@@ -5077,7 +5092,7 @@ impl Default for JoinKind {
 
 /// Parenthesized table expression with joins
 /// Represents: (tbl1 CROSS JOIN tbl2) or ((SELECT 1) CROSS JOIN (SELECT 2))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JoinedTable {
     /// The left-hand side table expression
@@ -5091,7 +5106,7 @@ pub struct JoinedTable {
 }
 
 /// Represent a WHERE clause containing a boolean filter predicate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Where {
     /// The filter predicate expression.
@@ -5102,7 +5117,7 @@ pub struct Where {
 ///
 /// The `expressions` list may contain plain columns, ordinal positions,
 /// ROLLUP/CUBE/GROUPING SETS expressions, or the special empty-set `()`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupBy {
     /// The grouping expressions.
@@ -5119,7 +5134,7 @@ pub struct GroupBy {
 }
 
 /// Represent a HAVING clause containing a predicate over aggregate results.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Having {
     /// The filter predicate, typically involving aggregate functions.
@@ -5130,7 +5145,7 @@ pub struct Having {
 }
 
 /// Represent an ORDER BY clause containing one or more sort specifications.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OrderBy {
     /// The sort specifications, each with direction and null ordering.
@@ -5149,7 +5164,7 @@ pub struct OrderBy {
 /// When `desc` is false the sort is ascending. The `nulls_first` field
 /// controls the NULLS FIRST / NULLS LAST modifier; `None` means unspecified
 /// (database default).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Ordered {
     /// The expression to sort by.
@@ -5190,7 +5205,7 @@ impl Ordered {
 
 /// DISTRIBUTE BY clause (Hive/Spark)
 /// Controls how rows are distributed across reducers
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct DistributeBy {
@@ -5199,7 +5214,7 @@ pub struct DistributeBy {
 
 /// CLUSTER BY clause (Hive/Spark)
 /// Combines DISTRIBUTE BY and SORT BY on the same columns
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct ClusterBy {
@@ -5208,7 +5223,7 @@ pub struct ClusterBy {
 
 /// SORT BY clause (Hive/Spark)
 /// Sorts data within each reducer (local sort, not global)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct SortBy {
@@ -5217,7 +5232,7 @@ pub struct SortBy {
 
 /// LATERAL VIEW clause (Hive/Spark)
 /// Used for unnesting arrays/maps with EXPLODE, POSEXPLODE, etc.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct LateralView {
@@ -5232,7 +5247,7 @@ pub struct LateralView {
 }
 
 /// Query hint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Hint {
@@ -5240,7 +5255,7 @@ pub struct Hint {
 }
 
 /// Individual hint expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum HintExpression {
@@ -5253,7 +5268,9 @@ pub enum HintExpression {
 }
 
 /// Pseudocolumn type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum PseudocolumnType {
@@ -5292,7 +5309,7 @@ impl PseudocolumnType {
 
 /// Pseudocolumn expression (Oracle ROWNUM, ROWID, LEVEL, etc.)
 /// These are special identifiers that should not be quoted
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Pseudocolumn {
@@ -5320,7 +5337,7 @@ impl Pseudocolumn {
 }
 
 /// Oracle CONNECT BY clause for hierarchical queries
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Connect {
@@ -5333,7 +5350,7 @@ pub struct Connect {
 }
 
 /// Oracle PRIOR expression - references parent row's value in CONNECT BY
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Prior {
@@ -5341,7 +5358,7 @@ pub struct Prior {
 }
 
 /// Oracle CONNECT_BY_ROOT function - returns root row's column value
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct ConnectByRoot {
@@ -5349,7 +5366,7 @@ pub struct ConnectByRoot {
 }
 
 /// MATCH_RECOGNIZE clause for row pattern matching (Oracle/Snowflake/Presto/Trino)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct MatchRecognize {
@@ -5377,7 +5394,7 @@ pub struct MatchRecognize {
 }
 
 /// MEASURES expression with optional RUNNING/FINAL semantics
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct MatchRecognizeMeasure {
@@ -5388,7 +5405,9 @@ pub struct MatchRecognizeMeasure {
 }
 
 /// Semantics for MEASURES in MATCH_RECOGNIZE
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum MatchRecognizeSemantics {
@@ -5397,7 +5416,7 @@ pub enum MatchRecognizeSemantics {
 }
 
 /// Row output semantics for MATCH_RECOGNIZE
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum MatchRecognizeRows {
@@ -5409,7 +5428,7 @@ pub enum MatchRecognizeRows {
 }
 
 /// AFTER MATCH SKIP behavior
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum MatchRecognizeAfter {
@@ -5420,7 +5439,7 @@ pub enum MatchRecognizeAfter {
 }
 
 /// Represent a LIMIT clause that restricts the number of returned rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Limit {
     /// The limit count expression.
@@ -5435,7 +5454,7 @@ pub struct Limit {
 }
 
 /// OFFSET clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Offset {
     pub this: Expression,
@@ -5445,7 +5464,7 @@ pub struct Offset {
 }
 
 /// TOP clause (SQL Server)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Top {
     pub this: Expression,
@@ -5457,7 +5476,7 @@ pub struct Top {
 }
 
 /// FETCH FIRST/NEXT clause (SQL standard)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Fetch {
     /// FIRST or NEXT
@@ -5477,7 +5496,7 @@ pub struct Fetch {
 /// Supported by Snowflake, BigQuery, DuckDB, and Databricks. The predicate
 /// typically references a window function (e.g.
 /// `QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY ts DESC) = 1`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Qualify {
     /// The filter predicate over window function results.
@@ -5485,7 +5504,7 @@ pub struct Qualify {
 }
 
 /// SAMPLE / TABLESAMPLE clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Sample {
     pub method: SampleMethod,
@@ -5526,7 +5545,9 @@ pub struct Sample {
 }
 
 /// Sample method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum SampleMethod {
     Bernoulli,
@@ -5541,7 +5562,7 @@ pub enum SampleMethod {
 }
 
 /// Named window definition (WINDOW w AS (...))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NamedWindow {
     pub name: Identifier,
@@ -5553,7 +5574,7 @@ pub struct NamedWindow {
 /// When `recursive` is true, the clause is `WITH RECURSIVE`, enabling CTEs
 /// that reference themselves. Each CTE is defined in the `ctes` vector and
 /// can be referenced by name in subsequent CTEs and in the main query body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct With {
     /// The list of CTE definitions, in order.
@@ -5574,7 +5595,7 @@ pub struct With {
 /// The `materialized` field maps to PostgreSQL's `MATERIALIZED` /
 /// `NOT MATERIALIZED` hints. ClickHouse supports an inverted syntax where
 /// the expression comes before the alias (`alias_first`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cte {
     /// The CTE name.
@@ -5597,7 +5618,7 @@ pub struct Cte {
 }
 
 /// Window specification
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WindowSpec {
     pub partition_by: Vec<Expression>,
@@ -5606,7 +5627,7 @@ pub struct WindowSpec {
 }
 
 /// OVER clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Over {
     /// Named window reference (e.g., OVER w or OVER (w ORDER BY x))
@@ -5618,7 +5639,7 @@ pub struct Over {
 }
 
 /// Window frame
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WindowFrame {
     pub kind: WindowFrameKind,
@@ -5636,7 +5657,9 @@ pub struct WindowFrame {
     pub end_side_text: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum WindowFrameKind {
     Rows,
@@ -5645,7 +5668,9 @@ pub enum WindowFrameKind {
 }
 
 /// EXCLUDE clause for window frames
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum WindowFrameExclude {
     CurrentRow,
@@ -5654,7 +5679,7 @@ pub enum WindowFrameExclude {
     NoOthers,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum WindowFrameBound {
     CurrentRow,
@@ -5671,7 +5696,7 @@ pub enum WindowFrameBound {
 }
 
 /// Struct field with optional OPTIONS clause (BigQuery) and COMMENT (Spark/Databricks)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StructField {
     pub name: String,
@@ -5730,7 +5755,7 @@ impl StructField {
 ///
 /// Types that do not match any known variant fall through to `Custom { name }`,
 /// preserving the original type name for round-trip fidelity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(tag = "data_type", rename_all = "snake_case")]
 pub enum DataType {
@@ -5922,7 +5947,7 @@ pub enum DataType {
 }
 
 /// Array expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(rename = "SqlArray"))]
 pub struct Array {
@@ -5930,21 +5955,21 @@ pub struct Array {
 }
 
 /// Struct expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Struct {
     pub fields: Vec<(Option<String>, Expression)>,
 }
 
 /// Tuple expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Tuple {
     pub expressions: Vec<Expression>,
 }
 
 /// Interval expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Interval {
     /// The value expression (e.g., '1', 5, column_ref)
@@ -5954,7 +5979,7 @@ pub struct Interval {
 }
 
 /// Specification for interval unit - can be a simple unit, a span (HOUR TO SECOND), or an expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IntervalUnitSpec {
@@ -5974,7 +5999,7 @@ pub enum IntervalUnitSpec {
 }
 
 /// Interval span for ranges like HOUR TO SECOND
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IntervalSpan {
     /// Start unit (e.g., HOUR)
@@ -5985,7 +6010,7 @@ pub struct IntervalSpan {
 
 /// Expression-based interval span for Oracle (e.g., DAY(9) TO SECOND(3))
 /// Unlike IntervalSpan, this uses expressions to represent units with optional precision
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IntervalSpanExpr {
     /// Start unit expression (e.g., Var("DAY") or Anonymous("DAY", [9]))
@@ -5994,7 +6019,9 @@ pub struct IntervalSpanExpr {
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum IntervalUnit {
     Year,
@@ -6011,7 +6038,7 @@ pub enum IntervalUnit {
 }
 
 /// SQL Command (COMMIT, ROLLBACK, BEGIN, etc.)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Command {
     /// The command text (e.g., "ROLLBACK", "COMMIT", "BEGIN")
@@ -6020,7 +6047,7 @@ pub struct Command {
 
 /// PREPARE statement (PostgreSQL/generic prepared statement definition)
 /// Syntax: PREPARE name [(type, ...)] AS statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PrepareStatement {
     /// The prepared statement name.
@@ -6033,7 +6060,7 @@ pub struct PrepareStatement {
 }
 
 /// T-SQL TRY/CATCH block.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TryCatch {
     /// Statements inside BEGIN TRY ... END TRY.
@@ -6046,7 +6073,7 @@ pub struct TryCatch {
 
 /// EXEC/EXECUTE statement (TSQL stored procedure call)
 /// Syntax: EXEC [schema.]procedure_name [@param=value, ...]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExecuteStatement {
     /// The procedure name (can be qualified: schema.proc_name)
@@ -6066,7 +6093,7 @@ pub struct ExecuteStatement {
 }
 
 /// Named parameter in EXEC statement: @name=value
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExecuteParameter {
     /// Parameter name (including @)
@@ -6083,7 +6110,7 @@ pub struct ExecuteParameter {
 
 /// KILL statement (MySQL/MariaDB)
 /// KILL [CONNECTION | QUERY] <id>
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Kill {
     /// The target (process ID or connection ID)
@@ -6093,7 +6120,7 @@ pub struct Kill {
 }
 
 /// Snowflake CREATE TASK statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateTask {
     pub or_replace: bool,
@@ -6107,7 +6134,7 @@ pub struct CreateTask {
 }
 
 /// Raw/unparsed SQL
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Raw {
     pub sql: String,
@@ -6118,7 +6145,7 @@ pub struct Raw {
 // ============================================================================
 
 /// Generic unary function (takes a single argument)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnaryFunc {
     pub this: Expression,
@@ -6127,6 +6154,7 @@ pub struct UnaryFunc {
     pub original_name: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -6153,7 +6181,7 @@ impl UnaryFunc {
 /// CHAR/CHR function with multiple args and optional USING charset
 /// e.g., CHAR(77, 77.3, '77.3' USING utf8mb4)
 /// e.g., CHR(187 USING NCHAR_CS) -- Oracle
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CharFunc {
     pub args: Vec<Expression>,
@@ -6165,7 +6193,7 @@ pub struct CharFunc {
 }
 
 /// Generic binary function (takes two arguments)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BinaryFunc {
     pub this: Expression,
@@ -6175,11 +6203,12 @@ pub struct BinaryFunc {
     pub original_name: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// Variable argument function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct VarArgFunc {
     pub expressions: Vec<Expression>,
@@ -6188,11 +6217,12 @@ pub struct VarArgFunc {
     pub original_name: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// CONCAT_WS function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConcatWs {
     pub separator: Expression,
@@ -6200,7 +6230,7 @@ pub struct ConcatWs {
 }
 
 /// SUBSTRING function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SubstringFunc {
     pub this: Expression,
@@ -6212,7 +6242,7 @@ pub struct SubstringFunc {
 }
 
 /// OVERLAY function - OVERLAY(string PLACING replacement FROM position [FOR length])
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OverlayFunc {
     pub this: Expression,
@@ -6222,7 +6252,7 @@ pub struct OverlayFunc {
 }
 
 /// TRIM function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TrimFunc {
     pub this: Expression,
@@ -6236,7 +6266,9 @@ pub struct TrimFunc {
     pub position_explicit: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TrimPosition {
     Both,
@@ -6245,7 +6277,7 @@ pub enum TrimPosition {
 }
 
 /// REPLACE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ReplaceFunc {
     pub this: Expression,
@@ -6254,7 +6286,7 @@ pub struct ReplaceFunc {
 }
 
 /// LEFT/RIGHT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LeftRightFunc {
     pub this: Expression,
@@ -6262,7 +6294,7 @@ pub struct LeftRightFunc {
 }
 
 /// REPEAT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RepeatFunc {
     pub this: Expression,
@@ -6270,7 +6302,7 @@ pub struct RepeatFunc {
 }
 
 /// LPAD/RPAD function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PadFunc {
     pub this: Expression,
@@ -6279,7 +6311,7 @@ pub struct PadFunc {
 }
 
 /// SPLIT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SplitFunc {
     pub this: Expression,
@@ -6287,7 +6319,7 @@ pub struct SplitFunc {
 }
 
 /// REGEXP_LIKE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpFunc {
     pub this: Expression,
@@ -6296,7 +6328,7 @@ pub struct RegexpFunc {
 }
 
 /// REGEXP_REPLACE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpReplaceFunc {
     pub this: Expression,
@@ -6306,7 +6338,7 @@ pub struct RegexpReplaceFunc {
 }
 
 /// REGEXP_EXTRACT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpExtractFunc {
     pub this: Expression,
@@ -6315,7 +6347,7 @@ pub struct RegexpExtractFunc {
 }
 
 /// ROUND function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RoundFunc {
     pub this: Expression,
@@ -6323,7 +6355,7 @@ pub struct RoundFunc {
 }
 
 /// FLOOR function with optional scale and time unit (Druid: FLOOR(time TO unit))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FloorFunc {
     pub this: Expression,
@@ -6334,7 +6366,7 @@ pub struct FloorFunc {
 }
 
 /// CEIL function with optional decimals and time unit (Druid: CEIL(time TO unit))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CeilFunc {
     pub this: Expression,
@@ -6346,7 +6378,7 @@ pub struct CeilFunc {
 }
 
 /// LOG function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LogFunc {
     pub this: Expression,
@@ -6354,19 +6386,19 @@ pub struct LogFunc {
 }
 
 /// CURRENT_DATE (no arguments)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentDate;
 
 /// CURRENT_TIME
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentTime {
     pub precision: Option<u32>,
 }
 
 /// CURRENT_TIMESTAMP
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentTimestamp {
     pub precision: Option<u32>,
@@ -6376,14 +6408,14 @@ pub struct CurrentTimestamp {
 }
 
 /// CURRENT_TIMESTAMP_LTZ - Snowflake local timezone timestamp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentTimestampLTZ {
     pub precision: Option<u32>,
 }
 
 /// AT TIME ZONE expression for timezone conversion
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AtTimeZone {
     /// The expression to convert
@@ -6393,7 +6425,7 @@ pub struct AtTimeZone {
 }
 
 /// DATE_ADD / DATE_SUB function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateAddFunc {
     pub this: Expression,
@@ -6402,7 +6434,7 @@ pub struct DateAddFunc {
 }
 
 /// DATEDIFF function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateDiffFunc {
     pub this: Expression,
@@ -6411,7 +6443,7 @@ pub struct DateDiffFunc {
 }
 
 /// DATE_TRUNC function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateTruncFunc {
     pub this: Expression,
@@ -6419,14 +6451,14 @@ pub struct DateTruncFunc {
 }
 
 /// EXTRACT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExtractFunc {
     pub this: Expression,
     pub field: DateTimeField,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum DateTimeField {
     Year,
@@ -6454,7 +6486,7 @@ pub enum DateTimeField {
 }
 
 /// TO_DATE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToDateFunc {
     pub this: Expression,
@@ -6462,7 +6494,7 @@ pub struct ToDateFunc {
 }
 
 /// TO_TIMESTAMP function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToTimestampFunc {
     pub this: Expression,
@@ -6470,7 +6502,7 @@ pub struct ToTimestampFunc {
 }
 
 /// IF function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IfFunc {
     pub condition: Expression,
@@ -6481,11 +6513,12 @@ pub struct IfFunc {
     pub original_name: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// NVL2 function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Nvl2Func {
     pub this: Expression,
@@ -6493,6 +6526,7 @@ pub struct Nvl2Func {
     pub false_value: Expression,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
@@ -6501,7 +6535,7 @@ pub struct Nvl2Func {
 // ============================================================================
 
 /// Generic aggregate function base type
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AggFunc {
     pub this: Expression,
@@ -6523,11 +6557,12 @@ pub struct AggFunc {
     pub limit: Option<Box<Expression>>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// COUNT function with optional star
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CountFunc {
     pub this: Option<Expression>,
@@ -6542,11 +6577,12 @@ pub struct CountFunc {
     pub original_name: Option<String>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// GROUP_CONCAT function (MySQL style)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupConcatFunc {
     pub this: Expression,
@@ -6559,11 +6595,12 @@ pub struct GroupConcatFunc {
     pub limit: Option<Box<Expression>>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// STRING_AGG function (PostgreSQL/Standard SQL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StringAggFunc {
     pub this: Expression,
@@ -6580,11 +6617,12 @@ pub struct StringAggFunc {
     pub limit: Option<Box<Expression>>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// LISTAGG function (Oracle style)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ListAggFunc {
     pub this: Expression,
@@ -6595,11 +6633,12 @@ pub struct ListAggFunc {
     pub filter: Option<Expression>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// LISTAGG ON OVERFLOW behavior
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ListAggOverflow {
     Error,
@@ -6610,7 +6649,7 @@ pub enum ListAggOverflow {
 }
 
 /// SUM_IF / COUNT_IF function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SumIfFunc {
     pub this: Expression,
@@ -6618,11 +6657,12 @@ pub struct SumIfFunc {
     pub filter: Option<Expression>,
     /// Inferred data type from type annotation
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
     pub inferred_type: Option<DataType>,
 }
 
 /// APPROX_PERCENTILE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxPercentileFunc {
     pub this: Expression,
@@ -6632,7 +6672,7 @@ pub struct ApproxPercentileFunc {
 }
 
 /// PERCENTILE_CONT / PERCENTILE_DISC function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PercentileFunc {
     pub this: Expression,
@@ -6646,12 +6686,12 @@ pub struct PercentileFunc {
 // ============================================================================
 
 /// ROW_NUMBER function (no arguments)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowNumber;
 
 /// RANK function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rank {
     /// DuckDB: RANK(ORDER BY col) - order by inside function
@@ -6663,7 +6703,7 @@ pub struct Rank {
 }
 
 /// DENSE_RANK function (Oracle allows hypothetical args with WITHIN GROUP)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DenseRank {
     /// Oracle hypothetical rank: DENSE_RANK(val1, val2, ...) WITHIN GROUP (ORDER BY ...)
@@ -6672,7 +6712,7 @@ pub struct DenseRank {
 }
 
 /// NTILE function (DuckDB allows ORDER BY inside)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NTileFunc {
     /// num_buckets is optional to support Databricks NTILE() without arguments
@@ -6684,7 +6724,7 @@ pub struct NTileFunc {
 }
 
 /// LEAD / LAG function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LeadLagFunc {
     pub this: Expression,
@@ -6696,7 +6736,7 @@ pub struct LeadLagFunc {
 }
 
 /// FIRST_VALUE / LAST_VALUE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ValueFunc {
     pub this: Expression,
@@ -6709,7 +6749,7 @@ pub struct ValueFunc {
 }
 
 /// NTH_VALUE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NthValueFunc {
     pub this: Expression,
@@ -6724,7 +6764,7 @@ pub struct NthValueFunc {
 }
 
 /// PERCENT_RANK function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PercentRank {
     /// DuckDB: PERCENT_RANK(ORDER BY col) - order by inside function
@@ -6736,7 +6776,7 @@ pub struct PercentRank {
 }
 
 /// CUME_DIST function (DuckDB allows ORDER BY inside, Oracle allows hypothetical args with WITHIN GROUP)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CumeDist {
     /// DuckDB: CUME_DIST(ORDER BY col) - order by inside function
@@ -6752,7 +6792,7 @@ pub struct CumeDist {
 // ============================================================================
 
 /// POSITION/INSTR function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PositionFunc {
     pub substring: Expression,
@@ -6765,12 +6805,12 @@ pub struct PositionFunc {
 // ============================================================================
 
 /// RANDOM function (no arguments)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Random;
 
 /// RAND function (optional seed, or Teradata RANDOM(lower, upper))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rand {
     pub seed: Option<Box<Expression>>,
@@ -6783,7 +6823,7 @@ pub struct Rand {
 }
 
 /// TRUNCATE / TRUNC function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TruncateFunc {
     pub this: Expression,
@@ -6791,7 +6831,7 @@ pub struct TruncateFunc {
 }
 
 /// PI function (no arguments)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Pi;
 
@@ -6800,7 +6840,7 @@ pub struct Pi;
 // ============================================================================
 
 /// DECODE function (Oracle style)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DecodeFunc {
     pub this: Expression,
@@ -6813,7 +6853,7 @@ pub struct DecodeFunc {
 // ============================================================================
 
 /// DATE_FORMAT / FORMAT_DATE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateFormatFunc {
     pub this: Expression,
@@ -6821,7 +6861,7 @@ pub struct DateFormatFunc {
 }
 
 /// FROM_UNIXTIME function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FromUnixtimeFunc {
     pub this: Expression,
@@ -6829,7 +6869,7 @@ pub struct FromUnixtimeFunc {
 }
 
 /// UNIX_TIMESTAMP function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnixTimestampFunc {
     pub this: Option<Expression>,
@@ -6837,7 +6877,7 @@ pub struct UnixTimestampFunc {
 }
 
 /// MAKE_DATE function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MakeDateFunc {
     pub year: Expression,
@@ -6846,7 +6886,7 @@ pub struct MakeDateFunc {
 }
 
 /// MAKE_TIMESTAMP function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MakeTimestampFunc {
     pub year: Expression,
@@ -6859,7 +6899,7 @@ pub struct MakeTimestampFunc {
 }
 
 /// LAST_DAY function with optional date part (for BigQuery granularity like WEEK(SUNDAY))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LastDayFunc {
     pub this: Expression,
@@ -6873,7 +6913,7 @@ pub struct LastDayFunc {
 // ============================================================================
 
 /// ARRAY constructor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayConstructor {
     pub expressions: Vec<Expression>,
@@ -6883,7 +6923,7 @@ pub struct ArrayConstructor {
 }
 
 /// ARRAY_SORT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArraySortFunc {
     pub this: Expression,
@@ -6893,7 +6933,7 @@ pub struct ArraySortFunc {
 }
 
 /// ARRAY_JOIN / ARRAY_TO_STRING function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayJoinFunc {
     pub this: Expression,
@@ -6902,7 +6942,7 @@ pub struct ArrayJoinFunc {
 }
 
 /// UNNEST function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnnestFunc {
     pub this: Expression,
@@ -6917,7 +6957,7 @@ pub struct UnnestFunc {
 }
 
 /// ARRAY_FILTER function (with lambda)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayFilterFunc {
     pub this: Expression,
@@ -6925,7 +6965,7 @@ pub struct ArrayFilterFunc {
 }
 
 /// ARRAY_TRANSFORM / TRANSFORM function (with lambda)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayTransformFunc {
     pub this: Expression,
@@ -6933,7 +6973,7 @@ pub struct ArrayTransformFunc {
 }
 
 /// SEQUENCE / GENERATE_SERIES function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SequenceFunc {
     pub start: Expression,
@@ -6946,14 +6986,14 @@ pub struct SequenceFunc {
 // ============================================================================
 
 /// STRUCT constructor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StructConstructor {
     pub fields: Vec<(Option<Identifier>, Expression)>,
 }
 
 /// STRUCT_EXTRACT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StructExtractFunc {
     pub this: Expression,
@@ -6961,7 +7001,7 @@ pub struct StructExtractFunc {
 }
 
 /// NAMED_STRUCT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NamedStructFunc {
     pub pairs: Vec<(Expression, Expression)>,
@@ -6972,7 +7012,7 @@ pub struct NamedStructFunc {
 // ============================================================================
 
 /// MAP constructor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MapConstructor {
     pub keys: Vec<Expression>,
@@ -6986,7 +7026,7 @@ pub struct MapConstructor {
 }
 
 /// TRANSFORM_KEYS / TRANSFORM_VALUES function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TransformFunc {
     pub this: Expression,
@@ -6995,7 +7035,7 @@ pub struct TransformFunc {
 
 /// Function call with EMITS clause (Exasol)
 /// Used for JSON_EXTRACT(...) EMITS (col1 TYPE1, col2 TYPE2)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FunctionEmits {
     /// The function call expression
@@ -7009,7 +7049,7 @@ pub struct FunctionEmits {
 // ============================================================================
 
 /// JSON_EXTRACT / JSON_EXTRACT_SCALAR function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonExtractFunc {
     pub this: Expression,
@@ -7036,7 +7076,7 @@ pub struct JsonExtractFunc {
 }
 
 /// JSON path extraction
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonPathFunc {
     pub this: Expression,
@@ -7044,7 +7084,7 @@ pub struct JsonPathFunc {
 }
 
 /// JSON_OBJECT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonObjectFunc {
     pub pairs: Vec<(Expression, Expression)>,
@@ -7063,7 +7103,9 @@ pub struct JsonObjectFunc {
 }
 
 /// JSON null handling options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum JsonNullHandling {
     NullOnNull,
@@ -7071,7 +7113,7 @@ pub enum JsonNullHandling {
 }
 
 /// JSON_SET / JSON_INSERT function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonModifyFunc {
     pub this: Expression,
@@ -7079,7 +7121,7 @@ pub struct JsonModifyFunc {
 }
 
 /// JSON_ARRAYAGG function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonArrayAggFunc {
     pub this: Expression,
@@ -7089,7 +7131,7 @@ pub struct JsonArrayAggFunc {
 }
 
 /// JSON_OBJECTAGG function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonObjectAggFunc {
     pub key: Expression,
@@ -7103,7 +7145,7 @@ pub struct JsonObjectAggFunc {
 // ============================================================================
 
 /// CONVERT function (SQL Server style)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConvertFunc {
     pub this: Expression,
@@ -7116,7 +7158,7 @@ pub struct ConvertFunc {
 // ============================================================================
 
 /// Lambda expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LambdaExpr {
     pub parameters: Vec<Identifier>,
@@ -7131,7 +7173,7 @@ pub struct LambdaExpr {
 }
 
 /// Parameter (parameterized queries)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Parameter {
     pub name: Option<String>,
@@ -7149,7 +7191,9 @@ pub struct Parameter {
 }
 
 /// Parameter placeholder styles
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ParameterStyle {
     Question,     // ?
@@ -7164,14 +7208,14 @@ pub enum ParameterStyle {
 }
 
 /// Placeholder expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Placeholder {
     pub index: Option<u32>,
 }
 
 /// Named argument in function call: name => value or name := value
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NamedArgument {
     pub name: Identifier,
@@ -7181,7 +7225,9 @@ pub struct NamedArgument {
 }
 
 /// Separator style for named arguments
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum NamedArgSeparator {
     /// `=>` (standard SQL, Snowflake, BigQuery)
@@ -7194,7 +7240,7 @@ pub enum NamedArgSeparator {
 
 /// TABLE ref or MODEL ref used as a function argument (BigQuery)
 /// e.g., GAP_FILL(TABLE device_data, ...) or ML.PREDICT(MODEL mydataset.mymodel, ...)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TableArgument {
     /// The keyword prefix: "TABLE" or "MODEL"
@@ -7204,7 +7250,7 @@ pub struct TableArgument {
 }
 
 /// SQL Comment preservation
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SqlComment {
     pub text: String,
@@ -7216,7 +7262,7 @@ pub struct SqlComment {
 // ============================================================================
 
 /// SIMILAR TO expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SimilarToExpr {
     pub this: Expression,
@@ -7226,7 +7272,7 @@ pub struct SimilarToExpr {
 }
 
 /// ANY / ALL quantified expression
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct QuantifiedExpr {
     pub this: Expression,
@@ -7235,7 +7281,7 @@ pub struct QuantifiedExpr {
 }
 
 /// Comparison operator for quantified expressions
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum QuantifiedOp {
     Eq,
@@ -7250,7 +7296,7 @@ pub enum QuantifiedOp {
 /// Supports two forms:
 /// 1. Simple binary: a OVERLAPS b (this, expression are set)
 /// 2. Full ANSI: (a, b) OVERLAPS (c, d) (left_start, left_end, right_start, right_end are set)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OverlapsExpr {
     /// Left operand for simple binary form
@@ -7278,7 +7324,7 @@ pub struct OverlapsExpr {
 // ============================================================================
 
 /// Subscript access (array[index] or map[key])
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Subscript {
     pub this: Expression,
@@ -7286,7 +7332,7 @@ pub struct Subscript {
 }
 
 /// Dot access (struct.field)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DotAccess {
     pub this: Expression,
@@ -7294,7 +7340,7 @@ pub struct DotAccess {
 }
 
 /// Method call (expr.method(args))
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MethodCall {
     pub this: Expression,
@@ -7303,7 +7349,7 @@ pub struct MethodCall {
 }
 
 /// Array slice (array[start:end])
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArraySlice {
     pub this: Expression,
@@ -7316,7 +7362,7 @@ pub struct ArraySlice {
 // ============================================================================
 
 /// ON COMMIT behavior for temporary tables
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum OnCommit {
     /// ON COMMIT PRESERVE ROWS
@@ -7326,7 +7372,7 @@ pub enum OnCommit {
 }
 
 /// CREATE TABLE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateTable {
     pub name: TableRef,
@@ -7426,7 +7472,7 @@ pub struct CreateTable {
 }
 
 /// Teradata index specification for CREATE TABLE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TeradataIndex {
     /// Index kind: NoPrimary, Primary, PrimaryAmp, Unique, UniquePrimary
@@ -7438,7 +7484,7 @@ pub struct TeradataIndex {
 }
 
 /// Kind of Teradata index
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TeradataIndexKind {
     /// NO PRIMARY INDEX
@@ -7498,7 +7544,9 @@ impl CreateTable {
 }
 
 /// Sort order for PRIMARY KEY ASC/DESC
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum SortOrder {
     Asc,
@@ -7506,7 +7554,7 @@ pub enum SortOrder {
 }
 
 /// Type of column constraint for tracking order
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ConstraintType {
     NotNull,
@@ -7535,7 +7583,7 @@ pub enum ConstraintType {
 }
 
 /// Column definition in CREATE TABLE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ColumnDef {
     pub name: Identifier,
@@ -7686,7 +7734,7 @@ impl ColumnDef {
 }
 
 /// Column-level constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ColumnConstraint {
     NotNull,
@@ -7711,7 +7759,7 @@ pub enum ColumnConstraint {
 }
 
 /// Computed/generated column constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ComputedColumn {
     /// The expression that computes the column value
@@ -7732,7 +7780,7 @@ pub struct ComputedColumn {
 }
 
 /// TSQL temporal column constraint: GENERATED ALWAYS AS ROW START|END [HIDDEN]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GeneratedAsRow {
     /// true = ROW START, false = ROW END
@@ -7743,7 +7791,7 @@ pub struct GeneratedAsRow {
 }
 
 /// Generated identity column constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GeneratedAsIdentity {
     /// True for ALWAYS, False for BY DEFAULT
@@ -7763,7 +7811,9 @@ pub struct GeneratedAsIdentity {
 }
 
 /// Constraint modifiers (shared between table-level constraints)
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConstraintModifiers {
     /// ENFORCED / NOT ENFORCED
@@ -7812,7 +7862,7 @@ pub struct ConstraintModifiers {
 }
 
 /// Table-level constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TableConstraint {
     PrimaryKey {
@@ -7947,7 +7997,7 @@ pub enum TableConstraint {
 }
 
 /// Element in an EXCLUDE constraint: expression WITH operator
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExcludeElement {
     /// The column expression (may include operator class, ordering, nulls)
@@ -7957,7 +8007,9 @@ pub struct ExcludeElement {
 }
 
 /// Action for LIKE clause options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum LikeOptionAction {
     Including,
@@ -7965,7 +8017,9 @@ pub enum LikeOptionAction {
 }
 
 /// MATCH type for foreign keys
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum MatchType {
     Full,
@@ -7974,7 +8028,7 @@ pub enum MatchType {
 }
 
 /// Foreign key reference
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ForeignKeyRef {
     pub table: TableRef,
@@ -8002,7 +8056,9 @@ pub struct ForeignKeyRef {
 }
 
 /// Referential action for foreign keys
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ReferentialAction {
     Cascade,
@@ -8013,7 +8069,7 @@ pub enum ReferentialAction {
 }
 
 /// DROP TABLE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropTable {
     pub names: Vec<TableRef>,
@@ -8061,7 +8117,7 @@ impl DropTable {
 }
 
 /// UNDROP object statement (Snowflake, ClickHouse)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Undrop {
     /// The object kind, e.g. "TABLE", "SCHEMA", "DATABASE", "DYNAMIC TABLE"
@@ -8077,7 +8133,7 @@ pub struct Undrop {
 }
 
 /// ALTER TABLE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterTable {
     pub name: TableRef,
@@ -8122,7 +8178,7 @@ impl AlterTable {
 }
 
 /// Column position for ADD COLUMN (MySQL/MariaDB)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ColumnPosition {
     First,
@@ -8130,7 +8186,7 @@ pub enum ColumnPosition {
 }
 
 /// Actions for ALTER TABLE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum AlterTableAction {
     AddColumn {
@@ -8288,7 +8344,7 @@ pub enum AlterTableAction {
 }
 
 /// Actions for ALTER COLUMN
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum AlterColumnAction {
     SetDataType {
@@ -8312,7 +8368,7 @@ pub enum AlterColumnAction {
 }
 
 /// CREATE INDEX statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateIndex {
     pub name: Identifier,
@@ -8361,7 +8417,7 @@ impl CreateIndex {
 }
 
 /// Index column specification
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IndexColumn {
     pub column: Identifier,
@@ -8376,7 +8432,7 @@ pub struct IndexColumn {
 }
 
 /// DROP INDEX statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropIndex {
     pub name: TableRef,
@@ -8399,7 +8455,7 @@ impl DropIndex {
 }
 
 /// View column definition with optional COMMENT and OPTIONS (BigQuery)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ViewColumn {
     pub name: Identifier,
@@ -8428,7 +8484,7 @@ impl ViewColumn {
 }
 
 /// CREATE VIEW statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateView {
     pub name: TableRef,
@@ -8556,7 +8612,7 @@ impl CreateView {
 }
 
 /// DROP VIEW statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropView {
     pub name: TableRef,
@@ -8575,7 +8631,7 @@ impl DropView {
 }
 
 /// TRUNCATE TABLE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Truncate {
     /// Target of TRUNCATE (TABLE vs DATABASE)
@@ -8604,7 +8660,7 @@ pub struct Truncate {
 }
 
 /// A table entry in a TRUNCATE statement, with optional ONLY modifier and * suffix
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TruncateTableEntry {
     pub table: TableRef,
@@ -8614,7 +8670,9 @@ pub struct TruncateTableEntry {
 }
 
 /// TRUNCATE target type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TruncateTarget {
     Table,
@@ -8628,7 +8686,9 @@ impl Default for TruncateTarget {
 }
 
 /// TRUNCATE identity option
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TruncateIdentity {
     Restart,
@@ -8652,7 +8712,7 @@ impl Truncate {
 }
 
 /// USE statement (USE database, USE ROLE, USE WAREHOUSE, USE CATALOG, USE SCHEMA)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Use {
     /// The kind of object (DATABASE, SCHEMA, ROLE, WAREHOUSE, CATALOG, or None for default)
@@ -8662,7 +8722,9 @@ pub struct Use {
 }
 
 /// Kind of USE statement
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum UseKind {
     Database,
@@ -8675,7 +8737,7 @@ pub enum UseKind {
 }
 
 /// SET variable statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SetStatement {
     /// The items being set
@@ -8683,7 +8745,7 @@ pub struct SetStatement {
 }
 
 /// A single SET item (variable assignment)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SetItem {
     /// The variable name
@@ -8698,7 +8760,7 @@ pub struct SetItem {
 }
 
 /// CACHE TABLE statement (Spark)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cache {
     /// The table to cache
@@ -8712,7 +8774,7 @@ pub struct Cache {
 }
 
 /// UNCACHE TABLE statement (Spark)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Uncache {
     /// The table to uncache
@@ -8722,7 +8784,7 @@ pub struct Uncache {
 }
 
 /// LOAD DATA statement (Hive)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LoadData {
     /// LOCAL keyword - load from local filesystem
@@ -8742,7 +8804,7 @@ pub struct LoadData {
 }
 
 /// PRAGMA statement (SQLite)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Pragma {
     /// Optional schema prefix (e.g., "schema" in "schema.pragma_name")
@@ -8760,7 +8822,7 @@ pub struct Pragma {
 
 /// A privilege with optional column list for GRANT/REVOKE
 /// Examples: SELECT, UPDATE(col1, col2), ALL(col1, col2, col3)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Privilege {
     /// The privilege name (e.g., SELECT, INSERT, UPDATE, ALL)
@@ -8771,7 +8833,7 @@ pub struct Privilege {
 }
 
 /// Principal in GRANT/REVOKE (user, role, etc.)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GrantPrincipal {
     /// The name of the principal
@@ -8787,7 +8849,7 @@ pub struct GrantPrincipal {
 }
 
 /// GRANT statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Grant {
     /// Privileges to grant (e.g., SELECT, INSERT, UPDATE(col1, col2))
@@ -8809,7 +8871,7 @@ pub struct Grant {
 }
 
 /// REVOKE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Revoke {
     /// Privileges to revoke (e.g., SELECT, INSERT, UPDATE(col1, col2))
@@ -8833,7 +8895,7 @@ pub struct Revoke {
 }
 
 /// COMMENT ON statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Comment {
     /// The object being commented on
@@ -8853,7 +8915,7 @@ pub struct Comment {
 // ============================================================================
 
 /// ALTER VIEW statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterView {
     pub name: TableRef,
@@ -8876,7 +8938,7 @@ pub struct AlterView {
 }
 
 /// Actions for ALTER VIEW
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum AlterViewAction {
     /// Rename the view
@@ -8915,7 +8977,7 @@ impl AlterView {
 }
 
 /// ALTER INDEX statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterIndex {
     pub name: Identifier,
@@ -8924,7 +8986,7 @@ pub struct AlterIndex {
 }
 
 /// Actions for ALTER INDEX
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum AlterIndexAction {
     /// Rename the index
@@ -8946,7 +9008,7 @@ impl AlterIndex {
 }
 
 /// CREATE SCHEMA statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateSchema {
     /// Schema name parts, possibly dot-qualified (e.g. [mydb, hr] for "mydb.hr")
@@ -8982,7 +9044,7 @@ impl CreateSchema {
 }
 
 /// DROP SCHEMA statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropSchema {
     pub name: Identifier,
@@ -9001,7 +9063,7 @@ impl DropSchema {
 }
 
 /// DROP NAMESPACE statement (Spark/Databricks - alias for DROP SCHEMA)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropNamespace {
     pub name: Identifier,
@@ -9020,7 +9082,7 @@ impl DropNamespace {
 }
 
 /// CREATE DATABASE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateDatabase {
     pub name: Identifier,
@@ -9035,7 +9097,7 @@ pub struct CreateDatabase {
 }
 
 /// Database option
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum DatabaseOption {
     CharacterSet(String),
@@ -9059,7 +9121,7 @@ impl CreateDatabase {
 }
 
 /// DROP DATABASE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropDatabase {
     pub name: Identifier,
@@ -9080,7 +9142,7 @@ impl DropDatabase {
 }
 
 /// CREATE FUNCTION statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateFunction {
     pub name: TableRef,
@@ -9148,7 +9210,7 @@ pub struct CreateFunction {
 }
 
 /// A SET option in CREATE FUNCTION (PostgreSQL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FunctionSetOption {
     pub name: String,
@@ -9156,7 +9218,7 @@ pub struct FunctionSetOption {
 }
 
 /// The value of a SET option
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum FunctionSetValue {
     /// SET key = value (use_to = false) or SET key TO value (use_to = true)
@@ -9166,7 +9228,9 @@ pub enum FunctionSetValue {
 }
 
 /// SQL data access characteristics for functions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum SqlDataAccess {
     /// NO SQL
@@ -9180,7 +9244,9 @@ pub enum SqlDataAccess {
 }
 
 /// Types of properties in CREATE FUNCTION for tracking their original order
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum FunctionPropertyKind {
     /// SET option
@@ -9214,7 +9280,7 @@ pub enum FunctionPropertyKind {
 }
 
 /// Hive CREATE FUNCTION resource in a USING clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FunctionUsingResource {
     pub kind: String,
@@ -9222,7 +9288,7 @@ pub struct FunctionUsingResource {
 }
 
 /// Function parameter
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FunctionParameter {
     pub name: Option<Identifier>,
@@ -9235,7 +9301,9 @@ pub struct FunctionParameter {
 }
 
 /// Parameter mode (IN, OUT, INOUT, VARIADIC)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum ParameterMode {
     In,
@@ -9245,7 +9313,7 @@ pub enum ParameterMode {
 }
 
 /// Function body
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum FunctionBody {
     /// AS $$ ... $$ (dollar-quoted)
@@ -9271,7 +9339,9 @@ pub enum FunctionBody {
 }
 
 /// Function security (DEFINER, INVOKER, or NONE)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum FunctionSecurity {
     Definer,
@@ -9316,7 +9386,7 @@ impl CreateFunction {
 }
 
 /// DROP FUNCTION statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropFunction {
     pub name: TableRef,
@@ -9337,7 +9407,7 @@ impl DropFunction {
 }
 
 /// CREATE PROCEDURE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateProcedure {
     pub name: TableRef,
@@ -9388,7 +9458,7 @@ impl CreateProcedure {
 }
 
 /// DROP PROCEDURE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropProcedure {
     pub name: TableRef,
@@ -9409,7 +9479,7 @@ impl DropProcedure {
 }
 
 /// Sequence property tag for ordering
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum SeqPropKind {
     Start,
@@ -9453,7 +9523,7 @@ pub enum SeqPropKind {
 }
 
 /// CREATE SYNONYM statement (TSQL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateSynonym {
     /// The synonym name (can be qualified: schema.synonym_name)
@@ -9463,7 +9533,7 @@ pub struct CreateSynonym {
 }
 
 /// CREATE SEQUENCE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateSequence {
     pub name: TableRef,
@@ -9505,7 +9575,7 @@ pub struct CreateSequence {
 }
 
 /// Sequence bound (value or NO MINVALUE/NO MAXVALUE)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum SequenceBound {
     Value(i64),
@@ -9539,7 +9609,7 @@ impl CreateSequence {
 }
 
 /// DROP SEQUENCE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropSequence {
     pub name: TableRef,
@@ -9558,7 +9628,7 @@ impl DropSequence {
 }
 
 /// ALTER SEQUENCE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterSequence {
     pub name: TableRef,
@@ -9591,7 +9661,7 @@ impl AlterSequence {
 }
 
 /// CREATE TRIGGER statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateTrigger {
     pub name: Identifier,
@@ -9616,7 +9686,9 @@ pub struct CreateTrigger {
 }
 
 /// Trigger timing (BEFORE, AFTER, INSTEAD OF)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TriggerTiming {
     Before,
@@ -9625,7 +9697,7 @@ pub enum TriggerTiming {
 }
 
 /// Trigger event (INSERT, UPDATE, DELETE, TRUNCATE)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TriggerEvent {
     Insert,
@@ -9635,7 +9707,9 @@ pub enum TriggerEvent {
 }
 
 /// Trigger FOR EACH clause
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize,
+)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TriggerForEach {
     Row,
@@ -9643,7 +9717,7 @@ pub enum TriggerForEach {
 }
 
 /// Trigger body
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TriggerBody {
     /// EXECUTE FUNCTION/PROCEDURE name(args)
@@ -9656,7 +9730,7 @@ pub enum TriggerBody {
 }
 
 /// Trigger REFERENCING clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TriggerReferencing {
     pub old_table: Option<Identifier>,
@@ -9690,7 +9764,7 @@ impl CreateTrigger {
 }
 
 /// DROP TRIGGER statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropTrigger {
     pub name: Identifier,
@@ -9711,7 +9785,7 @@ impl DropTrigger {
 }
 
 /// CREATE TYPE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CreateType {
     pub name: TableRef,
@@ -9720,7 +9794,7 @@ pub struct CreateType {
 }
 
 /// Type definition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub enum TypeDefinition {
     /// ENUM type: CREATE TYPE name AS ENUM ('val1', 'val2', ...)
@@ -9748,7 +9822,7 @@ pub enum TypeDefinition {
 }
 
 /// Type attribute for composite types
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TypeAttribute {
     pub name: Identifier,
@@ -9757,7 +9831,7 @@ pub struct TypeAttribute {
 }
 
 /// Domain constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DomainConstraint {
     pub name: Option<Identifier>,
@@ -9783,7 +9857,7 @@ impl CreateType {
 }
 
 /// DROP TYPE statement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropType {
     pub name: TableRef,
@@ -9802,7 +9876,7 @@ impl DropType {
 }
 
 /// DESCRIBE statement - shows table structure or query plan
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Describe {
     /// The target to describe (table name or query)
@@ -9852,7 +9926,7 @@ impl Describe {
 }
 
 /// SHOW statement - displays database objects
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Show {
     /// The thing to show (DATABASES, TABLES, SCHEMAS, etc.)
@@ -9921,7 +9995,7 @@ impl Show {
 ///
 /// Preserves user-written parentheses so that `(a + b) * c` round-trips
 /// correctly instead of being flattened to `a + b * c`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Paren {
     /// The inner expression wrapped by parentheses.
@@ -9931,7 +10005,7 @@ pub struct Paren {
 }
 
 /// Expression annotated with trailing comments (for round-trip preservation)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Annotated {
     pub this: Expression,
@@ -9942,7 +10016,7 @@ pub struct Annotated {
 // Generated from Python sqlglot expressions.py
 
 /// Refresh
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Refresh {
     pub this: Box<Expression>,
@@ -9950,7 +10024,7 @@ pub struct Refresh {
 }
 
 /// LockingStatement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LockingStatement {
     pub this: Box<Expression>,
@@ -9958,7 +10032,7 @@ pub struct LockingStatement {
 }
 
 /// SequenceProperties
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SequenceProperties {
     #[serde(default)]
@@ -9978,7 +10052,7 @@ pub struct SequenceProperties {
 }
 
 /// TruncateTable
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TruncateTable {
     #[serde(default)]
@@ -10000,7 +10074,7 @@ pub struct TruncateTable {
 }
 
 /// Clone
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Clone {
     pub this: Box<Expression>,
@@ -10011,7 +10085,7 @@ pub struct Clone {
 }
 
 /// Attach
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Attach {
     pub this: Box<Expression>,
@@ -10022,7 +10096,7 @@ pub struct Attach {
 }
 
 /// Detach
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Detach {
     pub this: Box<Expression>,
@@ -10031,7 +10105,7 @@ pub struct Detach {
 }
 
 /// Install
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Install {
     pub this: Box<Expression>,
@@ -10042,7 +10116,7 @@ pub struct Install {
 }
 
 /// Summarize
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Summarize {
     pub this: Box<Expression>,
@@ -10051,7 +10125,7 @@ pub struct Summarize {
 }
 
 /// Declare
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Declare {
     #[serde(default)]
@@ -10061,7 +10135,7 @@ pub struct Declare {
 }
 
 /// DeclareItem
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DeclareItem {
     pub this: Box<Expression>,
@@ -10077,7 +10151,7 @@ pub struct DeclareItem {
 }
 
 /// Set
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Set {
     #[serde(default)]
@@ -10089,7 +10163,7 @@ pub struct Set {
 }
 
 /// Heredoc
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Heredoc {
     pub this: Box<Expression>,
@@ -10098,7 +10172,7 @@ pub struct Heredoc {
 }
 
 /// QueryBand
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct QueryBand {
     pub this: Box<Expression>,
@@ -10109,7 +10183,7 @@ pub struct QueryBand {
 }
 
 /// UserDefinedFunction
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UserDefinedFunction {
     pub this: Box<Expression>,
@@ -10120,7 +10194,7 @@ pub struct UserDefinedFunction {
 }
 
 /// RecursiveWithSearch
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RecursiveWithSearch {
     pub kind: String,
@@ -10131,7 +10205,7 @@ pub struct RecursiveWithSearch {
 }
 
 /// ProjectionDef
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ProjectionDef {
     pub this: Box<Expression>,
@@ -10139,7 +10213,7 @@ pub struct ProjectionDef {
 }
 
 /// TableAlias
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TableAlias {
     #[serde(default)]
@@ -10149,7 +10223,7 @@ pub struct TableAlias {
 }
 
 /// ByteString
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ByteString {
     pub this: Box<Expression>,
@@ -10159,7 +10233,7 @@ pub struct ByteString {
 
 /// HexStringExpr - Hex string expression (not literal)
 /// BigQuery: converts to FROM_HEX(this)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct HexStringExpr {
     pub this: Box<Expression>,
@@ -10168,7 +10242,7 @@ pub struct HexStringExpr {
 }
 
 /// UnicodeString
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnicodeString {
     pub this: Box<Expression>,
@@ -10177,7 +10251,7 @@ pub struct UnicodeString {
 }
 
 /// AlterColumn
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterColumn {
     pub this: Box<Expression>,
@@ -10202,7 +10276,7 @@ pub struct AlterColumn {
 }
 
 /// AlterSortKey
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterSortKey {
     #[serde(default)]
@@ -10214,7 +10288,7 @@ pub struct AlterSortKey {
 }
 
 /// AlterSet
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterSet {
     #[serde(default)]
@@ -10238,7 +10312,7 @@ pub struct AlterSet {
 }
 
 /// RenameColumn
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RenameColumn {
     pub this: Box<Expression>,
@@ -10249,7 +10323,7 @@ pub struct RenameColumn {
 }
 
 /// Comprehension
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Comprehension {
     pub this: Box<Expression>,
@@ -10263,7 +10337,7 @@ pub struct Comprehension {
 }
 
 /// MergeTreeTTLAction
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MergeTreeTTLAction {
     pub this: Box<Expression>,
@@ -10278,7 +10352,7 @@ pub struct MergeTreeTTLAction {
 }
 
 /// MergeTreeTTL
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MergeTreeTTL {
     #[serde(default)]
@@ -10292,7 +10366,7 @@ pub struct MergeTreeTTL {
 }
 
 /// IndexConstraintOption
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IndexConstraintOption {
     #[serde(default)]
@@ -10312,7 +10386,7 @@ pub struct IndexConstraintOption {
 }
 
 /// PeriodForSystemTimeConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PeriodForSystemTimeConstraint {
     pub this: Box<Expression>,
@@ -10320,7 +10394,7 @@ pub struct PeriodForSystemTimeConstraint {
 }
 
 /// CaseSpecificColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CaseSpecificColumnConstraint {
     #[serde(default)]
@@ -10328,14 +10402,14 @@ pub struct CaseSpecificColumnConstraint {
 }
 
 /// CharacterSetColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CharacterSetColumnConstraint {
     pub this: Box<Expression>,
 }
 
 /// CheckColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CheckColumnConstraint {
     pub this: Box<Expression>,
@@ -10344,14 +10418,14 @@ pub struct CheckColumnConstraint {
 }
 
 /// AssumeColumnConstraint (ClickHouse ASSUME constraint)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AssumeColumnConstraint {
     pub this: Box<Expression>,
 }
 
 /// CompressColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CompressColumnConstraint {
     #[serde(default)]
@@ -10359,14 +10433,14 @@ pub struct CompressColumnConstraint {
 }
 
 /// DateFormatColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateFormatColumnConstraint {
     pub this: Box<Expression>,
 }
 
 /// EphemeralColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EphemeralColumnConstraint {
     #[serde(default)]
@@ -10374,7 +10448,7 @@ pub struct EphemeralColumnConstraint {
 }
 
 /// WithOperator
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithOperator {
     pub this: Box<Expression>,
@@ -10382,7 +10456,7 @@ pub struct WithOperator {
 }
 
 /// GeneratedAsIdentityColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GeneratedAsIdentityColumnConstraint {
     #[serde(default)]
@@ -10407,17 +10481,17 @@ pub struct GeneratedAsIdentityColumnConstraint {
 
 /// AutoIncrementColumnConstraint - MySQL/TSQL auto-increment marker
 /// TSQL: outputs "IDENTITY"
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AutoIncrementColumnConstraint;
 
 /// CommentColumnConstraint - Column comment marker
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CommentColumnConstraint;
 
 /// GeneratedAsRowColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GeneratedAsRowColumnConstraint {
     #[serde(default)]
@@ -10427,7 +10501,7 @@ pub struct GeneratedAsRowColumnConstraint {
 }
 
 /// IndexColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IndexColumnConstraint {
     #[serde(default)]
@@ -10447,7 +10521,7 @@ pub struct IndexColumnConstraint {
 }
 
 /// MaskingPolicyColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MaskingPolicyColumnConstraint {
     pub this: Box<Expression>,
@@ -10456,7 +10530,7 @@ pub struct MaskingPolicyColumnConstraint {
 }
 
 /// NotNullColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NotNullColumnConstraint {
     #[serde(default)]
@@ -10464,7 +10538,7 @@ pub struct NotNullColumnConstraint {
 }
 
 /// DefaultColumnConstraint - DEFAULT value for a column
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DefaultColumnConstraint {
     pub this: Box<Expression>,
@@ -10474,7 +10548,7 @@ pub struct DefaultColumnConstraint {
 }
 
 /// PrimaryKeyColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PrimaryKeyColumnConstraint {
     #[serde(default)]
@@ -10484,7 +10558,7 @@ pub struct PrimaryKeyColumnConstraint {
 }
 
 /// UniqueColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UniqueColumnConstraint {
     #[serde(default)]
@@ -10500,7 +10574,7 @@ pub struct UniqueColumnConstraint {
 }
 
 /// WatermarkColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WatermarkColumnConstraint {
     pub this: Box<Expression>,
@@ -10508,7 +10582,7 @@ pub struct WatermarkColumnConstraint {
 }
 
 /// ComputedColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ComputedColumnConstraint {
     pub this: Box<Expression>,
@@ -10521,7 +10595,7 @@ pub struct ComputedColumnConstraint {
 }
 
 /// InOutColumnConstraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct InOutColumnConstraint {
     #[serde(default)]
@@ -10531,14 +10605,14 @@ pub struct InOutColumnConstraint {
 }
 
 /// PathColumnConstraint - PATH 'xpath' for XMLTABLE/JSON_TABLE columns
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PathColumnConstraint {
     pub this: Box<Expression>,
 }
 
 /// Constraint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Constraint {
     pub this: Box<Expression>,
@@ -10547,7 +10621,7 @@ pub struct Constraint {
 }
 
 /// Export
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Export {
     pub this: Box<Expression>,
@@ -10558,7 +10632,7 @@ pub struct Export {
 }
 
 /// Filter
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Filter {
     pub this: Box<Expression>,
@@ -10566,7 +10640,7 @@ pub struct Filter {
 }
 
 /// Changes
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Changes {
     #[serde(default)]
@@ -10578,7 +10652,7 @@ pub struct Changes {
 }
 
 /// Directory
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Directory {
     pub this: Box<Expression>,
@@ -10589,7 +10663,7 @@ pub struct Directory {
 }
 
 /// ForeignKey
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ForeignKey {
     #[serde(default)]
@@ -10605,7 +10679,7 @@ pub struct ForeignKey {
 }
 
 /// ColumnPrefix
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ColumnPrefix {
     pub this: Box<Expression>,
@@ -10613,7 +10687,7 @@ pub struct ColumnPrefix {
 }
 
 /// PrimaryKey
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PrimaryKey {
     #[serde(default)]
@@ -10627,7 +10701,7 @@ pub struct PrimaryKey {
 }
 
 /// Into
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IntoClause {
     #[serde(default)]
@@ -10643,7 +10717,7 @@ pub struct IntoClause {
 }
 
 /// JoinHint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JoinHint {
     pub this: Box<Expression>,
@@ -10652,7 +10726,7 @@ pub struct JoinHint {
 }
 
 /// Opclass
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Opclass {
     pub this: Box<Expression>,
@@ -10660,7 +10734,7 @@ pub struct Opclass {
 }
 
 /// Index
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Index {
     #[serde(default)]
@@ -10678,7 +10752,7 @@ pub struct Index {
 }
 
 /// IndexParameters
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IndexParameters {
     #[serde(default)]
@@ -10700,7 +10774,7 @@ pub struct IndexParameters {
 }
 
 /// ConditionalInsert
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConditionalInsert {
     pub this: Box<Expression>,
@@ -10711,7 +10785,7 @@ pub struct ConditionalInsert {
 }
 
 /// MultitableInserts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MultitableInserts {
     #[serde(default)]
@@ -10728,7 +10802,7 @@ pub struct MultitableInserts {
 }
 
 /// OnConflict
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OnConflict {
     #[serde(default)]
@@ -10748,7 +10822,7 @@ pub struct OnConflict {
 }
 
 /// OnCondition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OnCondition {
     #[serde(default)]
@@ -10760,7 +10834,7 @@ pub struct OnCondition {
 }
 
 /// Returning
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Returning {
     #[serde(default)]
@@ -10770,7 +10844,7 @@ pub struct Returning {
 }
 
 /// Introducer
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Introducer {
     pub this: Box<Expression>,
@@ -10778,7 +10852,7 @@ pub struct Introducer {
 }
 
 /// PartitionRange
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionRange {
     pub this: Box<Expression>,
@@ -10789,7 +10863,7 @@ pub struct PartitionRange {
 }
 
 /// Group
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Group {
     #[serde(default)]
@@ -10808,7 +10882,7 @@ pub struct Group {
 }
 
 /// Cube
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cube {
     #[serde(default)]
@@ -10816,7 +10890,7 @@ pub struct Cube {
 }
 
 /// Rollup
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rollup {
     #[serde(default)]
@@ -10824,7 +10898,7 @@ pub struct Rollup {
 }
 
 /// GroupingSets
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupingSets {
     #[serde(default)]
@@ -10832,7 +10906,7 @@ pub struct GroupingSets {
 }
 
 /// LimitOptions
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LimitOptions {
     #[serde(default)]
@@ -10844,7 +10918,7 @@ pub struct LimitOptions {
 }
 
 /// Lateral
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Lateral {
     pub this: Box<Expression>,
@@ -10867,7 +10941,7 @@ pub struct Lateral {
 }
 
 /// TableFromRows
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TableFromRows {
     pub this: Box<Expression>,
@@ -10883,7 +10957,7 @@ pub struct TableFromRows {
 
 /// RowsFrom - PostgreSQL ROWS FROM (func1(args) AS alias1(...), func2(args) AS alias2(...)) syntax
 /// Used for set-returning functions with typed column definitions
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowsFrom {
     /// List of function expressions, each potentially with an alias and typed columns
@@ -10897,7 +10971,7 @@ pub struct RowsFrom {
 }
 
 /// WithFill
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithFill {
     #[serde(default)]
@@ -10913,7 +10987,7 @@ pub struct WithFill {
 }
 
 /// Property
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Property {
     pub this: Box<Expression>,
@@ -10922,7 +10996,7 @@ pub struct Property {
 }
 
 /// GrantPrivilege
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GrantPrivilege {
     pub this: Box<Expression>,
@@ -10931,7 +11005,7 @@ pub struct GrantPrivilege {
 }
 
 /// AllowedValuesProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AllowedValuesProperty {
     #[serde(default)]
@@ -10939,42 +11013,42 @@ pub struct AllowedValuesProperty {
 }
 
 /// AlgorithmProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlgorithmProperty {
     pub this: Box<Expression>,
 }
 
 /// AutoIncrementProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AutoIncrementProperty {
     pub this: Box<Expression>,
 }
 
 /// AutoRefreshProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AutoRefreshProperty {
     pub this: Box<Expression>,
 }
 
 /// BackupProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BackupProperty {
     pub this: Box<Expression>,
 }
 
 /// BuildProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BuildProperty {
     pub this: Box<Expression>,
 }
 
 /// BlockCompressionProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct BlockCompressionProperty {
     #[serde(default)]
@@ -10990,7 +11064,7 @@ pub struct BlockCompressionProperty {
 }
 
 /// CharacterSetProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CharacterSetProperty {
     pub this: Box<Expression>,
@@ -10999,7 +11073,7 @@ pub struct CharacterSetProperty {
 }
 
 /// ChecksumProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ChecksumProperty {
     #[serde(default)]
@@ -11009,7 +11083,7 @@ pub struct ChecksumProperty {
 }
 
 /// CollateProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CollateProperty {
     pub this: Box<Expression>,
@@ -11018,7 +11092,7 @@ pub struct CollateProperty {
 }
 
 /// DataBlocksizeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DataBlocksizeProperty {
     #[serde(default)]
@@ -11034,9 +11108,11 @@ pub struct DataBlocksizeProperty {
 }
 
 /// DataDeletionProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DataDeletionProperty {
+    /// Syntax marker for the ON/OFF keyword, not a transformable boolean expression.
+    #[ast(skip)]
     pub on: Box<Expression>,
     #[serde(default)]
     pub filter_column: Option<Box<Expression>>,
@@ -11045,21 +11121,21 @@ pub struct DataDeletionProperty {
 }
 
 /// DefinerProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DefinerProperty {
     pub this: Box<Expression>,
 }
 
 /// DistKeyProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DistKeyProperty {
     pub this: Box<Expression>,
 }
 
 /// DistributedByProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DistributedByProperty {
     #[serde(default)]
@@ -11072,14 +11148,14 @@ pub struct DistributedByProperty {
 }
 
 /// DistStyleProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DistStyleProperty {
     pub this: Box<Expression>,
 }
 
 /// DuplicateKeyProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DuplicateKeyProperty {
     #[serde(default)]
@@ -11087,28 +11163,28 @@ pub struct DuplicateKeyProperty {
 }
 
 /// EngineProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EngineProperty {
     pub this: Box<Expression>,
 }
 
 /// ToTableProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToTableProperty {
     pub this: Box<Expression>,
 }
 
 /// ExecuteAsProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExecuteAsProperty {
     pub this: Box<Expression>,
 }
 
 /// ExternalProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ExternalProperty {
     #[serde(default)]
@@ -11116,7 +11192,7 @@ pub struct ExternalProperty {
 }
 
 /// FallbackProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FallbackProperty {
     #[serde(default)]
@@ -11126,7 +11202,7 @@ pub struct FallbackProperty {
 }
 
 /// FileFormatProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FileFormatProperty {
     #[serde(default)]
@@ -11138,7 +11214,7 @@ pub struct FileFormatProperty {
 }
 
 /// CredentialsProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CredentialsProperty {
     #[serde(default)]
@@ -11146,7 +11222,7 @@ pub struct CredentialsProperty {
 }
 
 /// FreespaceProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FreespaceProperty {
     pub this: Box<Expression>,
@@ -11155,7 +11231,7 @@ pub struct FreespaceProperty {
 }
 
 /// InheritsProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct InheritsProperty {
     #[serde(default)]
@@ -11163,21 +11239,21 @@ pub struct InheritsProperty {
 }
 
 /// InputModelProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct InputModelProperty {
     pub this: Box<Expression>,
 }
 
 /// OutputModelProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OutputModelProperty {
     pub this: Box<Expression>,
 }
 
 /// IsolatedLoadingProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IsolatedLoadingProperty {
     #[serde(default)]
@@ -11189,7 +11265,7 @@ pub struct IsolatedLoadingProperty {
 }
 
 /// JournalProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JournalProperty {
     #[serde(default)]
@@ -11205,14 +11281,14 @@ pub struct JournalProperty {
 }
 
 /// LanguageProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LanguageProperty {
     pub this: Box<Expression>,
 }
 
 /// EnviromentProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EnviromentProperty {
     #[serde(default)]
@@ -11220,7 +11296,7 @@ pub struct EnviromentProperty {
 }
 
 /// ClusteredByProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ClusteredByProperty {
     #[serde(default)]
@@ -11232,7 +11308,7 @@ pub struct ClusteredByProperty {
 }
 
 /// DictProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DictProperty {
     pub this: Box<Expression>,
@@ -11242,7 +11318,7 @@ pub struct DictProperty {
 }
 
 /// DictRange
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DictRange {
     pub this: Box<Expression>,
@@ -11253,14 +11329,14 @@ pub struct DictRange {
 }
 
 /// OnCluster
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OnCluster {
     pub this: Box<Expression>,
 }
 
 /// LikeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LikeProperty {
     pub this: Box<Expression>,
@@ -11269,21 +11345,21 @@ pub struct LikeProperty {
 }
 
 /// LocationProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LocationProperty {
     pub this: Box<Expression>,
 }
 
 /// LockProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LockProperty {
     pub this: Box<Expression>,
 }
 
 /// LockingProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LockingProperty {
     #[serde(default)]
@@ -11298,7 +11374,7 @@ pub struct LockingProperty {
 }
 
 /// LogProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct LogProperty {
     #[serde(default)]
@@ -11306,7 +11382,7 @@ pub struct LogProperty {
 }
 
 /// MaterializedProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MaterializedProperty {
     #[serde(default)]
@@ -11314,7 +11390,7 @@ pub struct MaterializedProperty {
 }
 
 /// MergeBlockRatioProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MergeBlockRatioProperty {
     #[serde(default)]
@@ -11328,14 +11404,14 @@ pub struct MergeBlockRatioProperty {
 }
 
 /// OnProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OnProperty {
     pub this: Box<Expression>,
 }
 
 /// OnCommitProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OnCommitProperty {
     #[serde(default)]
@@ -11343,14 +11419,14 @@ pub struct OnCommitProperty {
 }
 
 /// PartitionedByProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionedByProperty {
     pub this: Box<Expression>,
 }
 
 /// BigQuery PARTITION BY property in CREATE TABLE statements.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByProperty {
     #[serde(default)]
@@ -11358,7 +11434,7 @@ pub struct PartitionByProperty {
 }
 
 /// PartitionedByBucket
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionedByBucket {
     pub this: Box<Expression>,
@@ -11366,7 +11442,7 @@ pub struct PartitionedByBucket {
 }
 
 /// BigQuery CLUSTER BY property in CREATE TABLE statements.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ClusterByColumnsProperty {
     #[serde(default)]
@@ -11374,7 +11450,7 @@ pub struct ClusterByColumnsProperty {
 }
 
 /// PartitionByTruncate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByTruncate {
     pub this: Box<Expression>,
@@ -11382,7 +11458,7 @@ pub struct PartitionByTruncate {
 }
 
 /// PartitionByRangeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByRangeProperty {
     #[serde(default)]
@@ -11392,7 +11468,7 @@ pub struct PartitionByRangeProperty {
 }
 
 /// PartitionByRangePropertyDynamic
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByRangePropertyDynamic {
     #[serde(default)]
@@ -11409,7 +11485,7 @@ pub struct PartitionByRangePropertyDynamic {
 }
 
 /// PartitionByListProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByListProperty {
     #[serde(default)]
@@ -11419,7 +11495,7 @@ pub struct PartitionByListProperty {
 }
 
 /// PartitionList
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionList {
     pub this: Box<Expression>,
@@ -11428,7 +11504,7 @@ pub struct PartitionList {
 }
 
 /// Partition - represents PARTITION/SUBPARTITION clause
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Partition {
     pub expressions: Vec<Expression>,
@@ -11438,7 +11514,7 @@ pub struct Partition {
 
 /// RefreshTriggerProperty - Doris REFRESH clause for materialized views
 /// e.g., REFRESH COMPLETE ON MANUAL, REFRESH AUTO ON SCHEDULE EVERY 5 MINUTE
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RefreshTriggerProperty {
     /// Method: COMPLETE or AUTO
@@ -11458,7 +11534,7 @@ pub struct RefreshTriggerProperty {
 }
 
 /// UniqueKeyProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UniqueKeyProperty {
     #[serde(default)]
@@ -11466,14 +11542,14 @@ pub struct UniqueKeyProperty {
 }
 
 /// RollupProperty - StarRocks ROLLUP (index_name(col1, col2), ...)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RollupProperty {
     pub expressions: Vec<RollupIndex>,
 }
 
 /// RollupIndex - A single rollup index: name(col1, col2)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RollupIndex {
     pub name: Identifier,
@@ -11481,7 +11557,7 @@ pub struct RollupIndex {
 }
 
 /// PartitionBoundSpec
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionBoundSpec {
     #[serde(default)]
@@ -11495,7 +11571,7 @@ pub struct PartitionBoundSpec {
 }
 
 /// PartitionedOfProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionedOfProperty {
     pub this: Box<Expression>,
@@ -11503,14 +11579,14 @@ pub struct PartitionedOfProperty {
 }
 
 /// RemoteWithConnectionModelProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RemoteWithConnectionModelProperty {
     pub this: Box<Expression>,
 }
 
 /// ReturnsProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ReturnsProperty {
     #[serde(default)]
@@ -11524,14 +11600,14 @@ pub struct ReturnsProperty {
 }
 
 /// RowFormatProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowFormatProperty {
     pub this: Box<Expression>,
 }
 
 /// RowFormatDelimitedProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowFormatDelimitedProperty {
     #[serde(default)]
@@ -11551,7 +11627,7 @@ pub struct RowFormatDelimitedProperty {
 }
 
 /// RowFormatSerdeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RowFormatSerdeProperty {
     pub this: Box<Expression>,
@@ -11560,7 +11636,7 @@ pub struct RowFormatSerdeProperty {
 }
 
 /// QueryTransform
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct QueryTransform {
     #[serde(default)]
@@ -11580,28 +11656,28 @@ pub struct QueryTransform {
 }
 
 /// SampleProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SampleProperty {
     pub this: Box<Expression>,
 }
 
 /// SecurityProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SecurityProperty {
     pub this: Box<Expression>,
 }
 
 /// SchemaCommentProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SchemaCommentProperty {
     pub this: Box<Expression>,
 }
 
 /// SemanticView
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SemanticView {
     pub this: Box<Expression>,
@@ -11616,7 +11692,7 @@ pub struct SemanticView {
 }
 
 /// SerdeProperties
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SerdeProperties {
     #[serde(default)]
@@ -11626,7 +11702,7 @@ pub struct SerdeProperties {
 }
 
 /// SetProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SetProperty {
     #[serde(default)]
@@ -11634,7 +11710,7 @@ pub struct SetProperty {
 }
 
 /// SharingProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SharingProperty {
     #[serde(default)]
@@ -11642,14 +11718,14 @@ pub struct SharingProperty {
 }
 
 /// SetConfigProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SetConfigProperty {
     pub this: Box<Expression>,
 }
 
 /// SettingsProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SettingsProperty {
     #[serde(default)]
@@ -11657,7 +11733,7 @@ pub struct SettingsProperty {
 }
 
 /// SortKeyProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SortKeyProperty {
     pub this: Box<Expression>,
@@ -11666,35 +11742,35 @@ pub struct SortKeyProperty {
 }
 
 /// SqlReadWriteProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SqlReadWriteProperty {
     pub this: Box<Expression>,
 }
 
 /// SqlSecurityProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SqlSecurityProperty {
     pub this: Box<Expression>,
 }
 
 /// StabilityProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StabilityProperty {
     pub this: Box<Expression>,
 }
 
 /// StorageHandlerProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StorageHandlerProperty {
     pub this: Box<Expression>,
 }
 
 /// TemporaryProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TemporaryProperty {
     #[serde(default)]
@@ -11702,7 +11778,7 @@ pub struct TemporaryProperty {
 }
 
 /// Tags
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Tags {
     #[serde(default)]
@@ -11710,7 +11786,7 @@ pub struct Tags {
 }
 
 /// TransformModelProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TransformModelProperty {
     #[serde(default)]
@@ -11718,7 +11794,7 @@ pub struct TransformModelProperty {
 }
 
 /// TransientProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TransientProperty {
     #[serde(default)]
@@ -11726,21 +11802,21 @@ pub struct TransientProperty {
 }
 
 /// UsingTemplateProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UsingTemplateProperty {
     pub this: Box<Expression>,
 }
 
 /// ViewAttributeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ViewAttributeProperty {
     pub this: Box<Expression>,
 }
 
 /// VolatileProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct VolatileProperty {
     #[serde(default)]
@@ -11748,7 +11824,7 @@ pub struct VolatileProperty {
 }
 
 /// WithDataProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithDataProperty {
     #[serde(default)]
@@ -11758,21 +11834,21 @@ pub struct WithDataProperty {
 }
 
 /// WithJournalTableProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithJournalTableProperty {
     pub this: Box<Expression>,
 }
 
 /// WithSchemaBindingProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithSchemaBindingProperty {
     pub this: Box<Expression>,
 }
 
 /// WithSystemVersioningProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithSystemVersioningProperty {
     #[serde(default)]
@@ -11788,7 +11864,7 @@ pub struct WithSystemVersioningProperty {
 }
 
 /// WithProcedureOptions
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithProcedureOptions {
     #[serde(default)]
@@ -11796,7 +11872,7 @@ pub struct WithProcedureOptions {
 }
 
 /// EncodeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EncodeProperty {
     pub this: Box<Expression>,
@@ -11807,7 +11883,7 @@ pub struct EncodeProperty {
 }
 
 /// IncludeProperty
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IncludeProperty {
     pub this: Box<Expression>,
@@ -11818,7 +11894,7 @@ pub struct IncludeProperty {
 }
 
 /// Properties
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Properties {
     #[serde(default)]
@@ -11826,7 +11902,7 @@ pub struct Properties {
 }
 
 /// Key/value pair in a BigQuery OPTIONS (...) clause.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OptionEntry {
     pub key: Identifier,
@@ -11834,7 +11910,7 @@ pub struct OptionEntry {
 }
 
 /// Typed BigQuery OPTIONS (...) property for CREATE TABLE and related DDL.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OptionsProperty {
     #[serde(default)]
@@ -11842,7 +11918,7 @@ pub struct OptionsProperty {
 }
 
 /// InputOutputFormat
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct InputOutputFormat {
     #[serde(default)]
@@ -11852,7 +11928,7 @@ pub struct InputOutputFormat {
 }
 
 /// Reference
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Reference {
     pub this: Box<Expression>,
@@ -11863,7 +11939,7 @@ pub struct Reference {
 }
 
 /// QueryOption
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct QueryOption {
     pub this: Box<Expression>,
@@ -11872,7 +11948,7 @@ pub struct QueryOption {
 }
 
 /// WithTableHint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WithTableHint {
     #[serde(default)]
@@ -11880,7 +11956,7 @@ pub struct WithTableHint {
 }
 
 /// IndexTableHint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IndexTableHint {
     pub this: Box<Expression>,
@@ -11891,7 +11967,7 @@ pub struct IndexTableHint {
 }
 
 /// Get
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Get {
     pub this: Box<Expression>,
@@ -11902,7 +11978,7 @@ pub struct Get {
 }
 
 /// SetOperation
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SetOperation {
     #[serde(default)]
@@ -11922,21 +11998,21 @@ pub struct SetOperation {
 }
 
 /// Var - Simple variable reference (for SQL variables, keywords as values)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Var {
     pub this: String,
 }
 
 /// Variadic - represents VARIADIC prefix on function arguments (PostgreSQL)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Variadic {
     pub this: Box<Expression>,
 }
 
 /// Version
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Version {
     pub this: Box<Expression>,
@@ -11946,7 +12022,7 @@ pub struct Version {
 }
 
 /// Schema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Schema {
     #[serde(default)]
@@ -11956,7 +12032,7 @@ pub struct Schema {
 }
 
 /// Lock
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Lock {
     #[serde(default)]
@@ -11971,7 +12047,7 @@ pub struct Lock {
 
 /// TableSample - wraps an expression with a TABLESAMPLE clause
 /// Used when TABLESAMPLE follows a non-Table expression (subquery, function, etc.)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TableSample {
     /// The expression being sampled (subquery, function, etc.)
@@ -12001,7 +12077,7 @@ pub struct TableSample {
 }
 
 /// Tags are used for generating arbitrary sql like SELECT <span>x</span>.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Tag {
     #[serde(default)]
@@ -12013,7 +12089,7 @@ pub struct Tag {
 }
 
 /// UnpivotColumns
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnpivotColumns {
     pub this: Box<Expression>,
@@ -12022,7 +12098,7 @@ pub struct UnpivotColumns {
 }
 
 /// SessionParameter
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SessionParameter {
     pub this: Box<Expression>,
@@ -12031,21 +12107,21 @@ pub struct SessionParameter {
 }
 
 /// PseudoType
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PseudoType {
     pub this: Box<Expression>,
 }
 
 /// ObjectIdentifier
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ObjectIdentifier {
     pub this: Box<Expression>,
 }
 
 /// Transaction
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Transaction {
     #[serde(default)]
@@ -12057,7 +12133,7 @@ pub struct Transaction {
 }
 
 /// Commit
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Commit {
     #[serde(default)]
@@ -12069,7 +12145,7 @@ pub struct Commit {
 }
 
 /// Rollback
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rollback {
     #[serde(default)]
@@ -12079,7 +12155,7 @@ pub struct Rollback {
 }
 
 /// AlterSession
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AlterSession {
     #[serde(default)]
@@ -12089,7 +12165,7 @@ pub struct AlterSession {
 }
 
 /// Analyze
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Analyze {
     #[serde(default)]
@@ -12112,7 +12188,7 @@ pub struct Analyze {
 }
 
 /// AnalyzeStatistics
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeStatistics {
     pub kind: String,
@@ -12125,7 +12201,7 @@ pub struct AnalyzeStatistics {
 }
 
 /// AnalyzeHistogram
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeHistogram {
     pub this: Box<Expression>,
@@ -12138,7 +12214,7 @@ pub struct AnalyzeHistogram {
 }
 
 /// AnalyzeSample
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeSample {
     pub kind: String,
@@ -12147,7 +12223,7 @@ pub struct AnalyzeSample {
 }
 
 /// AnalyzeListChainedRows
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeListChainedRows {
     #[serde(default)]
@@ -12155,7 +12231,7 @@ pub struct AnalyzeListChainedRows {
 }
 
 /// AnalyzeDelete
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeDelete {
     #[serde(default)]
@@ -12163,7 +12239,7 @@ pub struct AnalyzeDelete {
 }
 
 /// AnalyzeWith
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeWith {
     #[serde(default)]
@@ -12171,7 +12247,7 @@ pub struct AnalyzeWith {
 }
 
 /// AnalyzeValidate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnalyzeValidate {
     pub kind: String,
@@ -12182,7 +12258,7 @@ pub struct AnalyzeValidate {
 }
 
 /// AddPartition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AddPartition {
     pub this: Box<Expression>,
@@ -12193,7 +12269,7 @@ pub struct AddPartition {
 }
 
 /// AttachOption
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AttachOption {
     pub this: Box<Expression>,
@@ -12202,7 +12278,7 @@ pub struct AttachOption {
 }
 
 /// DropPartition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DropPartition {
     #[serde(default)]
@@ -12212,7 +12288,7 @@ pub struct DropPartition {
 }
 
 /// ReplacePartition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ReplacePartition {
     pub expression: Box<Expression>,
@@ -12221,7 +12297,7 @@ pub struct ReplacePartition {
 }
 
 /// DPipe
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DPipe {
     pub this: Box<Expression>,
@@ -12231,7 +12307,7 @@ pub struct DPipe {
 }
 
 /// Operator
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Operator {
     pub this: Box<Expression>,
@@ -12244,7 +12320,7 @@ pub struct Operator {
 }
 
 /// PivotAny
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PivotAny {
     #[serde(default)]
@@ -12252,7 +12328,7 @@ pub struct PivotAny {
 }
 
 /// Aliases
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Aliases {
     pub this: Box<Expression>,
@@ -12261,7 +12337,7 @@ pub struct Aliases {
 }
 
 /// AtIndex
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AtIndex {
     pub this: Box<Expression>,
@@ -12269,7 +12345,7 @@ pub struct AtIndex {
 }
 
 /// FromTimeZone
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FromTimeZone {
     pub this: Box<Expression>,
@@ -12278,7 +12354,7 @@ pub struct FromTimeZone {
 }
 
 /// Format override for a column in Teradata
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FormatPhrase {
     pub this: Box<Expression>,
@@ -12286,7 +12362,7 @@ pub struct FormatPhrase {
 }
 
 /// ForIn
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ForIn {
     pub this: Box<Expression>,
@@ -12294,7 +12370,7 @@ pub struct ForIn {
 }
 
 /// Automatically converts unit arg into a var.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeUnit {
     #[serde(default)]
@@ -12302,7 +12378,7 @@ pub struct TimeUnit {
 }
 
 /// IntervalOp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct IntervalOp {
     #[serde(default)]
@@ -12311,7 +12387,7 @@ pub struct IntervalOp {
 }
 
 /// HavingMax
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct HavingMax {
     pub this: Box<Expression>,
@@ -12321,7 +12397,7 @@ pub struct HavingMax {
 }
 
 /// CosineDistance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CosineDistance {
     pub this: Box<Expression>,
@@ -12329,7 +12405,7 @@ pub struct CosineDistance {
 }
 
 /// DotProduct
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DotProduct {
     pub this: Box<Expression>,
@@ -12337,7 +12413,7 @@ pub struct DotProduct {
 }
 
 /// EuclideanDistance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EuclideanDistance {
     pub this: Box<Expression>,
@@ -12345,7 +12421,7 @@ pub struct EuclideanDistance {
 }
 
 /// ManhattanDistance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ManhattanDistance {
     pub this: Box<Expression>,
@@ -12353,7 +12429,7 @@ pub struct ManhattanDistance {
 }
 
 /// JarowinklerSimilarity
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JarowinklerSimilarity {
     pub this: Box<Expression>,
@@ -12361,7 +12437,7 @@ pub struct JarowinklerSimilarity {
 }
 
 /// Booland
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Booland {
     pub this: Box<Expression>,
@@ -12369,7 +12445,7 @@ pub struct Booland {
 }
 
 /// Boolor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Boolor {
     pub this: Box<Expression>,
@@ -12377,7 +12453,7 @@ pub struct Boolor {
 }
 
 /// ParameterizedAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParameterizedAgg {
     pub this: Box<Expression>,
@@ -12388,7 +12464,7 @@ pub struct ParameterizedAgg {
 }
 
 /// ArgMax
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArgMax {
     pub this: Box<Expression>,
@@ -12398,7 +12474,7 @@ pub struct ArgMax {
 }
 
 /// ArgMin
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArgMin {
     pub this: Box<Expression>,
@@ -12408,7 +12484,7 @@ pub struct ArgMin {
 }
 
 /// ApproxTopK
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxTopK {
     pub this: Box<Expression>,
@@ -12419,7 +12495,7 @@ pub struct ApproxTopK {
 }
 
 /// ApproxTopKAccumulate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxTopKAccumulate {
     pub this: Box<Expression>,
@@ -12428,7 +12504,7 @@ pub struct ApproxTopKAccumulate {
 }
 
 /// ApproxTopKCombine
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxTopKCombine {
     pub this: Box<Expression>,
@@ -12437,7 +12513,7 @@ pub struct ApproxTopKCombine {
 }
 
 /// ApproxTopKEstimate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxTopKEstimate {
     pub this: Box<Expression>,
@@ -12446,7 +12522,7 @@ pub struct ApproxTopKEstimate {
 }
 
 /// ApproxTopSum
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxTopSum {
     pub this: Box<Expression>,
@@ -12456,7 +12532,7 @@ pub struct ApproxTopSum {
 }
 
 /// ApproxQuantiles
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxQuantiles {
     pub this: Box<Expression>,
@@ -12465,7 +12541,7 @@ pub struct ApproxQuantiles {
 }
 
 /// Minhash
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Minhash {
     pub this: Box<Expression>,
@@ -12474,7 +12550,7 @@ pub struct Minhash {
 }
 
 /// FarmFingerprint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FarmFingerprint {
     #[serde(default)]
@@ -12482,7 +12558,7 @@ pub struct FarmFingerprint {
 }
 
 /// Float64
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Float64 {
     pub this: Box<Expression>,
@@ -12491,7 +12567,7 @@ pub struct Float64 {
 }
 
 /// Transform
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Transform {
     pub this: Box<Expression>,
@@ -12499,7 +12575,7 @@ pub struct Transform {
 }
 
 /// Translate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Translate {
     pub this: Box<Expression>,
@@ -12510,7 +12586,7 @@ pub struct Translate {
 }
 
 /// Grouping
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Grouping {
     #[serde(default)]
@@ -12518,7 +12594,7 @@ pub struct Grouping {
 }
 
 /// GroupingId
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupingId {
     #[serde(default)]
@@ -12526,7 +12602,7 @@ pub struct GroupingId {
 }
 
 /// Anonymous
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Anonymous {
     pub this: Box<Expression>,
@@ -12535,7 +12611,7 @@ pub struct Anonymous {
 }
 
 /// AnonymousAggFunc
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AnonymousAggFunc {
     pub this: Box<Expression>,
@@ -12544,7 +12620,7 @@ pub struct AnonymousAggFunc {
 }
 
 /// CombinedAggFunc
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CombinedAggFunc {
     pub this: Box<Expression>,
@@ -12553,7 +12629,7 @@ pub struct CombinedAggFunc {
 }
 
 /// CombinedParameterizedAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CombinedParameterizedAgg {
     pub this: Box<Expression>,
@@ -12564,7 +12640,7 @@ pub struct CombinedParameterizedAgg {
 }
 
 /// HashAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct HashAgg {
     pub this: Box<Expression>,
@@ -12573,7 +12649,7 @@ pub struct HashAgg {
 }
 
 /// Hll
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Hll {
     pub this: Box<Expression>,
@@ -12582,7 +12658,7 @@ pub struct Hll {
 }
 
 /// Apply
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Apply {
     pub this: Box<Expression>,
@@ -12590,7 +12666,7 @@ pub struct Apply {
 }
 
 /// ToBoolean
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToBoolean {
     pub this: Box<Expression>,
@@ -12599,7 +12675,7 @@ pub struct ToBoolean {
 }
 
 /// List
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct List {
     #[serde(default)]
@@ -12610,7 +12686,7 @@ pub struct List {
 /// Can hold either:
 /// - A SELECT subquery (MAP(SELECT 'a', 1))
 /// - A struct with key=>value entries (MAP['a' => 1, 'b' => 2])
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToMap {
     /// Either a Select subquery or a Struct containing PropertyEQ entries
@@ -12618,7 +12694,7 @@ pub struct ToMap {
 }
 
 /// Pad
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Pad {
     pub this: Box<Expression>,
@@ -12630,7 +12706,7 @@ pub struct Pad {
 }
 
 /// ToChar
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToChar {
     pub this: Box<Expression>,
@@ -12643,7 +12719,7 @@ pub struct ToChar {
 }
 
 /// StringFunc - String type conversion function (BigQuery STRING)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StringFunc {
     pub this: Box<Expression>,
@@ -12652,7 +12728,7 @@ pub struct StringFunc {
 }
 
 /// ToNumber
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToNumber {
     pub this: Box<Expression>,
@@ -12671,7 +12747,7 @@ pub struct ToNumber {
 }
 
 /// ToDouble
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToDouble {
     pub this: Box<Expression>,
@@ -12682,7 +12758,7 @@ pub struct ToDouble {
 }
 
 /// ToDecfloat
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToDecfloat {
     pub this: Box<Expression>,
@@ -12691,7 +12767,7 @@ pub struct ToDecfloat {
 }
 
 /// TryToDecfloat
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TryToDecfloat {
     pub this: Box<Expression>,
@@ -12700,7 +12776,7 @@ pub struct TryToDecfloat {
 }
 
 /// ToFile
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToFile {
     pub this: Box<Expression>,
@@ -12711,7 +12787,7 @@ pub struct ToFile {
 }
 
 /// Columns
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Columns {
     pub this: Box<Expression>,
@@ -12720,7 +12796,7 @@ pub struct Columns {
 }
 
 /// ConvertToCharset
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConvertToCharset {
     pub this: Box<Expression>,
@@ -12731,7 +12807,7 @@ pub struct ConvertToCharset {
 }
 
 /// ConvertTimezone
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ConvertTimezone {
     #[serde(default)]
@@ -12745,7 +12821,7 @@ pub struct ConvertTimezone {
 }
 
 /// GenerateSeries
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GenerateSeries {
     #[serde(default)]
@@ -12759,7 +12835,7 @@ pub struct GenerateSeries {
 }
 
 /// AIAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AIAgg {
     pub this: Box<Expression>,
@@ -12767,7 +12843,7 @@ pub struct AIAgg {
 }
 
 /// AIClassify
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AIClassify {
     pub this: Box<Expression>,
@@ -12778,7 +12854,7 @@ pub struct AIClassify {
 }
 
 /// ArrayAll
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayAll {
     pub this: Box<Expression>,
@@ -12786,7 +12862,7 @@ pub struct ArrayAll {
 }
 
 /// ArrayAny
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayAny {
     pub this: Box<Expression>,
@@ -12794,7 +12870,7 @@ pub struct ArrayAny {
 }
 
 /// ArrayConstructCompact
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArrayConstructCompact {
     #[serde(default)]
@@ -12802,7 +12878,7 @@ pub struct ArrayConstructCompact {
 }
 
 /// StPoint
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StPoint {
     pub this: Box<Expression>,
@@ -12812,7 +12888,7 @@ pub struct StPoint {
 }
 
 /// StDistance
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StDistance {
     pub this: Box<Expression>,
@@ -12822,7 +12898,7 @@ pub struct StDistance {
 }
 
 /// StringToArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StringToArray {
     pub this: Box<Expression>,
@@ -12833,7 +12909,7 @@ pub struct StringToArray {
 }
 
 /// ArraySum
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ArraySum {
     pub this: Box<Expression>,
@@ -12842,7 +12918,7 @@ pub struct ArraySum {
 }
 
 /// ObjectAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ObjectAgg {
     pub this: Box<Expression>,
@@ -12850,7 +12926,7 @@ pub struct ObjectAgg {
 }
 
 /// CastToStrType
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CastToStrType {
     pub this: Box<Expression>,
@@ -12859,14 +12935,14 @@ pub struct CastToStrType {
 }
 
 /// CheckJson
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CheckJson {
     pub this: Box<Expression>,
 }
 
 /// CheckXml
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CheckXml {
     pub this: Box<Expression>,
@@ -12875,7 +12951,7 @@ pub struct CheckXml {
 }
 
 /// TranslateCharacters
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TranslateCharacters {
     pub this: Box<Expression>,
@@ -12885,7 +12961,7 @@ pub struct TranslateCharacters {
 }
 
 /// CurrentSchemas
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentSchemas {
     #[serde(default)]
@@ -12893,7 +12969,7 @@ pub struct CurrentSchemas {
 }
 
 /// CurrentDatetime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentDatetime {
     #[serde(default)]
@@ -12901,7 +12977,7 @@ pub struct CurrentDatetime {
 }
 
 /// Localtime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Localtime {
     #[serde(default)]
@@ -12909,7 +12985,7 @@ pub struct Localtime {
 }
 
 /// Localtimestamp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Localtimestamp {
     #[serde(default)]
@@ -12917,7 +12993,7 @@ pub struct Localtimestamp {
 }
 
 /// Systimestamp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Systimestamp {
     #[serde(default)]
@@ -12925,7 +13001,7 @@ pub struct Systimestamp {
 }
 
 /// CurrentSchema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentSchema {
     #[serde(default)]
@@ -12933,7 +13009,7 @@ pub struct CurrentSchema {
 }
 
 /// CurrentUser
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CurrentUser {
     #[serde(default)]
@@ -12941,17 +13017,17 @@ pub struct CurrentUser {
 }
 
 /// SessionUser - MySQL/PostgreSQL SESSION_USER function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SessionUser;
 
 /// JSONPathRoot - Represents $ in JSON path expressions
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathRoot;
 
 /// UtcTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UtcTime {
     #[serde(default)]
@@ -12959,7 +13035,7 @@ pub struct UtcTime {
 }
 
 /// UtcTimestamp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UtcTimestamp {
     #[serde(default)]
@@ -12967,7 +13043,7 @@ pub struct UtcTimestamp {
 }
 
 /// TimestampFunc - TIMESTAMP constructor function
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampFunc {
     #[serde(default)]
@@ -12981,7 +13057,7 @@ pub struct TimestampFunc {
 }
 
 /// DateBin
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateBin {
     pub this: Box<Expression>,
@@ -12995,7 +13071,7 @@ pub struct DateBin {
 }
 
 /// Datetime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Datetime {
     pub this: Box<Expression>,
@@ -13004,7 +13080,7 @@ pub struct Datetime {
 }
 
 /// DatetimeAdd
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DatetimeAdd {
     pub this: Box<Expression>,
@@ -13014,7 +13090,7 @@ pub struct DatetimeAdd {
 }
 
 /// DatetimeSub
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DatetimeSub {
     pub this: Box<Expression>,
@@ -13024,7 +13100,7 @@ pub struct DatetimeSub {
 }
 
 /// DatetimeDiff
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DatetimeDiff {
     pub this: Box<Expression>,
@@ -13034,7 +13110,7 @@ pub struct DatetimeDiff {
 }
 
 /// DatetimeTrunc
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DatetimeTrunc {
     pub this: Box<Expression>,
@@ -13044,7 +13120,7 @@ pub struct DatetimeTrunc {
 }
 
 /// Dayname
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Dayname {
     pub this: Box<Expression>,
@@ -13053,7 +13129,7 @@ pub struct Dayname {
 }
 
 /// MakeInterval
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MakeInterval {
     #[serde(default)]
@@ -13073,7 +13149,7 @@ pub struct MakeInterval {
 }
 
 /// PreviousDay
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PreviousDay {
     pub this: Box<Expression>,
@@ -13081,7 +13157,7 @@ pub struct PreviousDay {
 }
 
 /// Elt
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Elt {
     pub this: Box<Expression>,
@@ -13090,7 +13166,7 @@ pub struct Elt {
 }
 
 /// TimestampAdd
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampAdd {
     pub this: Box<Expression>,
@@ -13100,7 +13176,7 @@ pub struct TimestampAdd {
 }
 
 /// TimestampSub
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampSub {
     pub this: Box<Expression>,
@@ -13110,7 +13186,7 @@ pub struct TimestampSub {
 }
 
 /// TimestampDiff
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampDiff {
     pub this: Box<Expression>,
@@ -13120,7 +13196,7 @@ pub struct TimestampDiff {
 }
 
 /// TimeSlice
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeSlice {
     pub this: Box<Expression>,
@@ -13131,7 +13207,7 @@ pub struct TimeSlice {
 }
 
 /// TimeAdd
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeAdd {
     pub this: Box<Expression>,
@@ -13141,7 +13217,7 @@ pub struct TimeAdd {
 }
 
 /// TimeSub
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeSub {
     pub this: Box<Expression>,
@@ -13151,7 +13227,7 @@ pub struct TimeSub {
 }
 
 /// TimeDiff
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeDiff {
     pub this: Box<Expression>,
@@ -13161,7 +13237,7 @@ pub struct TimeDiff {
 }
 
 /// TimeTrunc
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeTrunc {
     pub this: Box<Expression>,
@@ -13171,7 +13247,7 @@ pub struct TimeTrunc {
 }
 
 /// DateFromParts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DateFromParts {
     #[serde(default)]
@@ -13185,7 +13261,7 @@ pub struct DateFromParts {
 }
 
 /// TimeFromParts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeFromParts {
     #[serde(default)]
@@ -13203,7 +13279,7 @@ pub struct TimeFromParts {
 }
 
 /// DecodeCase
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DecodeCase {
     #[serde(default)]
@@ -13211,7 +13287,7 @@ pub struct DecodeCase {
 }
 
 /// Decrypt
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Decrypt {
     pub this: Box<Expression>,
@@ -13226,7 +13302,7 @@ pub struct Decrypt {
 }
 
 /// DecryptRaw
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DecryptRaw {
     pub this: Box<Expression>,
@@ -13245,7 +13321,7 @@ pub struct DecryptRaw {
 }
 
 /// Encode
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Encode {
     pub this: Box<Expression>,
@@ -13254,7 +13330,7 @@ pub struct Encode {
 }
 
 /// Encrypt
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Encrypt {
     pub this: Box<Expression>,
@@ -13267,7 +13343,7 @@ pub struct Encrypt {
 }
 
 /// EncryptRaw
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EncryptRaw {
     pub this: Box<Expression>,
@@ -13282,7 +13358,7 @@ pub struct EncryptRaw {
 }
 
 /// EqualNull
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct EqualNull {
     pub this: Box<Expression>,
@@ -13290,7 +13366,7 @@ pub struct EqualNull {
 }
 
 /// ToBinary
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ToBinary {
     pub this: Box<Expression>,
@@ -13301,7 +13377,7 @@ pub struct ToBinary {
 }
 
 /// Base64DecodeBinary
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Base64DecodeBinary {
     pub this: Box<Expression>,
@@ -13310,7 +13386,7 @@ pub struct Base64DecodeBinary {
 }
 
 /// Base64DecodeString
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Base64DecodeString {
     pub this: Box<Expression>,
@@ -13319,7 +13395,7 @@ pub struct Base64DecodeString {
 }
 
 /// Base64Encode
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Base64Encode {
     pub this: Box<Expression>,
@@ -13330,7 +13406,7 @@ pub struct Base64Encode {
 }
 
 /// TryBase64DecodeBinary
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TryBase64DecodeBinary {
     pub this: Box<Expression>,
@@ -13339,7 +13415,7 @@ pub struct TryBase64DecodeBinary {
 }
 
 /// TryBase64DecodeString
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TryBase64DecodeString {
     pub this: Box<Expression>,
@@ -13348,7 +13424,7 @@ pub struct TryBase64DecodeString {
 }
 
 /// GapFill
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GapFill {
     pub this: Box<Expression>,
@@ -13367,7 +13443,7 @@ pub struct GapFill {
 }
 
 /// GenerateDateArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GenerateDateArray {
     #[serde(default)]
@@ -13379,7 +13455,7 @@ pub struct GenerateDateArray {
 }
 
 /// GenerateTimestampArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GenerateTimestampArray {
     #[serde(default)]
@@ -13391,7 +13467,7 @@ pub struct GenerateTimestampArray {
 }
 
 /// GetExtract
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GetExtract {
     pub this: Box<Expression>,
@@ -13399,7 +13475,7 @@ pub struct GetExtract {
 }
 
 /// Getbit
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Getbit {
     pub this: Box<Expression>,
@@ -13409,7 +13485,7 @@ pub struct Getbit {
 }
 
 /// OverflowTruncateBehavior
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OverflowTruncateBehavior {
     #[serde(default)]
@@ -13419,7 +13495,7 @@ pub struct OverflowTruncateBehavior {
 }
 
 /// HexEncode
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct HexEncode {
     pub this: Box<Expression>,
@@ -13428,7 +13504,7 @@ pub struct HexEncode {
 }
 
 /// Compress
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Compress {
     pub this: Box<Expression>,
@@ -13437,7 +13513,7 @@ pub struct Compress {
 }
 
 /// DecompressBinary
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DecompressBinary {
     pub this: Box<Expression>,
@@ -13445,7 +13521,7 @@ pub struct DecompressBinary {
 }
 
 /// DecompressString
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct DecompressString {
     pub this: Box<Expression>,
@@ -13453,7 +13529,7 @@ pub struct DecompressString {
 }
 
 /// Xor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Xor {
     #[serde(default)]
@@ -13465,7 +13541,7 @@ pub struct Xor {
 }
 
 /// Nullif
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Nullif {
     pub this: Box<Expression>,
@@ -13473,7 +13549,7 @@ pub struct Nullif {
 }
 
 /// JSON
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSON {
     #[serde(default)]
@@ -13485,7 +13561,7 @@ pub struct JSON {
 }
 
 /// JSONPath
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPath {
     #[serde(default)]
@@ -13495,21 +13571,21 @@ pub struct JSONPath {
 }
 
 /// JSONPathFilter
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathFilter {
     pub this: Box<Expression>,
 }
 
 /// JSONPathKey
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathKey {
     pub this: Box<Expression>,
 }
 
 /// JSONPathRecursive
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathRecursive {
     #[serde(default)]
@@ -13517,14 +13593,14 @@ pub struct JSONPathRecursive {
 }
 
 /// JSONPathScript
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathScript {
     pub this: Box<Expression>,
 }
 
 /// JSONPathSlice
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathSlice {
     #[serde(default)]
@@ -13536,21 +13612,21 @@ pub struct JSONPathSlice {
 }
 
 /// JSONPathSelector
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathSelector {
     pub this: Box<Expression>,
 }
 
 /// JSONPathSubscript
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathSubscript {
     pub this: Box<Expression>,
 }
 
 /// JSONPathUnion
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONPathUnion {
     #[serde(default)]
@@ -13558,7 +13634,7 @@ pub struct JSONPathUnion {
 }
 
 /// Format
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Format {
     pub this: Box<Expression>,
@@ -13567,7 +13643,7 @@ pub struct Format {
 }
 
 /// JSONKeys
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONKeys {
     pub this: Box<Expression>,
@@ -13578,7 +13654,7 @@ pub struct JSONKeys {
 }
 
 /// JSONKeyValue
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONKeyValue {
     pub this: Box<Expression>,
@@ -13586,7 +13662,7 @@ pub struct JSONKeyValue {
 }
 
 /// JSONKeysAtDepth
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONKeysAtDepth {
     pub this: Box<Expression>,
@@ -13597,7 +13673,7 @@ pub struct JSONKeysAtDepth {
 }
 
 /// JSONObject
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONObject {
     #[serde(default)]
@@ -13613,7 +13689,7 @@ pub struct JSONObject {
 }
 
 /// JSONObjectAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONObjectAgg {
     #[serde(default)]
@@ -13629,7 +13705,7 @@ pub struct JSONObjectAgg {
 }
 
 /// JSONBObjectAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONBObjectAgg {
     pub this: Box<Expression>,
@@ -13637,7 +13713,7 @@ pub struct JSONBObjectAgg {
 }
 
 /// JSONArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONArray {
     #[serde(default)]
@@ -13651,7 +13727,7 @@ pub struct JSONArray {
 }
 
 /// JSONArrayAgg
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONArrayAgg {
     pub this: Box<Expression>,
@@ -13666,7 +13742,7 @@ pub struct JSONArrayAgg {
 }
 
 /// JSONExists
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONExists {
     pub this: Box<Expression>,
@@ -13681,7 +13757,7 @@ pub struct JSONExists {
 }
 
 /// JSONColumnDef
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONColumnDef {
     #[serde(default)]
@@ -13699,7 +13775,7 @@ pub struct JSONColumnDef {
 }
 
 /// JSONSchema
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONSchema {
     #[serde(default)]
@@ -13707,7 +13783,7 @@ pub struct JSONSchema {
 }
 
 /// JSONSet
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONSet {
     pub this: Box<Expression>,
@@ -13716,7 +13792,7 @@ pub struct JSONSet {
 }
 
 /// JSONStripNulls
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONStripNulls {
     pub this: Box<Expression>,
@@ -13729,7 +13805,7 @@ pub struct JSONStripNulls {
 }
 
 /// JSONValue
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONValue {
     pub this: Box<Expression>,
@@ -13742,7 +13818,7 @@ pub struct JSONValue {
 }
 
 /// JSONValueArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONValueArray {
     pub this: Box<Expression>,
@@ -13751,7 +13827,7 @@ pub struct JSONValueArray {
 }
 
 /// JSONRemove
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONRemove {
     pub this: Box<Expression>,
@@ -13760,7 +13836,7 @@ pub struct JSONRemove {
 }
 
 /// JSONTable
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONTable {
     pub this: Box<Expression>,
@@ -13775,7 +13851,7 @@ pub struct JSONTable {
 }
 
 /// JSONType
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONType {
     pub this: Box<Expression>,
@@ -13784,7 +13860,7 @@ pub struct JSONType {
 }
 
 /// ObjectInsert
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ObjectInsert {
     pub this: Box<Expression>,
@@ -13797,7 +13873,7 @@ pub struct ObjectInsert {
 }
 
 /// OpenJSONColumnDef
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OpenJSONColumnDef {
     pub this: Box<Expression>,
@@ -13812,7 +13888,7 @@ pub struct OpenJSONColumnDef {
 }
 
 /// OpenJSON
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct OpenJSON {
     pub this: Box<Expression>,
@@ -13823,7 +13899,7 @@ pub struct OpenJSON {
 }
 
 /// JSONBExists
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONBExists {
     pub this: Box<Expression>,
@@ -13832,7 +13908,7 @@ pub struct JSONBExists {
 }
 
 /// JSONCast
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONCast {
     pub this: Box<Expression>,
@@ -13840,7 +13916,7 @@ pub struct JSONCast {
 }
 
 /// JSONExtract
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONExtract {
     pub this: Box<Expression>,
@@ -13864,7 +13940,7 @@ pub struct JSONExtract {
 }
 
 /// JSONExtractQuote
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONExtractQuote {
     #[serde(default)]
@@ -13874,7 +13950,7 @@ pub struct JSONExtractQuote {
 }
 
 /// JSONExtractArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONExtractArray {
     pub this: Box<Expression>,
@@ -13883,7 +13959,7 @@ pub struct JSONExtractArray {
 }
 
 /// JSONExtractScalar
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONExtractScalar {
     pub this: Box<Expression>,
@@ -13899,7 +13975,7 @@ pub struct JSONExtractScalar {
 }
 
 /// JSONBExtractScalar
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONBExtractScalar {
     pub this: Box<Expression>,
@@ -13909,7 +13985,7 @@ pub struct JSONBExtractScalar {
 }
 
 /// JSONFormat
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONFormat {
     #[serde(default)]
@@ -13923,7 +13999,7 @@ pub struct JSONFormat {
 }
 
 /// JSONArrayAppend
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONArrayAppend {
     pub this: Box<Expression>,
@@ -13932,7 +14008,7 @@ pub struct JSONArrayAppend {
 }
 
 /// JSONArrayContains
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONArrayContains {
     pub this: Box<Expression>,
@@ -13942,7 +14018,7 @@ pub struct JSONArrayContains {
 }
 
 /// JSONArrayInsert
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONArrayInsert {
     pub this: Box<Expression>,
@@ -13951,7 +14027,7 @@ pub struct JSONArrayInsert {
 }
 
 /// ParseJSON
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParseJSON {
     pub this: Box<Expression>,
@@ -13962,7 +14038,7 @@ pub struct ParseJSON {
 }
 
 /// ParseUrl
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParseUrl {
     pub this: Box<Expression>,
@@ -13975,7 +14051,7 @@ pub struct ParseUrl {
 }
 
 /// ParseIp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParseIp {
     pub this: Box<Expression>,
@@ -13986,7 +14062,7 @@ pub struct ParseIp {
 }
 
 /// ParseTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParseTime {
     pub this: Box<Expression>,
@@ -13994,7 +14070,7 @@ pub struct ParseTime {
 }
 
 /// ParseDatetime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ParseDatetime {
     pub this: Box<Expression>,
@@ -14005,7 +14081,7 @@ pub struct ParseDatetime {
 }
 
 /// Map
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Map {
     #[serde(default)]
@@ -14015,7 +14091,7 @@ pub struct Map {
 }
 
 /// MapCat
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MapCat {
     pub this: Box<Expression>,
@@ -14023,7 +14099,7 @@ pub struct MapCat {
 }
 
 /// MapDelete
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MapDelete {
     pub this: Box<Expression>,
@@ -14032,7 +14108,7 @@ pub struct MapDelete {
 }
 
 /// MapInsert
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MapInsert {
     pub this: Box<Expression>,
@@ -14045,7 +14121,7 @@ pub struct MapInsert {
 }
 
 /// MapPick
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MapPick {
     pub this: Box<Expression>,
@@ -14054,7 +14130,7 @@ pub struct MapPick {
 }
 
 /// ScopeResolution
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ScopeResolution {
     #[serde(default)]
@@ -14063,7 +14139,7 @@ pub struct ScopeResolution {
 }
 
 /// Slice
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Slice {
     #[serde(default)]
@@ -14075,7 +14151,7 @@ pub struct Slice {
 }
 
 /// VarMap
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct VarMap {
     #[serde(default)]
@@ -14085,7 +14161,7 @@ pub struct VarMap {
 }
 
 /// MatchAgainst
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MatchAgainst {
     pub this: Box<Expression>,
@@ -14096,7 +14172,7 @@ pub struct MatchAgainst {
 }
 
 /// MD5Digest
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MD5Digest {
     pub this: Box<Expression>,
@@ -14105,7 +14181,7 @@ pub struct MD5Digest {
 }
 
 /// Monthname
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Monthname {
     pub this: Box<Expression>,
@@ -14114,7 +14190,7 @@ pub struct Monthname {
 }
 
 /// Ntile
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Ntile {
     #[serde(default)]
@@ -14122,7 +14198,7 @@ pub struct Ntile {
 }
 
 /// Normalize
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Normalize {
     pub this: Box<Expression>,
@@ -14133,7 +14209,7 @@ pub struct Normalize {
 }
 
 /// Normal
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Normal {
     pub this: Box<Expression>,
@@ -14144,7 +14220,7 @@ pub struct Normal {
 }
 
 /// Predict
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Predict {
     pub this: Box<Expression>,
@@ -14154,7 +14230,7 @@ pub struct Predict {
 }
 
 /// MLTranslate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MLTranslate {
     pub this: Box<Expression>,
@@ -14164,7 +14240,7 @@ pub struct MLTranslate {
 }
 
 /// FeaturesAtTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FeaturesAtTime {
     pub this: Box<Expression>,
@@ -14177,7 +14253,7 @@ pub struct FeaturesAtTime {
 }
 
 /// GenerateEmbedding
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GenerateEmbedding {
     pub this: Box<Expression>,
@@ -14189,7 +14265,7 @@ pub struct GenerateEmbedding {
 }
 
 /// MLForecast
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct MLForecast {
     pub this: Box<Expression>,
@@ -14200,7 +14276,7 @@ pub struct MLForecast {
 }
 
 /// ModelAttribute
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ModelAttribute {
     pub this: Box<Expression>,
@@ -14208,7 +14284,7 @@ pub struct ModelAttribute {
 }
 
 /// VectorSearch
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct VectorSearch {
     pub this: Box<Expression>,
@@ -14227,7 +14303,7 @@ pub struct VectorSearch {
 }
 
 /// Quantile
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Quantile {
     pub this: Box<Expression>,
@@ -14236,7 +14312,7 @@ pub struct Quantile {
 }
 
 /// ApproxQuantile
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxQuantile {
     pub this: Box<Expression>,
@@ -14251,7 +14327,7 @@ pub struct ApproxQuantile {
 }
 
 /// ApproxPercentileEstimate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ApproxPercentileEstimate {
     pub this: Box<Expression>,
@@ -14260,7 +14336,7 @@ pub struct ApproxPercentileEstimate {
 }
 
 /// Randn
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Randn {
     #[serde(default)]
@@ -14268,7 +14344,7 @@ pub struct Randn {
 }
 
 /// Randstr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Randstr {
     pub this: Box<Expression>,
@@ -14277,7 +14353,7 @@ pub struct Randstr {
 }
 
 /// RangeN
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RangeN {
     pub this: Box<Expression>,
@@ -14288,7 +14364,7 @@ pub struct RangeN {
 }
 
 /// RangeBucket
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RangeBucket {
     pub this: Box<Expression>,
@@ -14296,7 +14372,7 @@ pub struct RangeBucket {
 }
 
 /// ReadCSV
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ReadCSV {
     pub this: Box<Expression>,
@@ -14305,7 +14381,7 @@ pub struct ReadCSV {
 }
 
 /// ReadParquet
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct ReadParquet {
     #[serde(default)]
@@ -14313,7 +14389,7 @@ pub struct ReadParquet {
 }
 
 /// Reduce
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Reduce {
     pub this: Box<Expression>,
@@ -14326,7 +14402,7 @@ pub struct Reduce {
 }
 
 /// RegexpExtractAll
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpExtractAll {
     pub this: Box<Expression>,
@@ -14342,7 +14418,7 @@ pub struct RegexpExtractAll {
 }
 
 /// RegexpILike
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpILike {
     pub this: Box<Expression>,
@@ -14352,7 +14428,7 @@ pub struct RegexpILike {
 }
 
 /// RegexpFullMatch
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpFullMatch {
     pub this: Box<Expression>,
@@ -14362,7 +14438,7 @@ pub struct RegexpFullMatch {
 }
 
 /// RegexpInstr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpInstr {
     pub this: Box<Expression>,
@@ -14380,7 +14456,7 @@ pub struct RegexpInstr {
 }
 
 /// RegexpSplit
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpSplit {
     pub this: Box<Expression>,
@@ -14390,7 +14466,7 @@ pub struct RegexpSplit {
 }
 
 /// RegexpCount
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpCount {
     pub this: Box<Expression>,
@@ -14402,7 +14478,7 @@ pub struct RegexpCount {
 }
 
 /// RegrValx
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrValx {
     pub this: Box<Expression>,
@@ -14410,7 +14486,7 @@ pub struct RegrValx {
 }
 
 /// RegrValy
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrValy {
     pub this: Box<Expression>,
@@ -14418,7 +14494,7 @@ pub struct RegrValy {
 }
 
 /// RegrAvgy
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrAvgy {
     pub this: Box<Expression>,
@@ -14426,7 +14502,7 @@ pub struct RegrAvgy {
 }
 
 /// RegrAvgx
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrAvgx {
     pub this: Box<Expression>,
@@ -14434,7 +14510,7 @@ pub struct RegrAvgx {
 }
 
 /// RegrCount
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrCount {
     pub this: Box<Expression>,
@@ -14442,7 +14518,7 @@ pub struct RegrCount {
 }
 
 /// RegrIntercept
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrIntercept {
     pub this: Box<Expression>,
@@ -14450,7 +14526,7 @@ pub struct RegrIntercept {
 }
 
 /// RegrR2
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrR2 {
     pub this: Box<Expression>,
@@ -14458,7 +14534,7 @@ pub struct RegrR2 {
 }
 
 /// RegrSxx
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrSxx {
     pub this: Box<Expression>,
@@ -14466,7 +14542,7 @@ pub struct RegrSxx {
 }
 
 /// RegrSxy
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrSxy {
     pub this: Box<Expression>,
@@ -14474,7 +14550,7 @@ pub struct RegrSxy {
 }
 
 /// RegrSyy
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrSyy {
     pub this: Box<Expression>,
@@ -14482,7 +14558,7 @@ pub struct RegrSyy {
 }
 
 /// RegrSlope
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegrSlope {
     pub this: Box<Expression>,
@@ -14490,7 +14566,7 @@ pub struct RegrSlope {
 }
 
 /// SafeAdd
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SafeAdd {
     pub this: Box<Expression>,
@@ -14498,7 +14574,7 @@ pub struct SafeAdd {
 }
 
 /// SafeDivide
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SafeDivide {
     pub this: Box<Expression>,
@@ -14506,7 +14582,7 @@ pub struct SafeDivide {
 }
 
 /// SafeMultiply
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SafeMultiply {
     pub this: Box<Expression>,
@@ -14514,7 +14590,7 @@ pub struct SafeMultiply {
 }
 
 /// SafeSubtract
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SafeSubtract {
     pub this: Box<Expression>,
@@ -14522,7 +14598,7 @@ pub struct SafeSubtract {
 }
 
 /// SHA2
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SHA2 {
     pub this: Box<Expression>,
@@ -14531,7 +14607,7 @@ pub struct SHA2 {
 }
 
 /// SHA2Digest
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SHA2Digest {
     pub this: Box<Expression>,
@@ -14540,7 +14616,7 @@ pub struct SHA2Digest {
 }
 
 /// SortArray
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SortArray {
     pub this: Box<Expression>,
@@ -14551,7 +14627,7 @@ pub struct SortArray {
 }
 
 /// SplitPart
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SplitPart {
     pub this: Box<Expression>,
@@ -14562,7 +14638,7 @@ pub struct SplitPart {
 }
 
 /// SUBSTRING_INDEX(str, delim, count)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SubstringIndex {
     pub this: Box<Expression>,
@@ -14573,7 +14649,7 @@ pub struct SubstringIndex {
 }
 
 /// StandardHash
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StandardHash {
     pub this: Box<Expression>,
@@ -14582,7 +14658,7 @@ pub struct StandardHash {
 }
 
 /// StrPosition
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StrPosition {
     pub this: Box<Expression>,
@@ -14595,7 +14671,7 @@ pub struct StrPosition {
 }
 
 /// Search
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Search {
     pub this: Box<Expression>,
@@ -14611,7 +14687,7 @@ pub struct Search {
 }
 
 /// SearchIp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct SearchIp {
     pub this: Box<Expression>,
@@ -14619,7 +14695,7 @@ pub struct SearchIp {
 }
 
 /// StrToDate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StrToDate {
     pub this: Box<Expression>,
@@ -14630,7 +14706,7 @@ pub struct StrToDate {
 }
 
 /// StrToTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StrToTime {
     pub this: Box<Expression>,
@@ -14644,7 +14720,7 @@ pub struct StrToTime {
 }
 
 /// StrToUnix
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StrToUnix {
     #[serde(default)]
@@ -14654,7 +14730,7 @@ pub struct StrToUnix {
 }
 
 /// StrToMap
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct StrToMap {
     pub this: Box<Expression>,
@@ -14667,7 +14743,7 @@ pub struct StrToMap {
 }
 
 /// NumberToStr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NumberToStr {
     pub this: Box<Expression>,
@@ -14677,7 +14753,7 @@ pub struct NumberToStr {
 }
 
 /// FromBase
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct FromBase {
     pub this: Box<Expression>,
@@ -14685,7 +14761,7 @@ pub struct FromBase {
 }
 
 /// Stuff
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Stuff {
     pub this: Box<Expression>,
@@ -14697,7 +14773,7 @@ pub struct Stuff {
 }
 
 /// TimeToStr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeToStr {
     pub this: Box<Expression>,
@@ -14709,7 +14785,7 @@ pub struct TimeToStr {
 }
 
 /// TimeStrToTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimeStrToTime {
     pub this: Box<Expression>,
@@ -14718,7 +14794,7 @@ pub struct TimeStrToTime {
 }
 
 /// TsOrDsAdd
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TsOrDsAdd {
     pub this: Box<Expression>,
@@ -14730,7 +14806,7 @@ pub struct TsOrDsAdd {
 }
 
 /// TsOrDsDiff
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TsOrDsDiff {
     pub this: Box<Expression>,
@@ -14740,7 +14816,7 @@ pub struct TsOrDsDiff {
 }
 
 /// TsOrDsToDate
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TsOrDsToDate {
     pub this: Box<Expression>,
@@ -14751,7 +14827,7 @@ pub struct TsOrDsToDate {
 }
 
 /// TsOrDsToTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TsOrDsToTime {
     pub this: Box<Expression>,
@@ -14762,7 +14838,7 @@ pub struct TsOrDsToTime {
 }
 
 /// Unhex
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Unhex {
     pub this: Box<Expression>,
@@ -14771,7 +14847,7 @@ pub struct Unhex {
 }
 
 /// Uniform
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Uniform {
     pub this: Box<Expression>,
@@ -14783,7 +14859,7 @@ pub struct Uniform {
 }
 
 /// UnixToStr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnixToStr {
     pub this: Box<Expression>,
@@ -14792,7 +14868,7 @@ pub struct UnixToStr {
 }
 
 /// UnixToTime
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct UnixToTime {
     pub this: Box<Expression>,
@@ -14811,7 +14887,7 @@ pub struct UnixToTime {
 }
 
 /// Uuid
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Uuid {
     #[serde(default)]
@@ -14823,7 +14899,7 @@ pub struct Uuid {
 }
 
 /// TimestampFromParts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampFromParts {
     #[serde(default)]
@@ -14837,7 +14913,7 @@ pub struct TimestampFromParts {
 }
 
 /// TimestampTzFromParts
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct TimestampTzFromParts {
     #[serde(default)]
@@ -14845,7 +14921,7 @@ pub struct TimestampTzFromParts {
 }
 
 /// Corr
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Corr {
     pub this: Box<Expression>,
@@ -14855,7 +14931,7 @@ pub struct Corr {
 }
 
 /// WidthBucket
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct WidthBucket {
     pub this: Box<Expression>,
@@ -14870,7 +14946,7 @@ pub struct WidthBucket {
 }
 
 /// CovarSamp
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CovarSamp {
     pub this: Box<Expression>,
@@ -14878,7 +14954,7 @@ pub struct CovarSamp {
 }
 
 /// CovarPop
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct CovarPop {
     pub this: Box<Expression>,
@@ -14886,7 +14962,7 @@ pub struct CovarPop {
 }
 
 /// Week
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Week {
     pub this: Box<Expression>,
@@ -14895,7 +14971,7 @@ pub struct Week {
 }
 
 /// XMLElement
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct XMLElement {
     pub this: Box<Expression>,
@@ -14906,7 +14982,7 @@ pub struct XMLElement {
 }
 
 /// XMLGet
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct XMLGet {
     pub this: Box<Expression>,
@@ -14916,7 +14992,7 @@ pub struct XMLGet {
 }
 
 /// XMLTable
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct XMLTable {
     pub this: Box<Expression>,
@@ -14931,7 +15007,7 @@ pub struct XMLTable {
 }
 
 /// XMLKeyValueOption
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct XMLKeyValueOption {
     pub this: Box<Expression>,
@@ -14940,7 +15016,7 @@ pub struct XMLKeyValueOption {
 }
 
 /// Zipf
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Zipf {
     pub this: Box<Expression>,
@@ -14951,7 +15027,7 @@ pub struct Zipf {
 }
 
 /// Merge
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Merge {
     pub this: Box<Expression>,
@@ -14969,7 +15045,7 @@ pub struct Merge {
 }
 
 /// When
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct When {
     #[serde(default)]
@@ -14982,7 +15058,7 @@ pub struct When {
 }
 
 /// Wraps around one or more WHEN [NOT] MATCHED [...] clauses.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Whens {
     #[serde(default)]
@@ -14990,7 +15066,7 @@ pub struct Whens {
 }
 
 /// NextValueFor
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct NextValueFor {
     pub this: Box<Expression>,

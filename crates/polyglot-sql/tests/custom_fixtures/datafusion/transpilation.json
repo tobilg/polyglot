@@ -523,7 +523,7 @@
     {
       "sql": "SELECT * FROM t LIMIT 10 OFFSET 5",
       "write": {
-        "tsql": "SELECT * FROM t OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+        "tsql": "SELECT * FROM t ORDER BY (SELECT NULL) OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
         "duckdb": "SELECT * FROM t LIMIT 10 OFFSET 5",
         "mysql": "SELECT * FROM t LIMIT 10 OFFSET 5",
         "postgresql": "SELECT * FROM t LIMIT 10 OFFSET 5",

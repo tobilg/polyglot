@@ -1,11 +1,12 @@
 use crate::errors::map_transpile_error;
 use crate::helpers::{
-    normalize_error_level, normalize_unsupported_level, resolve_dialect, run_on_large_stack,
+    normalize_error_level, normalize_unsupported_level, resolve_dialect, run_detached,
 };
 use polyglot_sql::dialects::{Dialect, TranspileOptions};
 use pyo3::prelude::*;
 
 #[pyfunction(signature = (sql, read = None, write = None, *, identity = true, error_level = None, unsupported_level = None, pretty = false, max_unsupported = None))]
+#[allow(clippy::too_many_arguments)]
 pub fn transpile(
     py: Python<'_>,
     sql: &str,
@@ -31,7 +32,7 @@ pub fn transpile(
     let sql_owned = sql.to_owned();
     let read_owned = read.to_owned();
     let write_owned = write.to_owned();
-    run_on_large_stack(py, move || {
+    run_detached(py, move || {
         let read_dialect = Dialect::get_by_name(&read_owned)
             .expect("dialect existence checked before entering stack");
         let write_dialect = Dialect::get_by_name(&write_owned)

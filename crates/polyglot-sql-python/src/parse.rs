@@ -1,8 +1,7 @@
 use crate::errors::parse_statement_count_error;
 use crate::expr_types::wrap_expression;
 use crate::helpers::{
-    normalize_error_level, parse_data_type_on_large_stack, parse_on_large_stack,
-    resolve_read_or_dialect,
+    normalize_error_level, parse_data_type_detached, parse_detached, resolve_read_or_dialect,
 };
 use polyglot_sql::Expression;
 use pyo3::exceptions::PyNotImplementedError;
@@ -19,7 +18,7 @@ pub fn parse(
 ) -> PyResult<Vec<Py<PyAny>>> {
     let dialect = resolve_read_or_dialect(read, dialect)?;
     let _ = normalize_error_level(error_level)?;
-    let expressions = parse_on_large_stack(py, &dialect, sql)?;
+    let expressions = parse_detached(py, &dialect, sql)?;
     expressions
         .into_iter()
         .map(|expr| wrap_expression(py, expr))
@@ -41,7 +40,7 @@ pub fn parse_one(
     if let Some(into) = into {
         let data_type_class = py.get_type::<crate::expr_types::DataType>();
         if into.is(data_type_class.as_any()) {
-            let data_type = parse_data_type_on_large_stack(py, &dialect, sql)?;
+            let data_type = parse_data_type_detached(py, &dialect, sql)?;
             return wrap_expression(py, Expression::DataType(data_type));
         }
 
@@ -50,7 +49,7 @@ pub fn parse_one(
         ));
     }
 
-    let mut expressions = parse_on_large_stack(py, &dialect, sql)?;
+    let mut expressions = parse_detached(py, &dialect, sql)?;
 
     if expressions.len() != 1 {
         return Err(parse_statement_count_error(expressions.len()));
@@ -69,7 +68,7 @@ pub fn parse_data_type(
 ) -> PyResult<Py<PyAny>> {
     let dialect = resolve_read_or_dialect(read, dialect)?;
     let _ = normalize_error_level(error_level)?;
-    let data_type = parse_data_type_on_large_stack(py, &dialect, sql)?;
+    let data_type = parse_data_type_detached(py, &dialect, sql)?;
 
     wrap_expression(py, Expression::DataType(data_type))
 }

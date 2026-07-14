@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import * as wasmModule from '../wasm/polyglot_sql_wasm.js';
+import * as sdk from './index';
 import {
   analyzeQuery,
   Dialect,
@@ -22,7 +25,92 @@ import {
   transpile,
 } from './index';
 
+type ContractEntry = {
+  status: 'supported' | 'partial' | 'unavailable';
+  symbols: string[];
+  notes?: string;
+};
+
+type CapabilityContract = {
+  schemaVersion: number;
+  layers: string[];
+  capabilities: Array<{
+    id: string;
+    layers: Record<string, ContractEntry>;
+  }>;
+};
+
+function hasDottedExport(root: object, symbol: string): boolean {
+  let value: unknown = root;
+  for (const part of symbol.split('.')) {
+    if (
+      (typeof value !== 'object' && typeof value !== 'function') ||
+      value === null ||
+      !(part in value)
+    ) {
+      return false;
+    }
+    value = (value as Record<string, unknown>)[part];
+  }
+  return true;
+}
+
+function assertLayerContract(
+  contract: CapabilityContract,
+  layer: 'wasm' | 'typescript',
+  exports: object,
+): void {
+  const seen = new Set<string>();
+  for (const capability of contract.capabilities) {
+    expect(
+      seen.has(capability.id),
+      `duplicate capability ${capability.id}`,
+    ).toBe(false);
+    seen.add(capability.id);
+
+    const entry = capability.layers[layer];
+    expect(entry, `${capability.id} has no ${layer} entry`).toBeDefined();
+    expect(['supported', 'partial', 'unavailable']).toContain(entry.status);
+    if (entry.status !== 'supported') {
+      expect(entry.notes, `${capability.id} requires notes`).toBeTruthy();
+    }
+
+    for (const symbol of entry.symbols) {
+      const exists = hasDottedExport(exports, symbol);
+      if (entry.status === 'unavailable') {
+        expect(exists, `${capability.id}: ${symbol} unexpectedly exists`).toBe(
+          false,
+        );
+      } else {
+        expect(exists, `${capability.id}: ${symbol} is missing`).toBe(true);
+      }
+    }
+  }
+}
+
 describe('Polyglot SDK', () => {
+  it('matches the cross-language API capability contract', () => {
+    const path = process.env.POLYGLOT_API_CONTRACT;
+    if (!path) {
+      return;
+    }
+
+    const contract = JSON.parse(
+      readFileSync(path, 'utf8'),
+    ) as CapabilityContract;
+    expect(contract.schemaVersion).toBe(1);
+    expect(contract.layers).toEqual([
+      'rust',
+      'python',
+      'ffi',
+      'go',
+      'wasm',
+      'typescript',
+    ]);
+    assertLayerContract(contract, 'typescript', sdk);
+    assertLayerContract(contract, 'wasm', wasmModule);
+  });
+
   describe('init', () => {
     it('should be initialized (synchronous init on import)', () => {
       expect(isInitialized()).toBe(true);
@@ -45,7 +133,8 @@ describe('Polyglot SDK', () => {
     it('should return an array of dialect names', () => {
       const dialects = getDialects();
       expect(Array.isArray(dialects)).toBe(true);
-      expect(dialects.length).toBeGreaterThan(0);
+      expect(new Set(dialects).size).toBe(dialects.length);
+      expect([...dialects].sort()).toEqual([...Object.values(Dialect)].sort());
     });
 
     it('should include common dialects', () => {
@@ -170,14 +259,17 @@ describe('Polyglot SDK', () => {
 
       expect(parsed.success).toBe(true);
       expect(parsed.dataType?.data_type).toBe('array');
-      expect(polyglot.generateDataType(parsed.dataType!, Dialect.DuckDB).sql).toBe(
-        'INT[]',
-      );
+      expect(
+        polyglot.generateDataType(parsed.dataType!, Dialect.DuckDB).sql,
+      ).toBe('INT[]');
     });
   });
 
   describe('lineage helpers', () => {
-    const collectNames = (node: { name?: string; downstream?: unknown[] }): string[] => [
+    const collectNames = (node: {
+      name?: string;
+      downstream?: unknown[];
+    }): string[] => [
       node.name ?? '',
       ...(node.downstream ?? []).flatMap((child) =>
         collectNames(child as { name?: string; downstream?: unknown[] }),
@@ -240,9 +332,7 @@ describe('Polyglot SDK', () => {
         'amount',
         'SELECT order_id, amount FROM t',
         {
-          tables: [
-            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'amount', type: 'INT' }] }],
         },
         Dialect.DuckDB,
       );
@@ -433,9 +523,7 @@ describe('Polyglot SDK', () => {
       const result = analyzeQuery('SELECT i FROM t, UNNEST(t.arr) AS i', {
         dialect: Dialect.DuckDB,
         schema: {
-          tables: [
-            { name: 't', columns: [{ name: 'arr', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'arr', type: 'INT' }] }],
         },
       });
 
@@ -451,17 +539,14 @@ describe('Polyglot SDK', () => {
       const result = analyzeQuery('SELECT order_id, amount FROM t', {
         dialect: Dialect.DuckDB,
         schema: {
-          tables: [
-            { name: 't', columns: [{ name: 'amount', type: 'INT' }] },
-          ],
+          tables: [{ name: 't', columns: [{ name: 'amount', type: 'INT' }] }],
         },
       });
 
       expect(result.success).toBe(true);
-      expect(result.analysis?.projections.map((projection) => projection.name)).toEqual([
-        'order_id',
-        'amount',
-      ]);
+      expect(
+        result.analysis?.projections.map((projection) => projection.name),
+      ).toEqual(['order_id', 'amount']);
       expect(result.analysis?.projections[0].upstream).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

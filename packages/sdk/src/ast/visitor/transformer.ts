@@ -8,6 +8,19 @@
  * instead of { "type": "variant", ...data }.
  */
 
+import {
+  ast_add_where,
+  ast_qualify_columns,
+  ast_qualify_tables,
+  ast_remove_where,
+  ast_rename_columns,
+  ast_rename_tables,
+  ast_rename_tables_with_options,
+  ast_set_distinct,
+  ast_set_limit,
+  ast_set_offset,
+  ast_set_order_by,
+} from '../../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../../generated/Expression';
 import {
   getExprData,
@@ -20,19 +33,6 @@ import type {
   TransformCallback,
   TransformConfig,
 } from './types';
-import {
-  ast_rename_columns,
-  ast_rename_tables,
-  ast_rename_tables_with_options,
-  ast_qualify_columns,
-  ast_qualify_tables,
-  ast_add_where,
-  ast_remove_where,
-  ast_set_limit,
-  ast_set_offset,
-  ast_set_order_by,
-  ast_set_distinct,
-} from '../../../wasm/polyglot_sql_wasm.js';
 
 export interface RenameTablesOptions {
   aliasRenamedTables?: boolean;

@@ -52,6 +52,15 @@ describe('validate', () => {
       const result = validate('SELECT name, FROM employees', 'generic');
       expect(result.valid).toBe(true);
     });
+
+    it('should give strict syntax precedence when semantic validation is also enabled', () => {
+      const result = validate('SELECT *, FROM employees', 'generic', {
+        strictSyntax: true,
+        semantic: true,
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.map((error) => error.code)).toEqual(['E005']);
+    });
   });
 
   describe('semantic validation', () => {

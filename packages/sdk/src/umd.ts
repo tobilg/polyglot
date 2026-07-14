@@ -14,6 +14,114 @@
  * ```
  */
 
+// AST: Type guards & Visitors
+export {
+  findAll,
+  getColumns,
+  getInferredType,
+  isColumn,
+  isFunction,
+  isLiteral,
+  isSelect,
+  renameColumns,
+  transform,
+  walk,
+} from './ast';
+// Builders: Expression class & types
+// Builders: Expression helpers
+// Builders: Query builders
+// Builders: Logical operators
+// Builders: Convenience functions
+export {
+  // Math
+  abs,
+  alias,
+  and,
+  avg,
+  boolean,
+  CaseBuilder,
+  caseOf,
+  caseWhen,
+  cast,
+  ceil,
+  // Null handling
+  coalesce,
+  col,
+  concatWs,
+  condition,
+  // Aggregate
+  count,
+  countDistinct,
+  // Date/time
+  currentDate,
+  currentTime,
+  currentTimestamp,
+  DeleteBuilder,
+  del,
+  deleteFrom,
+  denseRank,
+  Expr,
+  type ExprInput,
+  except,
+  exp,
+  extract,
+  floor,
+  func,
+  greatest,
+  InsertBuilder,
+  ifNull,
+  initcap,
+  insert,
+  insertInto,
+  intersect,
+  least,
+  length,
+  lit,
+  ln,
+  lower,
+  ltrim,
+  MergeBuilder,
+  max,
+  mergeInto,
+  min,
+  not,
+  nullIf,
+  or,
+  power,
+  rank,
+  replace,
+  reverse,
+  round,
+  // Window
+  rowNumber,
+  rtrim,
+  SelectBuilder,
+  SetOpBuilder,
+  select,
+  sign,
+  sqlExpr,
+  sqlNull,
+  sqrt,
+  star,
+  substring,
+  sum,
+  table,
+  trim,
+  UpdateBuilder,
+  union,
+  unionAll,
+  update,
+  // String
+  upper,
+} from './builders';
+export type {
+  AnnotateTypesResult,
+  FormatOptions,
+  ParseResult,
+  TranspileOptions,
+  TranspileResult,
+  UnsupportedLevel,
+} from './index';
 // Core APIs
 export {
   annotateTypes,
@@ -31,122 +139,6 @@ export {
   transpile,
 } from './index';
 export type {
-  AnnotateTypesResult,
-  FormatOptions,
-  ParseResult,
-  TranspileOptions,
-  TranspileResult,
-  UnsupportedLevel,
-} from './index';
-
-// AST: Type guards & Visitors
-export {
-  findAll,
-  getColumns,
-  getInferredType,
-  isColumn,
-  isFunction,
-  isLiteral,
-  isSelect,
-  renameColumns,
-  transform,
-  walk,
-} from './ast';
-
-// Builders: Expression class & types
-export { Expr, type ExprInput } from './builders';
-
-// Builders: Expression helpers
-export {
-  col,
-  lit,
-  star,
-  sqlNull,
-  boolean,
-  table,
-  sqlExpr,
-  condition,
-  func,
-} from './builders';
-
-// Builders: Query builders
-export {
-  SelectBuilder,
-  InsertBuilder,
-  UpdateBuilder,
-  DeleteBuilder,
-  MergeBuilder,
-  CaseBuilder,
-  SetOpBuilder,
-  select,
-  insert,
-  insertInto,
-  update,
-  deleteFrom,
-  del,
-  mergeInto,
-  caseWhen,
-  caseOf,
-  union,
-  unionAll,
-  intersect,
-  except,
-} from './builders';
-
-// Builders: Logical operators
-export { and, or, not, cast, alias } from './builders';
-
-// Builders: Convenience functions
-export {
-  // Aggregate
-  count,
-  countDistinct,
-  sum,
-  avg,
-  min,
-  max,
-  // String
-  upper,
-  lower,
-  length,
-  trim,
-  ltrim,
-  rtrim,
-  reverse,
-  initcap,
-  substring,
-  replace,
-  concatWs,
-  // Null handling
-  coalesce,
-  nullIf,
-  ifNull,
-  // Math
-  abs,
-  round,
-  floor,
-  ceil,
-  power,
-  sqrt,
-  ln,
-  exp,
-  sign,
-  greatest,
-  least,
-  // Date/time
-  currentDate,
-  currentTime,
-  currentTimestamp,
-  extract,
-  // Window
-  rowNumber,
-  rank,
-  denseRank,
-} from './builders';
-
-// Validation
-export { ValidationSeverity, validate, validateWithSchema } from './validation';
-export type {
   ColumnSchema,
   Schema,
   SchemaValidationOptions,
@@ -155,6 +147,8 @@ export type {
   ValidationOptions,
   ValidationResult,
 } from './validation';
+// Validation
+export { ValidationSeverity, validate, validateWithSchema } from './validation';
 
 // Default export for convenience
 import * as PolyglotSQL from './index';

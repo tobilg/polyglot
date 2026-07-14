@@ -116,7 +116,7 @@ These methods are available on `*Client` and as package-level wrappers:
 | `Optimize(sql, dialect string, options ...OptimizeOptions) ([]string, error)` | Apply optimizer rewrites and return SQL. |
 | `Generate(ast json.RawMessage, dialect string, options ...GenerateOptions) ([]string, error)` | Generate SQL from a JSON AST returned by `Parse` or related APIs. |
 | `GenerateDataType(dataType json.RawMessage, dialect string) (string, error)` | Generate SQL from a JSON `DataType` returned by `ParseDataType`. |
-| `Validate(sql, dialect string) (ValidationResult, error)` | Validate SQL and return diagnostics as data when validation fails. |
+| `Validate(sql, dialect string, options ...ValidationOptions) (ValidationResult, error)` | Validate SQL with optional strict syntax and semantic warnings; diagnostics are returned as data. |
 | `Dialects() ([]string, error)` | Return supported dialect names. |
 | `DialectCount() (int, error)` | Return the number of supported dialects. |
 
@@ -385,6 +385,7 @@ fmt.Println(columnLineage.Facet.Fields, jobEvent.Event, runEvent.Event)
 | `SetOperationFact` | `Kind`, `All`, `Distinct`, `OutputColumns`, `Branches` |
 | `ValidationResult` | `Valid`, `Errors` |
 | `ValidationError` | `Message`, `Line`, `Column`, `Severity`, `Code`, `Start`, `End` |
+| `ValidationOptions` | `StrictSyntax`, `Semantic` |
 | `ValidationSchema` | `Tables`, `Strict` |
 | `SchemaTable` | `Name`, `Schema`, `Columns`, `Aliases`, `PrimaryKey`, `UniqueKeys`, `ForeignKeys` |
 | `SchemaColumn` | `Name`, `Type`, `Nullable`, `PrimaryKey`, `Unique`, `References` |
@@ -454,6 +455,19 @@ if err != nil {
 fmt.Println(result.Valid)
 fmt.Println(result.Errors)
 ```
+
+Strict syntax and query-quality warnings use the same Rust validation path as
+the other SDKs:
+
+```go
+result, err := client.Validate(
+	"SELECT * FROM users LIMIT 10",
+	"generic",
+	polyglot.ValidationOptions{StrictSyntax: true, Semantic: true},
+)
+```
+
+Semantic warnings W001-W004 do not make `result.Valid` false.
 
 Go errors are reserved for missing libraries, missing symbols, invalid option
 JSON, FFI failures, and lifecycle misuse.

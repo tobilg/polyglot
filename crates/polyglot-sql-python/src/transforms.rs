@@ -42,6 +42,7 @@ fn wrap_transform_result(
     alias_prefix = "_",
     normalize_set_operation_subqueries = true
 ))]
+#[allow(clippy::too_many_arguments)]
 pub fn qualify_tables(
     py: Python<'_>,
     ast: &Bound<'_, PyAny>,

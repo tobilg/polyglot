@@ -114,6 +114,7 @@ typedef struct {
 - `polyglot_format(sql, dialect)`
 - `polyglot_format_with_options(sql, dialect, options_json)` (`FormatGuardOptions` JSON)
 - `polyglot_validate(sql, dialect)`
+- `polyglot_validate_with_options(sql, dialect, options_json)` (`ValidationOptions` JSON, e.g. `{"strictSyntax": true, "semantic": true}`)
 - `polyglot_optimize(sql, dialect)` (full optimizer pipeline)
 - `polyglot_lineage(column_name, sql, dialect)`
 - `polyglot_lineage_with_schema(column_name, sql, schema_json, dialect)` (`ValidationSchema` JSON)

@@ -1,6 +1,6 @@
 # polyglot-sql (Python)
 
-Rust-powered SQL transpiler for 30+ dialects.
+Rust-powered SQL transpiler for more than 30 SQL dialects.
 
 The `polyglot-sql` Python package exposes an API backed by the Rust `polyglot-sql` engine for fast parse/transpile/generate/format/validate workflows.
 
@@ -81,7 +81,12 @@ pretty = polyglot_sql.format_sql(
 ```
 
 ```python
-result = polyglot_sql.validate("SELECT 1", dialect="postgres")
+result = polyglot_sql.validate(
+    "SELECT * FROM users LIMIT 10",
+    dialect="postgres",
+    strict_syntax=True,
+    semantic=True,
+)
 if result:
     print("valid")
 ```
@@ -187,7 +192,7 @@ All functions are exported from `polyglot_sql`.
 - `generate(ast: dict | list[dict], dialect: str = "generic", *, pretty: bool = False) -> list[str]`
 - `format_sql(sql: str, dialect: str = "generic", *, max_input_bytes: int | None = None, max_tokens: int | None = None, max_ast_nodes: int | None = None, max_set_op_chain: int | None = None) -> str`
 - `format(sql: str, dialect: str = "generic", *, max_input_bytes: int | None = None, max_tokens: int | None = None, max_ast_nodes: int | None = None, max_set_op_chain: int | None = None) -> str` (alias of `format_sql`)
-- `validate(sql: str, dialect: str = "generic") -> ValidationResult`
+- `validate(sql: str, dialect: str = "generic", *, strict_syntax: bool = False, semantic: bool = False) -> ValidationResult`
 - `optimize(sql: str, dialect: str = "generic") -> str`
 - `lineage(column: str, sql: str, dialect: str = "generic") -> dict`
 - `source_tables(column: str, sql: str, dialect: str = "generic") -> list[str]`
@@ -222,6 +227,11 @@ Unknown dialect names raise built-in `ValueError`.
 - `result.errors: list[ValidationErrorInfo]`
 - `bool(result)` works (`True` when valid)
 
+`strict_syntax=True` rejects compatibility forms such as trailing commas before
+clause boundaries. `semantic=True` adds warning diagnostics W001-W004 for
+`SELECT *`, mixed aggregate projections, `DISTINCT` with `ORDER BY`, and
+`LIMIT` without `ORDER BY`; warnings do not make the result invalid.
+
 Each `ValidationErrorInfo` has:
 - `message: str`
 - `line: int`
@@ -232,6 +242,10 @@ Each `ValidationErrorInfo` has:
 ## Performance Note
 
 The package uses Rust internals directly via PyO3 and has zero runtime Python dependencies for SQL processing.
+Published wheels use the dedicated Cargo `python_release` profile with
+`opt-level=2` and thin LTO. This favors Python query throughput without changing
+the size-oriented release profile used by WASM and other artifacts. Editable
+development installs continue to use Cargo's `dev` profile.
 
 ## Development
 
@@ -241,7 +255,7 @@ uv sync --group dev
 uv run maturin develop
 uv run pytest
 uv run pyright python/polyglot_sql/
-uv run maturin build --release
+uv run maturin build --profile python_release
 uv run --with mkdocs mkdocs build --strict --clean --config-file mkdocs.yml --site-dir ../../packages/python-docs/dist
 ```
 

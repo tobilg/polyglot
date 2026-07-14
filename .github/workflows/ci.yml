@@ -11,10 +11,53 @@ permissions:
   contents: read
 
 jobs:
-  rust-test:
+  quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Lint Rust wrappers and catalogs
+        run: make lint-rust
+
+      - name: Lint TypeScript SDK
+        run: make lint-sdk
+
+      - name: Check project consistency
+        run: make check-consistency
+
+  rust-test:
+    needs: quality
+    runs-on: ubuntu-latest
+    env:
+      POLYGLOT_API_CONTRACT: ${{ github.workspace }}/docs/api-capabilities.json
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -33,6 +76,12 @@ jobs:
 
       - name: Lib unit tests
         run: cargo test --lib -p polyglot-sql
+
+      - name: Compile standalone Rust example
+        run: cargo check --manifest-path examples/rust/Cargo.toml
+
+      - name: Compile performance benchmarks
+        run: cargo check -p polyglot-sql --benches
 
       - name: WASM Rust unit tests
         run: cargo test -p polyglot-sql-wasm --lib -- --nocapture
@@ -77,10 +126,11 @@ jobs:
         run: cargo check -p polyglot-sql-wasm --no-default-features --features "console_error_panic_hook,dialect-clickhouse"
 
   python-fast-check:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      POLYGLOT_API_CONTRACT: ${{ github.workspace }}/docs/api-capabilities.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -92,17 +142,26 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
       - name: Python bindings tests
         run: make test-python
 
       - name: Python bindings typecheck
         run: make typecheck-python
 
+      - name: Build Python API documentation
+        run: make python-docs-build
+
   go-sdk:
     needs: rust-test
     runs-on: ubuntu-latest
+    env:
+      POLYGLOT_API_CONTRACT: ${{ github.workspace }}/docs/api-capabilities.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -129,8 +188,10 @@ jobs:
   sdk-build:
     needs: rust-test
     runs-on: ubuntu-latest
+    env:
+      POLYGLOT_API_CONTRACT: ${{ github.workspace }}/docs/api-capabilities.json
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -165,6 +226,9 @@ jobs:
       - name: Build SDK
         run: cd packages/sdk && pnpm run build
 
+      - name: Build TypeScript API documentation
+        run: make documentation-build
+
       - name: Verify SDK/WASM version matches release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -179,11 +243,24 @@ jobs:
       - name: Test SDK bundler integration
         run: cd packages/sdk && pnpm run test:bundlers
 
-      - name: Test SDK
-        run: cd packages/sdk && pnpm test
-
       - name: Typecheck SDK
         run: cd packages/sdk && pnpm typecheck
+
+      - name: Test SDK with coverage
+        run: cd packages/sdk && pnpm run test:coverage
+
+      - name: Publish SDK coverage summary
+        if: ${{ always() && hashFiles('packages/sdk/coverage/coverage-summary.json') != '' }}
+        run: cd packages/sdk && pnpm run coverage:summary >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SDK coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-coverage
+          path: packages/sdk/coverage/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v7
@@ -205,21 +282,21 @@ jobs:
 
   python-wheels-linux:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: rust-test
+    needs: [rust-test, python-fast-check]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build Python wheels (Linux ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: '2014'
-          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
           sccache: true
 
       - name: Smoke test built wheel (Linux x86_64)
@@ -237,7 +314,7 @@ jobs:
 
   python-wheels-macos:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: rust-test
+    needs: [rust-test, python-fast-check]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -248,13 +325,13 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build Python wheels (macOS ${{ matrix.target }})
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
           sccache: true
 
       - name: Smoke test built wheel (macOS)
@@ -271,16 +348,16 @@ jobs:
 
   python-wheels-windows:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: rust-test
+    needs: [rust-test, python-fast-check]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build Python wheels (Windows x86_64)
         uses: PyO3/maturin-action@v1
         with:
           target: x86_64-pc-windows-msvc
-          args: --release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
+          args: --profile python_release --out dist --find-interpreter --manifest-path crates/polyglot-sql-python/Cargo.toml
           sccache: true
 
       - name: Smoke test built wheel (Windows)
@@ -298,10 +375,10 @@ jobs:
 
   python-sdist:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: rust-test
+    needs: [rust-test, python-fast-check]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build Python source distribution
         uses: PyO3/maturin-action@v1
@@ -326,7 +403,7 @@ jobs:
       name: pypi
       url: https://pypi.org/p/polyglot-sql
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download Python distribution artifacts
         uses: actions/download-artifact@v8
@@ -408,7 +485,7 @@ jobs:
     needs: sdk-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -451,7 +528,7 @@ jobs:
     needs: sdk-build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
         with:
@@ -533,7 +610,7 @@ jobs:
             use_cross: false
             target_dir: target
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -625,7 +702,7 @@ jobs:
     needs: [ffi-build-artifacts]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -651,7 +728,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -671,7 +748,7 @@ jobs:
     needs: [publish-crate, publish-npm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
         with:
@@ -729,7 +806,7 @@ jobs:
     needs: [publish-pypi]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -769,7 +846,7 @@ jobs:
     needs: [publish-crate, publish-npm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
         with:

@@ -13,9 +13,10 @@
 use super::{DialectImpl, DialectType};
 use crate::error::Result;
 use crate::expressions::{
-    Alias, BinaryOp, Cast, Column, Cte, DataType, Exists, Expression, Function, Identifier, In,
-    Join, JoinKind, LikeOp, Literal, Null, Over, Paren, QuantifiedOp, Select, Star, StringAggFunc,
-    Subquery, TrimFunc, TrimPosition, UnaryFunc, Where,
+    Alias, BinaryOp, Cast, Column, Cte, DataType, Exists, Expression, From, Function, Identifier,
+    In, Join, JoinKind, LikeOp, Literal, Null, Over, Paren, QuantifiedOp, Select, Star,
+    StringAggFunc, Subquery, TrimFunc, TrimPosition, Tuple, UnaryFunc, Values, Where,
+    WindowFunction,
 };
 #[cfg(feature = "generate")]
 use crate::generator::GeneratorConfig;
@@ -299,10 +300,27 @@ impl DialectImpl for TSQLDialect {
                 inferred_type: None,
             }))),
 
+            // PostgreSQL accepts inline ORDER BY for every aggregate, even when
+            // input order cannot affect the result. T-SQL only accepts ordering
+            // for these functions in an analytic OVER clause.
+            Expression::Sum(f) => Ok(Expression::Sum(Self::without_inert_ordering(f))),
+            Expression::Avg(f) => Ok(Expression::Avg(Self::without_inert_ordering(f))),
+            Expression::Min(f) => Ok(Expression::Min(Self::without_inert_ordering(f))),
+            Expression::Max(f) => Ok(Expression::Max(Self::without_inert_ordering(f))),
+            Expression::AnyValue(f) => Ok(Expression::Max(Self::without_inert_ordering(f))),
+            Expression::ApproxCountDistinct(f) => Ok(Expression::ApproxCountDistinct(
+                Self::without_inert_ordering(f),
+            )),
+
             // T-SQL/Fabric do not have boolean aggregates. Preserve PostgreSQL NULL
             // semantics by returning NULL for unknown input predicates.
             Expression::LogicalAnd(f) => Self::transform_logical_aggregate(f.this, f.filter, "MIN"),
             Expression::LogicalOr(f) => Self::transform_logical_aggregate(f.this, f.filter, "MAX"),
+
+            // The bottom-up transform turns a windowed boolean aggregate into
+            // CAST(MIN|MAX(CASE ...) AS BIT) OVER (...). OVER belongs to the
+            // aggregate in T-SQL, so keep the result cast outside the window.
+            Expression::WindowFunction(f) => Ok(Self::reassociate_logical_aggregate_window(*f)),
 
             // TryCast -> TRY_CAST (SQL Server supports TRY_CAST starting from 2012)
             Expression::TryCast(c) => Ok(Expression::TryCast(c)),
@@ -1277,13 +1295,17 @@ impl TSQLDialect {
         let Some(from) = select.from.as_mut() else {
             return;
         };
-        if from.expressions.len() < 2
-            || !from
-                .expressions
-                .iter()
-                .skip(1)
-                .any(Self::is_lateral_table_expression)
-        {
+        let has_comma_lateral = from
+            .expressions
+            .iter()
+            .skip(1)
+            .any(Self::is_lateral_table_expression);
+        let has_apply_join = select
+            .joins
+            .iter()
+            .any(|join| matches!(join.kind, JoinKind::CrossApply | JoinKind::OuterApply));
+
+        if from.expressions.len() < 2 || (!has_comma_lateral && !has_apply_join) {
             return;
         }
 
@@ -1868,6 +1890,10 @@ impl TSQLDialect {
     }
 
     fn select_from_in_rhs(in_expr: &In) -> Option<Select> {
+        if let Some(values) = Self::values_from_in_rhs(in_expr) {
+            return Self::select_from_values(&values);
+        }
+
         if let Some(query) = &in_expr.query {
             return if in_expr.expressions.is_empty() {
                 Self::select_from_query_expression(query)
@@ -1881,6 +1907,117 @@ impl TSQLDialect {
         } else {
             None
         }
+    }
+
+    fn values_from_in_rhs(in_expr: &In) -> Option<Values> {
+        if let Some(query) = &in_expr.query {
+            return if in_expr.expressions.is_empty() {
+                Self::values_from_expression(query)
+            } else {
+                None
+            };
+        }
+
+        if in_expr.expressions.len() == 1 {
+            if let Some(values) = Self::values_from_expression(&in_expr.expressions[0]) {
+                return Some(values);
+            }
+        }
+
+        // IN (VALUES ...) currently parses as VALUES(first_row), followed by tuple rows.
+        let Expression::Function(first_row) = in_expr.expressions.first()? else {
+            return None;
+        };
+        if !first_row.name.eq_ignore_ascii_case("VALUES") {
+            return None;
+        }
+
+        let mut rows = Vec::with_capacity(in_expr.expressions.len());
+        rows.push(Tuple {
+            expressions: first_row.args.clone(),
+        });
+        for row in &in_expr.expressions[1..] {
+            rows.push(Self::tuple_from_values_row(row)?);
+        }
+
+        Some(Values {
+            expressions: rows,
+            alias: None,
+            column_aliases: Vec::new(),
+        })
+    }
+
+    fn values_from_expression(expr: &Expression) -> Option<Values> {
+        match expr {
+            Expression::Values(values) => Some((**values).clone()),
+            Expression::Paren(paren) => Self::values_from_expression(&paren.this),
+            Expression::Subquery(subquery) => Self::values_from_expression(&subquery.this),
+            _ => None,
+        }
+    }
+
+    fn tuple_from_values_row(expr: &Expression) -> Option<Tuple> {
+        match expr {
+            Expression::Tuple(tuple) => Some((**tuple).clone()),
+            Expression::Paren(paren) => match &paren.this {
+                Expression::Tuple(tuple) => Some((**tuple).clone()),
+                other => Some(Tuple {
+                    expressions: vec![other.clone()],
+                }),
+            },
+            _ => None,
+        }
+    }
+
+    fn select_from_values(values: &Values) -> Option<Select> {
+        let column_count = values.expressions.first()?.expressions.len();
+        if column_count == 0
+            || values
+                .expressions
+                .iter()
+                .any(|row| row.expressions.len() != column_count)
+        {
+            return None;
+        }
+
+        let source_alias = Identifier::new("_polyglot_values");
+        let column_aliases = (1..=column_count)
+            .map(|index| Identifier::new(format!("_polyglot_value_{index}")))
+            .collect::<Vec<_>>();
+        let projections = column_aliases
+            .iter()
+            .cloned()
+            .map(|column| Self::column_from_identifier(column, Some(source_alias.clone())))
+            .collect();
+
+        let mut source_values = values.clone();
+        source_values.alias = None;
+        source_values.column_aliases.clear();
+
+        let source = Expression::Subquery(Box::new(Subquery {
+            this: Expression::Values(Box::new(source_values)),
+            alias: Some(source_alias),
+            column_aliases,
+            alias_explicit_as: true,
+            alias_keyword: None,
+            order_by: None,
+            limit: None,
+            offset: None,
+            distribute_by: None,
+            sort_by: None,
+            cluster_by: None,
+            lateral: false,
+            modifiers_inside: false,
+            trailing_comments: Vec::new(),
+            inferred_type: None,
+        }));
+
+        let mut select = Select::new();
+        select.expressions = projections;
+        select.from = Some(From {
+            expressions: vec![source],
+        });
+        Some(select)
     }
 
     fn tuple_expressions(expr: &Expression) -> Option<&[Expression]> {
@@ -2180,6 +2317,47 @@ impl TSQLDialect {
             default: None,
             inferred_type: None,
         })))
+    }
+
+    fn reassociate_logical_aggregate_window(mut window: WindowFunction) -> Expression {
+        let Expression::Cast(mut cast) = window.this else {
+            return Expression::WindowFunction(Box::new(window));
+        };
+
+        if !Self::is_transformed_logical_aggregate_cast(&cast) {
+            window.this = Expression::Cast(cast);
+            return Expression::WindowFunction(Box::new(window));
+        }
+
+        window.this = cast.this;
+        cast.this = Expression::WindowFunction(Box::new(window));
+        Expression::Cast(cast)
+    }
+
+    fn is_transformed_logical_aggregate_cast(cast: &Cast) -> bool {
+        if !matches!(
+            &cast.to,
+            DataType::Custom { name } if name.eq_ignore_ascii_case("BIT")
+        ) {
+            return false;
+        }
+
+        let Expression::Function(function) = &cast.this else {
+            return false;
+        };
+        if !matches!(function.name.to_ascii_uppercase().as_str(), "MIN" | "MAX")
+            || function.args.len() != 1
+        {
+            return false;
+        }
+
+        matches!(
+            function.args.first(),
+            Some(Expression::Case(case))
+                if case.operand.is_none()
+                    && case.whens.len() == 2
+                    && matches!(case.else_.as_ref(), Some(Expression::Null(_)))
+        )
     }
 
     fn apply_aggregate_filter(condition: Expression, filter: Option<Expression>) -> Expression {
@@ -2645,8 +2823,114 @@ impl TSQLDialect {
                 Literal::String(s) => Some(s),
                 _ => None,
             },
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast)
+                if Self::is_text_data_type(&cast.to) =>
+            {
+                Self::literal_string(&cast.this)
+            }
             _ => None,
         }
+    }
+
+    fn is_text_data_type(data_type: &DataType) -> bool {
+        match data_type {
+            DataType::Char { .. }
+            | DataType::VarChar { .. }
+            | DataType::String { .. }
+            | DataType::Text
+            | DataType::TextWithLength { .. } => true,
+            DataType::Custom { name } => {
+                let base = name
+                    .split_once('(')
+                    .map_or(name.as_str(), |(base, _)| base)
+                    .trim();
+                matches!(
+                    base.to_ascii_uppercase().as_str(),
+                    "CHAR"
+                        | "NCHAR"
+                        | "VARCHAR"
+                        | "NVARCHAR"
+                        | "TEXT"
+                        | "NTEXT"
+                        | "STRING"
+                        | "CHARACTER VARYING"
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn is_numeric_data_type(data_type: &DataType) -> bool {
+        match data_type {
+            DataType::TinyInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::Int { .. }
+            | DataType::BigInt { .. }
+            | DataType::Float { .. }
+            | DataType::Double { .. }
+            | DataType::Decimal { .. } => true,
+            DataType::Custom { name } => {
+                let base = name
+                    .split_once('(')
+                    .map_or(name.as_str(), |(base, _)| base)
+                    .trim();
+                matches!(
+                    base.to_ascii_uppercase().as_str(),
+                    "TINYINT"
+                        | "SMALLINT"
+                        | "INT"
+                        | "INTEGER"
+                        | "BIGINT"
+                        | "DECIMAL"
+                        | "NUMERIC"
+                        | "REAL"
+                        | "FLOAT"
+                        | "MONEY"
+                        | "SMALLMONEY"
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn is_explicitly_numeric_expression(expr: &Expression) -> bool {
+        if expr.inferred_type().is_some_and(Self::is_numeric_data_type) {
+            return true;
+        }
+
+        match expr {
+            Expression::Literal(literal) => matches!(literal.as_ref(), Literal::Number(_)),
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+                Self::is_numeric_data_type(&cast.to)
+            }
+            Expression::Alias(alias) => Self::is_explicitly_numeric_expression(&alias.this),
+            Expression::Paren(paren) => Self::is_explicitly_numeric_expression(&paren.this),
+            Expression::Neg(unary) => Self::is_explicitly_numeric_expression(&unary.this),
+            _ => false,
+        }
+    }
+
+    fn is_postgres_numeric_to_char_format(format: &str) -> bool {
+        let mut unquoted = String::with_capacity(format.len());
+        let mut quoted = false;
+        let mut chars = format.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '"' {
+                if quoted && chars.peek() == Some(&'"') {
+                    chars.next();
+                } else {
+                    quoted = !quoted;
+                }
+            } else if !quoted {
+                unquoted.extend(ch.to_uppercase());
+            }
+        }
+
+        unquoted.contains(['9', '0'])
+            || ["PR", "SG", "PL", "RN", "EEEE"]
+                .iter()
+                .any(|token| unquoted.contains(token))
     }
 
     fn postgres_format_to_strftime(format: &str) -> String {
@@ -2744,11 +3028,20 @@ impl TSQLDialect {
     ) -> Result<Expression> {
         let this = args.remove(0);
         let format = args.remove(0);
-        if let Some(format) = Self::literal_string(&format) {
+        if let Some(format_string) = Self::literal_string(&format).map(str::to_owned) {
+            if Self::is_explicitly_numeric_expression(&this)
+                || Self::is_postgres_numeric_to_char_format(&format_string)
+            {
+                return Ok(Expression::Function(Box::new(Function::new(
+                    original_name.to_string(),
+                    vec![this, format],
+                ))));
+            }
+
             Ok(Expression::TimeToStr(Box::new(
                 crate::expressions::TimeToStr {
                     this: Box::new(this),
-                    format: Self::postgres_format_to_strftime(format),
+                    format: Self::postgres_format_to_strftime(&format_string),
                     culture: None,
                     zone: None,
                 },
@@ -2763,9 +3056,34 @@ impl TSQLDialect {
 
     fn transform_aggregate_function(
         &self,
-        f: Box<crate::expressions::AggregateFunction>,
+        mut f: Box<crate::expressions::AggregateFunction>,
     ) -> Result<Expression> {
         let name_upper = f.name.to_uppercase();
+        if matches!(
+            name_upper.as_str(),
+            "SUM"
+                | "AVG"
+                | "MIN"
+                | "MAX"
+                | "COUNT"
+                | "COUNT_BIG"
+                | "ANY_VALUE"
+                | "APPROX_COUNT_DISTINCT"
+                | "STDEV"
+                | "STDEVP"
+                | "VAR"
+                | "VARP"
+                | "BOOL_AND"
+                | "BOOL_OR"
+                | "LOGICAL_AND"
+                | "LOGICAL_OR"
+                | "BIT_AND"
+                | "BIT_OR"
+                | "BIT_XOR"
+        ) {
+            f.order_by.clear();
+        }
+
         match name_upper.as_str() {
             // GROUP_CONCAT -> STRING_AGG
             "GROUP_CONCAT" if !f.args.is_empty() => Ok(Expression::Function(Box::new(
@@ -2801,6 +3119,13 @@ impl TSQLDialect {
             // Pass through everything else
             _ => Ok(Expression::AggregateFunction(f)),
         }
+    }
+
+    fn without_inert_ordering(
+        mut aggregate: Box<crate::expressions::AggFunc>,
+    ) -> Box<crate::expressions::AggFunc> {
+        aggregate.order_by.clear();
+        aggregate
     }
 
     /// Transform CTEs to add auto-aliases to bare expressions in SELECT

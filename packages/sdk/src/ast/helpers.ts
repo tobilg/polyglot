@@ -134,7 +134,7 @@ export function makeExpr(type: string, data: unknown): Expression {
 export function getInferredType(expr: Expression): DataType | undefined {
   const data = getExprData(expr);
   if (data && typeof data === 'object' && 'inferred_type' in data) {
-    const it = (data as Record<string, unknown>)['inferred_type'];
+    const it = (data as Record<string, unknown>).inferred_type;
     if (it != null) {
       return it as DataType;
     }

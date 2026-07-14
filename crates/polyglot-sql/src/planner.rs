@@ -28,24 +28,28 @@ impl Plan {
     pub fn dag(&mut self) -> &HashMap<usize, HashSet<usize>> {
         if self.dag.is_none() {
             let mut dag = HashMap::new();
-            self.build_dag(&self.root, &mut dag, 0);
+            let mut next_id = 0;
+            Self::build_dag(&self.root, &mut dag, &mut next_id);
             self.dag = Some(dag);
         }
         self.dag.as_ref().unwrap()
     }
 
-    fn build_dag(&self, step: &Step, dag: &mut HashMap<usize, HashSet<usize>>, id: usize) {
-        let deps: HashSet<usize> = step
+    fn build_dag(
+        step: &Step,
+        dag: &mut HashMap<usize, HashSet<usize>>,
+        next_id: &mut usize,
+    ) -> usize {
+        let id = *next_id;
+        *next_id += 1;
+
+        let dependencies = step
             .dependencies
             .iter()
-            .enumerate()
-            .map(|(i, _)| id + i + 1)
+            .map(|dependency| Self::build_dag(dependency, dag, next_id))
             .collect();
-        dag.insert(id, deps);
-
-        for (i, dep) in step.dependencies.iter().enumerate() {
-            self.build_dag(dep, dag, id + i + 1);
-        }
+        dag.insert(id, dependencies);
+        id
     }
 
     /// Get all leaf steps (steps with no dependencies)
@@ -499,6 +503,29 @@ mod tests {
         let plan = plan.unwrap();
         assert!(matches!(plan.root.kind, StepKind::Join(_)));
         assert_eq!(plan.root.dependencies.len(), 2);
+    }
+
+    #[test]
+    fn test_nested_join_dag_has_unique_preorder_ids() {
+        let expr = parse(
+            "SELECT t1.a FROM t1 \
+             JOIN t2 ON t1.id = t2.id \
+             JOIN t3 ON t2.id = t3.id",
+        );
+        let mut plan = Plan::from_expression(&expr).unwrap();
+        let dag = plan.dag();
+
+        assert_eq!(dag.len(), 5);
+        assert_eq!(dag.get(&0), Some(&HashSet::from([1, 4])));
+        assert_eq!(dag.get(&1), Some(&HashSet::from([2, 3])));
+        assert_eq!(dag.get(&2), Some(&HashSet::new()));
+        assert_eq!(dag.get(&3), Some(&HashSet::new()));
+        assert_eq!(dag.get(&4), Some(&HashSet::new()));
+
+        assert!(dag
+            .values()
+            .flat_map(|dependencies| dependencies.iter())
+            .all(|dependency| dag.contains_key(dependency)));
     }
 
     #[test]

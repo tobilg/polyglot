@@ -8,11 +8,11 @@
 
 use crate::dialects::transform_recursive;
 use crate::dialects::{Dialect, DialectType};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::expressions::{
     Alias, BinaryOp, BooleanLiteral, Cast, DataType, Exists, Expression, From, Function,
     Identifier, Join, JoinKind, Lateral, LateralView, Literal, NamedArgSeparator, NamedArgument,
-    Over, Select, StructField, Subquery, UnaryFunc, UnnestFunc, Where, WindowFunction, With,
+    Over, Select, StructField, Subquery, Tuple, UnaryFunc, UnnestFunc, Where, WindowFunction, With,
     WithinGroup,
 };
 use std::cell::RefCell;
@@ -34,6 +34,175 @@ where
         result = transform(result)?;
     }
     Ok(result)
+}
+
+const MAX_TSQL_GROUPING_SETS: usize = 4096;
+
+/// Expand PostgreSQL-style GROUP BY DISTINCT over advanced grouping elements
+/// into a de-duplicated GROUPING SETS list accepted by T-SQL and Fabric.
+pub fn expand_distinct_grouping_sets_for_tsql(
+    expr: Expression,
+    target: DialectType,
+) -> Result<Expression> {
+    transform_recursive(expr, &|expr| {
+        let Expression::Select(mut select) = expr else {
+            return Ok(expr);
+        };
+
+        let Some(group_by) = select.group_by.as_mut() else {
+            return Ok(Expression::Select(select));
+        };
+        if group_by.all != Some(false) {
+            return Ok(Expression::Select(select));
+        }
+
+        let mut product = vec![Vec::new()];
+        let mut has_advanced_grouping = false;
+
+        for element in &group_by.expressions {
+            let alternatives = match expand_grouping_element(element, target)? {
+                Some(alternatives) => {
+                    has_advanced_grouping = true;
+                    alternatives
+                }
+                None => vec![vec![element.clone()]],
+            };
+
+            let expanded_len = product
+                .len()
+                .checked_mul(alternatives.len())
+                .filter(|len| *len <= MAX_TSQL_GROUPING_SETS)
+                .ok_or_else(|| grouping_set_expansion_error(target))?;
+            let mut next = Vec::with_capacity(expanded_len);
+
+            for left in &product {
+                for right in &alternatives {
+                    let mut combined = left.clone();
+                    for expression in right {
+                        if !combined.contains(expression) {
+                            combined.push(expression.clone());
+                        }
+                    }
+                    next.push(combined);
+                }
+            }
+            product = next;
+        }
+
+        if !has_advanced_grouping {
+            return Ok(Expression::Select(select));
+        }
+
+        let mut distinct_sets = Vec::with_capacity(product.len());
+        for grouping_set in product {
+            if !distinct_sets.contains(&grouping_set) {
+                distinct_sets.push(grouping_set);
+            }
+        }
+
+        let sets = distinct_sets
+            .into_iter()
+            .map(|expressions| Expression::Tuple(Box::new(Tuple { expressions })))
+            .collect();
+        group_by.all = None;
+        group_by.expressions = vec![Expression::Function(Box::new(Function::new(
+            "GROUPING SETS".to_string(),
+            sets,
+        )))];
+
+        Ok(Expression::Select(select))
+    })
+}
+
+fn expand_grouping_element(
+    expression: &Expression,
+    target: DialectType,
+) -> Result<Option<Vec<Vec<Expression>>>> {
+    match expression {
+        Expression::Function(function) if function.name.eq_ignore_ascii_case("ROLLUP") => {
+            Ok(Some(expand_rollup(&function.args)))
+        }
+        Expression::Function(function) if function.name.eq_ignore_ascii_case("CUBE") => {
+            Ok(Some(expand_cube(&function.args, target)?))
+        }
+        Expression::Function(function) if function.name.eq_ignore_ascii_case("GROUPING SETS") => {
+            Ok(Some(expand_explicit_grouping_sets(&function.args, target)?))
+        }
+        Expression::Rollup(rollup) => Ok(Some(expand_rollup(&rollup.expressions))),
+        Expression::Cube(cube) => Ok(Some(expand_cube(&cube.expressions, target)?)),
+        Expression::GroupingSets(grouping_sets) => Ok(Some(expand_explicit_grouping_sets(
+            &grouping_sets.expressions,
+            target,
+        )?)),
+        _ => Ok(None),
+    }
+}
+
+fn expand_rollup(elements: &[Expression]) -> Vec<Vec<Expression>> {
+    (0..=elements.len())
+        .rev()
+        .map(|end| flatten_grouping_units(&elements[..end]))
+        .collect()
+}
+
+fn expand_cube(elements: &[Expression], target: DialectType) -> Result<Vec<Vec<Expression>>> {
+    let set_count = 1usize
+        .checked_shl(elements.len() as u32)
+        .filter(|count| *count <= MAX_TSQL_GROUPING_SETS)
+        .ok_or_else(|| grouping_set_expansion_error(target))?;
+
+    Ok((0..set_count)
+        .rev()
+        .map(|mask| {
+            let selected = elements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, element)| {
+                    let bit = elements.len() - index - 1;
+                    (mask & (1usize << bit) != 0).then_some(element)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            flatten_grouping_units(&selected)
+        })
+        .collect())
+}
+
+fn expand_explicit_grouping_sets(
+    elements: &[Expression],
+    target: DialectType,
+) -> Result<Vec<Vec<Expression>>> {
+    let mut sets = Vec::new();
+    for element in elements {
+        if let Some(nested) = expand_grouping_element(element, target)? {
+            sets.extend(nested);
+        } else {
+            sets.push(flatten_grouping_unit(element));
+        }
+        if sets.len() > MAX_TSQL_GROUPING_SETS {
+            return Err(grouping_set_expansion_error(target));
+        }
+    }
+    Ok(sets)
+}
+
+fn flatten_grouping_units(elements: &[Expression]) -> Vec<Expression> {
+    elements.iter().flat_map(flatten_grouping_unit).collect()
+}
+
+fn flatten_grouping_unit(expression: &Expression) -> Vec<Expression> {
+    match expression {
+        Expression::Tuple(tuple) => tuple.expressions.clone(),
+        Expression::Paren(paren) => flatten_grouping_unit(&paren.this),
+        _ => vec![expression.clone()],
+    }
+}
+
+fn grouping_set_expansion_error(target: DialectType) -> Error {
+    Error::unsupported(
+        format!("GROUP BY DISTINCT expansion beyond {MAX_TSQL_GROUPING_SETS} grouping sets"),
+        target.to_string(),
+    )
 }
 
 /// Rewrite PostgreSQL ordered-set percentile aggregates grouped by ordinary
@@ -2250,6 +2419,23 @@ fn ensure_bools_in_value_context(expr: Expression) -> Expression {
             subquery.this = ensure_bools_in_value_context(subquery.this);
             Expression::Subquery(subquery)
         }
+        Expression::JoinedTable(mut joined_table) => {
+            joined_table.left = ensure_bools_in_value_context(joined_table.left);
+            joined_table.joins = joined_table
+                .joins
+                .into_iter()
+                .map(ensure_bools_in_join)
+                .collect();
+            joined_table.lateral_views = joined_table
+                .lateral_views
+                .into_iter()
+                .map(|mut lateral_view| {
+                    lateral_view.this = ensure_bools_in_value_context(lateral_view.this);
+                    lateral_view
+                })
+                .collect();
+            Expression::JoinedTable(joined_table)
+        }
         Expression::Union(mut union) => {
             let left = std::mem::replace(&mut union.left, Expression::null());
             let right = std::mem::replace(&mut union.right, Expression::null());
@@ -2335,6 +2521,12 @@ fn ensure_bools_in_join(mut join: Join) -> Join {
         join.on = Some(ensure_bool_condition(ensure_bools_in_value_context(on)));
     }
 
+    if let Some(match_condition) = join.match_condition.take() {
+        join.match_condition = Some(ensure_bool_condition(ensure_bools_in_value_context(
+            match_condition,
+        )));
+    }
+
     join.pivots = join
         .pivots
         .into_iter()
@@ -2373,6 +2565,7 @@ fn is_boolean_expression(expr: &Expression) -> bool {
             | Expression::IsFalse(_)
             | Expression::Like(_)
             | Expression::ILike(_)
+            | Expression::StartsWith(_)
             | Expression::SimilarTo(_)
             | Expression::Glob(_)
             | Expression::RegexpLike(_)
@@ -2407,7 +2600,7 @@ fn wrap_neq_zero(expr: Expression) -> Expression {
 /// In TSQL, conditions in WHERE/HAVING must be boolean expressions.
 /// Non-boolean expressions (columns, literals, casts, function calls, etc.)
 /// are wrapped with `<> 0`. Boolean literals are converted to `(1 = 1)` or `(1 = 0)`.
-fn ensure_bool_condition(expr: Expression) -> Expression {
+pub(crate) fn ensure_bool_condition(expr: Expression) -> Expression {
     match expr {
         // For AND/OR, recursively process children
         Expression::And(op) => {

@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::expressions::Expression;
-use crate::tokens::{Token, TokenType};
+use crate::tokens::{ParserToken, Span, Token, TokenType};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -69,6 +69,54 @@ pub struct ComplexityGuardOptions {
     pub max_function_call_depth: Option<usize>,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct TokenGuardStats {
+    pub token_count: usize,
+    parenthesis_depth_spans: Vec<Span>,
+    function_depth_spans: Vec<Span>,
+    parenthesis_stack: Vec<bool>,
+    parenthesis_depth: usize,
+    function_depth: usize,
+    previous_significant: Option<TokenType>,
+}
+
+impl TokenGuardStats {
+    pub(crate) fn observe(&mut self, token_type: TokenType, span: Span) {
+        self.token_count += 1;
+        match token_type {
+            TokenType::LParen => {
+                self.parenthesis_depth += 1;
+                if self.parenthesis_depth_spans.len() < self.parenthesis_depth {
+                    self.parenthesis_depth_spans.push(span);
+                }
+
+                let is_function_call = self
+                    .previous_significant
+                    .map(is_function_call_name_token)
+                    .unwrap_or(false);
+                self.parenthesis_stack.push(is_function_call);
+                if is_function_call {
+                    self.function_depth += 1;
+                    if self.function_depth_spans.len() < self.function_depth {
+                        self.function_depth_spans.push(span);
+                    }
+                }
+            }
+            TokenType::RParen => {
+                self.parenthesis_depth = self.parenthesis_depth.saturating_sub(1);
+                if self.parenthesis_stack.pop().unwrap_or(false) {
+                    self.function_depth = self.function_depth.saturating_sub(1);
+                }
+            }
+            _ => {}
+        }
+
+        if !is_trivia_token(token_type) {
+            self.previous_significant = Some(token_type);
+        }
+    }
+}
+
 impl Default for ComplexityGuardOptions {
     fn default() -> Self {
         Self {
@@ -82,16 +130,10 @@ impl Default for ComplexityGuardOptions {
     }
 }
 
-fn parse_guard_error(code: &str, actual: usize, limit: usize, token: Option<&Token>) -> Error {
+fn parse_guard_error(code: &str, actual: usize, limit: usize, span: Option<Span>) -> Error {
     let message = format!("{code}: value {actual} exceeds configured limit {limit}");
-    if let Some(token) = token {
-        Error::parse(
-            message,
-            token.span.line,
-            token.span.column,
-            token.span.start,
-            token.span.end,
-        )
+    if let Some(span) = span {
+        Error::parse(message, span.line, span.column, span.start, span.end)
     } else {
         Error::parse(message, 0, 0, 0, 0)
     }
@@ -121,16 +163,47 @@ pub fn enforce_input(sql: &str, options: &ComplexityGuardOptions) -> Result<()> 
 }
 
 /// Enforce token and pre-parse nesting limits.
-pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Result<()> {
+trait GuardToken {
+    fn token_type(&self) -> TokenType;
+    fn span(&self) -> Span;
+}
+
+impl GuardToken for Token {
+    fn token_type(&self) -> TokenType {
+        self.token_type
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl GuardToken for ParserToken {
+    fn token_type(&self) -> TokenType {
+        self.token_type
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+fn enforce_token_slice<T: GuardToken>(
+    tokens: &[T],
+    options: &ComplexityGuardOptions,
+) -> Result<()> {
     if let Some(max) = options.max_tokens {
         let token_count = tokens.len();
         if token_count > max {
-            let token = tokens.get(max).or_else(|| tokens.last());
+            let span = tokens
+                .get(max)
+                .or_else(|| tokens.last())
+                .map(GuardToken::span);
             return Err(parse_guard_error(
                 "E_GUARD_TOKEN_BUDGET_EXCEEDED",
                 token_count,
                 max,
-                token,
+                span,
             ));
         }
     }
@@ -142,7 +215,7 @@ pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Res
         let mut previous_significant: Option<TokenType> = None;
 
         for token in tokens {
-            match token.token_type {
+            match token.token_type() {
                 TokenType::LParen => {
                     paren_depth += 1;
                     if let Some(max) = options.max_parenthesis_depth {
@@ -151,7 +224,7 @@ pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Res
                                 "E_GUARD_NESTING_DEPTH_EXCEEDED",
                                 paren_depth,
                                 max,
-                                Some(token),
+                                Some(token.span()),
                             ));
                         }
                     }
@@ -168,7 +241,7 @@ pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Res
                                     "E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED",
                                     function_depth,
                                     max,
-                                    Some(token),
+                                    Some(token.span()),
                                 ));
                             }
                         }
@@ -183,13 +256,86 @@ pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Res
                 _ => {}
             }
 
-            if !is_trivia_token(token.token_type) {
-                previous_significant = Some(token.token_type);
+            if !is_trivia_token(token.token_type()) {
+                previous_significant = Some(token.token_type());
             }
         }
     }
 
     Ok(())
+}
+
+pub fn enforce_tokens(tokens: &[Token], options: &ComplexityGuardOptions) -> Result<()> {
+    enforce_token_slice(tokens, options)
+}
+
+pub(crate) fn enforce_parser_tokens(
+    tokens: &[ParserToken],
+    options: &ComplexityGuardOptions,
+) -> Result<()> {
+    enforce_token_slice(tokens, options)
+}
+
+pub(crate) fn enforce_parser_token_stats(
+    tokens: &[ParserToken],
+    stats: &TokenGuardStats,
+    options: &ComplexityGuardOptions,
+) -> Result<()> {
+    if let Some(max) = options.max_tokens {
+        if stats.token_count > max {
+            let span = tokens
+                .get(max)
+                .or_else(|| tokens.last())
+                .map(|token| token.span);
+            return Err(parse_guard_error(
+                "E_GUARD_TOKEN_BUDGET_EXCEEDED",
+                stats.token_count,
+                max,
+                span,
+            ));
+        }
+    }
+
+    let parenthesis_error = options.max_parenthesis_depth.and_then(|max| {
+        stats
+            .parenthesis_depth_spans
+            .get(max)
+            .copied()
+            .map(|span| (span, max))
+    });
+    let function_error = options.max_function_call_depth.and_then(|max| {
+        stats
+            .function_depth_spans
+            .get(max)
+            .copied()
+            .map(|span| (span, max))
+    });
+
+    match (parenthesis_error, function_error) {
+        (Some((paren_span, _paren_max)), Some((function_span, function_max)))
+            if function_span.start < paren_span.start =>
+        {
+            Err(parse_guard_error(
+                "E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED",
+                function_max + 1,
+                function_max,
+                Some(function_span),
+            ))
+        }
+        (Some((span, max)), _) => Err(parse_guard_error(
+            "E_GUARD_NESTING_DEPTH_EXCEEDED",
+            max + 1,
+            max,
+            Some(span),
+        )),
+        (None, Some((span, max))) => Err(parse_guard_error(
+            "E_GUARD_FUNCTION_NESTING_DEPTH_EXCEEDED",
+            max + 1,
+            max,
+            Some(span),
+        )),
+        (None, None) => Ok(()),
+    }
 }
 
 fn is_trivia_token(token_type: TokenType) -> bool {
@@ -218,6 +364,49 @@ fn is_function_call_name_token(token_type: TokenType) -> bool {
             | TokenType::Right
             | TokenType::Row
     )
+}
+
+#[cfg(test)]
+mod token_guard_tests {
+    use super::*;
+    use crate::tokens::Tokenizer;
+    use std::sync::Arc;
+
+    #[test]
+    fn collected_parser_stats_match_full_token_guard_pass() {
+        let sql: Arc<str> = Arc::from("SELECT outer(inner((value))), other(1, 2) FROM t");
+        let tokenizer = Tokenizer::default();
+        let public_tokens = tokenizer.tokenize(&sql).unwrap();
+        let (parser_tokens, stats) = tokenizer.tokenize_for_parser(&sql).unwrap();
+        let options = [
+            ComplexityGuardOptions::default(),
+            ComplexityGuardOptions {
+                max_tokens: Some(5),
+                ..Default::default()
+            },
+            ComplexityGuardOptions {
+                max_parenthesis_depth: Some(1),
+                ..Default::default()
+            },
+            ComplexityGuardOptions {
+                max_function_call_depth: Some(1),
+                ..Default::default()
+            },
+            ComplexityGuardOptions {
+                max_parenthesis_depth: Some(2),
+                max_function_call_depth: Some(1),
+                ..Default::default()
+            },
+        ];
+
+        for option in options {
+            let full_pass =
+                enforce_tokens(&public_tokens, &option).map_err(|error| error.to_string());
+            let collected = enforce_parser_token_stats(&parser_tokens, &stats, &option)
+                .map_err(|error| error.to_string());
+            assert_eq!(collected, full_pass);
+        }
+    }
 }
 
 /// Enforce AST size/depth limits and report parse-oriented errors.
@@ -356,11 +545,11 @@ fn push_ast_children<'a>(
             push_connector_child(stack, &op.left, depth, ConnectorKind::Or);
         }
         _ => {
-            use crate::traversal::ExpressionWalk;
-
-            for child in expr.children().into_iter().rev() {
+            let child_start = stack.len();
+            crate::ast_children::for_each_child(expr, |_, child| {
                 stack.push((child, depth + 1));
-            }
+            });
+            stack[child_start..].reverse();
         }
     }
 }

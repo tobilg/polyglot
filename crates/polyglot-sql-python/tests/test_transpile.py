@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 import polyglot_sql
@@ -136,3 +138,17 @@ def test_empty_input_matches_core_behavior():
     except polyglot_sql.ParseError:
         # Accept parser-reject behavior as long as it is explicit and typed.
         pass
+
+
+def test_transpile_calls_execute_concurrently_with_stable_results():
+    sql = " UNION ALL ".join(
+        f"SELECT {value} AS id FROM events_{value}" for value in range(80)
+    )
+
+    def run(_):
+        return polyglot_sql.transpile(sql, read="postgres", write="duckdb")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(run, range(32)))
+
+    assert all(result == results[0] for result in results)

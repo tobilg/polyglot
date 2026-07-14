@@ -1,0 +1,246 @@
+{
+  "schemaVersion": 1,
+  "layers": ["rust", "python", "ffi", "go", "wasm", "typescript"],
+  "capabilities": [
+    {
+      "id": "version",
+      "description": "Runtime library version discovery",
+      "layers": {
+        "rust": { "status": "unavailable", "symbols": ["version"], "notes": "Rust consumers use Cargo package metadata." },
+        "python": { "status": "supported", "symbols": ["__version__"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_version"] },
+        "go": { "status": "supported", "symbols": ["Client.Version"] },
+        "wasm": { "status": "supported", "symbols": ["version"] },
+        "typescript": { "status": "supported", "symbols": ["getVersion"] }
+      }
+    },
+    {
+      "id": "dialects",
+      "description": "Dialect selection and discovery",
+      "layers": {
+        "rust": { "status": "partial", "symbols": ["Dialect.get"], "notes": "Rust exposes typed dialect selection but no list function." },
+        "python": { "status": "supported", "symbols": ["dialects"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_dialect_list", "polyglot_dialect_count"] },
+        "go": { "status": "supported", "symbols": ["Client.Dialects", "Client.DialectCount"] },
+        "wasm": { "status": "supported", "symbols": ["get_dialects"] },
+        "typescript": { "status": "supported", "symbols": ["getDialects"] }
+      }
+    },
+    {
+      "id": "transpile",
+      "description": "SQL transpilation with options",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["transpile"] },
+        "python": { "status": "supported", "symbols": ["transpile"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_transpile", "polyglot_transpile_with_options"] },
+        "go": { "status": "supported", "symbols": ["Client.Transpile"] },
+        "wasm": { "status": "supported", "symbols": ["transpile", "transpile_with_options"] },
+        "typescript": { "status": "supported", "symbols": ["transpile"] }
+      }
+    },
+    {
+      "id": "parse",
+      "description": "SQL statement parsing",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["parse", "parse_one"] },
+        "python": { "status": "supported", "symbols": ["parse", "parse_one"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_parse", "polyglot_parse_one"] },
+        "go": { "status": "supported", "symbols": ["Client.Parse", "Client.ParseOne"] },
+        "wasm": { "status": "partial", "symbols": ["parse"], "notes": "The raw WASM API returns all parsed statements and has no parse_one export." },
+        "typescript": { "status": "partial", "symbols": ["parse"], "notes": "The SDK returns all parsed statements and has no parseOne helper." }
+      }
+    },
+    {
+      "id": "data_types",
+      "description": "Standalone data type parsing and generation",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["parse_data_type", "generate_data_type"] },
+        "python": { "status": "partial", "symbols": ["parse_data_type"], "notes": "Python has no dedicated generate_data_type helper." },
+        "ffi": { "status": "supported", "symbols": ["polyglot_parse_data_type", "polyglot_generate_data_type"] },
+        "go": { "status": "supported", "symbols": ["Client.ParseDataType", "Client.GenerateDataType"] },
+        "wasm": { "status": "supported", "symbols": ["parse_data_type", "generate_data_type"] },
+        "typescript": { "status": "supported", "symbols": ["parseDataType", "generateDataType"] }
+      }
+    },
+    {
+      "id": "generate",
+      "description": "SQL generation from AST data",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["generate"] },
+        "python": { "status": "supported", "symbols": ["generate"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_generate"] },
+        "go": { "status": "supported", "symbols": ["Client.Generate"] },
+        "wasm": { "status": "supported", "symbols": ["generate"] },
+        "typescript": { "status": "supported", "symbols": ["generate"] }
+      }
+    },
+    {
+      "id": "format",
+      "description": "SQL formatting and guard options",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["format", "format_with_options"] },
+        "python": { "status": "partial", "symbols": ["format"], "notes": "Python exposes formatting but not guard-limit options." },
+        "ffi": { "status": "supported", "symbols": ["polyglot_format", "polyglot_format_with_options"] },
+        "go": { "status": "supported", "symbols": ["Client.Format"] },
+        "wasm": { "status": "supported", "symbols": ["format_sql", "format_sql_with_options"] },
+        "typescript": { "status": "supported", "symbols": ["format", "formatWithOptions"] }
+      }
+    },
+    {
+      "id": "validate",
+      "description": "Syntax validation and query-quality semantic warnings",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["validate", "validate_with_options", "validate_with_dialect"] },
+        "python": { "status": "supported", "symbols": ["validate"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_validate", "polyglot_validate_with_options"] },
+        "go": { "status": "supported", "symbols": ["Client.Validate"] },
+        "wasm": { "status": "supported", "symbols": ["validate", "validate_with_options"] },
+        "typescript": { "status": "supported", "symbols": ["validate"] }
+      }
+    },
+    {
+      "id": "validate_schema",
+      "description": "Schema-aware validation",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["validation.validate_with_schema"] },
+        "python": { "status": "unavailable", "symbols": ["validate_with_schema"], "notes": "No Python wrapper is currently exported." },
+        "ffi": { "status": "unavailable", "symbols": ["polyglot_validate_with_schema"], "notes": "No FFI export is currently available." },
+        "go": { "status": "unavailable", "symbols": ["Client.ValidateWithSchema"], "notes": "The Go SDK follows the current FFI surface." },
+        "wasm": { "status": "supported", "symbols": ["validate_with_schema"] },
+        "typescript": { "status": "supported", "symbols": ["validateWithSchema"] }
+      }
+    },
+    {
+      "id": "optimize",
+      "description": "AST or SQL optimization",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["optimizer.optimize"] },
+        "python": { "status": "supported", "symbols": ["optimize"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_optimize"] },
+        "go": { "status": "supported", "symbols": ["Client.Optimize"] },
+        "wasm": { "status": "unavailable", "symbols": ["optimize"], "notes": "The WASM crate does not export the optimizer." },
+        "typescript": { "status": "unavailable", "symbols": ["optimize"], "notes": "The SDK cannot expose an operation absent from WASM." }
+      }
+    },
+    {
+      "id": "tokenize",
+      "description": "SQL tokenization",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["Tokenizer.tokenize"] },
+        "python": { "status": "supported", "symbols": ["tokenize"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_tokenize"] },
+        "go": { "status": "supported", "symbols": ["Client.Tokenize"] },
+        "wasm": { "status": "supported", "symbols": ["tokenize"] },
+        "typescript": { "status": "supported", "symbols": ["tokenize"] }
+      }
+    },
+    {
+      "id": "annotate_types",
+      "description": "Schema-based AST type annotation",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["annotate_types"] },
+        "python": { "status": "unavailable", "symbols": ["annotate_types"], "notes": "The native binding exists but is not exported by the Python package." },
+        "ffi": { "status": "supported", "symbols": ["polyglot_annotate_types"] },
+        "go": { "status": "supported", "symbols": ["Client.AnnotateTypes"] },
+        "wasm": { "status": "supported", "symbols": ["annotate_types"] },
+        "typescript": { "status": "supported", "symbols": ["annotateTypes"] }
+      }
+    },
+    {
+      "id": "diff",
+      "description": "AST-aware SQL diffing",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["diff.diff"] },
+        "python": { "status": "supported", "symbols": ["diff"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_diff"] },
+        "go": { "status": "supported", "symbols": ["Client.Diff"] },
+        "wasm": { "status": "supported", "symbols": ["diff_sql"] },
+        "typescript": { "status": "supported", "symbols": ["diff"] }
+      }
+    },
+    {
+      "id": "ast_transforms",
+      "description": "Public AST mutation helpers",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["rename_tables", "set_limit", "set_offset", "set_order_by"] },
+        "python": { "status": "supported", "symbols": ["qualify_tables", "rename_tables", "set_limit", "set_offset", "set_order_by"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_qualify_tables", "polyglot_rename_tables_with_options", "polyglot_set_limit", "polyglot_set_offset", "polyglot_set_order_by"] },
+        "go": { "status": "supported", "symbols": ["Client.QualifyTables", "Client.RenameTables", "Client.SetLimit", "Client.SetOffset", "Client.SetOrderBy"] },
+        "wasm": { "status": "supported", "symbols": ["ast_qualify_tables", "ast_rename_tables_with_options", "ast_set_limit", "ast_set_offset", "ast_set_order_by"] },
+        "typescript": { "status": "supported", "symbols": ["ast.qualifyTables", "ast.renameTables", "ast.setLimit", "ast.setOffset", "ast.setOrderBy"] }
+      }
+    },
+    {
+      "id": "lineage",
+      "description": "Column lineage and source table discovery",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["lineage.lineage", "lineage.lineage_with_schema", "lineage.get_source_tables"] },
+        "python": { "status": "supported", "symbols": ["lineage", "lineage_with_schema", "source_tables"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_lineage", "polyglot_lineage_with_schema", "polyglot_source_tables"] },
+        "go": { "status": "supported", "symbols": ["Client.Lineage", "Client.LineageWithSchema", "Client.SourceTables"] },
+        "wasm": { "status": "supported", "symbols": ["lineage_sql", "lineage_sql_with_schema", "source_tables"] },
+        "typescript": { "status": "supported", "symbols": ["lineage", "lineageWithSchema", "getSourceTables"] }
+      }
+    },
+    {
+      "id": "openlineage",
+      "description": "OpenLineage facets and events",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["openlineage.openlineage_column_lineage", "openlineage.openlineage_job_event", "openlineage.openlineage_run_event"] },
+        "python": { "status": "supported", "symbols": ["openlineage_column_lineage", "openlineage_job_event", "openlineage_run_event"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_openlineage_column_lineage", "polyglot_openlineage_job_event", "polyglot_openlineage_run_event"] },
+        "go": { "status": "supported", "symbols": ["Client.OpenLineageColumnLineage", "Client.OpenLineageJobEvent", "Client.OpenLineageRunEvent"] },
+        "wasm": { "status": "supported", "symbols": ["openlineage_column_lineage", "openlineage_job_event", "openlineage_run_event"] },
+        "typescript": { "status": "supported", "symbols": ["openLineageColumnLineage", "openLineageJobEvent", "openLineageRunEvent"] }
+      }
+    },
+    {
+      "id": "analyze_query",
+      "description": "Structured query analysis",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["analyze_query"] },
+        "python": { "status": "supported", "symbols": ["analyze_query"] },
+        "ffi": { "status": "supported", "symbols": ["polyglot_analyze_query"] },
+        "go": { "status": "supported", "symbols": ["Client.AnalyzeQuery"] },
+        "wasm": { "status": "supported", "symbols": ["analyze_query"] },
+        "typescript": { "status": "supported", "symbols": ["analyzeQuery"] }
+      }
+    },
+    {
+      "id": "planner",
+      "description": "Logical query planning",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["planner.Plan.from_expression"] },
+        "python": { "status": "unavailable", "symbols": ["plan"], "notes": "No Python planner wrapper is currently exported." },
+        "ffi": { "status": "unavailable", "symbols": ["polyglot_plan"], "notes": "No FFI planner export is currently available." },
+        "go": { "status": "unavailable", "symbols": ["Client.Plan"], "notes": "The Go SDK follows the current FFI surface." },
+        "wasm": { "status": "supported", "symbols": ["plan"] },
+        "typescript": { "status": "supported", "symbols": ["plan"] }
+      }
+    },
+    {
+      "id": "builders",
+      "description": "Fluent SQL builders",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["builder.col"] },
+        "python": { "status": "unavailable", "symbols": ["select"], "notes": "Python currently exposes parsed Expression objects rather than fluent builders." },
+        "ffi": { "status": "unavailable", "symbols": ["polyglot_select_builder"], "notes": "The C ABI does not expose stateful builders." },
+        "go": { "status": "unavailable", "symbols": ["Client.Select"], "notes": "The Go SDK does not expose fluent builders." },
+        "wasm": { "status": "supported", "symbols": ["WasmSelectBuilder"] },
+        "typescript": { "status": "supported", "symbols": ["select", "SelectBuilder"] }
+      }
+    },
+    {
+      "id": "visitors",
+      "description": "AST traversal and visitor helpers",
+      "layers": {
+        "rust": { "status": "supported", "symbols": ["traversal.transform", "traversal.get_columns"] },
+        "python": { "status": "partial", "symbols": ["Expression.walk", "Expression.find"], "notes": "Traversal is exposed as methods on Expression rather than a separate visitor API." },
+        "ffi": { "status": "unavailable", "symbols": ["polyglot_walk"], "notes": "The C ABI exposes individual AST helpers, not visitors." },
+        "go": { "status": "unavailable", "symbols": ["Client.Walk"], "notes": "The Go SDK returns raw AST JSON and has no visitor API." },
+        "wasm": { "status": "unavailable", "symbols": ["walk"], "notes": "Raw WASM exposes AST helper functions rather than a visitor abstraction." },
+        "typescript": { "status": "supported", "symbols": ["walk", "findAll", "transform"] }
+      }
+    }
+  ]
+}

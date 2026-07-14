@@ -55,10 +55,8 @@ fn annotate_types_impl(
 
     // Parse schema if provided
     let schema = if !schema_json.is_null() {
-        let schema_str = match unsafe { required_arg(schema_json, "schema_json") } {
-            Ok(value) => value,
-            Err(_) => String::new(),
-        };
+        let schema_str: String =
+            unsafe { required_arg(schema_json, "schema_json") }.unwrap_or_default();
         if !schema_str.is_empty() {
             match serde_json::from_str::<polyglot_sql::ValidationSchema>(&schema_str) {
                 Ok(vs) => Some(polyglot_sql::mapping_schema_from_validation_schema(&vs)),

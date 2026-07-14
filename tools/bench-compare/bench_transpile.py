@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transpilation benchmark comparing polyglot-sql (Rust/PyO3) vs sqlglot[c] (Python + C tokenizer).
+"""Transpilation benchmark comparing polyglot-sql (Rust/PyO3) vs sqlglot[c] native extensions.
 
 Covers 8 queries of varying complexity and a 6-pair dialect matrix.
 

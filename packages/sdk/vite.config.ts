@@ -47,7 +47,9 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json', 'html'],
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.test.ts', 'src/generated/**', 'src/wasm/**'],
+      reporter: ['text', 'json-summary', 'lcov', 'html'],
     },
   },
 });

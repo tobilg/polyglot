@@ -1,4 +1,4 @@
-"""Polyglot SQL — Rust-powered SQL transpiler for 32+ dialects."""
+"""Polyglot SQL — Rust-powered SQL transpiler for more than 30 SQL dialects."""
 
 from polyglot_sql._polyglot_sql import (
     Expression,

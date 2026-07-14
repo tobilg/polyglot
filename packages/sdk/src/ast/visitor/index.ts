@@ -5,6 +5,7 @@
  * and manipulating SQL AST nodes.
  */
 
+export type { QualifyTablesOptions, RenameTablesOptions } from './transformer';
 // Transformer functions
 export {
   addSelectColumns,
@@ -36,7 +37,6 @@ export type {
   VisitorConfig,
   VisitorContext,
 } from './types';
-export type { QualifyTablesOptions, RenameTablesOptions } from './transformer';
 // Walker functions
 export {
   countNodes,

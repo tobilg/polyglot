@@ -1,16 +1,17 @@
 use polyglot_sql_ffi::{
-    polyglot_analyze_query, polyglot_dialect_count, polyglot_dialect_list, polyglot_diff,
-    polyglot_format, polyglot_format_with_options, polyglot_free_result, polyglot_free_string,
-    polyglot_free_validation_result, polyglot_generate, polyglot_generate_data_type,
-    polyglot_lineage, polyglot_lineage_with_schema, polyglot_openlineage_column_lineage,
-    polyglot_openlineage_job_event, polyglot_openlineage_run_event, polyglot_optimize,
-    polyglot_parse, polyglot_parse_data_type, polyglot_parse_one, polyglot_qualify_tables,
-    polyglot_rename_tables_with_options, polyglot_set_limit, polyglot_set_offset,
-    polyglot_set_order_by, polyglot_source_tables, polyglot_transpile,
-    polyglot_transpile_with_options, polyglot_validate, polyglot_version, PolyglotResult,
-    PolyglotValidationResult,
+    polyglot_analyze_query, polyglot_annotate_types, polyglot_dialect_count, polyglot_dialect_list,
+    polyglot_diff, polyglot_format, polyglot_format_with_options, polyglot_free_result,
+    polyglot_free_string, polyglot_free_validation_result, polyglot_generate,
+    polyglot_generate_data_type, polyglot_lineage, polyglot_lineage_with_schema,
+    polyglot_openlineage_column_lineage, polyglot_openlineage_job_event,
+    polyglot_openlineage_run_event, polyglot_optimize, polyglot_parse, polyglot_parse_data_type,
+    polyglot_parse_one, polyglot_qualify_tables, polyglot_rename_tables_with_options,
+    polyglot_set_limit, polyglot_set_offset, polyglot_set_order_by, polyglot_source_tables,
+    polyglot_tokenize, polyglot_transpile, polyglot_transpile_with_options, polyglot_validate,
+    polyglot_validate_with_options, polyglot_version, PolyglotResult, PolyglotValidationResult,
 };
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -709,6 +710,58 @@ fn test_validate_invalid_sql() {
 }
 
 #[test]
+fn test_validate_with_options_strict_and_semantic() {
+    let sql = c("SELECT *, FROM users");
+    let dialect = c("generic");
+    let options = c(r#"{"strictSyntax":true,"semantic":true}"#);
+    let (status, valid, errors_json, top_error) = consume_validation(
+        polyglot_validate_with_options(sql.as_ptr(), dialect.as_ptr(), options.as_ptr()),
+    );
+    assert_eq!(status, 4, "top_error={top_error:?}");
+    assert_eq!(valid, 0);
+    let errors: Vec<Value> =
+        serde_json::from_str(&errors_json.expect("missing errors_json")).expect("invalid json");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["code"], "E005");
+
+    let sql = c("SELECT * FROM users LIMIT 10");
+    let options = c(r#"{"semantic":true}"#);
+    let (status, valid, errors_json, top_error) = consume_validation(
+        polyglot_validate_with_options(sql.as_ptr(), dialect.as_ptr(), options.as_ptr()),
+    );
+    assert_eq!(status, 0, "top_error={top_error:?}");
+    assert_eq!(valid, 1);
+    let errors: Vec<Value> =
+        serde_json::from_str(&errors_json.expect("missing errors_json")).expect("invalid json");
+    assert!(errors.iter().any(|error| error["code"] == "W001"));
+    assert!(errors.iter().any(|error| error["code"] == "W004"));
+}
+
+#[test]
+fn test_validate_with_options_rejects_invalid_options() {
+    let sql = c("SELECT 1");
+    let dialect = c("generic");
+    let options = c("{not-json");
+    let (status, _, _, error) = consume_validation(polyglot_validate_with_options(
+        sql.as_ptr(),
+        dialect.as_ptr(),
+        options.as_ptr(),
+    ));
+    assert_eq!(status, 6);
+    assert!(error
+        .expect("top-level error")
+        .contains("Invalid validation options JSON"));
+
+    let (status, _, _, error) = consume_validation(polyglot_validate_with_options(
+        sql.as_ptr(),
+        dialect.as_ptr(),
+        ptr::null(),
+    ));
+    assert_eq!(status, 5);
+    assert!(error.expect("top-level error").contains("options_json"));
+}
+
+#[test]
 fn test_optimize_sql() {
     let sql = c("SELECT a FROM t WHERE NOT (NOT (b = 1))");
     let dialect = c("generic");
@@ -1257,7 +1310,9 @@ fn test_dialect_list_and_count() {
     let list: Vec<String> = serde_json::from_str(&json).expect("invalid dialect list json");
     let count = polyglot_dialect_count();
     assert_eq!(list.len() as i32, count);
-    assert!(count >= 32);
+    assert_eq!(count, 34);
+    let unique: BTreeSet<&str> = list.iter().map(String::as_str).collect();
+    assert_eq!(unique.len(), list.len());
     assert!(list.iter().any(|d| d == "generic"));
 }
 
@@ -1287,4 +1342,87 @@ fn test_memory_free_functions_null_safe() {
         status: 0,
     };
     polyglot_free_validation_result(validation);
+}
+
+#[test]
+fn test_public_api_matches_capability_contract() {
+    let Ok(path) = std::env::var("POLYGLOT_API_CONTRACT") else {
+        return;
+    };
+    let contract: Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read API capability contract"))
+            .expect("parse API capability contract");
+
+    macro_rules! exported_symbols {
+        ($($capability:literal => { $($symbol:ident),+ $(,)? }),+ $(,)?) => {{
+            let mut capabilities = BTreeMap::new();
+            $(
+                $(let _ = $symbol;)+
+                capabilities.insert(
+                    $capability,
+                    BTreeSet::from([$(stringify!($symbol)),+]),
+                );
+            )+
+            capabilities
+        }};
+    }
+
+    let actual = exported_symbols! {
+        "version" => { polyglot_version },
+        "dialects" => { polyglot_dialect_list, polyglot_dialect_count },
+        "transpile" => { polyglot_transpile, polyglot_transpile_with_options },
+        "parse" => { polyglot_parse, polyglot_parse_one },
+        "data_types" => { polyglot_parse_data_type, polyglot_generate_data_type },
+        "generate" => { polyglot_generate },
+        "format" => { polyglot_format, polyglot_format_with_options },
+        "validate" => { polyglot_validate, polyglot_validate_with_options },
+        "optimize" => { polyglot_optimize },
+        "tokenize" => { polyglot_tokenize },
+        "annotate_types" => { polyglot_annotate_types },
+        "diff" => { polyglot_diff },
+        "ast_transforms" => {
+            polyglot_qualify_tables,
+            polyglot_rename_tables_with_options,
+            polyglot_set_limit,
+            polyglot_set_offset,
+            polyglot_set_order_by
+        },
+        "lineage" => { polyglot_lineage, polyglot_lineage_with_schema, polyglot_source_tables },
+        "openlineage" => {
+            polyglot_openlineage_column_lineage,
+            polyglot_openlineage_job_event,
+            polyglot_openlineage_run_event
+        },
+        "analyze_query" => { polyglot_analyze_query },
+    };
+
+    let mut declared_available = BTreeSet::new();
+    for capability in contract["capabilities"]
+        .as_array()
+        .expect("capabilities must be an array")
+    {
+        let id = capability["id"].as_str().expect("capability id");
+        let entry = &capability["layers"]["ffi"];
+        let status = entry["status"].as_str().expect("capability status");
+        if status != "supported" {
+            assert!(entry["notes"].as_str().is_some_and(|note| !note.is_empty()));
+        }
+        if status == "unavailable" {
+            assert!(!actual.contains_key(id));
+            continue;
+        }
+
+        declared_available.insert(id);
+        let expected = entry["symbols"]
+            .as_array()
+            .expect("symbols must be an array")
+            .iter()
+            .map(|symbol| symbol.as_str().expect("symbol must be a string"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual.get(id), Some(&expected), "capability {id}");
+    }
+    assert_eq!(
+        actual.keys().copied().collect::<BTreeSet<_>>(),
+        declared_available
+    );
 }

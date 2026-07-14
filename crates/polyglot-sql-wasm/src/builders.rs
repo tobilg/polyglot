@@ -213,6 +213,7 @@ pub struct WasmExprArray {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 impl WasmExprArray {
     /// Create an empty expression array.
     #[wasm_bindgen(constructor)]
@@ -267,6 +268,7 @@ pub struct WasmAssignmentArray {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 impl WasmAssignmentArray {
     /// Create an empty assignment array.
     #[wasm_bindgen(constructor)]
@@ -471,6 +473,7 @@ pub struct WasmSelectBuilder {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::new_without_default)]
 impl WasmSelectBuilder {
     /// Create a new, empty SELECT builder.
     #[wasm_bindgen(constructor)]
@@ -994,6 +997,7 @@ pub struct WasmCaseBuilder {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::new_without_default)]
 impl WasmCaseBuilder {
     /// Create a new searched CASE builder (CASE WHEN ... THEN ...).
     #[wasm_bindgen(constructor)]
@@ -1050,6 +1054,7 @@ pub struct WasmWindowDefBuilder {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::new_without_default)]
 impl WasmWindowDefBuilder {
     /// Create a new, empty window definition builder.
     #[wasm_bindgen(constructor)]

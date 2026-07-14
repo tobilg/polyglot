@@ -4,10 +4,12 @@
 //! SQL strings into token streams.
 
 use crate::error::{Error, Result};
+use crate::guard::TokenGuardStats;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::LazyLock;
+use std::ops::Deref;
+use std::sync::{Arc, LazyLock};
 #[cfg(feature = "bindings")]
 use ts_rs::TS;
 
@@ -102,6 +104,174 @@ impl Token {
     pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
         self.comments.push(comment.into());
         self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ParserTokenText {
+    Source {
+        source: Arc<str>,
+        start: usize,
+        end: usize,
+    },
+    Owned(String),
+}
+
+impl Deref for ParserTokenText {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Source { source, start, end } => &source[*start..*end],
+            Self::Owned(text) => text,
+        }
+    }
+}
+
+impl fmt::Display for ParserTokenText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self)
+    }
+}
+
+impl PartialEq<str> for ParserTokenText {
+    fn eq(&self, other: &str) -> bool {
+        self.deref() == other
+    }
+}
+
+impl PartialEq<&str> for ParserTokenText {
+    fn eq(&self, other: &&str) -> bool {
+        self.deref() == *other
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParserToken {
+    pub token_type: TokenType,
+    pub span: Span,
+    pub comments: Vec<String>,
+    pub trailing_comments: Vec<String>,
+    pub(crate) text: ParserTokenText,
+}
+
+impl ParserToken {
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub(crate) fn text_owned(&self) -> String {
+        self.text.to_string()
+    }
+}
+
+impl From<Token> for ParserToken {
+    fn from(token: Token) -> Self {
+        Self {
+            token_type: token.token_type,
+            span: token.span,
+            comments: token.comments,
+            trailing_comments: token.trailing_comments,
+            text: ParserTokenText::Owned(token.text),
+        }
+    }
+}
+
+trait TokenOutput: Sized {
+    fn from_source(
+        token_type: TokenType,
+        source: &str,
+        text_start: usize,
+        text_end: usize,
+        span: Span,
+        shared_source: Option<&Arc<str>>,
+    ) -> Self;
+    fn from_owned(token_type: TokenType, text: String, span: Span) -> Self;
+    fn token_type(&self) -> TokenType;
+    fn text<'a>(&'a self, source: &'a str) -> &'a str;
+    fn comments_mut(&mut self) -> &mut Vec<String>;
+    fn trailing_comments_mut(&mut self) -> &mut Vec<String>;
+}
+
+impl TokenOutput for Token {
+    fn from_source(
+        token_type: TokenType,
+        source: &str,
+        text_start: usize,
+        text_end: usize,
+        span: Span,
+        _shared_source: Option<&Arc<str>>,
+    ) -> Self {
+        Self::new(token_type, &source[text_start..text_end], span)
+    }
+
+    fn from_owned(token_type: TokenType, text: String, span: Span) -> Self {
+        Self::new(token_type, text, span)
+    }
+
+    fn token_type(&self) -> TokenType {
+        self.token_type
+    }
+
+    fn text<'a>(&'a self, _source: &'a str) -> &'a str {
+        &self.text
+    }
+
+    fn comments_mut(&mut self) -> &mut Vec<String> {
+        &mut self.comments
+    }
+
+    fn trailing_comments_mut(&mut self) -> &mut Vec<String> {
+        &mut self.trailing_comments
+    }
+}
+
+impl TokenOutput for ParserToken {
+    fn from_source(
+        token_type: TokenType,
+        _source: &str,
+        text_start: usize,
+        text_end: usize,
+        span: Span,
+        shared_source: Option<&Arc<str>>,
+    ) -> Self {
+        Self {
+            token_type,
+            span,
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
+            text: ParserTokenText::Source {
+                source: Arc::clone(shared_source.expect("parser tokenization requires source SQL")),
+                start: text_start,
+                end: text_end,
+            },
+        }
+    }
+
+    fn from_owned(token_type: TokenType, text: String, span: Span) -> Self {
+        Self {
+            token_type,
+            span,
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
+            text: ParserTokenText::Owned(text),
+        }
+    }
+
+    fn token_type(&self) -> TokenType {
+        self.token_type
+    }
+
+    fn text<'a>(&'a self, _source: &'a str) -> &'a str {
+        self.text()
+    }
+
+    fn comments_mut(&mut self) -> &mut Vec<String> {
+        &mut self.comments
+    }
+
+    fn trailing_comments_mut(&mut self) -> &mut Vec<String> {
+        &mut self.trailing_comments
     }
 }
 
@@ -1403,12 +1573,18 @@ impl Default for TokenizerConfig {
 
 /// SQL Tokenizer
 pub struct Tokenizer {
-    config: TokenizerConfig,
+    config: Arc<TokenizerConfig>,
 }
 
 impl Tokenizer {
     /// Create a new tokenizer with the given configuration
     pub fn new(config: TokenizerConfig) -> Self {
+        Self {
+            config: Arc::new(config),
+        }
+    }
+
+    pub(crate) fn from_shared_config(config: Arc<TokenizerConfig>) -> Self {
         Self { config }
     }
 
@@ -1419,8 +1595,47 @@ impl Tokenizer {
 
     /// Tokenize a SQL string
     pub fn tokenize(&self, sql: &str) -> Result<Vec<Token>> {
-        let mut state = TokenizerState::new(sql, &self.config);
-        state.tokenize()
+        if sql.is_ascii() {
+            TokenizerState::<_, Token>::new(sql, &self.config, AsciiCursor(sql.as_bytes()))
+                .tokenize()
+        } else {
+            TokenizerState::<_, Token>::new(sql, &self.config, UnicodeCursor::new(sql)).tokenize()
+        }
+    }
+
+    pub(crate) fn tokenize_for_parser(
+        &self,
+        sql: &Arc<str>,
+    ) -> Result<(Vec<ParserToken>, TokenGuardStats)> {
+        if sql.is_ascii() {
+            let mut state = TokenizerState::<_, ParserToken>::new_shared(
+                sql,
+                Arc::clone(sql),
+                &self.config,
+                AsciiCursor(sql.as_bytes()),
+            );
+            let tokens = state.tokenize()?;
+            Ok((tokens, state.guard_stats.take().unwrap_or_default()))
+        } else {
+            let mut state = TokenizerState::<_, ParserToken>::new_shared(
+                sql,
+                Arc::clone(sql),
+                &self.config,
+                UnicodeCursor::new(sql),
+            );
+            let tokens = state.tokenize()?;
+            Ok((tokens, state.guard_stats.take().unwrap_or_default()))
+        }
+    }
+
+    #[cfg(test)]
+    fn tokenize_without_ascii_fast_path(&self, sql: &str) -> Result<Vec<Token>> {
+        TokenizerState::new(sql, &self.config, UnicodeCursor::new(sql)).tokenize()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_config_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.config, &other.config)
     }
 }
 
@@ -1430,29 +1645,92 @@ impl Default for Tokenizer {
     }
 }
 
+trait TokenizerCursor {
+    fn len(&self) -> usize;
+    fn char_at(&self, index: usize) -> char;
+    fn text_from_range(&self, source: &str, start: usize, end: usize) -> String;
+
+    fn source_range<'a>(&self, _source: &'a str, _start: usize, _end: usize) -> Option<&'a str> {
+        None
+    }
+
+    fn range_contains(&self, start: usize, needle: char) -> bool {
+        (start..self.len()).any(|index| self.char_at(index) == needle)
+    }
+}
+
+struct AsciiCursor<'a>(&'a [u8]);
+
+impl TokenizerCursor for AsciiCursor<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    fn char_at(&self, index: usize) -> char {
+        self.0[index] as char
+    }
+
+    #[inline]
+    fn text_from_range(&self, source: &str, start: usize, end: usize) -> String {
+        source[start..end].to_string()
+    }
+
+    #[inline]
+    fn source_range<'a>(&self, source: &'a str, start: usize, end: usize) -> Option<&'a str> {
+        Some(&source[start..end])
+    }
+}
+
+struct UnicodeCursor(Vec<char>);
+
+impl UnicodeCursor {
+    fn new(source: &str) -> Self {
+        Self(source.chars().collect())
+    }
+}
+
+impl TokenizerCursor for UnicodeCursor {
+    #[inline]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    fn char_at(&self, index: usize) -> char {
+        self.0[index]
+    }
+
+    #[inline]
+    fn text_from_range(&self, _source: &str, start: usize, end: usize) -> String {
+        self.0[start..end].iter().collect()
+    }
+}
+
 /// Internal state for tokenization
-struct TokenizerState<'a> {
+struct TokenizerState<'a, C, T> {
     source: &'a str,
-    source_is_ascii: bool,
-    chars: Vec<char>,
+    shared_source: Option<Arc<str>>,
+    cursor: C,
     size: usize,
-    tokens: Vec<Token>,
+    tokens: Vec<T>,
     start: usize,
     current: usize,
     line: usize,
     column: usize,
     comments: Vec<String>,
+    guard_stats: Option<TokenGuardStats>,
     config: &'a TokenizerConfig,
 }
 
-impl<'a> TokenizerState<'a> {
-    fn new(sql: &'a str, config: &'a TokenizerConfig) -> Self {
-        let chars: Vec<char> = sql.chars().collect();
-        let size = chars.len();
+impl<'a, C: TokenizerCursor, T: TokenOutput> TokenizerState<'a, C, T> {
+    fn new(sql: &'a str, config: &'a TokenizerConfig, cursor: C) -> Self {
+        let size = cursor.len();
         Self {
             source: sql,
-            source_is_ascii: sql.is_ascii(),
-            chars,
+            shared_source: None,
+            cursor,
             size,
             tokens: Vec::new(),
             start: 0,
@@ -1460,11 +1738,30 @@ impl<'a> TokenizerState<'a> {
             line: 1,
             column: 1,
             comments: Vec::new(),
+            guard_stats: None,
             config,
         }
     }
 
-    fn tokenize(&mut self) -> Result<Vec<Token>> {
+    fn new_shared(sql: &'a str, source: Arc<str>, config: &'a TokenizerConfig, cursor: C) -> Self {
+        let size = cursor.len();
+        Self {
+            source: sql,
+            shared_source: Some(source),
+            cursor,
+            size,
+            tokens: Vec::new(),
+            start: 0,
+            current: 0,
+            line: 1,
+            column: 1,
+            comments: Vec::new(),
+            guard_stats: Some(TokenGuardStats::default()),
+            config,
+        }
+    }
+
+    fn tokenize(&mut self) -> Result<Vec<T>> {
         while !self.is_at_end() {
             self.skip_whitespace();
             if self.is_at_end() {
@@ -1492,7 +1789,7 @@ impl<'a> TokenizerState<'a> {
         // Attach them as trailing comments on the last token so they're preserved.
         if !self.comments.is_empty() {
             if let Some(last) = self.tokens.last_mut() {
-                last.trailing_comments.extend(self.comments.drain(..));
+                last.trailing_comments_mut().extend(self.comments.drain(..));
             }
         }
 
@@ -1506,11 +1803,17 @@ impl<'a> TokenizerState<'a> {
 
     #[inline]
     fn text_from_range(&self, start: usize, end: usize) -> String {
-        if self.source_is_ascii {
-            self.source[start..end].to_string()
-        } else {
-            self.chars[start..end].iter().collect()
-        }
+        self.cursor.text_from_range(self.source, start, end)
+    }
+
+    #[inline]
+    fn char_at(&self, index: usize) -> char {
+        self.cursor.char_at(index)
+    }
+
+    #[inline]
+    fn range_contains(&self, start: usize, needle: char) -> bool {
+        self.cursor.range_contains(start, needle)
     }
 
     #[inline]
@@ -1518,7 +1821,7 @@ impl<'a> TokenizerState<'a> {
         if self.is_at_end() {
             '\0'
         } else {
-            self.chars[self.current]
+            self.char_at(self.current)
         }
     }
 
@@ -1527,7 +1830,7 @@ impl<'a> TokenizerState<'a> {
         if self.current + 1 >= self.size {
             '\0'
         } else {
-            self.chars[self.current + 1]
+            self.char_at(self.current + 1)
         }
     }
 
@@ -1542,6 +1845,125 @@ impl<'a> TokenizerState<'a> {
             self.column += 1;
         }
         c
+    }
+
+    #[inline]
+    fn advance_ascii_to(&mut self, end: usize) -> bool {
+        let Some(text) = self.cursor.source_range(self.source, self.current, end) else {
+            return false;
+        };
+
+        let newline_count = text
+            .as_bytes()
+            .iter()
+            .filter(|&&byte| byte == b'\n')
+            .count();
+        if newline_count == 0 {
+            self.column += end - self.current;
+        } else {
+            self.line += newline_count;
+            let last_newline = text
+                .as_bytes()
+                .iter()
+                .rposition(|&byte| byte == b'\n')
+                .expect("newline count is non-zero");
+            self.column = text.len() - last_newline;
+        }
+        self.current = end;
+        true
+    }
+
+    #[inline]
+    fn advance_ascii_digits(&mut self) -> bool {
+        let Some(rest) = self
+            .cursor
+            .source_range(self.source, self.current, self.size)
+        else {
+            return false;
+        };
+        let bytes = rest.as_bytes();
+        let mut length = 0;
+        while length < bytes.len() {
+            match bytes[length] {
+                b'0'..=b'9' => length += 1,
+                b'_' if bytes.get(length + 1).is_some_and(u8::is_ascii_digit) => length += 1,
+                _ => break,
+            }
+        }
+        self.current += length;
+        self.column += length;
+        true
+    }
+
+    #[inline]
+    fn advance_ascii_hex_digits(&mut self) -> bool {
+        let Some(rest) = self
+            .cursor
+            .source_range(self.source, self.current, self.size)
+        else {
+            return false;
+        };
+        let bytes = rest.as_bytes();
+        let mut length = 0;
+        while length < bytes.len() {
+            match bytes[length] {
+                byte if byte.is_ascii_hexdigit() => length += 1,
+                b'_' if bytes.get(length + 1).is_some_and(u8::is_ascii_hexdigit) => length += 1,
+                _ => break,
+            }
+        }
+        self.current += length;
+        self.column += length;
+        true
+    }
+
+    #[inline]
+    fn advance_ascii_identifier(&mut self) -> bool {
+        let Some(rest) = self
+            .cursor
+            .source_range(self.source, self.current, self.size)
+        else {
+            return false;
+        };
+        let bytes = rest.as_bytes();
+        let mut length = 0;
+        while length < bytes.len() {
+            let byte = bytes[length];
+            if byte == b'#' && matches!(bytes.get(length + 1), Some(b'>') | Some(b'-')) {
+                break;
+            }
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'#' | b'@') {
+                length += 1;
+            } else {
+                break;
+            }
+        }
+        self.current += length;
+        self.column += length;
+        true
+    }
+
+    fn try_scan_simple_quoted_content(
+        &mut self,
+        quote: char,
+        backslash_is_escape: bool,
+    ) -> Option<(usize, usize)> {
+        let content_start = self.current;
+        let rest = self
+            .cursor
+            .source_range(self.source, content_start, self.size)?;
+        let quote_offset = rest.find(quote)?;
+        let content_end = content_start + quote_offset;
+
+        if (content_end + 1 < self.size && self.char_at(content_end + 1) == quote)
+            || (backslash_is_escape && rest[..quote_offset].contains('\\'))
+        {
+            return None;
+        }
+
+        self.advance_ascii_to(content_end);
+        self.advance();
+        Some((content_start, content_end))
     }
 
     fn skip_whitespace(&mut self) {
@@ -1578,7 +2000,7 @@ impl<'a> TokenizerState<'a> {
                 }
                 '/' if self.peek_next() == '*' => {
                     // Check if this is a hint comment /*+ ... */
-                    if self.current + 2 < self.size && self.chars[self.current + 2] == '+' {
+                    if self.current + 2 < self.size && self.char_at(self.current + 2) == '+' {
                         // This is a hint comment, handle it as a token instead of skipping
                         break;
                     }
@@ -1593,10 +2015,10 @@ impl<'a> TokenizerState<'a> {
                     // Check that previous non-whitespace char is not ':' or '/'
                     let prev_non_ws = if self.current > 0 {
                         let mut i = self.current - 1;
-                        while i > 0 && (self.chars[i] == ' ' || self.chars[i] == '\t') {
+                        while i > 0 && (self.char_at(i) == ' ' || self.char_at(i) == '\t') {
                             i -= 1;
                         }
-                        self.chars[i]
+                        self.char_at(i)
                     } else {
                         '\0'
                     };
@@ -1625,7 +2047,7 @@ impl<'a> TokenizerState<'a> {
         let comment = self.text_from_range(start, self.current);
         let comment_text = comment.trim().to_string();
         if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
+            last.trailing_comments_mut().push(comment_text);
         } else {
             self.comments.push(comment_text);
         }
@@ -1641,7 +2063,7 @@ impl<'a> TokenizerState<'a> {
         let comment = self.text_from_range(start, self.current);
         let comment_text = comment.trim().to_string();
         if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
+            last.trailing_comments_mut().push(comment_text);
         } else {
             self.comments.push(comment_text);
         }
@@ -1661,7 +2083,7 @@ impl<'a> TokenizerState<'a> {
         if after_newline || self.tokens.is_empty() {
             self.comments.push(comment_text);
         } else if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
+            last.trailing_comments_mut().push(comment_text);
         }
     }
 
@@ -1710,7 +2132,7 @@ impl<'a> TokenizerState<'a> {
         if after_newline || self.tokens.is_empty() {
             self.comments.push(comment_text);
         } else if let Some(last) = self.tokens.last_mut() {
-            last.trailing_comments.push(comment_text);
+            last.trailing_comments_mut().push(comment_text);
         }
 
         Ok(())
@@ -1807,7 +2229,7 @@ impl<'a> TokenizerState<'a> {
             // Check if we've reached the closing tag
             if self.peek() == '$' && self.current + closing_chars.len() <= self.size {
                 let matches = closing_chars.iter().enumerate().all(|(j, &ch)| {
-                    self.current + j < self.size && self.chars[self.current + j] == ch
+                    self.current + j < self.size && self.char_at(self.current + j) == ch
                 });
                 if matches {
                     let content = self.text_from_range(content_start, self.current);
@@ -1838,7 +2260,7 @@ impl<'a> TokenizerState<'a> {
         while !self.is_at_end() {
             if self.peek() == '$'
                 && self.current + 1 < self.size
-                && self.chars[self.current + 1] == '$'
+                && self.char_at(self.current + 1) == '$'
             {
                 break;
             }
@@ -1865,7 +2287,7 @@ impl<'a> TokenizerState<'a> {
             if self.config.quotes.contains_key("'''")
                 && self.peek_next() == '\''
                 && self.current + 2 < self.size
-                && self.chars[self.current + 2] == '\''
+                && self.char_at(self.current + 2) == '\''
             {
                 return self.scan_triple_quoted_string('\'');
             }
@@ -1877,7 +2299,7 @@ impl<'a> TokenizerState<'a> {
             && self.config.quotes.contains_key("\"\"\"")
             && self.peek_next() == '"'
             && self.current + 2 < self.size
-            && self.chars[self.current + 2] == '"'
+            && self.char_at(self.current + 2) == '"'
         {
             return self.scan_triple_quoted_string('"');
         }
@@ -1909,7 +2331,7 @@ impl<'a> TokenizerState<'a> {
         //   This handles BigQuery numeric table parts like project.dataset.25
         if c == '.' && self.peek_next().is_ascii_digit() {
             let prev_char = if self.current > 0 {
-                self.chars[self.current - 1]
+                self.char_at(self.current - 1)
             } else {
                 '\0'
             };
@@ -1928,7 +2350,7 @@ impl<'a> TokenizerState<'a> {
         if c == '/'
             && self.peek_next() == '*'
             && self.current + 2 < self.size
-            && self.chars[self.current + 2] == '+'
+            && self.char_at(self.current + 2) == '+'
         {
             return self.scan_hint();
         }
@@ -2020,7 +2442,7 @@ impl<'a> TokenizerState<'a> {
         let c = self.peek();
         let next = self.peek_next();
         let third = if self.current + 2 < self.size {
-            self.chars[self.current + 2]
+            self.char_at(self.current + 2)
         } else {
             '\0'
         };
@@ -2106,7 +2528,7 @@ impl<'a> TokenizerState<'a> {
 
         // !~~* (Not ILike - PostgreSQL)
         let fourth = if self.current + 3 < self.size {
-            self.chars[self.current + 3]
+            self.char_at(self.current + 3)
         } else {
             '\0'
         };
@@ -2236,6 +2658,12 @@ impl<'a> TokenizerState<'a> {
 
     fn scan_string(&mut self) -> Result<()> {
         self.advance(); // Opening quote
+        if let Some((text_start, text_end)) =
+            self.try_scan_simple_quoted_content('\'', self.config.string_escapes.contains(&'\\'))
+        {
+            self.add_token_from_source(TokenType::String, text_start, text_end);
+            return Ok(());
+        }
         let mut value = String::new();
 
         while !self.is_at_end() {
@@ -2252,7 +2680,7 @@ impl<'a> TokenizerState<'a> {
             } else if c == '\\' && self.config.string_escapes.contains(&'\\') {
                 if self.config.recover_terminal_backslash_quote
                     && self.peek_next() == '\''
-                    && !self.chars[self.current + 2..].contains(&'\'')
+                    && !self.range_contains(self.current + 2, '\'')
                 {
                     value.push(self.advance());
                     break;
@@ -2457,9 +2885,9 @@ impl<'a> TokenizerState<'a> {
             // Check for closing triple quote
             if self.peek() == quote_char
                 && self.current + 1 < self.size
-                && self.chars[self.current + 1] == quote_char
+                && self.char_at(self.current + 1) == quote_char
                 && self.current + 2 < self.size
-                && self.chars[self.current + 2] == quote_char
+                && self.char_at(self.current + 2) == quote_char
             {
                 // Found closing """
                 break;
@@ -2581,7 +3009,7 @@ impl<'a> TokenizerState<'a> {
         // Check for 0x/0X hex number prefix (SQLite-style)
         if self.config.hex_number_strings && self.peek() == '0' && !self.is_at_end() {
             let next = if self.current + 1 < self.size {
-                self.chars[self.current + 1]
+                self.char_at(self.current + 1)
             } else {
                 '\0'
             };
@@ -2591,11 +3019,15 @@ impl<'a> TokenizerState<'a> {
                 self.advance();
                 // Collect hex digits (allow underscores as separators, e.g., 0xbad_cafe)
                 let hex_start = self.current;
-                while !self.is_at_end() && (self.peek().is_ascii_hexdigit() || self.peek() == '_') {
-                    if self.peek() == '_' && !self.peek_next().is_ascii_hexdigit() {
-                        break;
+                if !self.advance_ascii_hex_digits() {
+                    while !self.is_at_end()
+                        && (self.peek().is_ascii_hexdigit() || self.peek() == '_')
+                    {
+                        if self.peek() == '_' && !self.peek_next().is_ascii_hexdigit() {
+                            break;
+                        }
+                        self.advance();
                     }
-                    self.advance();
                 }
                 if self.current > hex_start {
                     // Check for hex float: 0xABC.DEFpEXP or 0xABCpEXP
@@ -2603,15 +3035,17 @@ impl<'a> TokenizerState<'a> {
                     // Optional fractional part: .hexdigits
                     if !self.is_at_end() && self.peek() == '.' {
                         let after_dot = if self.current + 1 < self.size {
-                            self.chars[self.current + 1]
+                            self.char_at(self.current + 1)
                         } else {
                             '\0'
                         };
                         if after_dot.is_ascii_hexdigit() {
                             is_hex_float = true;
                             self.advance(); // consume '.'
-                            while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
-                                self.advance();
+                            if !self.advance_ascii_hex_digits() {
+                                while !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                                    self.advance();
+                                }
                             }
                         }
                     }
@@ -2622,8 +3056,10 @@ impl<'a> TokenizerState<'a> {
                         if !self.is_at_end() && (self.peek() == '+' || self.peek() == '-') {
                             self.advance();
                         }
-                        while !self.is_at_end() && self.peek().is_ascii_digit() {
-                            self.advance();
+                        if !self.advance_ascii_digits() {
+                            while !self.is_at_end() && self.peek().is_ascii_digit() {
+                                self.advance();
+                            }
                         }
                     }
                     if is_hex_float {
@@ -2669,12 +3105,14 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Allow underscores as digit separators (e.g., 20_000, 1_000_000)
-        while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
-            // Don't allow underscore at the end (must be followed by digit)
-            if self.peek() == '_' && (self.is_at_end() || !self.peek_next().is_ascii_digit()) {
-                break;
+        if !self.advance_ascii_digits() {
+            while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
+                // Don't allow underscore at the end (must be followed by digit)
+                if self.peek() == '_' && (self.is_at_end() || !self.peek_next().is_ascii_digit()) {
+                    break;
+                }
+                self.advance();
             }
-            self.advance();
         }
 
         // Look for decimal part - allow trailing dot (e.g., "1.")
@@ -2690,11 +3128,14 @@ impl<'a> TokenizerState<'a> {
             if next != '.' {
                 self.advance(); // consume the .
                                 // Only consume digits after the decimal point (not identifiers)
-                while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
-                    if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
-                        break;
+                if !self.advance_ascii_digits() {
+                    while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_')
+                    {
+                        if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
+                            break;
+                        }
+                        self.advance();
                     }
-                    self.advance();
                 }
             }
         }
@@ -2705,22 +3146,33 @@ impl<'a> TokenizerState<'a> {
             if self.peek() == '+' || self.peek() == '-' {
                 self.advance();
             }
-            while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
-                if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
-                    break;
+            if !self.advance_ascii_digits() {
+                while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
+                    if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
+                        break;
+                    }
+                    self.advance();
                 }
-                self.advance();
             }
         }
 
-        let raw_text = self.text_from_range(self.start, self.current);
+        let source_text = self
+            .cursor
+            .source_range(self.source, self.start, self.current);
+        let raw_owned = source_text
+            .is_none()
+            .then(|| self.text_from_range(self.start, self.current));
+        let raw_text = source_text.unwrap_or_else(|| {
+            raw_owned
+                .as_deref()
+                .expect("non-ASCII numbers own their text")
+        });
         // Strip underscore digit separators (e.g., 20_000 -> 20000, 1_2E+1_0 -> 12E+10)
         // Only for dialects that support this (ClickHouse, DuckDB)
-        let text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
-            raw_text.replace('_', "")
-        } else {
-            raw_text
-        };
+        let normalized = (self.config.numbers_can_be_underscore_separated
+            && raw_text.contains('_'))
+        .then(|| raw_text.replace('_', ""));
+        let text = normalized.as_deref().unwrap_or(raw_text);
 
         // Check for numeric literal suffixes (e.g., 1L -> BIGINT, 1s -> SMALLINT in Hive/Spark)
         if !self.config.numeric_literals.is_empty() && !self.is_at_end() {
@@ -2728,15 +3180,15 @@ impl<'a> TokenizerState<'a> {
             // Try 2-char suffix first (e.g., "BD"), then 1-char
             let suffix_match = if self.current + 1 < self.size {
                 let two_char: String = [
-                    self.chars[self.current].to_ascii_uppercase(),
-                    self.chars[self.current + 1].to_ascii_uppercase(),
+                    self.char_at(self.current).to_ascii_uppercase(),
+                    self.char_at(self.current + 1).to_ascii_uppercase(),
                 ]
                 .iter()
                 .collect();
                 if self.config.numeric_literals.contains_key(&two_char) {
                     // Make sure the 2-char suffix is not followed by more identifier chars
                     let after_suffix = if self.current + 2 < self.size {
-                        self.chars[self.current + 2]
+                        self.char_at(self.current + 2)
                     } else {
                         ' '
                     };
@@ -2748,7 +3200,7 @@ impl<'a> TokenizerState<'a> {
                 } else if self.config.numeric_literals.contains_key(&next_char) {
                     // 1-char suffix - make sure not followed by more identifier chars
                     let after_suffix = if self.current + 1 < self.size {
-                        self.chars[self.current + 1]
+                        self.char_at(self.current + 1)
                     } else {
                         ' '
                     };
@@ -2792,21 +3244,26 @@ impl<'a> TokenizerState<'a> {
             let next = self.peek();
             if next.is_alphabetic() || next == '_' {
                 // Continue scanning as an identifier
-                while !self.is_at_end() {
-                    let ch = self.peek();
-                    if ch.is_alphanumeric() || ch == '_' {
-                        self.advance();
-                    } else {
-                        break;
+                if !self.advance_ascii_identifier() {
+                    while !self.is_at_end() {
+                        let ch = self.peek();
+                        if ch.is_alphanumeric() || ch == '_' {
+                            self.advance();
+                        } else {
+                            break;
+                        }
                     }
                 }
-                let ident_text = self.text_from_range(self.start, self.current);
-                self.add_token_with_text(TokenType::Identifier, ident_text);
+                self.add_token(TokenType::Identifier);
                 return Ok(());
             }
         }
 
-        self.add_token_with_text(TokenType::Number, text);
+        if let Some(text) = normalized.or(raw_owned) {
+            self.add_token_with_text(TokenType::Number, text);
+        } else {
+            self.add_token(TokenType::Number);
+        }
         Ok(())
     }
 
@@ -2816,19 +3273,7 @@ impl<'a> TokenizerState<'a> {
         self.advance();
 
         // Consume the fractional digits
-        while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
-            if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
-                break;
-            }
-            self.advance();
-        }
-
-        // Look for exponent
-        if self.peek() == 'e' || self.peek() == 'E' {
-            self.advance();
-            if self.peek() == '+' || self.peek() == '-' {
-                self.advance();
-            }
+        if !self.advance_ascii_digits() {
             while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
                 if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
                     break;
@@ -2837,15 +3282,43 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let raw_text = self.text_from_range(self.start, self.current);
+        // Look for exponent
+        if self.peek() == 'e' || self.peek() == 'E' {
+            self.advance();
+            if self.peek() == '+' || self.peek() == '-' {
+                self.advance();
+            }
+            if !self.advance_ascii_digits() {
+                while !self.is_at_end() && (self.peek().is_ascii_digit() || self.peek() == '_') {
+                    if self.peek() == '_' && !self.peek_next().is_ascii_digit() {
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+        }
+
+        let source_text = self
+            .cursor
+            .source_range(self.source, self.start, self.current);
+        let raw_owned = source_text
+            .is_none()
+            .then(|| self.text_from_range(self.start, self.current));
+        let raw_text = source_text.unwrap_or_else(|| {
+            raw_owned
+                .as_deref()
+                .expect("non-ASCII numbers own their text")
+        });
         // Strip underscore digit separators (e.g., .1_5 -> .15)
         // Only for dialects that support this (ClickHouse, DuckDB)
-        let text = if self.config.numbers_can_be_underscore_separated && raw_text.contains('_') {
-            raw_text.replace('_', "")
+        let normalized = (self.config.numbers_can_be_underscore_separated
+            && raw_text.contains('_'))
+        .then(|| raw_text.replace('_', ""));
+        if let Some(text) = normalized.or(raw_owned) {
+            self.add_token_with_text(TokenType::Number, text);
         } else {
-            raw_text
-        };
-        self.add_token_with_text(TokenType::Number, text);
+            self.add_token(TokenType::Number);
+        }
         Ok(())
     }
 
@@ -2882,29 +3355,41 @@ impl<'a> TokenizerState<'a> {
             ));
         }
 
-        while !self.is_at_end() {
-            let c = self.peek();
-            // Allow alphanumeric, underscore, $, # and @ in identifiers
-            // PostgreSQL allows $, TSQL allows # and @
-            // But stop consuming # if followed by > or >> (PostgreSQL #> and #>> operators)
-            if c == '#' {
-                let next_c = if self.current + 1 < self.size {
-                    self.chars[self.current + 1]
+        if !self.advance_ascii_identifier() {
+            while !self.is_at_end() {
+                let c = self.peek();
+                // Allow alphanumeric, underscore, $, # and @ in identifiers
+                // PostgreSQL allows $, TSQL allows # and @
+                // But stop consuming # if followed by > or >> (PostgreSQL #> and #>> operators)
+                if c == '#' {
+                    let next_c = if self.current + 1 < self.size {
+                        self.char_at(self.current + 1)
+                    } else {
+                        '\0'
+                    };
+                    if next_c == '>' || next_c == '-' {
+                        break; // Don't consume # — it's part of #>, #>>, or #- operator
+                    }
+                    self.advance();
+                } else if c.is_alphanumeric() || c == '_' || c == '$' || c == '@' {
+                    self.advance();
                 } else {
-                    '\0'
-                };
-                if next_c == '>' || next_c == '-' {
-                    break; // Don't consume # — it's part of #>, #>>, or #- operator
+                    break;
                 }
-                self.advance();
-            } else if c.is_alphanumeric() || c == '_' || c == '$' || c == '@' {
-                self.advance();
-            } else {
-                break;
             }
         }
 
-        let text = self.text_from_range(self.start, self.current);
+        let source_text = self
+            .cursor
+            .source_range(self.source, self.start, self.current);
+        let owned_text = source_text
+            .is_none()
+            .then(|| self.text_from_range(self.start, self.current));
+        let text = source_text.unwrap_or_else(|| {
+            owned_text
+                .as_deref()
+                .expect("non-ASCII identifiers own their text")
+        });
 
         // Special-case NOT= (Teradata and other dialects)
         if text.eq_ignore_ascii_case("NOT") && self.peek() == '=' {
@@ -3002,7 +3487,7 @@ impl<'a> TokenizerState<'a> {
         if text.eq_ignore_ascii_case("U")
             && self.peek() == '&'
             && self.current + 1 < self.size
-            && self.chars[self.current + 1] == '\''
+            && self.char_at(self.current + 1) == '\''
         {
             self.advance(); // consume '&'
             self.advance(); // consume opening quote
@@ -3013,7 +3498,11 @@ impl<'a> TokenizerState<'a> {
 
         let token_type = Self::lookup_keyword_ascii(&self.config.keywords, &text);
 
-        self.add_token_with_text(token_type, text);
+        if let Some(text) = owned_text {
+            self.add_token_with_text(token_type, text);
+        } else {
+            self.add_token_from_source(token_type, self.start, self.current);
+        }
         Ok(())
     }
 
@@ -3024,9 +3513,13 @@ impl<'a> TokenizerState<'a> {
         &mut self,
         force_backslash_escapes: bool,
     ) -> Result<String> {
-        let mut value = String::new();
         let use_backslash_escapes =
             force_backslash_escapes || self.config.string_escapes.contains(&'\\');
+        if let Some((start, end)) = self.try_scan_simple_quoted_content('\'', use_backslash_escapes)
+        {
+            return Ok(self.text_from_range(start, end));
+        }
+        let mut value = String::new();
 
         while !self.is_at_end() {
             let c = self.peek();
@@ -3072,8 +3565,12 @@ impl<'a> TokenizerState<'a> {
     /// Scan double-quoted string content (for dialects like BigQuery where " is a string delimiter)
     /// This is used for prefixed strings like b"..." or N"..."
     fn scan_double_quoted_string_content(&mut self) -> Result<String> {
-        let mut value = String::new();
         let use_backslash_escapes = self.config.string_escapes.contains(&'\\');
+        if let Some((start, end)) = self.try_scan_simple_quoted_content('"', use_backslash_escapes)
+        {
+            return Ok(self.text_from_range(start, end));
+        }
+        let mut value = String::new();
 
         while !self.is_at_end() {
             let c = self.peek();
@@ -3147,6 +3644,12 @@ impl<'a> TokenizerState<'a> {
     /// In raw strings, backslashes are literal EXCEPT that escape sequences for the
     /// quote character still work (e.g., \' in r'...' escapes the quote, '' also works)
     fn scan_raw_string_content(&mut self, quote_char: char) -> Result<String> {
+        if let Some((start, end)) = self.try_scan_simple_quoted_content(
+            quote_char,
+            self.config.string_escapes_allowed_in_raw_strings,
+        ) {
+            return Ok(self.text_from_range(start, end));
+        }
         let mut value = String::new();
 
         while !self.is_at_end() {
@@ -3199,7 +3702,7 @@ impl<'a> TokenizerState<'a> {
             let c = self.peek();
             if c == quote_char && self.peek_next() == quote_char {
                 // Check for third quote
-                if self.current + 2 < self.size && self.chars[self.current + 2] == quote_char {
+                if self.current + 2 < self.size && self.char_at(self.current + 2) == quote_char {
                     // Found three consecutive quotes - end of string
                     self.advance(); // first closing quote
                     self.advance(); // second closing quote
@@ -3239,8 +3742,7 @@ impl<'a> TokenizerState<'a> {
             }
         }
 
-        let text = self.text_from_range(self.start, self.current);
-        self.add_token_with_text(TokenType::Var, text);
+        self.add_token(TokenType::Var);
         Ok(())
     }
 
@@ -3254,18 +3756,19 @@ impl<'a> TokenizerState<'a> {
         }
 
         // Now scan the rest of the identifier
-        while !self.is_at_end() {
-            let c = self.peek();
-            if c.is_alphanumeric() || c == '_' || c == '$' || c == '#' || c == '@' {
-                self.advance();
-            } else {
-                break;
+        if !self.advance_ascii_identifier() {
+            while !self.is_at_end() {
+                let c = self.peek();
+                if c.is_alphanumeric() || c == '_' || c == '$' || c == '#' || c == '@' {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
 
-        let text = self.text_from_range(self.start, self.current);
         // These are always identifiers (variables or temp table names), never keywords
-        self.add_token_with_text(TokenType::Var, text);
+        self.add_token(TokenType::Var);
         Ok(())
     }
 
@@ -3280,16 +3783,16 @@ impl<'a> TokenizerState<'a> {
 
         // Last token should be the format name (Identifier or Var, not VALUES)
         let last = &self.tokens[len - 1];
-        if last.text.eq_ignore_ascii_case("VALUES") {
+        if last.text(self.source).eq_ignore_ascii_case("VALUES") {
             return None;
         }
-        if !matches!(last.token_type, TokenType::Var | TokenType::Identifier) {
+        if !matches!(last.token_type(), TokenType::Var | TokenType::Identifier) {
             return None;
         }
 
         // Second-to-last should be FORMAT
         let format_tok = &self.tokens[len - 2];
-        if !format_tok.text.eq_ignore_ascii_case("FORMAT") {
+        if !format_tok.text(self.source).eq_ignore_ascii_case("FORMAT") {
             return None;
         }
 
@@ -3298,7 +3801,7 @@ impl<'a> TokenizerState<'a> {
             .iter()
             .rev()
             .take(20)
-            .any(|t| t.token_type == TokenType::Insert);
+            .any(|t| t.token_type() == TokenType::Insert);
         if !has_insert {
             return None;
         }
@@ -3340,14 +3843,46 @@ impl<'a> TokenizerState<'a> {
     }
 
     fn add_token(&mut self, token_type: TokenType) {
-        let text = self.text_from_range(self.start, self.current);
-        self.add_token_with_text(token_type, text);
+        self.add_token_from_source(token_type, self.start, self.current);
+    }
+
+    fn add_token_from_source(&mut self, token_type: TokenType, text_start: usize, text_end: usize) {
+        let span = Span::new(self.start, self.current, self.line, self.column);
+        if let Some(stats) = &mut self.guard_stats {
+            stats.observe(token_type, span);
+        }
+        let mut token = if self
+            .cursor
+            .source_range(self.source, text_start, text_end)
+            .is_some()
+        {
+            T::from_source(
+                token_type,
+                self.source,
+                text_start,
+                text_end,
+                span,
+                self.shared_source.as_ref(),
+            )
+        } else {
+            T::from_owned(
+                token_type,
+                self.cursor
+                    .text_from_range(self.source, text_start, text_end),
+                span,
+            )
+        };
+        token.comments_mut().append(&mut self.comments);
+        self.tokens.push(token);
     }
 
     fn add_token_with_text(&mut self, token_type: TokenType, text: String) {
         let span = Span::new(self.start, self.current, self.line, self.column);
-        let mut token = Token::new(token_type, text, span);
-        token.comments.append(&mut self.comments);
+        if let Some(stats) = &mut self.guard_stats {
+            stats.observe(token_type, span);
+        }
+        let mut token = T::from_owned(token_type, text, span);
+        token.comments_mut().append(&mut self.comments);
         self.tokens.push(token);
     }
 }
@@ -3355,6 +3890,69 @@ impl<'a> TokenizerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_fast_path_matches_character_buffer_path() {
+        let tokenizer = Tokenizer::default();
+        let inputs = [
+            "SELECT a, b FROM t WHERE id IN (1, 2, 3)",
+            "SELECT 'it''s', \"quoted\", $1 /* comment */ FROM schema.table",
+            "INSERT INTO t VALUES (1, 'a'), (2, 'b'); UPDATE t SET value = 'c'",
+            "SELECT $$body$$, $tag$content$tag$, 0xFF, 1.25e-2",
+        ];
+
+        for sql in inputs {
+            assert_eq!(
+                tokenizer.tokenize(sql).unwrap(),
+                tokenizer.tokenize_without_ascii_fast_path(sql).unwrap(),
+                "tokenization differs for {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn parser_tokens_match_public_tokens() {
+        let tokenizer = Tokenizer::default();
+        let inputs = [
+            "SELECT alpha, 123, 'plain' FROM schema.table WHERE id = 42",
+            "SELECT 'it''s', $$body$$, $tag$content$tag$ /* comment */",
+            "SELECT cafe, 'naive' FROM t\nWHERE value >= 1.25e-2",
+            "SELECT cafe, 'caf\u{e9}', \u{3b4}elta FROM donn\u{e9}es",
+        ];
+
+        for sql in inputs {
+            let public = tokenizer.tokenize(sql).unwrap();
+            let source: Arc<str> = Arc::from(sql);
+            let (parser, stats) = tokenizer.tokenize_for_parser(&source).unwrap();
+            let materialized = parser
+                .iter()
+                .map(|token| Token {
+                    token_type: token.token_type,
+                    text: token.text_owned(),
+                    span: token.span,
+                    comments: token.comments.clone(),
+                    trailing_comments: token.trailing_comments.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                materialized, public,
+                "parser tokenization differs for {sql}"
+            );
+            assert_eq!(stats.token_count, public.len());
+        }
+    }
+
+    #[test]
+    fn parser_tokens_borrow_unchanged_ascii_text() {
+        let tokenizer = Tokenizer::default();
+        let source: Arc<str> = Arc::from("SELECT alpha, 123, 'plain'");
+        let (tokens, _) = tokenizer.tokenize_for_parser(&source).unwrap();
+
+        assert!(tokens
+            .iter()
+            .all(|token| matches!(&token.text, ParserTokenText::Source { .. })));
+    }
 
     #[test]
     fn test_simple_select() {

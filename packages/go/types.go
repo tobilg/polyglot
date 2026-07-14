@@ -2,7 +2,7 @@ package polyglot
 
 import "encoding/json"
 
-const sdkVersion = "0.5.16"
+const sdkVersion = "0.6.0"
 
 func Version() string {
 	return sdkVersion
@@ -52,6 +52,11 @@ type AnalyzeQueryOptions struct {
 type ValidationResult struct {
 	Valid  bool              `json:"valid"`
 	Errors []ValidationError `json:"errors"`
+}
+
+type ValidationOptions struct {
+	StrictSyntax bool `json:"strictSyntax,omitempty"`
+	Semantic     bool `json:"semantic,omitempty"`
 }
 
 type ValidationError struct {

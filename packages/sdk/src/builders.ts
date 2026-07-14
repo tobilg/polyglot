@@ -35,6 +35,8 @@ import {
   wasm_case_of,
   wasm_cast,
   wasm_col,
+  wasm_count_distinct,
+  wasm_extract,
   wasm_func,
   wasm_lit,
   wasm_not,
@@ -44,8 +46,6 @@ import {
   wasm_star,
   wasm_subquery,
   wasm_table,
-  wasm_count_distinct,
-  wasm_extract,
 } from '../wasm/polyglot_sql_wasm.js';
 
 // ============================================================================

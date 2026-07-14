@@ -571,10 +571,35 @@ fn postgres_to_char_formats_map_to_fabric_dotnet_format_strings() {
             "SELECT to_char(ts, 'YYYY-MM-DD HH24:MI:SS.US') AS c FROM t",
             "SELECT FORMAT(ts, 'yyyy-MM-dd HH:mm:ss.ffffff') AS c FROM t",
         ),
+        (
+            "SELECT to_char(ts, 'YYYY-MM-DD'::text) AS c FROM t",
+            "SELECT FORMAT(ts, 'yyyy-MM-dd') AS c FROM t",
+        ),
     ];
 
     for (sql, expected) in cases {
         assert_eq!(pg_to_fabric(sql), expected, "failed for {sql}");
+        assert_eq!(pg_to_fabric_strict(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_numeric_to_char_formats_fail_for_fabric_in_strict_mode() {
+    let cases = [
+        "SELECT to_char(val, '9G999G999') FROM t",
+        "SELECT to_char(val, '9G999G999'::text) FROM t",
+        "SELECT to_char(123, 'S')",
+    ];
+
+    for sql in cases {
+        let err = Dialect::get(DialectType::PostgreSQL)
+            .transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+            .expect_err("strict mode should reject PostgreSQL numeric TO_CHAR formats");
+
+        assert!(
+            err.to_string().contains("PostgreSQL TO_CHAR"),
+            "unexpected error for {sql}: {err}"
+        );
     }
 }
 
@@ -1012,6 +1037,53 @@ fn postgres_row_value_not_in_subquery_is_not_rewritten_for_fabric() {
 }
 
 #[test]
+fn postgres_row_value_in_values_maps_to_fabric_exists() {
+    let out = pg_to_fabric_strict(
+        "SELECT * FROM onek WHERE (unique1, ten) IN (VALUES (1,1),(20,0),(99,9),(17,99)) ORDER BY unique1",
+    );
+    assert_eq!(
+        out,
+        "SELECT * FROM onek WHERE EXISTS(SELECT 1 FROM (VALUES (1, 1), (20, 0), (99, 9), (17, 99)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE _polyglot_values._polyglot_value_1 = onek.unique1 AND _polyglot_values._polyglot_value_2 = onek.ten) ORDER BY CASE WHEN unique1 IS NULL THEN 1 ELSE 0 END, unique1"
+    );
+}
+
+#[test]
+fn postgres_row_value_not_in_values_maps_to_fabric_not_exists() {
+    let out = pg_to_fabric_strict("SELECT a FROM t WHERE (a, b) NOT IN (VALUES (1, 2), (3, NULL))");
+    assert_eq!(
+        out,
+        "SELECT a FROM t WHERE NOT EXISTS(SELECT 1 FROM (VALUES (1, 2), (3, NULL)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE (_polyglot_values._polyglot_value_1 = t.a OR _polyglot_values._polyglot_value_1 IS NULL OR t.a IS NULL) AND (_polyglot_values._polyglot_value_2 = t.b OR _polyglot_values._polyglot_value_2 IS NULL OR t.b IS NULL))"
+    );
+}
+
+#[test]
+fn postgres_row_value_in_values_rewrites_inside_scalar_boolean_for_fabric() {
+    let out = pg_to_fabric_strict("SELECT (a, b) IN (VALUES (1, 2), (3, 4)) AS matched FROM t");
+    assert_eq!(
+        out,
+        "SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM (VALUES (1, 2), (3, 4)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE _polyglot_values._polyglot_value_1 = t.a AND _polyglot_values._polyglot_value_2 = t.b) THEN 1 ELSE 0 END AS BIT) AS matched FROM t"
+    );
+}
+
+#[test]
+fn postgres_row_value_in_values_arity_mismatch_fails_fabric_strict_mode() {
+    for sql in [
+        "SELECT a FROM t WHERE (a, b) IN (VALUES (1), (2))",
+        "SELECT a FROM t WHERE (a, b) IN (VALUES (1, 2), (3))",
+    ] {
+        let err = Dialect::get(DialectType::PostgreSQL)
+            .transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+            .expect_err("strict mode should reject mismatched row-value VALUES membership");
+
+        assert!(
+            err.to_string()
+                .contains("row-value VALUES membership comparisons"),
+            "unexpected error for {sql}: {err}"
+        );
+    }
+}
+
+#[test]
 fn postgres_row_value_in_subquery_arity_mismatch_is_not_rewritten_for_fabric() {
     let out = pg_to_fabric("SELECT a FROM t WHERE (a, b) IN (SELECT x FROM u)");
     assert_eq!(out, "SELECT a FROM t WHERE (a, b) IN (SELECT x FROM u)");
@@ -1132,6 +1204,24 @@ fn postgres_plain_numeric_and_decimal_casts_use_scaled_fabric_decimal() {
 
     for (sql, expected) in cases {
         assert_eq!(pg_to_fabric(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_lead_lag_numeric_values_use_scaled_fabric_decimal() {
+    let cases = [
+        (
+            "SELECT lag((ten)::numeric, four, 0.7) OVER (ORDER BY ten) FROM num_tbl",
+            "SELECT LAG(CAST((ten) AS DECIMAL(38, 10)), four, 0.7) OVER (ORDER BY CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten) FROM num_tbl",
+        ),
+        (
+            "SELECT lead((ten)::numeric, four, -1.4) OVER (ORDER BY ten) FROM num_tbl",
+            "SELECT LEAD(CAST((ten) AS DECIMAL(38, 10)), four, -1.4) OVER (ORDER BY CASE WHEN ten IS NULL THEN 1 ELSE 0 END, ten) FROM num_tbl",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_fabric_strict(sql), expected, "failed for {sql}");
     }
 }
 
@@ -1278,6 +1368,18 @@ fn postgres_boolean_aggregates_map_to_fabric_case_aggregates() {
         (
             "SELECT bool_or(x > 0) FILTER (WHERE y > 0) AS s FROM t",
             "SELECT CAST(MAX(CASE WHEN y > 0 AND x > 0 THEN 1 WHEN y > 0 AND NOT x > 0 THEN 0 ELSE NULL END) AS BIT) AS s FROM t",
+        ),
+        (
+            "SELECT bool_and(x > 0) OVER (PARTITION BY p) AS s FROM t",
+            "SELECT CAST(MIN(CASE WHEN x > 0 THEN 1 WHEN NOT x > 0 THEN 0 ELSE NULL END) OVER (PARTITION BY p) AS BIT) AS s FROM t",
+        ),
+        (
+            "SELECT bool_or(x > 0) FILTER (WHERE y > 0) OVER (PARTITION BY p) AS s FROM t",
+            "SELECT CAST(MAX(CASE WHEN y > 0 AND x > 0 THEN 1 WHEN y > 0 AND NOT x > 0 THEN 0 ELSE NULL END) OVER (PARTITION BY p) AS BIT) AS s FROM t",
+        ),
+        (
+            "SELECT every(x > 0) OVER () AS s FROM t",
+            "SELECT CAST(MIN(CASE WHEN x > 0 THEN 1 WHEN NOT x > 0 THEN 0 ELSE NULL END) OVER () AS BIT) AS s FROM t",
         ),
     ];
 
@@ -1473,6 +1575,47 @@ fn postgres_string_agg_order_by_maps_to_fabric_within_group() {
     for (sql, expected) in cases {
         assert_eq!(pg_to_fabric(sql), expected, "failed for {sql}");
     }
+}
+
+#[test]
+fn postgres_from_only_drops_inheritance_modifier_for_fabric() {
+    let pg = Dialect::get(DialectType::PostgreSQL);
+    let sql = "SELECT AVG(gpa) FROM ONLY student AS s";
+
+    assert_eq!(
+        pg.transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+            .unwrap(),
+        vec!["SELECT AVG(gpa) FROM student AS s"]
+    );
+    assert_eq!(
+        pg.transpile(sql, DialectType::PostgreSQL).unwrap(),
+        vec!["SELECT AVG(gpa) FROM ONLY student AS s"]
+    );
+}
+
+#[test]
+fn strict_postgres_distinct_string_agg_is_rejected_for_fabric() {
+    let sql = "SELECT string_agg(DISTINCT f1, ',' ORDER BY f1) FROM t";
+    let pg = Dialect::get(DialectType::PostgreSQL);
+    let err = pg
+        .transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+        .expect_err("strict Fabric transpilation should reject DISTINCT STRING_AGG");
+
+    assert!(
+        err.to_string().contains("STRING_AGG with DISTINCT"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(
+        pg_to_fabric(sql),
+        "SELECT STRING_AGG(DISTINCT f1, ',') WITHIN GROUP (ORDER BY CASE WHEN f1 IS NULL THEN 1 ELSE 0 END, f1) FROM t"
+    );
+    assert!(pg
+        .transpile_with(
+            "SELECT string_agg(f1, ',' ORDER BY f1) FROM t",
+            DialectType::Fabric,
+            TranspileOptions::strict(),
+        )
+        .is_ok());
 }
 
 #[test]
@@ -1754,6 +1897,87 @@ fn strict_any_array_agg_in_case_wrapper_rejects_unsupported_array_semantics() {
 }
 
 #[test]
+fn strict_postgres_aggregate_support_functions_and_array_casts_are_rejected() {
+    let pg = Dialect::get(DialectType::PostgreSQL);
+    let cases = [
+        (
+            "SELECT float8_accum('{4,140,2900}'::float8[], 100) FROM t",
+            "FLOAT8_ACCUM",
+        ),
+        (
+            "SELECT float8_regr_accum('{4,140,2900}'::float8[], 100, 10) FROM t",
+            "FLOAT8_REGR_ACCUM",
+        ),
+        (
+            "SELECT float8_combine('{4,140,2900}'::float8[], '{1,2,3}'::float8[]) FROM t",
+            "FLOAT8_COMBINE",
+        ),
+        (
+            "SELECT float8_regr_combine('{4,140,2900}'::float8[], '{1,2,3}'::float8[]) FROM t",
+            "FLOAT8_REGR_COMBINE",
+        ),
+        (
+            "SELECT booland_statefunc(true, true) FROM t",
+            "BOOLAND_STATEFUNC",
+        ),
+        (
+            "SELECT boolor_statefunc(false, true) FROM t",
+            "BOOLOR_STATEFUNC",
+        ),
+        ("SELECT '{1,2,3}'::float8[]", "array data types"),
+    ];
+
+    for (sql, expected) in cases {
+        let err = pg
+            .transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+            .expect_err("strict Fabric transpilation should reject PostgreSQL aggregate state SQL");
+        assert!(
+            err.to_string().contains(expected),
+            "unexpected error for {sql}: {err}"
+        );
+    }
+
+    assert_eq!(
+        pg_to_fabric("SELECT booland_statefunc(true, true) FROM t"),
+        "SELECT BOOLAND_STATEFUNC(1, 1) FROM t"
+    );
+}
+
+#[test]
+fn strict_postgres_collations_are_rejected_for_fabric() {
+    let pg = Dialect::get(DialectType::PostgreSQL);
+
+    for collation in ["C", "POSIX"] {
+        let sql = format!(r#"SELECT foo COLLATE "{collation}" FROM v"#);
+        let err = pg
+            .transpile_with(&sql, DialectType::Fabric, TranspileOptions::strict())
+            .expect_err("strict Fabric transpilation should reject PostgreSQL collations");
+        assert!(
+            err.to_string()
+                .contains(&format!(r#"PostgreSQL collation "{collation}""#)),
+            "unexpected error for {sql}: {err}"
+        );
+    }
+
+    assert_eq!(
+        pg_to_fabric(r#"SELECT foo COLLATE "C" FROM v"#),
+        r#"SELECT foo COLLATE "C" FROM v"#
+    );
+}
+
+#[test]
+fn postgres_any_value_remains_native_for_fabric() {
+    assert_eq!(
+        pg_to_fabric("SELECT ANY_VALUE(v) FROM t"),
+        "SELECT ANY_VALUE(v) FROM t"
+    );
+    assert_eq!(
+        pg_to_fabric_strict("SELECT ANY_VALUE(v) FROM t"),
+        "SELECT ANY_VALUE(v) FROM t"
+    );
+}
+
+#[test]
 fn any_eq_subquery_not_rewritten() {
     let out = pg_to_fabric("SELECT * FROM t WHERE col = ANY(SELECT id FROM s)");
     assert_eq!(out, "SELECT * FROM t WHERE col = ANY (SELECT id FROM s)");
@@ -1779,6 +2003,34 @@ fn date_minus_date_rewrites_to_datediff() {
     for (sql, expected) in cases {
         assert_eq!(pg_to_fabric(sql), expected, "failed for {sql}");
     }
+}
+
+#[test]
+fn strict_date_subtraction_with_unresolved_column_type_is_rejected() {
+    let cases = [
+        "SELECT (f1 - '2000-01-01'::date) AS days FROM date_tbl",
+        "SELECT ('2020-01-01'::date - f1) AS days FROM t",
+    ];
+
+    for sql in cases {
+        let err = Dialect::get(DialectType::PostgreSQL)
+            .transpile_with(sql, DialectType::Fabric, TranspileOptions::strict())
+            .expect_err("strict Fabric transpilation should require the column type");
+        assert!(
+            err.to_string()
+                .contains("date subtraction with an unresolved column type"),
+            "unexpected error for {sql}: {err}"
+        );
+    }
+
+    assert_eq!(
+        pg_to_fabric("SELECT (f1 - '2000-01-01'::date) AS days FROM date_tbl"),
+        "SELECT (f1 - CAST('2000-01-01' AS DATE)) AS days FROM date_tbl"
+    );
+    assert_eq!(
+        pg_to_fabric("SELECT ('2020-01-01'::date - f1) AS days FROM t"),
+        "SELECT (CAST('2020-01-01' AS DATE) - f1) AS days FROM t"
+    );
 }
 
 #[test]

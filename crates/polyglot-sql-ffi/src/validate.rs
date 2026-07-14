@@ -2,8 +2,8 @@ use crate::helpers::{
     dialect_by_name, err_validation_result, panic_validation_result, required_arg_validation,
     validation_result_from_core,
 };
-use crate::types::{PolyglotValidationResult, STATUS_INVALID_ARGUMENT};
-use polyglot_sql::{Error, ValidationError, ValidationResult};
+use crate::types::{PolyglotValidationResult, STATUS_INVALID_ARGUMENT, STATUS_SERIALIZATION_ERROR};
+use polyglot_sql::ValidationOptions;
 use std::os::raw::c_char;
 
 /// Validate SQL syntax for a dialect.
@@ -12,13 +12,55 @@ pub extern "C" fn polyglot_validate(
     sql: *const c_char,
     dialect: *const c_char,
 ) -> PolyglotValidationResult {
-    match std::panic::catch_unwind(|| validate_impl(sql, dialect)) {
+    match std::panic::catch_unwind(|| validate_impl(sql, dialect, None)) {
         Ok(result) => result,
         Err(panic) => panic_validation_result(panic),
     }
 }
 
-fn validate_impl(sql: *const c_char, dialect: *const c_char) -> PolyglotValidationResult {
+/// Validate SQL syntax and optional semantic warnings for a dialect.
+///
+/// `options_json` must be a JSON object compatible with `ValidationOptions`, e.g.
+/// `{"strictSyntax": true, "semantic": true}`.
+#[no_mangle]
+pub extern "C" fn polyglot_validate_with_options(
+    sql: *const c_char,
+    dialect: *const c_char,
+    options_json: *const c_char,
+) -> PolyglotValidationResult {
+    match std::panic::catch_unwind(|| validate_with_options_impl(sql, dialect, options_json)) {
+        Ok(result) => result,
+        Err(panic) => panic_validation_result(panic),
+    }
+}
+
+fn validate_with_options_impl(
+    sql: *const c_char,
+    dialect: *const c_char,
+    options_json: *const c_char,
+) -> PolyglotValidationResult {
+    let options_json = match unsafe { required_arg_validation(options_json, "options_json") } {
+        Ok(value) => value,
+        Err(result) => return result,
+    };
+    let options: ValidationOptions = match serde_json::from_str(&options_json) {
+        Ok(value) => value,
+        Err(error) => {
+            return err_validation_result(
+                STATUS_SERIALIZATION_ERROR,
+                format!("Invalid validation options JSON: {error}"),
+            );
+        }
+    };
+
+    validate_impl(sql, dialect, Some(&options))
+}
+
+fn validate_impl(
+    sql: *const c_char,
+    dialect: *const c_char,
+    options: Option<&ValidationOptions>,
+) -> PolyglotValidationResult {
     let sql = match unsafe { required_arg_validation(sql, "sql") } {
         Ok(value) => value,
         Err(result) => return result,
@@ -38,52 +80,9 @@ fn validate_impl(sql: *const c_char, dialect: *const c_char) -> PolyglotValidati
         }
     };
 
-    let result = match dialect.parse(&sql) {
-        Ok(expressions) => {
-            for expression in &expressions {
-                if !expression.is_statement() {
-                    return validation_result_from_core(ValidationResult::with_errors(vec![
-                        ValidationError::error("Invalid expression / Unexpected token", "E004"),
-                    ]));
-                }
-            }
-            ValidationResult::success()
-        }
-        Err(error) => ValidationResult::with_errors(vec![to_validation_error(error)]),
-    };
+    let default_options = ValidationOptions::default();
+    let result =
+        polyglot_sql::validate_with_dialect(&sql, &dialect, options.unwrap_or(&default_options));
 
     validation_result_from_core(result)
-}
-
-fn to_validation_error(error: Error) -> ValidationError {
-    match error {
-        Error::Syntax {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E001")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        Error::Tokenize {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E002")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        Error::Parse {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E003")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        _ => ValidationError::error(error.to_string(), "E000"),
-    }
 }

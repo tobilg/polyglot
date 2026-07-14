@@ -531,6 +531,47 @@ fn test_validate_with_schema_semantic_warnings() {
 }
 
 #[test]
+fn test_basic_and_schema_validation_share_semantic_diagnostics() {
+    let sql = "SELECT * FROM users LIMIT 10";
+    let basic = crate::validate_with_options(
+        sql,
+        DialectType::Generic,
+        &crate::ValidationOptions {
+            semantic: true,
+            ..Default::default()
+        },
+    );
+    let schema = validate_with_schema(
+        sql,
+        DialectType::Generic,
+        &base_schema(),
+        &SchemaValidationOptions {
+            semantic: true,
+            ..Default::default()
+        },
+    );
+
+    let diagnostics = |result: &ValidationResult| {
+        result
+            .errors
+            .iter()
+            .filter(|error| error.code.starts_with('W'))
+            .map(|error| {
+                (
+                    error.code.clone(),
+                    error.message.clone(),
+                    error.line,
+                    error.column,
+                    error.start,
+                    error.end,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(diagnostics(&basic), diagnostics(&schema));
+}
+
+#[test]
 fn test_validate_with_schema_reference_check_valid_column_fk() {
     let mut schema = base_schema();
     mark_primary_key(&mut schema, "users", "id");

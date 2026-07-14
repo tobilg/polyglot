@@ -103,3 +103,4 @@ tools/sqlglot-compare/fixtures/extracted/
 .vscode/
 .claude/
 prompts/
+internal-docs/

@@ -291,10 +291,9 @@ describe('Convenience Finder Functions', () => {
       const tables = getTables(ast);
 
       expect(tables).toHaveLength(2);
-      expect(tables.map((table) => (getExprData(table) as any).name.name)).toEqual([
-        'ticket',
-        'team',
-      ]);
+      expect(
+        tables.map((table) => (getExprData(table) as any).name.name),
+      ).toEqual(['ticket', 'team']);
     });
   });
 
@@ -834,7 +833,9 @@ describe('Limit/Offset Manipulation', () => {
       const newAst = setOrderBy(ast, col('id').toJSON() as Expression);
       const sql = toSql(newAst);
 
-      expect(sql).toBe('SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id');
+      expect(sql).toBe(
+        'SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id',
+      );
     });
   });
 

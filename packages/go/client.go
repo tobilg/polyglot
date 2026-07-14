@@ -149,7 +149,7 @@ func (c *Client) GenerateDataType(dataType json.RawMessage, dialect string) (str
 	})
 }
 
-func (c *Client) Validate(sql, dialect string) (ValidationResult, error) {
+func (c *Client) Validate(sql, dialect string, options ...ValidationOptions) (ValidationResult, error) {
 	if err := rejectNUL(sql, dialect); err != nil {
 		return ValidationResult{}, err
 	}
@@ -160,7 +160,17 @@ func (c *Client) Validate(sql, dialect string) (ValidationResult, error) {
 	}
 	defer unlock()
 
-	result := lib.Validate(sql, defaultDialect(dialect))
+	dialect = defaultDialect(dialect)
+	var result ffi.ValidationResult
+	if len(options) > 0 && options[0] != (ValidationOptions{}) {
+		optionsJSON, err := marshalOptions(options[0])
+		if err != nil {
+			return ValidationResult{}, err
+		}
+		result = lib.ValidateWithOptions(sql, dialect, optionsJSON)
+	} else {
+		result = lib.Validate(sql, dialect)
+	}
 	defer lib.FreeValidationResult(result)
 
 	message := ffi.CString(result.Error)

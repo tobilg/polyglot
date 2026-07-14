@@ -4,11 +4,11 @@ import { join } from "node:path";
 const DIST = "dist";
 const OG_TAGS = `<meta property="og:type" content="website" />
 <meta property="og:title" content="Polyglot SQL API Documentation" />
-<meta property="og:description" content="Transpile SQL between 30+ database dialects in the browser" />
+<meta property="og:description" content="Transpile SQL between more than 30 SQL dialects in the browser" />
 <meta property="og:image" content="https://polyglot.gh.tobilg.com/polyglot-opengraph.png" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Polyglot SQL API Documentation" />
-<meta name="twitter:description" content="Transpile SQL between 30+ database dialects in the browser" />
+<meta name="twitter:description" content="Transpile SQL between more than 30 SQL dialects in the browser" />
 <meta name="twitter:image" content="https://polyglot.gh.tobilg.com/polyglot-opengraph.png" />`;
 
 async function findHtmlFiles(dir) {

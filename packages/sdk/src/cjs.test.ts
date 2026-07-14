@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { describe, it, expect, beforeAll } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 

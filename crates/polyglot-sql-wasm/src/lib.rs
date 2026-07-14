@@ -1063,7 +1063,7 @@ fn validate_internal(sql: &str, dialect: &str) -> CoreValidationResult {
     polyglot_sql::validate(sql, dialect_type)
 }
 
-/// Validate SQL syntax with additional options.
+/// Validate SQL syntax and optional query-quality semantic warnings.
 ///
 /// # Arguments
 /// * `sql` - The SQL string to validate
@@ -2047,7 +2047,7 @@ pub fn ast_get_column_names(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all table names from an AST (as JSON string).
@@ -2069,7 +2069,7 @@ pub fn ast_get_table_names(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all table nodes from an AST (as JSON string).
@@ -2098,7 +2098,7 @@ pub fn ast_get_tables(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all aggregate functions from an AST (as JSON string).
@@ -2128,7 +2128,7 @@ pub fn ast_get_aggregate_functions(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all window functions from an AST (as JSON string).
@@ -2158,7 +2158,7 @@ pub fn ast_get_window_functions(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all function calls from an AST (as JSON string).
@@ -2188,7 +2188,7 @@ pub fn ast_get_functions(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all subqueries from an AST (as JSON string).
@@ -2218,7 +2218,7 @@ pub fn ast_get_subqueries(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Get all literals from an AST (as JSON string).
@@ -2248,7 +2248,7 @@ pub fn ast_get_literals(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Count the total number of nodes in an AST.
@@ -2270,7 +2270,7 @@ pub fn ast_node_count(ast_json: &str) -> String {
             error: Some(e.to_string()),
         },
     };
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 // ============================================================================
@@ -2298,7 +2298,7 @@ pub fn ast_rename_columns(ast_json: &str, mapping_json: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Rename tables in an AST.
@@ -2322,7 +2322,7 @@ pub fn ast_rename_tables(ast_json: &str, mapping_json: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Rename tables in an AST with table-renaming options.
@@ -2353,7 +2353,7 @@ pub fn ast_rename_tables_with_options(
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Qualify unqualified column references with a table name.
@@ -2375,7 +2375,7 @@ pub fn ast_qualify_columns(ast_json: &str, table_name: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Qualify table references in an AST.
@@ -2399,7 +2399,7 @@ pub fn ast_qualify_tables(ast_json: &str, options_json: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Add a WHERE condition to a SELECT AST.
@@ -2423,7 +2423,7 @@ pub fn ast_add_where(ast_json: &str, condition_json: &str, use_or: bool) -> Stri
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Remove the WHERE clause from a SELECT AST.
@@ -2445,7 +2445,7 @@ pub fn ast_remove_where(ast_json: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Set the LIMIT on a SELECT AST.
@@ -2467,7 +2467,7 @@ pub fn ast_set_limit(ast_json: &str, limit: u32) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Set the OFFSET on a SELECT or set-operation AST.
@@ -2489,7 +2489,7 @@ pub fn ast_set_offset(ast_json: &str, offset: u32) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Set the ORDER BY clause on a SELECT or set-operation AST.
@@ -2512,7 +2512,7 @@ pub fn ast_set_order_by(ast_json: &str, order_by_json: &str) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 /// Set DISTINCT on a SELECT AST.
@@ -2534,7 +2534,7 @@ pub fn ast_set_distinct(ast_json: &str, distinct: bool) -> String {
         ast: None,
         error: Some(e),
     });
-    serde_json::to_string(&result).unwrap_or_else(|e| serialize_error_json(e))
+    serde_json::to_string(&result).unwrap_or_else(serialize_error_json)
 }
 
 #[cfg(test)]
@@ -2666,10 +2666,14 @@ mod tests {
     #[cfg(feature = "all-dialects")]
     fn test_get_dialects() {
         let result = get_dialects();
-        assert!(result.contains("postgresql"));
-        assert!(result.contains("mysql"));
-        assert!(result.contains("athena"));
-        assert!(result.contains("exasol"));
+        let dialects: Vec<String> = serde_json::from_str(&result).unwrap();
+        let unique: std::collections::BTreeSet<&str> =
+            dialects.iter().map(String::as_str).collect();
+        assert_eq!(dialects.len(), 34);
+        assert_eq!(unique.len(), dialects.len());
+        assert!(unique.contains("generic"));
+        assert!(unique.contains("postgresql"));
+        assert!(unique.contains("datafusion"));
     }
 
     #[test]
@@ -2691,6 +2695,15 @@ mod tests {
         let result = validate_with_options("SELECT name, FROM employees", "generic", options);
         assert!(result.contains("\"valid\":false"), "Result: {}", result);
         assert!(result.contains("\"code\":\"E005\""), "Result: {}", result);
+    }
+
+    #[test]
+    fn test_validate_with_options_semantic_warnings() {
+        let options = r#"{"semantic":true}"#;
+        let result = validate_with_options("SELECT * FROM users LIMIT 10", "generic", options);
+        assert!(result.contains("\"valid\":true"), "Result: {}", result);
+        assert!(result.contains("\"code\":\"W001\""), "Result: {}", result);
+        assert!(result.contains("\"code\":\"W004\""), "Result: {}", result);
     }
 
     #[test]
@@ -2880,7 +2893,6 @@ mod tests {
     // ============================================================================
 
     #[test]
-    #[ignore] // TODO: Parser panics on incomplete input instead of returning error
     fn test_transpile_invalid_sql() {
         let result = transpile("SELECT (", "generic", "postgres");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
@@ -2892,7 +2904,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Parser panics on incomplete input instead of returning error
     fn test_parse_invalid_sql() {
         let result = parse("SELECT (", "generic");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
@@ -2904,7 +2915,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Parser panics on incomplete input instead of returning error
     fn test_format_invalid_sql() {
         let result = format_sql("SELECT (", "generic");
         assert!(result.contains("\"success\":false"), "Result: {}", result);
@@ -3777,6 +3787,26 @@ mod tests {
             "Should have join step: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_plan_nested_join_serializes_complete_dag() {
+        let result = plan(
+            "SELECT t1.a FROM t1 \
+             JOIN t2 ON t1.id = t2.id \
+             JOIN t3 ON t2.id = t3.id",
+            "generic",
+        );
+        let parsed: PlanResult = serde_json::from_str(&result).expect("valid plan JSON");
+        assert!(parsed.success, "Result: {}", result);
+
+        let dag = parsed.plan.expect("successful plan").dag;
+        assert_eq!(dag.len(), 5);
+        assert_eq!(dag.get(&0), Some(&vec![1, 4]));
+        assert_eq!(dag.get(&1), Some(&vec![2, 3]));
+        assert_eq!(dag.get(&2), Some(&Vec::new()));
+        assert_eq!(dag.get(&3), Some(&Vec::new()));
+        assert_eq!(dag.get(&4), Some(&Vec::new()));
     }
 
     #[test]

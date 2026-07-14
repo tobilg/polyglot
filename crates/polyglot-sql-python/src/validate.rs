@@ -1,63 +1,23 @@
 use crate::helpers::resolve_dialect;
 use crate::types::{validation_result_from_core, ValidationResult};
-use polyglot_sql::{Error, ValidationError, ValidationResult as CoreValidationResult};
+use polyglot_sql::ValidationOptions;
 use pyo3::prelude::*;
 
-#[pyfunction(signature = (sql, dialect = "generic"))]
-pub fn validate(py: Python<'_>, sql: &str, dialect: &str) -> PyResult<ValidationResult> {
-    resolve_dialect(dialect)?;
+#[pyfunction(signature = (sql, dialect = "generic", *, strict_syntax = false, semantic = false))]
+pub fn validate(
+    py: Python<'_>,
+    sql: &str,
+    dialect: &str,
+    strict_syntax: bool,
+    semantic: bool,
+) -> PyResult<ValidationResult> {
+    let dialect = resolve_dialect(dialect)?;
+    let options = ValidationOptions {
+        strict_syntax,
+        semantic,
+    };
 
-    let result = py.detach(|| {
-        let dialect =
-            polyglot_sql::dialects::Dialect::get_by_name(dialect).expect("dialect validated");
-        match dialect.parse(sql) {
-            Ok(expressions) => {
-                for expression in &expressions {
-                    if !expression.is_statement() {
-                        return CoreValidationResult::with_errors(vec![ValidationError::error(
-                            "Invalid expression / Unexpected token",
-                            "E004",
-                        )]);
-                    }
-                }
-                CoreValidationResult::success()
-            }
-            Err(error) => CoreValidationResult::with_errors(vec![map_validation_error(error)]),
-        }
-    });
+    let result = py.detach(|| polyglot_sql::validate_with_dialect(sql, &dialect, &options));
 
     Ok(validation_result_from_core(result))
-}
-
-fn map_validation_error(error: Error) -> ValidationError {
-    match error {
-        Error::Syntax {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E001")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        Error::Tokenize {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E002")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        Error::Parse {
-            message,
-            line,
-            column,
-            start,
-            end,
-        } => ValidationError::error(message, "E003")
-            .with_location(line, column)
-            .with_span(Some(start), Some(end)),
-        _ => ValidationError::error(error.to_string(), "E000"),
-    }
 }

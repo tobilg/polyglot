@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// The generator walks the expression tree and emits dialect-specific SQL text.
 /// It supports pretty-printing with configurable indentation, identifier quoting,
-/// keyword casing, function name normalization, and 30+ SQL dialect variants.
+/// keyword casing, function name normalization, and more than 30 SQL dialects.
 ///
 /// # Usage
 ///
@@ -4170,6 +4170,48 @@ impl Generator {
         Self::projection_sort_expression(projections.get(index)?)
     }
 
+    fn is_direct_grouping_expression(expression: &Expression) -> bool {
+        match expression {
+            Expression::Paren(paren) => Self::is_direct_grouping_expression(&paren.this),
+            Expression::Grouping(_) | Expression::GroupingId(_) => true,
+            Expression::Function(function) => {
+                function.name.eq_ignore_ascii_case("GROUPING")
+                    || function.name.eq_ignore_ascii_case("GROUPING_ID")
+            }
+            _ => false,
+        }
+    }
+
+    fn group_by_has_multiple_grouping_levels(group_by: &GroupBy) -> bool {
+        group_by
+            .expressions
+            .iter()
+            .any(|expression| match expression {
+                Expression::Cube(_) | Expression::Rollup(_) => true,
+                Expression::GroupingSets(grouping_sets) => grouping_sets.expressions.len() > 1,
+                Expression::Function(function)
+                    if function.name.eq_ignore_ascii_case("CUBE")
+                        || function.name.eq_ignore_ascii_case("ROLLUP") =>
+                {
+                    !function.args.is_empty()
+                }
+                Expression::Function(function)
+                    if function.name.eq_ignore_ascii_case("GROUPING SETS") =>
+                {
+                    function.args.len() > 1
+                        || function.args.first().is_some_and(|expression| {
+                            matches!(expression, Expression::Cube(_) | Expression::Rollup(_))
+                                || matches!(expression,
+                                    Expression::Function(nested)
+                                        if nested.name.eq_ignore_ascii_case("CUBE")
+                                            || nested.name.eq_ignore_ascii_case("ROLLUP")
+                                )
+                        })
+                }
+                _ => false,
+            })
+    }
+
     fn set_output_identifier_at(expression: &Expression, index: usize) -> Option<Identifier> {
         match expression {
             Expression::Select(select) => {
@@ -4216,7 +4258,72 @@ impl Generator {
             .map(Self::column_expression)
     }
 
-    fn resolve_tsql_positional_ordering_for_select(&self, select: &Select) -> Option<Select> {
+    fn sole_tsql_ordering_source_qualifier(select: &Select) -> Option<Identifier> {
+        if !select.joins.is_empty() {
+            return None;
+        }
+
+        let from = select.from.as_ref()?;
+        if from.expressions.len() != 1 {
+            return None;
+        }
+
+        match from.expressions.first()? {
+            Expression::Table(table) => {
+                Some(table.alias.clone().unwrap_or_else(|| table.name.clone()))
+            }
+            Expression::Subquery(subquery) => subquery.alias.clone(),
+            _ => None,
+        }
+    }
+
+    fn resolve_duplicate_tsql_ordering_column(
+        select: &Select,
+        expression: &Expression,
+    ) -> Option<Expression> {
+        let Expression::Column(order_column) = expression else {
+            return None;
+        };
+        if order_column.table.is_some() {
+            return None;
+        }
+
+        let matching_projections: Vec<_> = select
+            .expressions
+            .iter()
+            .filter(|projection| {
+                Self::projection_output_identifier(projection).is_some_and(|identifier| {
+                    Self::identifier_names_match(&identifier, &order_column.name)
+                })
+            })
+            .filter_map(Self::projection_sort_expression)
+            .collect();
+
+        if matching_projections.len() < 2
+            || matching_projections[1..]
+                .iter()
+                .any(|projection| projection != &matching_projections[0])
+        {
+            return None;
+        }
+
+        let Expression::Column(projected_column) = &matching_projections[0] else {
+            return None;
+        };
+        if !Self::identifier_names_match(&projected_column.name, &order_column.name) {
+            return None;
+        }
+
+        let qualifier = projected_column
+            .table
+            .clone()
+            .or_else(|| Self::sole_tsql_ordering_source_qualifier(select))?;
+        let mut resolved = order_column.as_ref().clone();
+        resolved.table = Some(qualifier);
+        Some(Expression::Column(Box::new(resolved)))
+    }
+
+    fn resolve_tsql_null_ordering_for_select(&self, select: &Select) -> Option<Select> {
         if !matches!(
             self.config.dialect,
             Some(DialectType::TSQL) | Some(DialectType::Fabric)
@@ -4226,34 +4333,60 @@ impl Generator {
         }
 
         let order_by = select.order_by.as_ref()?;
-        let mut resolved_order_by = order_by.clone();
+        let grouping_order_is_constant = matches!(self.config.dialect, Some(DialectType::Fabric))
+            && select
+                .group_by
+                .as_ref()
+                .is_some_and(|group_by| !Self::group_by_has_multiple_grouping_levels(group_by));
+        let mut resolved_expressions = Vec::with_capacity(order_by.expressions.len());
         let mut changed = false;
 
-        for ordered in &mut resolved_order_by.expressions {
-            if !Self::ordered_requires_tsql_null_ordering_emulation(ordered) {
-                continue;
+        for mut ordered in order_by.expressions.iter().cloned() {
+            if Self::ordered_requires_tsql_null_ordering_emulation(&ordered) {
+                if let Some(index) = Self::positional_ordering_index(&ordered.this) {
+                    if let Some(resolved) =
+                        Self::resolve_positional_order_projection(&select.expressions, index)
+                            .or_else(|| {
+                                Self::resolve_single_subquery_star_projection(select, index)
+                            })
+                    {
+                        if resolved != ordered.this {
+                            ordered.this = resolved;
+                            changed = true;
+                        }
+                    }
+                }
+
+                if let Some(resolved) =
+                    Self::resolve_duplicate_tsql_ordering_column(select, &ordered.this)
+                {
+                    ordered.this = resolved;
+                    changed = true;
+                }
             }
 
-            let Some(index) = Self::positional_ordering_index(&ordered.this) else {
-                continue;
-            };
-
-            let Some(resolved) =
-                Self::resolve_positional_order_projection(&select.expressions, index)
-                    .or_else(|| Self::resolve_single_subquery_star_projection(select, index))
-            else {
-                continue;
-            };
-
-            if resolved != ordered.this {
-                ordered.this = resolved;
+            // Fabric rejects ORDER BY expressions that fold to constants (Msg 408).
+            // With one effective grouping level, a direct GROUPING/GROUPING_ID
+            // result is constant and contributes no ordering, so omit it.
+            if grouping_order_is_constant && Self::is_direct_grouping_expression(&ordered.this) {
                 changed = true;
+                continue;
             }
+
+            resolved_expressions.push(ordered);
         }
 
         if changed {
             let mut resolved_select = select.clone();
-            resolved_select.order_by = Some(resolved_order_by);
+            resolved_select.order_by = if resolved_expressions.is_empty() {
+                None
+            } else {
+                Some(OrderBy {
+                    expressions: resolved_expressions,
+                    siblings: order_by.siblings,
+                    comments: order_by.comments.clone(),
+                })
+            };
             Some(resolved_select)
         } else {
             None
@@ -4446,7 +4579,7 @@ impl Generator {
     fn generate_select(&mut self, select: &Select) -> Result<()> {
         use crate::dialects::DialectType;
 
-        if let Some(resolved_select) = self.resolve_tsql_positional_ordering_for_select(select) {
+        if let Some(resolved_select) = self.resolve_tsql_null_ordering_for_select(select) {
             return self.generate_select(&resolved_select);
         }
 
@@ -6910,7 +7043,7 @@ impl Generator {
         self.generate_select(&outer_select)
     }
 
-    fn dummy_tsql_order_by() -> OrderBy {
+    pub(crate) fn dummy_tsql_order_by() -> OrderBy {
         let null_select = Expression::Select(Box::new(Select {
             expressions: vec![Expression::Null(Null)],
             ..Select::new()
@@ -17467,6 +17600,7 @@ impl Generator {
                 | Expression::Select(_)
                 | Expression::Subquery(_)
                 | Expression::Paren(_)
+                | Expression::JoinedTable(_)
         );
         let dialect_skips_table_alias_as = matches!(self.config.dialect, Some(DialectType::Oracle));
         let skip_as = is_table_source && dialect_skips_table_alias_as;
@@ -18046,7 +18180,14 @@ impl Generator {
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
         // Normalize function name based on dialect settings
-        let normalized_name = if matches!(self.config.dialect, Some(DialectType::Snowflake))
+        let normalized_name = if func.name.eq_ignore_ascii_case("GROUPING")
+            && func.args.len() > 1
+            && matches!(
+                self.config.dialect,
+                Some(DialectType::TSQL | DialectType::Fabric)
+            ) {
+            Cow::Borrowed("GROUPING_ID")
+        } else if matches!(self.config.dialect, Some(DialectType::Snowflake))
             && func.name.to_ascii_uppercase().starts_with("IDENTIFIER(")
         {
             Cow::Borrowed(func.name.as_str())
@@ -30993,8 +31134,16 @@ impl Generator {
     }
 
     fn generate_grouping(&mut self, e: &Grouping) -> Result<()> {
-        // GROUPING(col1, col2, ...)
-        self.write_keyword("GROUPING");
+        let function_name = if e.expressions.len() > 1
+            && matches!(
+                self.config.dialect,
+                Some(DialectType::TSQL | DialectType::Fabric)
+            ) {
+            "GROUPING_ID"
+        } else {
+            "GROUPING"
+        };
+        self.write_keyword(function_name);
         self.write("(");
         for (i, expr) in e.expressions.iter().enumerate() {
             if i > 0 {

@@ -18,6 +18,7 @@ type Library struct {
 	Generate                 func(string, string) Result
 	GenerateDataType         func(string, string) Result
 	Validate                 func(string, string) ValidationResult
+	ValidateWithOptions      func(string, string, string) ValidationResult
 	Parse                    func(string, string) Result
 	ParseOne                 func(string, string) Result
 	ParseDataType            func(string, string) Result
@@ -84,6 +85,7 @@ func (l *Library) registerAll() error {
 		{"polyglot_generate", &l.Generate},
 		{"polyglot_generate_data_type", &l.GenerateDataType},
 		{"polyglot_validate", &l.Validate},
+		{"polyglot_validate_with_options", &l.ValidateWithOptions},
 		{"polyglot_parse", &l.Parse},
 		{"polyglot_parse_one", &l.ParseOne},
 		{"polyglot_parse_data_type", &l.ParseDataType},

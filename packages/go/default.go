@@ -78,12 +78,12 @@ func GenerateDataType(dataType json.RawMessage, dialect string) (string, error) 
 	return client.GenerateDataType(dataType, dialect)
 }
 
-func Validate(sql, dialect string) (ValidationResult, error) {
+func Validate(sql, dialect string, options ...ValidationOptions) (ValidationResult, error) {
 	client, err := DefaultClient()
 	if err != nil {
 		return ValidationResult{}, err
 	}
-	return client.Validate(sql, dialect)
+	return client.Validate(sql, dialect, options...)
 }
 
 func Dialects() ([]string, error) {

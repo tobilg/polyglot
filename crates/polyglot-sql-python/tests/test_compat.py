@@ -1,6 +1,45 @@
+import json
+import os
+
 import pytest
 
 import polyglot_sql
+
+
+def test_public_api_matches_capability_contract():
+    path = os.environ.get("POLYGLOT_API_CONTRACT")
+    if not path:
+        pytest.skip("POLYGLOT_API_CONTRACT is not set")
+
+    with open(path, encoding="utf-8") as contract_file:
+        contract = json.load(contract_file)
+
+    assert contract["schemaVersion"] == 1
+    assert contract["layers"] == ["rust", "python", "ffi", "go", "wasm", "typescript"]
+    seen = set()
+    for capability in contract["capabilities"]:
+        capability_id = capability["id"]
+        assert capability_id not in seen
+        seen.add(capability_id)
+
+        entry = capability["layers"]["python"]
+        assert entry["status"] in {"supported", "partial", "unavailable"}
+        if entry["status"] != "supported":
+            assert entry.get("notes")
+
+        for symbol in entry["symbols"]:
+            value = polyglot_sql
+            exists = True
+            for part in symbol.split("."):
+                if not hasattr(value, part):
+                    exists = False
+                    break
+                value = getattr(value, part)
+
+            if entry["status"] == "unavailable":
+                assert not exists, f"{capability_id}: {symbol} unexpectedly exists"
+            else:
+                assert exists, f"{capability_id}: {symbol} is missing"
 
 
 def test_sqlglot_style_transpile_signature_pattern():

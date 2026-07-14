@@ -4,10 +4,74 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestPublicAPIMatchesCapabilityContract(t *testing.T) {
+	path := os.Getenv("POLYGLOT_API_CONTRACT")
+	if path == "" {
+		t.Skip("POLYGLOT_API_CONTRACT is not set")
+	}
+
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read API capability contract: %v", err)
+	}
+	var contract struct {
+		SchemaVersion int      `json:"schemaVersion"`
+		Layers        []string `json:"layers"`
+		Capabilities  []struct {
+			ID     string `json:"id"`
+			Layers map[string]struct {
+				Status  string   `json:"status"`
+				Symbols []string `json:"symbols"`
+				Notes   string   `json:"notes"`
+			} `json:"layers"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(payload, &contract); err != nil {
+		t.Fatalf("parse API capability contract: %v", err)
+	}
+	if contract.SchemaVersion != 1 {
+		t.Fatalf("schemaVersion = %d, want 1", contract.SchemaVersion)
+	}
+
+	clientType := reflect.TypeOf(&Client{})
+	seen := make(map[string]bool, len(contract.Capabilities))
+	for _, capability := range contract.Capabilities {
+		if seen[capability.ID] {
+			t.Fatalf("duplicate capability %q", capability.ID)
+		}
+		seen[capability.ID] = true
+
+		entry, ok := capability.Layers["go"]
+		if !ok {
+			t.Fatalf("capability %q has no Go entry", capability.ID)
+		}
+		if entry.Status != "supported" && entry.Status != "partial" && entry.Status != "unavailable" {
+			t.Fatalf("capability %q has invalid status %q", capability.ID, entry.Status)
+		}
+		if entry.Status != "supported" && entry.Notes == "" {
+			t.Fatalf("capability %q requires notes", capability.ID)
+		}
+
+		for _, symbol := range entry.Symbols {
+			if !strings.HasPrefix(symbol, "Client.") {
+				t.Fatalf("capability %q has invalid Go symbol %q", capability.ID, symbol)
+			}
+			_, exists := clientType.MethodByName(strings.TrimPrefix(symbol, "Client."))
+			if entry.Status == "unavailable" && exists {
+				t.Fatalf("capability %q: %s unexpectedly exists", capability.ID, symbol)
+			}
+			if entry.Status != "unavailable" && !exists {
+				t.Fatalf("capability %q: %s is missing", capability.ID, symbol)
+			}
+		}
+	}
+}
 
 func TestVersion(t *testing.T) {
 	if Version() == "" {
@@ -54,6 +118,16 @@ func TestFormatOptionsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if payload != `{"maxSetOpChain":128}` {
+		t.Fatalf("payload = %s", payload)
+	}
+}
+
+func TestValidationOptionsJSON(t *testing.T) {
+	payload, err := marshalOptions(ValidationOptions{StrictSyntax: true, Semantic: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload != `{"strictSyntax":true,"semantic":true}` {
 		t.Fatalf("payload = %s", payload)
 	}
 }

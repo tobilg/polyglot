@@ -3153,7 +3153,7 @@ fn check_types(
     errors
 }
 
-fn check_semantics(stmt: &Expression) -> Vec<ValidationError> {
+pub(crate) fn check_semantics(stmt: &Expression) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
     let Expression::Select(select) = stmt else {
@@ -3162,29 +3162,49 @@ fn check_semantics(stmt: &Expression) -> Vec<ValidationError> {
     let select_expr = Expression::Select(select.clone());
 
     // W001: SELECT * is discouraged
-    if !select_expr
+    if let Some(star) = select_expr
         .find_all(|e| matches!(e, Expression::Star(_)))
-        .is_empty()
+        .into_iter()
+        .next()
     {
-        errors.push(ValidationError::warning(
+        let mut warning = ValidationError::warning(
             "SELECT * is discouraged; specify columns explicitly for better performance and maintainability",
             validation_codes::W_SELECT_STAR,
-        ));
+        );
+        if let Expression::Star(star) = star {
+            if let Some(span) = star.span {
+                warning = warning
+                    .with_location(span.line, span.column)
+                    .with_span(Some(span.start), Some(span.end));
+            }
+        }
+        errors.push(warning);
     }
 
     // W002: aggregate + non-aggregate columns without GROUP BY
     let aggregate_count = get_aggregate_functions(&select_expr).len();
     if aggregate_count > 0 && select.group_by.is_none() {
-        let has_non_aggregate_column = select.expressions.iter().any(|expr| {
+        let first_non_aggregate_column = select.expressions.iter().find(|expr| {
             matches!(expr, Expression::Column(_) | Expression::Identifier(_))
                 && get_aggregate_functions(expr).is_empty()
         });
 
-        if has_non_aggregate_column {
-            errors.push(ValidationError::warning(
+        if let Some(expression) = first_non_aggregate_column {
+            let mut warning = ValidationError::warning(
                 "Mixing aggregate functions with non-aggregated columns without GROUP BY may cause errors in strict SQL mode",
                 validation_codes::W_AGGREGATE_WITHOUT_GROUP_BY,
-            ));
+            );
+            let span = match expression {
+                Expression::Column(column) => column.span,
+                Expression::Identifier(identifier) => identifier.span,
+                _ => None,
+            };
+            if let Some(span) = span {
+                warning = warning
+                    .with_location(span.line, span.column)
+                    .with_span(Some(span.start), Some(span.end));
+            }
+            errors.push(warning);
         }
     }
 
@@ -3458,6 +3478,7 @@ pub fn validate_with_schema(
         dialect,
         &crate::ValidationOptions {
             strict_syntax: options.strict_syntax,
+            semantic: options.semantic,
         },
     );
     if !syntax_result.valid {
@@ -3498,9 +3519,6 @@ pub fn validate_with_schema(
     }
 
     for stmt in &statements {
-        if options.semantic {
-            all_errors.extend(check_semantics(stmt));
-        }
         all_errors.extend(validate_statement_with_schema(
             stmt,
             &schema_map,

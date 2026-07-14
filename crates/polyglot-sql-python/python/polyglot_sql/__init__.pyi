@@ -1582,8 +1582,14 @@ def format_sql(
     ...
 
 
-def validate(sql: str, dialect: str = "generic") -> ValidationResult:
-    """Validate SQL syntax and return a :class:`ValidationResult`.
+def validate(
+    sql: str,
+    dialect: str = "generic",
+    *,
+    strict_syntax: bool = False,
+    semantic: bool = False,
+) -> ValidationResult:
+    """Validate SQL syntax and optional semantic warnings.
 
     Does **not** raise on invalid SQL — check ``result.valid`` or
     ``bool(result)`` instead.
@@ -1591,6 +1597,8 @@ def validate(sql: str, dialect: str = "generic") -> ValidationResult:
     Args:
         sql: SQL to validate.
         dialect: Dialect for parsing. Defaults to ``"generic"``.
+        strict_syntax: Reject permissive forms such as trailing commas.
+        semantic: Report query-quality warnings W001 through W004.
 
     Raises:
         ValueError: If the dialect name is unknown.

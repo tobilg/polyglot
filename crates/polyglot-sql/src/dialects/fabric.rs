@@ -57,6 +57,12 @@ impl DialectImpl for FabricDialect {
     #[cfg(feature = "transpile")]
 
     fn transform_expr(&self, expr: Expression) -> Result<Expression> {
+        // ANY_VALUE is native in Fabric Warehouse, unlike SQL Server 2022.
+        if let Expression::AnyValue(mut any_value) = expr {
+            any_value.order_by.clear();
+            return Ok(Expression::AnyValue(any_value));
+        }
+
         // Handle CreateTable specially - add default precision of 1 to VARCHAR/CHAR without length
         // Reference: Python sqlglot Fabric dialect parser._parse_create adds default precision
         if let Expression::CreateTable(mut ct) = expr {

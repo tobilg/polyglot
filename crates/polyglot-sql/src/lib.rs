@@ -12,6 +12,7 @@
 //!
 //! Each stage can be customized per dialect.
 
+mod ast_children;
 pub mod ast_json;
 #[cfg(any(feature = "ast-tools", feature = "generate", feature = "semantic"))]
 pub mod ast_transforms;
@@ -599,9 +600,12 @@ pub struct ValidationOptions {
     /// would otherwise accept for compatibility (e.g. `SELECT a, FROM t`).
     #[serde(default)]
     pub strict_syntax: bool,
+    /// When enabled, validation reports query-quality warnings W001 through W004.
+    #[serde(default)]
+    pub semantic: bool,
 }
 
-/// Validate SQL syntax with additional validation options.
+/// Validate SQL syntax and optional query-quality semantic warnings.
 #[cfg(feature = "semantic")]
 pub fn validate_with_options(
     sql: &str,
@@ -609,7 +613,20 @@ pub fn validate_with_options(
     options: &ValidationOptions,
 ) -> ValidationResult {
     let d = Dialect::get(dialect);
-    match d.parse(sql) {
+    validate_with_dialect(sql, &d, options)
+}
+
+/// Validate SQL using an already-resolved dialect.
+///
+/// This is useful for wrappers and custom dialect consumers that should retain
+/// the exact tokenizer and parser configuration of a [`Dialect`] handle.
+#[cfg(feature = "semantic")]
+pub fn validate_with_dialect(
+    sql: &str,
+    dialect: &Dialect,
+    options: &ValidationOptions,
+) -> ValidationResult {
+    match dialect.parse(sql) {
         Ok(expressions) => {
             // Reject bare expressions that aren't valid SQL statements.
             // The parser accepts any expression at the top level, but bare identifiers,
@@ -623,11 +640,17 @@ pub fn validate_with_options(
                 }
             }
             if options.strict_syntax {
-                if let Some(error) = strict_syntax_error(sql, &d) {
+                if let Some(error) = strict_syntax_error(sql, dialect) {
                     return ValidationResult::with_errors(vec![error]);
                 }
             }
-            ValidationResult::success()
+            let mut errors = Vec::new();
+            if options.semantic {
+                for expression in &expressions {
+                    errors.extend(validation::check_semantics(expression));
+                }
+            }
+            ValidationResult::with_errors(errors)
         }
         Err(e) => {
             let error = match &e {
@@ -780,6 +803,121 @@ pub fn format_with_options_by_name(
     format_with_dialect(sql, &d, options)
 }
 
+#[cfg(test)]
+mod api_contract_tests {
+    use super::*;
+    use serde_json::Value;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    macro_rules! exported_symbols {
+        ($($capability:literal => { $($name:literal => $symbol:expr),+ $(,)? }),+ $(,)?) => {{
+            let mut capabilities = BTreeMap::new();
+            $(
+                $(let _ = $symbol;)+
+                capabilities.insert(
+                    $capability,
+                    BTreeSet::from([$($name),+]),
+                );
+            )+
+            capabilities
+        }};
+    }
+
+    #[test]
+    fn public_api_matches_capability_contract() {
+        let Ok(path) = std::env::var("POLYGLOT_API_CONTRACT") else {
+            return;
+        };
+        let contract: Value = serde_json::from_str(
+            &std::fs::read_to_string(path).expect("read API capability contract"),
+        )
+        .expect("parse API capability contract");
+
+        let actual = exported_symbols! {
+            "dialects" => { "Dialect.get" => Dialect::get },
+            "transpile" => { "transpile" => transpile },
+            "parse" => { "parse" => parse, "parse_one" => parse_one },
+            "data_types" => { "parse_data_type" => parse_data_type, "generate_data_type" => generate_data_type },
+            "generate" => { "generate" => generate },
+            "format" => { "format" => format, "format_with_options" => format_with_options },
+            "validate" => {
+                "validate" => validate,
+                "validate_with_options" => validate_with_options,
+                "validate_with_dialect" => validate_with_dialect
+            },
+            "validate_schema" => { "validation.validate_with_schema" => validation::validate_with_schema },
+            "optimize" => { "optimizer.optimize" => optimizer::optimize },
+            "tokenize" => { "Tokenizer.tokenize" => Tokenizer::tokenize },
+            "annotate_types" => { "annotate_types" => annotate_types },
+            "diff" => { "diff.diff" => diff::diff },
+            "ast_transforms" => {
+                "rename_tables" => rename_tables,
+                "set_limit" => set_limit,
+                "set_offset" => set_offset,
+                "set_order_by" => set_order_by
+            },
+            "lineage" => {
+                "lineage.lineage" => lineage::lineage,
+                "lineage.lineage_with_schema" => lineage::lineage_with_schema,
+                "lineage.get_source_tables" => lineage::get_source_tables
+            },
+            "openlineage" => {
+                "openlineage.openlineage_column_lineage" => openlineage::openlineage_column_lineage,
+                "openlineage.openlineage_job_event" => openlineage::openlineage_job_event,
+                "openlineage.openlineage_run_event" => openlineage::openlineage_run_event
+            },
+            "analyze_query" => { "analyze_query" => analyze_query },
+            "planner" => { "planner.Plan.from_expression" => planner::Plan::from_expression },
+            "builders" => { "builder.col" => builder::col },
+            "visitors" => {
+                "traversal.transform" => traversal::transform::<fn(Expression) -> Result<Option<Expression>>>,
+                "traversal.get_columns" => traversal::get_columns
+            },
+        };
+
+        assert_layer_contract(&contract, "rust", &actual);
+    }
+
+    fn assert_layer_contract(
+        contract: &Value,
+        layer: &str,
+        actual: &BTreeMap<&str, BTreeSet<&str>>,
+    ) {
+        let capabilities = contract["capabilities"]
+            .as_array()
+            .expect("capabilities must be an array");
+        let mut declared_available = BTreeSet::new();
+
+        for capability in capabilities {
+            let id = capability["id"].as_str().expect("capability id");
+            let entry = &capability["layers"][layer];
+            let status = entry["status"].as_str().expect("capability status");
+            assert!(matches!(status, "supported" | "partial" | "unavailable"));
+            if status != "supported" {
+                assert!(entry["notes"].as_str().is_some_and(|note| !note.is_empty()));
+            }
+            if status == "unavailable" {
+                assert!(!actual.contains_key(id), "{id} is declared unavailable");
+                continue;
+            }
+
+            declared_available.insert(id);
+            let expected = entry["symbols"]
+                .as_array()
+                .expect("symbols must be an array")
+                .iter()
+                .map(|symbol| symbol.as_str().expect("symbol must be a string"))
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual.get(id), Some(&expected), "capability {id}");
+        }
+
+        assert_eq!(
+            actual.keys().copied().collect::<BTreeSet<_>>(),
+            declared_available
+        );
+    }
+}
+
 #[cfg(all(test, feature = "semantic"))]
 mod validation_tests {
     use super::*;
@@ -794,6 +932,7 @@ mod validation_tests {
     fn validate_with_options_rejects_trailing_comma_before_from() {
         let options = ValidationOptions {
             strict_syntax: true,
+            ..Default::default()
         };
         let result = validate_with_options(
             "SELECT name, FROM employees",
@@ -812,6 +951,7 @@ mod validation_tests {
     fn validate_with_options_rejects_trailing_comma_before_where() {
         let options = ValidationOptions {
             strict_syntax: true,
+            ..Default::default()
         };
         let result = validate_with_options(
             "SELECT name FROM employees, WHERE salary > 10",
@@ -824,6 +964,38 @@ mod validation_tests {
             "Expected E005, got: {:?}",
             result.errors
         );
+    }
+
+    #[test]
+    fn validate_with_options_reports_semantic_warnings() {
+        let options = ValidationOptions {
+            semantic: true,
+            ..Default::default()
+        };
+        let result = validate_with_options(
+            "SELECT *, category, COUNT(*) FROM products LIMIT 10",
+            DialectType::Generic,
+            &options,
+        );
+
+        assert!(result.valid, "Warnings must not invalidate SQL");
+        assert!(result.errors.iter().any(|error| error.code == "W001"));
+        assert!(result.errors.iter().any(|error| error.code == "W002"));
+        assert!(result.errors.iter().any(|error| error.code == "W004"));
+    }
+
+    #[test]
+    fn validate_with_dialect_combines_strict_and_semantic_options() {
+        let options = ValidationOptions {
+            strict_syntax: true,
+            semantic: true,
+        };
+        let dialect = Dialect::get_by_name("generic").expect("generic dialect");
+        let result = validate_with_dialect("SELECT *, FROM products", &dialect, &options);
+
+        assert!(!result.valid);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].code, "E005");
     }
 }
 

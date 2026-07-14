@@ -267,15 +267,8 @@ QUERIES = {
 # ---------------------------------------------------------------------------
 
 
-def _set_sqlglot_rs_tokenizer(enabled):
-    tokens = getattr(sqlglot, "tokens", None)
-    if tokens is not None and hasattr(tokens, "USE_RS_TOKENIZER"):
-        tokens.USE_RS_TOKENIZER = enabled
-
-
 def sqlglot_parse(sql):
-    """Parse with sqlglot (v29) using the C tokenizer implementation."""
-    _set_sqlglot_rs_tokenizer(True)
+    """Parse with SQLGlot 30.12.0 and its mypyc-compiled native extensions."""
     sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.IGNORE)
 
 

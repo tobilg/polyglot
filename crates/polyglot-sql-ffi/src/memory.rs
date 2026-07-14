@@ -4,6 +4,8 @@ use std::os::raw::c_char;
 
 /// Free a C string returned by this library.
 #[no_mangle]
+// This C ABI entry point validates the pointer before reclaiming library-owned memory.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn polyglot_free_string(s: *mut c_char) {
     if s.is_null() {
         return;

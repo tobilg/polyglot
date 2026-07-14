@@ -34,3 +34,20 @@ def test_validate_repr_is_readable():
 def test_validate_unknown_dialect_raises_value_error():
     with pytest.raises(ValueError):
         polyglot_sql.validate("SELECT 1", dialect="not_a_dialect")
+
+
+def test_validate_strict_syntax_and_semantic_options():
+    strict = polyglot_sql.validate(
+        "SELECT *, FROM users", dialect="generic", strict_syntax=True, semantic=True
+    )
+    assert strict.valid is False
+    assert [error.code for error in strict.errors] == ["E005"]
+
+    semantic = polyglot_sql.validate(
+        "SELECT * FROM users LIMIT 10", dialect="generic", semantic=True
+    )
+    assert semantic.valid is True
+    assert {error.code for error in semantic.errors} >= {"W001", "W004"}
+
+    default = polyglot_sql.validate("SELECT * FROM users LIMIT 10", dialect="generic")
+    assert default.errors == []

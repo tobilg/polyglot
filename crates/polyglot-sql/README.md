@@ -1,6 +1,6 @@
 # polyglot-sql
 
-Core SQL parsing and dialect translation library for Rust. Parses, generates, transpiles, and formats SQL across 32 database dialects.
+Core SQL parsing and dialect translation library for Rust. Parses, generates, transpiles, and formats SQL across more than 30 SQL dialects.
 
 Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 
@@ -9,7 +9,7 @@ Part of the [Polyglot](https://github.com/tobilg/polyglot) project.
 - **Parse** SQL into a fully-typed AST with 200+ expression types
 - **Parse standalone data types** such as `DECIMAL(10, 2)` without a statement wrapper
 - **Generate** SQL from AST nodes for any target dialect
-- **Transpile** between any pair of 32 dialects in one call
+- **Transpile** between any pair of more than 30 SQL dialects in one call
 - **Format** / pretty-print SQL
 - **Fluent builder API** for constructing queries programmatically
 - **AST traversal** utilities (DFS/BFS iterators, transform, walk)
@@ -25,7 +25,7 @@ By default, `polyglot-sql` enables the full public API. Parser-only consumers ca
 disable default features and opt into only the dialect parsers they need:
 
 ```toml
-polyglot-sql = { version = "0.5", default-features = false }
+polyglot-sql = { version = "0.6.0", default-features = false }
 ```
 
 ```toml
@@ -245,10 +245,17 @@ let tables = get_tables(&ast[0]);
 ### Validation
 
 ```rust
-use polyglot_sql::{validate, DialectType};
+use polyglot_sql::{validate_with_options, DialectType, ValidationOptions};
 
-let result = validate("SELECT * FORM users", DialectType::Generic);
-// result contains error with line/column location
+let result = validate_with_options(
+    "SELECT * FROM users LIMIT 10",
+    DialectType::Generic,
+    &ValidationOptions {
+        strict_syntax: false,
+        semantic: true,
+    },
+);
+// W001 and W004 are warnings, so result.valid remains true.
 ```
 
 ```rust
@@ -448,7 +455,7 @@ assert_eq!(err.line(), None);
 
 ## Supported Dialects
 
-Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
+Athena, BigQuery, ClickHouse, CockroachDB, DataFusion, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Generic SQL, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
 
 ## Feature Flags
 

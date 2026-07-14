@@ -13,9 +13,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 
 def run_rust_bench():
-    print("Running polyglot-sql benchmarks (release build)...", file=sys.stderr)
+    print("Running polyglot-sql benchmarks (python_release build)...", file=sys.stderr)
     result = subprocess.run(
-        ["cargo", "run", "--example", "bench_json", "-p", "polyglot-sql", "--release"],
+        [
+            "cargo",
+            "run",
+            "--example",
+            "bench_json",
+            "-p",
+            "polyglot-sql",
+            "--profile",
+            "python_release",
+        ],
         capture_output=True,
         text=True,
         cwd=PROJECT_ROOT,

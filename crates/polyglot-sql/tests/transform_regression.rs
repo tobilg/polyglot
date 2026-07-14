@@ -1,7 +1,9 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use polyglot_sql::dialects::transform_recursive;
-use polyglot_sql::expressions::{Cast, DataType, Expression, JoinKind, StructField};
+use polyglot_sql::expressions::{
+    Cast, DataType, Expression, JoinKind, LikeOp, Literal, StructField,
+};
 use polyglot_sql::generator::{Generator, GeneratorConfig};
 use polyglot_sql::{parse, rename_tables, replace_by_type, DialectType, Parser};
 
@@ -325,4 +327,34 @@ fn transform_recursive_rewrites_nested_cast_data_types() {
         panic!("expected nested array");
     };
     assert!(matches!(element_type.as_ref(), DataType::BigInt { .. }));
+}
+
+#[test]
+fn transform_recursive_visits_generated_child_metadata() {
+    let expression = Expression::Like(Box::new(LikeOp {
+        left: Expression::column("name"),
+        right: Expression::Literal(Box::new(Literal::String("x%".to_string()))),
+        escape: Some(Expression::Literal(Box::new(Literal::String(
+            "!".to_string(),
+        )))),
+        quantifier: None,
+        inferred_type: None,
+    }));
+
+    let transformed = transform_recursive(expression, &|node| match node {
+        Expression::Literal(mut literal) if literal.is_string() && literal.value_str() == "!" => {
+            *literal = Literal::String("#".to_string());
+            Ok(Expression::Literal(literal))
+        }
+        other => Ok(other),
+    })
+    .expect("generated child should transform");
+
+    let Expression::Like(like) = transformed else {
+        panic!("expected LIKE expression");
+    };
+    assert!(matches!(
+        like.escape,
+        Some(Expression::Literal(literal)) if literal.is_string() && literal.value_str() == "#"
+    ));
 }

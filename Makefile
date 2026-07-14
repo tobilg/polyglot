@@ -13,9 +13,10 @@
         develop-python test-python build-python typecheck-python \
         python-docs-build python-docs-preview python-docs-deploy \
         bench-compare bench-rust bench-rust-parsing-report bench-python bench-parse bench-parse-quick bench-parse-full bench-simple bench-simple-quick bench-simple-full bench-transpile bench-transpile-quick \
+        bench-performance bench-allocations bench-python-concurrency bench-native-profiles bench-performance-all \
         playground-dev playground-build playground-preview playground-deploy \
         documentation-dev documentation-build documentation-preview documentation-deploy \
-        fmt \
+        fmt fmt-check lint-rust lint-sdk check-consistency docs-check \
         dev validate bump-version
 
 # =============================================================================
@@ -27,6 +28,9 @@ SQLGLOT_REF := v30.12.0
 
 CLICKHOUSE_REPO := https://github.com/ClickHouse/ClickHouse.git
 CLICKHOUSE_REF := v26.6.1.1193-stable
+
+PYTHON_RELEASE_PROFILE := python_release
+PYTHON_BENCH_BUILD_ENV := MATURIN_PEP517_ARGS="--profile $(PYTHON_RELEASE_PROFILE)"
 
 # Default target
 help:
@@ -89,6 +93,11 @@ help:
 	@echo "  make bench-simple-full   - Simple parse benchmark (all available parsers)"
 	@echo "  make bench-transpile     - Transpile benchmark (polyglot vs sqlglot)"
 	@echo "  make bench-transpile-quick - Transpile benchmark fast mode"
+	@echo "  make bench-performance   - Benchmark dialect construction and tokenizer/parser hotspots"
+	@echo "  make bench-allocations   - Report allocations for dialect, tokenizer, and parser operations"
+	@echo "  make bench-python-concurrency - Benchmark Python parse/transpile caller concurrency"
+	@echo "  make bench-native-profiles - Compare native size and speed release profiles"
+	@echo "  make bench-performance-all - Run all focused performance benchmarks"
 	@echo ""
 	@echo "Build:"
 	@echo "  make generate-bindings   - Generate TypeScript bindings (ts-rs) and copy to SDK"
@@ -109,6 +118,11 @@ help:
 	@echo "  make python-docs-deploy  - Deploy Python API docs to Cloudflare Pages"
 	@echo "  make build-all           - Build everything"
 	@echo "  make fmt                 - Format all code (Rust + TypeScript SDK)"
+	@echo "  make fmt-check           - Check Rust and TypeScript SDK formatting"
+	@echo "  make lint-rust           - Run strict Clippy on wrapper/catalog crates"
+	@echo "  make lint-sdk            - Run Biome checks for the TypeScript SDK"
+	@echo "  make check-consistency   - Check versions, dialect metadata, and active docs"
+	@echo "  make docs-check          - Check metadata, Rust example, and Python docs"
 	@echo "  make dev                 - Run quick development checks"
 	@echo "  make validate            - Run validation before commit"
 	@echo ""
@@ -379,43 +393,64 @@ bench-rust-parsing-report:
 bench-python:
 	@uv run --with sqlglot[c] python3 tools/bench-compare/bench_sqlglot.py
 
-# Parse benchmark (core): polyglot-sql (Rust/PyO3) vs sqlglot (C tokenizer) via pyperf
+# Parse benchmark (core): polyglot-sql (Rust/PyO3) vs sqlglot[c] native extensions via pyperf
 bench-parse:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only
 
 # Parse benchmark (core/quick): faster but less stable timings
 bench-parse-quick:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet --core-only --quick
 
 # Parse benchmark (full): include optional third-party parsers when available
 bench-parse-full:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_parse.py --quiet
 
-# Simple parse benchmark (core), w/o rebuilding the Python environment: polyglot-sql vs sqlglot, median-of-5
+# Simple parse benchmark (core/quick): polyglot-sql vs sqlglot, median-of-5
 bench-simple-quick:
-	@uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
 
 # Simple parse benchmark (core): polyglot-sql vs sqlglot, median-of-5
 bench-simple:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py --core-only
 
 # Simple parse benchmark (full): include optional third-party parsers
 bench-simple-full:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_simple.py
 
-# Transpile benchmark: polyglot-sql (Rust/PyO3) vs sqlglot (C tokenizer) via pyperf
+# Transpile benchmark: polyglot-sql (Rust/PyO3) vs sqlglot[c] native extensions via pyperf
 bench-transpile:
-	@uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
 		uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet
 
 # Transpile benchmark (quick): faster but less stable timings
 bench-transpile-quick:
-	@uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet --quick
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql && \
+		uv run --project tools/bench-compare python3 tools/bench-compare/bench_transpile.py --quiet --quick
+
+bench-performance:
+	@cargo bench -p polyglot-sql --bench performance_hotspots -- --noplot
+
+bench-allocations:
+	@mkdir -p target/performance
+	@cargo bench -p polyglot-sql --bench allocation_hotspots -- --quiet | tee target/performance/allocations.jsonl
+
+bench-python-concurrency:
+	@mkdir -p target/performance
+	@$(PYTHON_BENCH_BUILD_ENV) uv sync --project tools/bench-compare --reinstall-package polyglot-sql
+	@uv run --project tools/bench-compare python3 tools/bench-compare/bench_python_concurrency.py \
+		--output target/performance/python-concurrency.json
+
+bench-native-profiles:
+	@uv run python3 tools/bench-compare/bench_native_profiles.py \
+		--output target/performance/native-profiles.json
+
+bench-performance-all: bench-performance bench-allocations bench-python-concurrency bench-native-profiles
 
 # =============================================================================
 # Build
@@ -471,7 +506,7 @@ test-python:
 
 # Build Python wheels (release)
 build-python:
-	cd crates/polyglot-sql-python && uv sync --group dev && uv run maturin build --release
+	cd crates/polyglot-sql-python && uv sync --group dev && uv run maturin build --profile $(PYTHON_RELEASE_PROFILE)
 
 # Type-check Python package/stubs
 typecheck-python:
@@ -498,6 +533,30 @@ build-ffi-example: build-ffi
 fmt:
 	cargo fmt --all
 	cd packages/sdk && npm run format
+
+# Check formatting without modifying files.
+fmt-check:
+	cargo fmt --all -- --check
+	cd packages/sdk && pnpm run format:check
+
+# Keep strict Clippy scoped until the core crate's existing lint debt is resolved.
+lint-rust:
+	cargo clippy -p polyglot-sql-function-catalogs --all-targets --all-features -- -D warnings
+	cargo clippy -p polyglot-sql-ffi --all-targets --no-deps -- -D warnings
+	cargo clippy -p polyglot-sql-wasm --lib --no-deps -- -D warnings
+	cargo clippy -p polyglot-sql-python --lib --no-deps -- -D warnings
+
+lint-sdk:
+	cd packages/sdk && pnpm run lint
+
+# Keep release metadata, public dialect lists, and active documentation synchronized.
+check-consistency:
+	python3 -m unittest scripts.tests.test_check_project_consistency
+	python3 scripts/check_project_consistency.py
+
+docs-check: check-consistency
+	cargo check --manifest-path examples/rust/Cargo.toml
+	$(MAKE) python-docs-build
 
 # Quick development cycle: check + test
 dev: test-rust-check test-rust
@@ -571,6 +630,9 @@ endif
 	cargo set-version $(V)
 	pnpm -r exec pnpm version $(V) --no-git-tag-version
 	perl -0pi -e 's/const sdkVersion = "[^"]+"/const sdkVersion = "$(V)"/' packages/go/types.go
+	perl -0pi -e 's/(polyglot-sql = \{ version = ")[^"]+"/$${1}$(V)"/g' README.md crates/polyglot-sql/README.md examples/rust/Cargo.toml
+	cargo update --manifest-path examples/rust/Cargo.toml -p polyglot-sql
+	$(MAKE) check-consistency
 	@echo "Version bumped to $(V) in all crates and packages."
 
 # =============================================================================

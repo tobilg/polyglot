@@ -3,7 +3,7 @@
 //! The central type is [`Parser`], which consumes tokens produced by the
 //! [`Tokenizer`](crate::tokens::Tokenizer) and builds a tree of [`Expression`]
 //! nodes covering the full SQL grammar: queries, DML, DDL, set operations,
-//! window functions, CTEs, and dialect-specific extensions for 30+ databases.
+//! window functions, CTEs, and dialect-specific extensions for more than 30 SQL dialects.
 //!
 //! The simplest entry point is [`Parser::parse_sql`], which tokenizes and
 //! parses a SQL string in one call.
@@ -23,10 +23,13 @@
 
 use crate::error::{Error, Result};
 use crate::expressions::*;
-use crate::guard::{enforce_ast, enforce_input, enforce_tokens, ComplexityGuardOptions};
-use crate::tokens::{Span, Token, TokenType, Tokenizer, TokenizerConfig};
+use crate::guard::{
+    enforce_ast, enforce_input, enforce_parser_token_stats, enforce_parser_tokens,
+    ComplexityGuardOptions, TokenGuardStats,
+};
+use crate::tokens::{ParserToken, Span, Token, TokenType, Tokenizer, TokenizerConfig};
 use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 // =============================================================================
 // Parser Configuration Maps (ported from Python SQLGlot parser.py)
@@ -489,7 +492,7 @@ pub static RESERVED_TOKENS: LazyLock<HashSet<TokenType>> = LazyLock::new(|| {
 /// The parser consumes a `Vec<Token>` produced by the [`Tokenizer`](crate::tokens::Tokenizer)
 /// and builds a tree of [`Expression`] nodes. It supports the full SQL grammar
 /// including SELECT, DML (INSERT/UPDATE/DELETE/MERGE), DDL (CREATE/ALTER/DROP),
-/// window functions, CTEs, set operations, and 30+ dialect-specific extensions.
+/// window functions, CTEs, set operations, and extensions for more than 30 SQL dialects.
 ///
 /// # Quick start
 ///
@@ -505,17 +508,19 @@ pub static RESERVED_TOKENS: LazyLock<HashSet<TokenType>> = LazyLock::new(|| {
 /// For dialect-aware parsing, use [`Parser::with_config`] or
 /// [`Parser::parse_sql_with_config`].
 pub struct Parser {
-    tokens: Vec<Token>,
+    tokens: Vec<ParserToken>,
     current: usize,
     config: ParserConfig,
     /// Original source SQL (used for preserving exact text in Command expressions)
-    source: Option<String>,
+    source: Option<Arc<str>>,
     /// Comments captured by parse_comparison when no comparison operator follows.
     /// These are leading comments from the first token of an expression that need
     /// to be placed by the caller (e.g., after an alias, or after an AND operand).
     pending_leading_comments: Vec<String>,
     /// Whether token-level complexity guards have been applied to this token stream.
     guards_checked: bool,
+    /// Token statistics collected during the internal zero-copy tokenization path.
+    token_guard_stats: Option<TokenGuardStats>,
 }
 
 /// Configuration for the SQL [`Parser`].
@@ -554,24 +559,26 @@ impl Parser {
     /// Prefer [`Parser::parse_sql`] if you are starting from a raw SQL string.
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
-            tokens,
+            tokens: tokens.into_iter().map(ParserToken::from).collect(),
             current: 0,
             config: ParserConfig::default(),
             source: None,
             pending_leading_comments: Vec::new(),
             guards_checked: false,
+            token_guard_stats: None,
         }
     }
 
     /// Create a parser from a pre-tokenized token stream with a custom [`ParserConfig`].
     pub fn with_config(tokens: Vec<Token>, config: ParserConfig) -> Self {
         Self {
-            tokens,
+            tokens: tokens.into_iter().map(ParserToken::from).collect(),
             current: 0,
             config,
             source: None,
             pending_leading_comments: Vec::new(),
             guards_checked: false,
+            token_guard_stats: None,
         }
     }
 
@@ -581,12 +588,30 @@ impl Parser {
     /// dialect-specific statements) can preserve the exact source verbatim.
     pub fn with_source(tokens: Vec<Token>, config: ParserConfig, source: String) -> Self {
         Self {
+            tokens: tokens.into_iter().map(ParserToken::from).collect(),
+            current: 0,
+            config,
+            source: Some(Arc::from(source)),
+            pending_leading_comments: Vec::new(),
+            guards_checked: false,
+            token_guard_stats: None,
+        }
+    }
+
+    pub(crate) fn with_parser_tokens(
+        tokens: Vec<ParserToken>,
+        token_guard_stats: TokenGuardStats,
+        config: ParserConfig,
+        source: Arc<str>,
+    ) -> Self {
+        Self {
             tokens,
             current: 0,
             config,
             source: Some(source),
             pending_leading_comments: Vec::new(),
             guards_checked: false,
+            token_guard_stats: Some(token_guard_stats),
         }
     }
 
@@ -609,8 +634,10 @@ impl Parser {
     pub fn parse_sql(sql: &str) -> Result<Vec<Expression>> {
         enforce_input(sql, &ComplexityGuardOptions::default())?;
         let tokenizer = Tokenizer::default();
-        let tokens = tokenizer.tokenize(sql)?;
-        let mut parser = Parser::with_source(tokens, ParserConfig::default(), sql.to_string());
+        let source: Arc<str> = Arc::from(sql);
+        let (tokens, token_guard_stats) = tokenizer.tokenize_for_parser(&source)?;
+        let mut parser =
+            Parser::with_parser_tokens(tokens, token_guard_stats, ParserConfig::default(), source);
         parser.parse()
     }
 
@@ -624,8 +651,10 @@ impl Parser {
     ) -> Result<Vec<Expression>> {
         enforce_input(sql, &ComplexityGuardOptions::default())?;
         let tokenizer = Tokenizer::new(tokenizer_config);
-        let tokens = tokenizer.tokenize(sql)?;
-        let mut parser = Parser::with_source(tokens, ParserConfig::default(), sql.to_string());
+        let source: Arc<str> = Arc::from(sql);
+        let (tokens, token_guard_stats) = tokenizer.tokenize_for_parser(&source)?;
+        let mut parser =
+            Parser::with_parser_tokens(tokens, token_guard_stats, ParserConfig::default(), source);
         parser.parse()
     }
 
@@ -634,9 +663,33 @@ impl Parser {
             return Ok(());
         }
 
-        enforce_tokens(&self.tokens, &self.config.complexity_guard)?;
+        if let Some(stats) = &self.token_guard_stats {
+            enforce_parser_token_stats(&self.tokens, stats, &self.config.complexity_guard)?;
+        } else {
+            enforce_parser_tokens(&self.tokens, &self.config.complexity_guard)?;
+        }
         self.guards_checked = true;
         Ok(())
+    }
+
+    fn with_recursive_stack<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        #[cfg(feature = "stacker")]
+        {
+            let red_zone = if cfg!(debug_assertions) {
+                4 * 1024 * 1024
+            } else {
+                1024 * 1024
+            };
+            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || operation(self))
+        }
+
+        #[cfg(not(feature = "stacker"))]
+        {
+            operation(self)
+        }
     }
 
     fn is_bigquery_safe_namespace_receiver(expr: &Expression) -> bool {
@@ -778,7 +831,7 @@ impl Parser {
         if !self.is_at_end() {
             return Err(self.parse_error(format!(
                 "Unexpected token after data type: {}",
-                self.peek().text
+                self.peek_text()
             )));
         }
 
@@ -793,32 +846,13 @@ impl Parser {
     pub fn parse_statement(&mut self) -> Result<Expression> {
         self.ensure_complexity_guards()?;
         let start_pos = self.current;
-        #[cfg(feature = "stacker")]
-        {
-            let red_zone = if cfg!(debug_assertions) {
-                4 * 1024 * 1024
-            } else {
-                1024 * 1024
-            };
-            match stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || self.parse_statement_inner()) {
-                Ok(expr) => Ok(expr),
-                Err(err) if self.should_fallback_clickhouse_statement_error(start_pos, &err) => {
-                    self.current = start_pos;
-                    self.fallback_to_command(start_pos)
-                }
-                Err(err) => Err(err),
+        match self.with_recursive_stack(|parser| parser.parse_statement_inner()) {
+            Ok(expr) => Ok(expr),
+            Err(err) if self.should_fallback_clickhouse_statement_error(start_pos, &err) => {
+                self.current = start_pos;
+                self.fallback_to_command(start_pos)
             }
-        }
-        #[cfg(not(feature = "stacker"))]
-        {
-            match self.parse_statement_inner() {
-                Ok(expr) => Ok(expr),
-                Err(err) if self.should_fallback_clickhouse_statement_error(start_pos, &err) => {
-                    self.current = start_pos;
-                    self.fallback_to_command(start_pos)
-                }
-                Err(err) => Err(err),
-            }
+            Err(err) => Err(err),
         }
     }
 
@@ -936,7 +970,7 @@ impl Parser {
             // Handle hint comment /*+ ... */ before a statement - convert to regular comment
             TokenType::Hint => {
                 let hint_token = self.advance();
-                let hint_text = hint_token.text.clone();
+                let hint_text = hint_token.text.to_string();
                 // Convert hint to regular comment (preserve the + as part of the content)
                 let comment = format!("/* + {} */", hint_text.trim());
 
@@ -1248,19 +1282,19 @@ impl Parser {
                 self.parse_get_command()
             }
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("RM")
-                    || self.peek().text.eq_ignore_ascii_case("REMOVE") =>
+                if self.peek_text().eq_ignore_ascii_case("RM")
+                    || self.peek_text().eq_ignore_ascii_case("REMOVE") =>
             {
                 self.parse_rm_command()
             }
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("CALL") => self.parse_call(),
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("OPEN") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("CALL") => self.parse_call(),
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("OPEN") => {
                 self.skip(); // consume OPEN
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse OPEN statement"))
             }
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("EXCHANGE")
+                if self.peek_text().eq_ignore_ascii_case("EXCHANGE")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1270,7 +1304,7 @@ impl Parser {
             }
             // ClickHouse EXPLAIN has many subforms. Preserve it verbatim for coverage.
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+                if self.peek_text().eq_ignore_ascii_case("EXPLAIN")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1279,25 +1313,25 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             // EXPLAIN is treated as DESCRIBE (MySQL maps EXPLAIN -> DESCRIBE)
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("EXPLAIN") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("EXPLAIN") => {
                 self.parse_describe()
             }
             // LOCK TABLES / UNLOCK TABLES (MySQL)
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("LOCK")
-                    || self.peek().text.eq_ignore_ascii_case("UNLOCK") =>
+                if self.peek_text().eq_ignore_ascii_case("LOCK")
+                    || self.peek_text().eq_ignore_ascii_case("UNLOCK") =>
             {
                 self.skip(); // consume LOCK/UNLOCK
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse LOCK/UNLOCK statement"))
             }
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("ANALYZE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("ANALYZE") => {
                 self.skip(); // consume ANALYZE
                 self.parse_analyze()?
                     .ok_or_else(|| self.parse_error("Failed to parse ANALYZE statement"))
             }
             // TSQL: PRINT expression
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("PRINT") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("PRINT") => {
                 if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
@@ -1310,13 +1344,13 @@ impl Parser {
                 }
             }
             // TSQL: WAITFOR DELAY '00:00:05' / WAITFOR TIME '23:00:00'
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("WAITFOR") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("WAITFOR") => {
                 self.skip(); // consume WAITFOR
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse WAITFOR statement"))
             }
             // TSQL: BULK INSERT table FROM 'file' WITH (options)
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("BULK") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("BULK") => {
                 self.skip(); // consume BULK
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse BULK INSERT statement"))
@@ -1350,7 +1384,7 @@ impl Parser {
             }
             // ClickHouse: RENAME TABLE db.t1 TO db.t2 [, db.t3 TO db.t4 ...]
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("RENAME")
+                if self.peek_text().eq_ignore_ascii_case("RENAME")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1362,7 +1396,7 @@ impl Parser {
             // MySQL: OPTIMIZE [LOCAL|NO_WRITE_TO_BINLOG] TABLE t1 [, t2, ...]
             // Databricks/Spark: OPTIMIZE t [WHERE ...] [ZORDER BY (...)]
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("OPTIMIZE")
+                if self.peek_text().eq_ignore_ascii_case("OPTIMIZE")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1397,7 +1431,7 @@ impl Parser {
             }
             // ClickHouse: SHOW ... (various SHOW commands beyond what's already handled)
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("EXISTS")
+                if self.peek_text().eq_ignore_ascii_case("EXISTS")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1406,7 +1440,7 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             // DuckDB: ATTACH [DATABASE] [IF NOT EXISTS] 'path' [AS alias] [(options)]
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("ATTACH") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("ATTACH") => {
                 if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
@@ -1419,7 +1453,7 @@ impl Parser {
             }
             // UNDROP TABLE/SCHEMA/DATABASE (ClickHouse, Snowflake)
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("UNDROP")
+                if self.peek_text().eq_ignore_ascii_case("UNDROP")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1453,7 +1487,7 @@ impl Parser {
                     "TAG",
                     "TYPE",
                 ]) {
-                    self.previous().text.to_ascii_uppercase()
+                    self.previous_text().to_ascii_uppercase()
                 } else {
                     return Err(self.parse_error(
                         "Expected TABLE, SCHEMA, DATABASE, or Snowflake object kind after UNDROP",
@@ -1475,7 +1509,7 @@ impl Parser {
             }
             // ClickHouse: DETACH TABLE [IF EXISTS] ... [ON CLUSTER ...]
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("DETACH")
+                if self.peek_text().eq_ignore_ascii_case("DETACH")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1484,12 +1518,12 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             // DuckDB: DETACH [DATABASE] [IF EXISTS] name
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("DETACH") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("DETACH") => {
                 self.skip(); // consume DETACH
                 self.parse_attach_detach(false)
             }
             // Databricks/Spark: RESTORE TABLE t TO VERSION/TIMESTAMP AS OF x
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("RESTORE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("RESTORE") => {
                 if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
@@ -1502,7 +1536,7 @@ impl Parser {
                 }
             }
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("BACKUP")
+                if self.peek_text().eq_ignore_ascii_case("BACKUP")
                     && matches!(
                         self.config.dialect,
                         Some(crate::dialects::DialectType::ClickHouse)
@@ -1511,37 +1545,37 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             // Databricks/Spark: VACUUM t [RETAIN n HOURS] [DRY RUN]
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("VACUUM") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("VACUUM") => {
                 self.skip(); // consume VACUUM
                 self.parse_as_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse VACUUM statement"))
             }
             // Snowflake: LIST @stage / LS @stage
             TokenType::Var
-                if self.peek().text.eq_ignore_ascii_case("LIST")
-                    || self.peek().text.eq_ignore_ascii_case("LS") =>
+                if self.peek_text().eq_ignore_ascii_case("LIST")
+                    || self.peek_text().eq_ignore_ascii_case("LS") =>
             {
                 self.skip(); // consume LIST/LS
                 self.parse_as_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse LIST/LS statement"))
             }
             // DuckDB: INSTALL extension [FROM source]
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("INSTALL") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("INSTALL") => {
                 self.skip(); // consume INSTALL
                 self.parse_install(false)
             }
             // DuckDB: FORCE INSTALL extension | FORCE CHECKPOINT db
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("FORCE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("FORCE") => {
                 self.skip(); // consume FORCE
                 self.parse_force_statement()
             }
             // DuckDB: SUMMARIZE [TABLE] expression
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("SUMMARIZE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("SUMMARIZE") => {
                 self.skip(); // consume SUMMARIZE
                 self.parse_summarize_statement()
             }
             // DuckDB: RESET [SESSION|GLOBAL|LOCAL] variable
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("RESET") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("RESET") => {
                 self.skip(); // consume RESET
                 self.parse_as_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse RESET statement"))
@@ -1558,7 +1592,7 @@ impl Parser {
                     .ok_or_else(|| self.parse_error("Failed to parse UNPIVOT statement"))
             }
             // DuckDB: PIVOT_WIDER is an alias for PIVOT
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("PIVOT_WIDER") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("PIVOT_WIDER") => {
                 self.skip(); // consume PIVOT_WIDER
                 self.parse_simplified_pivot(false)?
                     .ok_or_else(|| self.parse_error("Failed to parse PIVOT_WIDER statement"))
@@ -1569,33 +1603,33 @@ impl Parser {
                 self.parse_for_in()
             }
             // BigQuery/procedural LOOP, REPEAT, WHILE control flow statements
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("LOOP") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("LOOP") => {
                 self.skip(); // consume LOOP
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse LOOP statement"))
             }
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("REPEAT") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("REPEAT") => {
                 self.skip(); // consume REPEAT
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse REPEAT statement"))
             }
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("WHILE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("WHILE") => {
                 self.skip(); // consume WHILE
                 self.parse_command()?
                     .ok_or_else(|| self.parse_error("Failed to parse WHILE statement"))
             }
             // Athena/Presto: UNLOAD (SELECT ...) TO 'location' WITH (options)
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("UNLOAD") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("UNLOAD") => {
                 self.parse_unload()
             }
             // Athena: USING EXTERNAL FUNCTION ... SELECT ...
             TokenType::Using => self.parse_using_external_function(),
             // BigQuery: EXPORT DATA [WITH CONNECTION conn] OPTIONS (...) AS SELECT ...
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("EXPORT") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("EXPORT") => {
                 self.parse_export_data()
             }
             // Presto/Trino: DEALLOCATE PREPARE <name>
-            TokenType::Var if self.peek().text.eq_ignore_ascii_case("DEALLOCATE") => {
+            TokenType::Var if self.peek_text().eq_ignore_ascii_case("DEALLOCATE") => {
                 self.parse_deallocate_prepare()
             }
             // DuckDB FROM-first syntax: FROM tbl = SELECT * FROM tbl
@@ -1683,7 +1717,7 @@ impl Parser {
                         let alias_keyword = if self.source.is_some() {
                             self.source_text_range(token.span.start, token.span.end)
                         } else {
-                            token.text.clone()
+                            token.text.to_string()
                         };
                         let alias = self.expect_identifier_or_keyword_with_quoted()?;
                         let trailing_comments = self.previous_trailing_comments().to_vec();
@@ -1712,7 +1746,7 @@ impl Parser {
                         let alias_keyword = if self.source.is_some() {
                             self.source_text_range(token.span.start, token.span.end)
                         } else {
-                            token.text.clone()
+                            token.text.to_string()
                         };
                         // Check for tuple alias: AS ("a", "b", ...)
                         if self.match_token(TokenType::LParen) {
@@ -1767,7 +1801,7 @@ impl Parser {
                     let alias_keyword = if self.source.is_some() {
                         self.source_text_range(token.span.start, token.span.end)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     // Capture comments from AS token (e.g., AS /* foo */ (a, b, c))
                     // These go into trailing_comments (after the alias), not pre_alias_comments
@@ -1817,7 +1851,7 @@ impl Parser {
                 {
                     // Implicit alias (without AS) - e.g., "1. x" or "1.x" -> "1. AS x"
                     // This handles cases like PostgreSQL's "1.x" which parses as float 1. with alias x
-                    let alias_text = self.advance().text.clone();
+                    let alias_text = self.advance_text();
                     let trailing_comments = self.previous_trailing_comments().to_vec();
                     Ok(Expression::Alias(Box::new(Alias {
                         this: expr,
@@ -1861,7 +1895,7 @@ impl Parser {
 
     fn parse_statement_with_leading_hint(&mut self) -> Result<Expression> {
         let hint_token = self.advance();
-        let hint_text = hint_token.text.clone();
+        let hint_text = hint_token.text.to_string();
         let comment = format!("/* + {} */", hint_text.trim());
 
         let mut stmt = self.parse_statement()?;
@@ -2173,7 +2207,7 @@ impl Parser {
                     self.skip();
                     operation_modifiers.push("STRAIGHT_JOIN".to_string());
                 } else if self.check(TokenType::Var) {
-                    let upper = self.peek().text.to_ascii_uppercase();
+                    let upper = self.peek_text().to_ascii_uppercase();
                     if MYSQL_MODIFIERS.contains(&upper.as_str()) {
                         self.skip();
                         operation_modifiers.push(upper);
@@ -2856,7 +2890,7 @@ impl Parser {
 
             if format.is_none() && self.match_token(TokenType::Format) {
                 let ident = if self.check(TokenType::Null) {
-                    let text = self.advance().text;
+                    let text = self.advance_text();
                     Identifier::new(text)
                 } else {
                     self.expect_identifier_or_keyword_with_quoted()?
@@ -3217,7 +3251,8 @@ impl Parser {
 
     /// Parse SELECT expressions
     fn parse_select_expressions(&mut self) -> Result<Vec<Expression>> {
-        let mut expressions = Vec::new();
+        let capacity_hint = self.estimate_select_expression_capacity();
+        let mut expressions = Vec::with_capacity(capacity_hint);
 
         loop {
             // Check if we're at end of select list (empty list case for TSQL TOP)
@@ -3573,7 +3608,7 @@ impl Parser {
                     let alias_keyword = if self.source.is_some() {
                         self.source_text_range(as_token.span.start, as_token.span.end)
                     } else {
-                        as_token.text.clone()
+                        as_token.text.to_string()
                     };
                     let alias_keyword = matches!(
                         self.config.dialect,
@@ -3673,7 +3708,7 @@ impl Parser {
                     // Implicit alias (without AS) - allow Var tokens, QuotedIdentifiers, command keywords (like GET, PUT, etc.), and OVERLAPS
                     // But NOT when it's the Oracle BULK COLLECT INTO sequence
                     let alias_token = self.advance();
-                    let alias_text = alias_token.text.clone();
+                    let alias_text = alias_token.text.to_string();
                     let is_quoted = alias_token.token_type == TokenType::QuotedIdentifier;
                     let trailing_comments = self.previous_trailing_comments().to_vec();
                     Expression::Alias(Box::new(Alias {
@@ -4141,11 +4176,11 @@ impl Parser {
         } else if self.check(TokenType::DAt) {
             // Snowflake stage reference: @stage_name or @"stage_name" or @namespace.stage/path
             self.parse_stage_reference()?
-        } else if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
+        } else if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
             // Snowflake stage reference tokenized as Var: @mystage/path
             // When @ is followed by alphanumeric, tokenizer creates a Var token instead of DAt
             self.parse_stage_reference_from_var()?
-        } else if self.check(TokenType::String) && self.peek().text.starts_with('@') {
+        } else if self.check(TokenType::String) && self.peek_text().starts_with('@') {
             // Snowflake stage reference in string: '@mystage' or '@external/location'
             self.parse_stage_reference_from_string()?
         } else if self.match_token(TokenType::Lateral) {
@@ -4260,7 +4295,7 @@ impl Parser {
                                 || self.check(TokenType::Identifier)
                                 || self.check(TokenType::Var)
                             {
-                                let alias_name = self.advance().text;
+                                let alias_name = self.advance_text();
                                 with_offset_alias = Some(crate::expressions::Identifier {
                                     name: alias_name,
                                     quoted: false,
@@ -4377,15 +4412,15 @@ impl Parser {
                 || self.check(TokenType::From)
                 || self.check(TokenType::Merge)
                 || self.check(TokenType::Describe)
-                || (self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN"))
+                || (self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("EXPLAIN"))
                 || (self.check(TokenType::Var)
-                    && self.peek().text.eq_ignore_ascii_case("SUMMARIZE"))
+                    && self.peek_text().eq_ignore_ascii_case("SUMMARIZE"))
             {
                 let query = if matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && self.check(TokenType::Var)
-                    && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+                    && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
                 {
                     self.parse_clickhouse_command_until_rparen()?
                 } else {
@@ -5159,7 +5194,7 @@ impl Parser {
                             if has_as
                                 || (self.check(TokenType::Identifier) || self.check(TokenType::Var))
                             {
-                                let alias_name = self.advance().text;
+                                let alias_name = self.advance_text();
                                 Some(crate::expressions::Identifier {
                                     name: alias_name,
                                     quoted: false,
@@ -5341,7 +5376,7 @@ impl Parser {
                     let name_token = self.advance();
                     self.expect(TokenType::RBrace)?;
                     Expression::Parameter(Box::new(Parameter {
-                        name: Some(name_token.text.clone()),
+                        name: Some(name_token.text.to_string()),
                         index: None,
                         style: ParameterStyle::Brace,
                         quoted: false,
@@ -5363,7 +5398,7 @@ impl Parser {
                 let expression = if self.match_token(TokenType::Colon) {
                     if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                         let expr_token = self.advance();
-                        Some(expr_token.text.clone())
+                        Some(expr_token.text.to_string())
                     } else {
                         return Err(self.parse_error("Expected identifier after : in ${...}"));
                     }
@@ -5372,7 +5407,7 @@ impl Parser {
                 };
                 self.expect(TokenType::RBrace)?;
                 Expression::Parameter(Box::new(Parameter {
-                    name: Some(name_token.text.clone()),
+                    name: Some(name_token.text.to_string()),
                     index: None,
                     style: ParameterStyle::DollarBrace,
                     quoted: false,
@@ -5388,7 +5423,7 @@ impl Parser {
             // Convert to a quoted identifier
             let string_token = self.advance();
             let table_name = Identifier {
-                name: string_token.text.clone(),
+                name: string_token.text.to_string(),
                 quoted: true,
                 trailing_comments: Vec::new(),
                 span: None,
@@ -5622,7 +5657,7 @@ impl Parser {
                 || next_text.eq_ignore_ascii_case("TIMESTAMP")
             {
                 self.skip(); // consume FOR
-                let version_kind = self.advance().text.to_ascii_uppercase(); // consume VERSION or TIMESTAMP
+                let version_kind = self.advance_text().to_ascii_uppercase(); // consume VERSION or TIMESTAMP
 
                 // Expect AS OF
                 if self.match_token(TokenType::As) && self.check_keyword_text("OF") {
@@ -5656,7 +5691,7 @@ impl Parser {
                     .text
                     .eq_ignore_ascii_case("OF")
             {
-                let version_kind = self.advance().text.to_ascii_uppercase(); // consume TIMESTAMP or VERSION
+                let version_kind = self.advance_text().to_ascii_uppercase(); // consume TIMESTAMP or VERSION
                 self.skip(); // consume AS
                 self.skip(); // consume OF
 
@@ -5830,7 +5865,7 @@ impl Parser {
                 let token = self.previous();
                 Some(self.source_text_range(token.span.start, token.span.end))
             } else {
-                Some(self.previous().text.clone())
+                Some(self.previous_text().to_string())
             };
             // Handle AS (col1, col2) without alias name - used by POSEXPLODE etc.
             if self.check(TokenType::LParen) {
@@ -5950,10 +5985,16 @@ impl Parser {
                                 mr.alias_explicit_as = true;
                                 Expression::MatchRecognize(mr)
                             }
-                            Expression::JoinedTable(mut jt) => {
-                                jt.alias = Some(make_alias_ident(alias));
-                                Expression::JoinedTable(jt)
-                            }
+                            Expression::JoinedTable(jt) => Expression::Alias(Box::new(Alias {
+                                this: Expression::JoinedTable(jt),
+                                alias: make_alias_ident(alias),
+                                column_aliases: aliases,
+                                alias_explicit_as: true,
+                                alias_keyword: alias_keyword.clone(),
+                                pre_alias_comments: Vec::new(),
+                                trailing_comments: Vec::new(),
+                                inferred_type: None,
+                            })),
                             _ => Expression::Alias(Box::new(Alias {
                                 this: expr,
                                 alias: make_alias_ident(alias),
@@ -6064,7 +6105,7 @@ impl Parser {
             // Also allow command keywords (GET, PUT, etc.) and WINDOW (when not a clause) as implicit table aliases
             let is_keyword_alias = self.peek().token_type.is_keyword();
             let is_quoted_alias = self.peek().token_type == TokenType::QuotedIdentifier;
-            let alias = self.advance().text.clone();
+            let alias = self.advance_text();
             // Check for column aliases: t(c1, c2)
             // Use expect_identifier_or_keyword to allow keywords like KEY, INDEX, VALUE as column aliases
             let mut column_aliases = if self.match_token(TokenType::LParen) {
@@ -6122,6 +6163,18 @@ impl Parser {
                     mr.alias = Some(make_alias_ident(alias));
                     Expression::MatchRecognize(mr)
                 }
+                Expression::JoinedTable(jt) if !column_aliases.is_empty() => {
+                    Expression::Alias(Box::new(Alias {
+                        this: Expression::JoinedTable(jt),
+                        alias: make_alias_ident(alias),
+                        column_aliases,
+                        alias_explicit_as: false,
+                        alias_keyword: None,
+                        pre_alias_comments: Vec::new(),
+                        trailing_comments: Vec::new(),
+                        inferred_type: None,
+                    }))
+                }
                 Expression::JoinedTable(mut jt) => {
                     jt.alias = Some(make_alias_ident(alias));
                     Expression::JoinedTable(jt)
@@ -6149,7 +6202,7 @@ impl Parser {
             let offset_alias = {
                 let has_as = self.match_token(TokenType::As);
                 if has_as || self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    let alias_name = self.advance().text;
+                    let alias_name = self.advance_text();
                     Some(crate::expressions::Identifier {
                         name: alias_name,
                         quoted: false,
@@ -6234,7 +6287,7 @@ impl Parser {
                 self.skip(); // consume LParen
                 let mut aliases = Vec::new();
                 loop {
-                    aliases.push(Identifier::new(self.advance().text.clone()));
+                    aliases.push(Identifier::new(self.advance_text()));
                     if !self.match_token(TokenType::Comma) {
                         break;
                     }
@@ -6350,9 +6403,9 @@ impl Parser {
             {
                 let tok = self.advance();
                 let alias = if tok.token_type == TokenType::QuotedIdentifier {
-                    Identifier::quoted(tok.text.clone())
+                    Identifier::quoted(tok.text.to_string())
                 } else {
-                    Identifier::new(tok.text.clone())
+                    Identifier::new(tok.text.to_string())
                 };
                 let alias_columns = self.parse_alias_column_list_if_present()?;
                 match &mut expr {
@@ -6940,7 +6993,7 @@ impl Parser {
             && self.check(TokenType::Number)
         {
             let num_token = self.advance().clone();
-            let mut name = num_token.text.clone();
+            let mut name = num_token.text.to_string();
 
             // Check if followed by more connected tokens (e.g., 25x, 25_, 25ab)
             // Numbers followed immediately by identifiers without whitespace are merged
@@ -6961,7 +7014,7 @@ impl Parser {
         if matches!(self.config.dialect, Some(DialectType::MySQL)) && self.check(TokenType::Number)
         {
             let num_token = self.advance().clone();
-            let mut name = num_token.text.clone();
+            let mut name = num_token.text.to_string();
 
             // Merge with connected identifier/var tokens only (not punctuation)
             while !self.is_at_end()
@@ -7081,7 +7134,7 @@ impl Parser {
             self.skip(); // consume (
                          // Parse the argument: either a string literal, a variable ($foo), or identifier
             let arg = if self.check(TokenType::String) {
-                let s = self.advance().text.clone();
+                let s = self.advance_text();
                 Expression::Literal(Box::new(Literal::String(s)))
             } else if self.check(TokenType::Placeholder) || self.check(TokenType::Parameter) {
                 // ? bind parameter — the Snowflake Python connector uses
@@ -7312,7 +7365,7 @@ impl Parser {
     /// Parse a datetime field for EXTRACT function (YEAR, MONTH, DAY, etc.)
     fn parse_datetime_field(&mut self) -> Result<DateTimeField> {
         let token = self.advance();
-        let original_name = token.text.clone();
+        let original_name = token.text.to_string();
         let name = original_name.to_ascii_uppercase();
         match name.as_str() {
             "YEAR" => Ok(DateTimeField::Year),
@@ -7461,7 +7514,7 @@ impl Parser {
                         .map(|t| t.text.eq_ignore_ascii_case("MATCH_CONDITION"))
                         == Some(true)
                 {
-                    let alias_name = self.advance().text.clone();
+                    let alias_name = self.advance_text();
                     Expression::Alias(Box::new(Alias {
                         this: table,
                         alias: Identifier::new(alias_name),
@@ -8227,10 +8280,10 @@ impl Parser {
         }
 
         let collation = if self.check(TokenType::String) {
-            let value = self.advance().text.replace('\'', "''");
+            let value = self.advance_text().replace('\'', "''");
             format!("'{}'", value)
         } else if self.is_identifier_or_keyword_token() {
-            self.advance().text.clone()
+            self.advance_text()
         } else {
             return Err(self.parse_error("Expected collation after COLLATE"));
         };
@@ -9143,7 +9196,7 @@ impl Parser {
     /// CONNECT_BY_ROOT col
     /// CONNECT_BY_ROOT(col)
     fn try_parse_connect_by_root_expression(&mut self) -> Result<Option<Expression>> {
-        if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("CONNECT_BY_ROOT"))
+        if !(self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("CONNECT_BY_ROOT"))
         {
             return Ok(None);
         }
@@ -9267,12 +9320,12 @@ impl Parser {
     /// Parse row semantics in MATCH_RECOGNIZE
     fn parse_match_recognize_rows(&mut self) -> Result<Option<MatchRecognizeRows>> {
         // ONE ROW PER MATCH
-        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ONE") {
+        if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ONE") {
             self.skip(); // consume ONE
             if !self.match_token(TokenType::Row) {
                 return Err(self.parse_error("Expected ROW after ONE"));
             }
-            if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PER")) {
+            if !(self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("PER")) {
                 return Err(self.parse_error("Expected PER after ONE ROW"));
             }
             self.skip(); // consume PER
@@ -9287,7 +9340,7 @@ impl Parser {
             if !self.match_token(TokenType::Rows) {
                 return Err(self.parse_error("Expected ROWS after ALL"));
             }
-            if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PER")) {
+            if !(self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("PER")) {
                 return Err(self.parse_error("Expected PER after ALL ROWS"));
             }
             self.skip(); // consume PER
@@ -9296,12 +9349,12 @@ impl Parser {
             }
 
             // Check for optional modifiers
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SHOW") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("SHOW") {
                 self.skip();
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EMPTY") {
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("EMPTY") {
                     self.skip();
                     if self.check(TokenType::Var)
-                        && self.peek().text.eq_ignore_ascii_case("MATCHES")
+                        && self.peek_text().eq_ignore_ascii_case("MATCHES")
                     {
                         self.skip();
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchShowEmptyMatches));
@@ -9310,12 +9363,12 @@ impl Parser {
                 return Err(self.parse_error("Expected EMPTY MATCHES after SHOW"));
             }
 
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OMIT") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OMIT") {
                 self.skip();
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EMPTY") {
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("EMPTY") {
                     self.skip();
                     if self.check(TokenType::Var)
-                        && self.peek().text.eq_ignore_ascii_case("MATCHES")
+                        && self.peek_text().eq_ignore_ascii_case("MATCHES")
                     {
                         self.skip();
                         return Ok(Some(MatchRecognizeRows::AllRowsPerMatchOmitEmptyMatches));
@@ -9325,7 +9378,7 @@ impl Parser {
             }
 
             if self.match_token(TokenType::With) {
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("UNMATCHED")
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("UNMATCHED")
                 {
                     self.skip();
                     if self.match_token(TokenType::Rows) {
@@ -9352,13 +9405,13 @@ impl Parser {
         }
 
         // Check for SKIP (it might be an identifier)
-        if !(self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SKIP")) {
+        if !(self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("SKIP")) {
             return Err(self.parse_error("Expected SKIP after AFTER MATCH"));
         }
         self.skip(); // consume SKIP
 
         // PAST LAST ROW
-        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("PAST") {
+        if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("PAST") {
             self.skip();
             if self.match_token(TokenType::Last) {
                 if self.match_token(TokenType::Row) {
@@ -9370,7 +9423,7 @@ impl Parser {
 
         // TO NEXT ROW / TO FIRST x / TO LAST x
         if self.match_token(TokenType::To) {
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("NEXT") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("NEXT") {
                 self.skip();
                 if self.match_token(TokenType::Row) {
                     return Ok(Some(MatchRecognizeAfter::ToNextRow));
@@ -9602,7 +9655,7 @@ impl Parser {
     /// Parse query hint /*+ ... */
     fn parse_hint(&mut self) -> Result<Hint> {
         let token = self.advance();
-        let hint_text = token.text.clone();
+        let hint_text = token.text.to_string();
 
         // For now, parse as raw hint text
         // More sophisticated parsing can be added later
@@ -9954,7 +10007,7 @@ impl Parser {
 
         // Check for PERCENT/ROWS suffix or % symbol
         let (method, unit_after_size, is_percent) =
-            if self.check(TokenType::Percent) && self.peek().text.eq_ignore_ascii_case("PERCENT") {
+            if self.check(TokenType::Percent) && self.peek_text().eq_ignore_ascii_case("PERCENT") {
                 self.skip();
                 // If no explicit method, use Percent to represent "PERCENT" unit
                 if explicit_method {
@@ -9969,7 +10022,7 @@ impl Parser {
                 } else {
                     (SampleMethod::Row, true, false)
                 }
-            } else if self.check(TokenType::Percent) && self.peek().text == "%" {
+            } else if self.check(TokenType::Percent) && self.peek_text() == "%" {
                 // 20% -> consume the %, treat as PERCENT unit
                 self.skip();
                 if explicit_method {
@@ -10929,8 +10982,8 @@ impl Parser {
             // ClickHouse: FORMAT <format_name> followed by raw data (CSV, JSON, TSV, etc.)
             // Skip everything to next semicolon or end — the data is not SQL
             self.skip(); // consume FORMAT
-            let format_name = self.advance().text.clone(); // consume format name
-                                                           // Consume all remaining tokens until semicolon (raw data)
+            let format_name = self.advance_text(); // consume format name
+                                                   // Consume all remaining tokens until semicolon (raw data)
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
                 self.skip();
             }
@@ -11373,7 +11426,7 @@ impl Parser {
                 } else if token.token_type == TokenType::QuotedIdentifier {
                     format!("\"{}\"", token.text)
                 } else {
-                    token.text.clone()
+                    token.text.to_string()
                 };
                 parts.push(text);
             }
@@ -11497,7 +11550,7 @@ impl Parser {
         if self.check_identifier("STATISTICS") {
             let mut parts = vec!["UPDATE".to_string()];
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                parts.push(self.advance().text);
+                parts.push(self.advance_text());
             }
             return Ok(Expression::Command(Box::new(Command {
                 this: parts.join(" "),
@@ -12096,7 +12149,7 @@ impl Parser {
             || self.match_identifier("DEFINER")
             || self.match_identifier("SQL")
         {
-            let option_name = self.previous().text.to_ascii_uppercase();
+            let option_name = self.previous_text().to_ascii_uppercase();
 
             if option_name == "ALGORITHM" && self.match_token(TokenType::Eq) {
                 // ALGORITHM=UNDEFINED|MERGE|TEMPTABLE
@@ -12112,7 +12165,7 @@ impl Parser {
                     && !self.check_identifier("SQL")
                     && !self.check_identifier("SECURITY")
                 {
-                    definer_value.push_str(&self.advance().text);
+                    definer_value.push_str(&self.advance_text());
                 }
                 definer = Some(definer_value);
             } else if option_name == "SQL" && self.match_identifier("SECURITY") {
@@ -12165,15 +12218,15 @@ impl Parser {
             let mut parts = Vec::new();
             loop {
                 if self.match_token(TokenType::Set) {
-                    parts.push(self.previous().text.to_ascii_uppercase());
+                    parts.push(self.previous_text().to_ascii_uppercase());
                 } else if self.match_identifier("MULTISET") {
-                    parts.push(self.previous().text.to_ascii_uppercase());
+                    parts.push(self.previous_text().to_ascii_uppercase());
                 } else if self.match_identifier("VOLATILE") {
-                    parts.push(self.previous().text.to_ascii_uppercase());
+                    parts.push(self.previous_text().to_ascii_uppercase());
                 } else if self.match_identifier("GLOBAL") {
-                    parts.push(self.previous().text.to_ascii_uppercase());
+                    parts.push(self.previous_text().to_ascii_uppercase());
                 } else if self.match_token(TokenType::Temporary) {
-                    parts.push(self.previous().text.to_ascii_uppercase());
+                    parts.push(self.previous_text().to_ascii_uppercase());
                 } else {
                     break;
                 }
@@ -12265,7 +12318,7 @@ impl Parser {
             _ => {
                 // Handle TSQL CLUSTERED/NONCLUSTERED [COLUMNSTORE] INDEX
                 if self.check_identifier("CLUSTERED") || self.check_identifier("NONCLUSTERED") {
-                    let clustered_text = self.advance().text.to_ascii_uppercase();
+                    let clustered_text = self.advance_text().to_ascii_uppercase();
                     // Check for COLUMNSTORE after CLUSTERED/NONCLUSTERED
                     let clustered = if self.check_identifier("COLUMNSTORE") {
                         self.skip();
@@ -12597,7 +12650,7 @@ impl Parser {
             // Parse optional AT or BEFORE time travel clause
             // Note: BEFORE is a keyword token, AT is an identifier
             let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-                let keyword = self.previous().text.to_ascii_uppercase();
+                let keyword = self.previous_text().to_ascii_uppercase();
                 self.expect(TokenType::LParen)?;
                 // Parse the content: OFFSET => value or TIMESTAMP => value
                 let mut result = format!("{} (", keyword);
@@ -12659,7 +12712,7 @@ impl Parser {
                 } else if self.match_token(TokenType::VersionSnapshot) {
                     "VERSION".to_string()
                 } else {
-                    let version_kind = self.advance().text.to_ascii_uppercase();
+                    let version_kind = self.advance_text().to_ascii_uppercase();
                     self.expect(TokenType::As)?;
                     if !self.match_keyword("OF") {
                         return Err(self.parse_error("Expected OF after AS"));
@@ -12929,7 +12982,7 @@ impl Parser {
                 }
             } else if self.check_identifier("COMPOUND") || self.check_identifier("INTERLEAVED") {
                 // COMPOUND SORTKEY(col, ...) or INTERLEAVED SORTKEY(col, ...)
-                let modifier = self.advance().text.to_ascii_uppercase();
+                let modifier = self.advance_text().to_ascii_uppercase();
                 if self.match_identifier("SORTKEY") && self.match_token(TokenType::LParen) {
                     let mut cols = Vec::new();
                     loop {
@@ -12994,7 +13047,7 @@ impl Parser {
             } else if self.match_identifier("DISTSTYLE") {
                 // DISTSTYLE ALL|EVEN|AUTO|KEY
                 if self.match_texts(&["ALL", "EVEN", "AUTO", "KEY"]) {
-                    let style = self.previous().text.to_ascii_uppercase();
+                    let style = self.previous_text().to_ascii_uppercase();
                     redshift_ctas_properties.push(Expression::DistStyleProperty(Box::new(
                         DistStyleProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: style }))),
@@ -13004,7 +13057,7 @@ impl Parser {
             } else if self.match_identifier("BACKUP") {
                 // BACKUP YES|NO
                 if self.match_texts(&["YES", "NO"]) {
-                    let value = self.previous().text.to_ascii_uppercase();
+                    let value = self.previous_text().to_ascii_uppercase();
                     redshift_ctas_properties.push(Expression::BackupProperty(Box::new(
                         BackupProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: value }))),
@@ -13284,16 +13337,16 @@ impl Parser {
                     || self.is_safe_keyword_as_identifier()
                     || self.check(TokenType::Warehouse)
                 {
-                    let key = self.advance().text;
+                    let key = self.advance_text();
                     if self.match_token(TokenType::Eq) {
                         // Capture value
                         let value = if self.check(TokenType::String) {
-                            let v = format!("'{}'", self.peek().text);
+                            let v = format!("'{}'", self.peek_text());
                             self.skip();
                             v
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
-                            self.advance().text
+                            self.advance_text()
                         } else {
                             break;
                         };
@@ -13301,7 +13354,7 @@ impl Parser {
                     } else {
                         // Just a keyword without value (like WAREHOUSE mywh)
                         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                            let value = self.advance().text;
+                            let value = self.advance_text();
                             extra_options.push((key, value));
                         }
                     }
@@ -13705,7 +13758,7 @@ impl Parser {
             let saved = self.current;
             self.skip(); // consume COMMENT
             if self.check(TokenType::String) {
-                let comment_text = self.advance().text.clone();
+                let comment_text = self.advance_text();
                 Some(comment_text)
             } else {
                 self.current = saved;
@@ -13772,7 +13825,7 @@ impl Parser {
                 if is_snowflake_option {
                     // Save position before consuming key - we might need to retreat for Hive-style syntax
                     let saved = self.current;
-                    let key = self.advance().text;
+                    let key = self.advance_text();
                     if self.match_token(TokenType::Eq) {
                         // Capture value - could be string, identifier, stage path @..., keyword, or parenthesized options
                         let value = if self.check(TokenType::LParen) {
@@ -13798,7 +13851,7 @@ impl Parser {
                             }
                             options
                         } else if self.check(TokenType::String) {
-                            let v = format!("'{}'", self.peek().text);
+                            let v = format!("'{}'", self.peek_text());
                             self.skip();
                             v
                         } else if self.check(TokenType::DAt) {
@@ -13806,7 +13859,7 @@ impl Parser {
                             self.skip(); // consume @
                             let mut path = String::from("@");
                             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                                path.push_str(&self.advance().text);
+                                path.push_str(&self.advance_text());
                             }
                             // Parse path segments, but stop before Snowflake option keywords
                             while self.check(TokenType::Slash) {
@@ -13831,14 +13884,14 @@ impl Parser {
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
                                 {
-                                    path.push_str(&self.advance().text);
+                                    path.push_str(&self.advance_text());
                                 }
                             }
                             path
-                        } else if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
+                        } else if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
                             // Stage path tokenized as Var (e.g., @s2/logs/)
                             // When @ is followed by alphanumeric, tokenizer creates a Var token
-                            let mut path = self.advance().text;
+                            let mut path = self.advance_text();
                             // Parse path segments, but stop before Snowflake option keywords
                             while self.check(TokenType::Slash) {
                                 // Peek ahead to see if next identifier is a Snowflake option keyword
@@ -13862,15 +13915,15 @@ impl Parser {
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
                                 {
-                                    path.push_str(&self.advance().text);
+                                    path.push_str(&self.advance_text());
                                 }
                             }
                             path
                         } else if self.check(TokenType::Warehouse) {
-                            self.advance().text
+                            self.advance_text()
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
-                            self.advance().text
+                            self.advance_text()
                         } else {
                             // No valid value after =, retreat and let Hive parsing try
                             self.current = saved;
@@ -13882,7 +13935,7 @@ impl Parser {
                         || self.check(TokenType::Warehouse)
                     {
                         // WAREHOUSE mywh (without =)
-                        let value = self.advance().text;
+                        let value = self.advance_text();
                         all_with_properties.push((key, value));
                     } else {
                         // Not a Snowflake-style option (e.g., Hive LOCATION 'path' without =)
@@ -14067,7 +14120,7 @@ impl Parser {
             } else if self.match_identifier("DISTSTYLE") {
                 // DISTSTYLE ALL|EVEN|AUTO|KEY
                 if self.match_texts(&["ALL", "EVEN", "AUTO", "KEY"]) {
-                    let style = self.previous().text.to_ascii_uppercase();
+                    let style = self.previous_text().to_ascii_uppercase();
                     table_properties.push(Expression::DistStyleProperty(Box::new(
                         DistStyleProperty {
                             this: Box::new(Expression::Var(Box::new(Var { this: style }))),
@@ -14077,7 +14130,7 @@ impl Parser {
             } else if self.match_identifier("BACKUP") {
                 // BACKUP YES|NO
                 if self.match_texts(&["YES", "NO"]) {
-                    let value = self.previous().text.to_ascii_uppercase();
+                    let value = self.previous_text().to_ascii_uppercase();
                     table_properties.push(Expression::BackupProperty(Box::new(BackupProperty {
                         this: Box::new(Expression::Var(Box::new(Var { this: value }))),
                     })));
@@ -14310,7 +14363,7 @@ impl Parser {
                         && self.check_next(TokenType::LParen)
                     {
                         // Only treat identifier as partition method (like HASH) if followed by (
-                        Some(self.advance().text.to_ascii_uppercase())
+                        Some(self.advance_text().to_ascii_uppercase())
                     } else {
                         // No explicit partition method (RANGE/LIST/HASH), just PARTITION BY (cols)
                         None
@@ -14553,7 +14606,7 @@ impl Parser {
                     || self.check_identifier("FILE_FORMAT")
                     || self.check_identifier("AUTO_REFRESH");
                 if is_snowflake_option {
-                    let key = self.advance().text;
+                    let key = self.advance_text();
                     if self.match_token(TokenType::Eq) {
                         let value = if self.check(TokenType::LParen) {
                             // Parenthesized option list
@@ -14577,7 +14630,7 @@ impl Parser {
                             }
                             options
                         } else if self.check(TokenType::String) {
-                            let v = format!("'{}'", self.peek().text);
+                            let v = format!("'{}'", self.peek_text());
                             self.skip();
                             v
                         } else if self.check(TokenType::DAt) {
@@ -14585,7 +14638,7 @@ impl Parser {
                             self.skip();
                             let mut path = String::from("@");
                             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                                path.push_str(&self.advance().text);
+                                path.push_str(&self.advance_text());
                             }
                             while self.check(TokenType::Slash) {
                                 if self.current + 1 < self.tokens.len() {
@@ -14607,12 +14660,12 @@ impl Parser {
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
                                 {
-                                    path.push_str(&self.advance().text);
+                                    path.push_str(&self.advance_text());
                                 }
                             }
                             path
-                        } else if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
-                            let mut path = self.advance().text;
+                        } else if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
+                            let mut path = self.advance_text();
                             while self.check(TokenType::Slash) {
                                 if self.current + 1 < self.tokens.len() {
                                     let next = &self.tokens[self.current + 1];
@@ -14633,15 +14686,15 @@ impl Parser {
                                 if self.is_identifier_token()
                                     || self.is_safe_keyword_as_identifier()
                                 {
-                                    path.push_str(&self.advance().text);
+                                    path.push_str(&self.advance_text());
                                 }
                             }
                             path
                         } else if self.check(TokenType::Warehouse) {
-                            self.advance().text
+                            self.advance_text()
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
-                            self.advance().text
+                            self.advance_text()
                         } else {
                             break;
                         };
@@ -14650,7 +14703,7 @@ impl Parser {
                         || self.is_safe_keyword_as_identifier()
                         || self.check(TokenType::Warehouse)
                     {
-                        let value = self.advance().text;
+                        let value = self.advance_text();
                         all_with_properties.push((key, value));
                     }
                 } else {
@@ -14663,7 +14716,7 @@ impl Parser {
         while self.check_identifier("STAGE_FILE_FORMAT")
             || self.check_identifier("STAGE_COPY_OPTIONS")
         {
-            let key = self.advance().text.to_ascii_uppercase();
+            let key = self.advance_text().to_ascii_uppercase();
             self.match_token(TokenType::Eq);
             // Consume the parenthesized options as raw text
             if self.match_token(TokenType::LParen) {
@@ -14832,7 +14885,7 @@ impl Parser {
             // Parse RANGE/LIST/HASH(columns)
             let partition_kind = if self.check(TokenType::Identifier) || self.check(TokenType::Var)
             {
-                let kind_text = self.advance().text.to_ascii_uppercase();
+                let kind_text = self.advance_text().to_ascii_uppercase();
                 kind_text
             } else if self.check(TokenType::Range) {
                 self.skip();
@@ -15145,7 +15198,7 @@ impl Parser {
 
         while self.is_snowflake_inline_table_option_start() {
             let saved = self.current;
-            let key = self.advance().text.clone();
+            let key = self.advance_text();
             let value = if self.match_token(TokenType::Eq) {
                 self.parse_snowflake_inline_table_option_value()?
             } else if self.is_identifier_token()
@@ -15167,7 +15220,7 @@ impl Parser {
 
     fn parse_snowflake_inline_table_option_value(&mut self) -> Result<String> {
         if self.check(TokenType::String) {
-            let value = format!("'{}'", self.peek().text);
+            let value = format!("'{}'", self.peek_text());
             self.skip();
             return Ok(value);
         }
@@ -15197,7 +15250,7 @@ impl Parser {
             || self.is_safe_keyword_as_identifier()
             || self.check_keyword()
         {
-            return Ok(self.advance().text.clone());
+            return Ok(self.advance_text());
         }
 
         Err(self.parse_error("Expected Snowflake table option value"))
@@ -15235,7 +15288,7 @@ impl Parser {
             // Parse property value - can be string, identifier, or parenthesized expression
             let value = if self.check(TokenType::String) {
                 // Store string with quotes to preserve format
-                let val = format!("'{}'", self.peek().text);
+                let val = format!("'{}'", self.peek_text());
                 self.skip();
                 val
             } else if self.match_token(TokenType::LParen) {
@@ -15285,7 +15338,7 @@ impl Parser {
                     .is_some_and(|t| t.token_type == TokenType::LBracket)
             {
                 // Handle ARRAY['value', 'value', ...] syntax (Athena/Presto)
-                let mut result = self.advance().text.clone(); // consume ARRAY
+                let mut result = self.advance_text(); // consume ARRAY
                 self.expect(TokenType::LBracket)?;
                 result.push('[');
                 let mut first = true;
@@ -15301,10 +15354,10 @@ impl Parser {
                     // Parse array element (usually a string)
                     if self.check(TokenType::String) {
                         result.push('\'');
-                        result.push_str(&self.advance().text);
+                        result.push_str(&self.advance_text());
                         result.push('\'');
                     } else if self.is_identifier_token() {
-                        result.push_str(&self.advance().text);
+                        result.push_str(&self.advance_text());
                     } else {
                         break;
                     }
@@ -15314,7 +15367,7 @@ impl Parser {
                 result
             } else if self.check(TokenType::Number) {
                 // Numeric value (e.g., bucket_count=64)
-                self.advance().text.clone()
+                self.advance_text()
             } else {
                 // Just an identifier or keyword (e.g., allow_page_locks=on)
                 self.expect_identifier_or_keyword()?
@@ -15385,7 +15438,7 @@ impl Parser {
                         && !self.is_at_end()
                     {
                         // Handle keywords as index type names (e.g., set, minmax)
-                        let type_name = self.advance().text.clone();
+                        let type_name = self.advance_text();
                         if self.check(TokenType::LParen) {
                             // It's a function call like set(100)
                             self.skip(); // consume (
@@ -15526,7 +15579,7 @@ impl Parser {
                             && !self.check(TokenType::Comma)
                             && !self.check(TokenType::RParen)
                         {
-                            self.advance().text.clone()
+                            self.advance_text()
                         } else {
                             String::new()
                         }
@@ -15706,7 +15759,7 @@ impl Parser {
             || self.match_identifier("ZEROFILL")
             || self.match_identifier("SIGNED")
         {
-            let modifier = self.previous().text.to_ascii_uppercase();
+            let modifier = self.previous_text().to_ascii_uppercase();
             if modifier == "UNSIGNED" {
                 col_def.unsigned = true;
             } else if modifier == "ZEROFILL" {
@@ -16184,7 +16237,7 @@ impl Parser {
                 self.match_token(TokenType::Index);
                 // Optional index name
                 let name = if self.is_identifier_token() && !self.check(TokenType::LParen) {
-                    Some(self.advance().text)
+                    Some(self.advance_text())
                 } else {
                     None
                 };
@@ -16215,7 +16268,7 @@ impl Parser {
                 self.match_token(TokenType::Index);
                 // Optional index name
                 let name = if self.is_identifier_token() {
-                    Some(self.advance().text)
+                    Some(self.advance_text())
                 } else {
                     None
                 };
@@ -16244,7 +16297,7 @@ impl Parser {
             if self.match_token(TokenType::Index) {
                 // Optional index name
                 let name = if self.is_identifier_token() && !self.check(TokenType::LParen) {
-                    Some(self.advance().text)
+                    Some(self.advance_text())
                 } else {
                     None
                 };
@@ -16359,7 +16412,7 @@ impl Parser {
             } else if token.token_type == TokenType::String {
                 format!("'{}'", token.text)
             } else {
-                token.text.clone()
+                token.text.to_string()
             };
 
             let mut join_type = token.token_type;
@@ -16385,7 +16438,7 @@ impl Parser {
         let mut identifiers = Vec::new();
         loop {
             if self.is_identifier_token() || self.is_identifier_or_keyword_token() {
-                identifiers.push(self.advance().text);
+                identifiers.push(self.advance_text());
             }
             if !self.match_token(TokenType::Comma) {
                 break;
@@ -16648,21 +16701,21 @@ impl Parser {
                 self.skip(); // consume DEFAULT
                 if self.check_identifier("CHARSET") || self.check_identifier("CHARACTER") {
                     let is_character = self.check_identifier("CHARACTER");
-                    let key_part = self.advance().text.to_ascii_uppercase();
+                    let key_part = self.advance_text().to_ascii_uppercase();
                     if is_character {
                         // CHARACTER SET
                         self.match_token(TokenType::Set);
                     }
                     if self.match_token(TokenType::Eq) {
                         let value = if self.check(TokenType::String) {
-                            let v = format!("'{}'", self.peek().text);
+                            let v = format!("'{}'", self.peek_text());
                             self.skip();
                             v
                         } else if self.is_identifier_token()
                             || self.is_safe_keyword_as_identifier()
                             || self.check(TokenType::Number)
                         {
-                            self.advance().text
+                            self.advance_text()
                         } else {
                             self.current = saved;
                             break;
@@ -16701,16 +16754,16 @@ impl Parser {
                 || self.check_identifier("ENCRYPTION");
 
             if is_known_option {
-                let key = self.advance().text.to_ascii_uppercase();
+                let key = self.advance_text().to_ascii_uppercase();
                 if self.match_token(TokenType::Eq) {
                     let value = if self.check(TokenType::String) {
-                        let v = format!("'{}'", self.peek().text);
+                        let v = format!("'{}'", self.peek_text());
                         self.skip();
                         v
                     } else if self.check(TokenType::Number) {
-                        self.advance().text
+                        self.advance_text()
                     } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                        self.advance().text
+                        self.advance_text()
                     } else {
                         break;
                     };
@@ -16726,13 +16779,13 @@ impl Parser {
                 self.skip(); // consume COMMENT
                 if self.match_token(TokenType::Eq) {
                     if self.check(TokenType::String) {
-                        let v = format!("'{}'", self.peek().text);
+                        let v = format!("'{}'", self.peek_text());
                         self.skip();
                         options.push(("COMMENT".to_string(), v));
                         continue;
                     }
                 } else if self.check(TokenType::String) {
-                    let v = format!("'{}'", self.peek().text);
+                    let v = format!("'{}'", self.peek_text());
                     self.skip();
                     options.push(("COMMENT".to_string(), v));
                     continue;
@@ -16755,14 +16808,14 @@ impl Parser {
                 }
                 if self.match_token(TokenType::Eq) {
                     let value = if self.check(TokenType::String) {
-                        let v = format!("'{}'", self.peek().text);
+                        let v = format!("'{}'", self.peek_text());
                         self.skip();
                         v
                     } else if self.is_identifier_token()
                         || self.is_safe_keyword_as_identifier()
                         || self.check(TokenType::Number)
                     {
-                        self.advance().text
+                        self.advance_text()
                     } else {
                         self.current = saved;
                         break;
@@ -16836,12 +16889,10 @@ impl Parser {
                     } else {
                         // STORED AS format_name (e.g., STORED AS TEXTFILE, STORED AS ORC)
                         let format = if self.check(TokenType::String) {
-                            Expression::Literal(Box::new(Literal::String(
-                                self.advance().text.clone(),
-                            )))
+                            Expression::Literal(Box::new(Literal::String(self.advance_text())))
                         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier()
                         {
-                            Expression::Identifier(Identifier::new(self.advance().text.clone()))
+                            Expression::Identifier(Identifier::new(self.advance_text()))
                         } else {
                             break;
                         };
@@ -16864,9 +16915,9 @@ impl Parser {
             if self.match_token(TokenType::Using) {
                 // Parse the format name (e.g., DELTA, PARQUET, ICEBERG, etc.)
                 let format = if self.check(TokenType::String) {
-                    Expression::Literal(Box::new(Literal::String(self.advance().text.clone())))
+                    Expression::Literal(Box::new(Literal::String(self.advance_text())))
                 } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    Expression::Identifier(Identifier::new(self.advance().text.clone()))
+                    Expression::Identifier(Identifier::new(self.advance_text()))
                 } else {
                     break;
                 };
@@ -16980,7 +17031,7 @@ impl Parser {
 
                     // Check for transform functions like BUCKET(n, col), TRUNCATE(n, col), etc.
                     if self.check_identifier("BUCKET") || self.check_identifier("TRUNCATE") {
-                        let func_name = self.advance().text.clone();
+                        let func_name = self.advance_text();
                         self.expect(TokenType::LParen)?;
                         let args = self.parse_expression_list()?;
                         self.expect(TokenType::RParen)?;
@@ -17015,7 +17066,7 @@ impl Parser {
                             || self.check(TokenType::Double)
                             || self.check(TokenType::Boolean)
                         {
-                            let col_name = self.advance().text.clone();
+                            let col_name = self.advance_text();
                             // Check if next token looks like a data type
                             if self.check(TokenType::Var)
                                 || self.check(TokenType::Identifier)
@@ -17029,7 +17080,7 @@ impl Parser {
                                 || self.check(TokenType::Date)
                                 || self.check(TokenType::Timestamp)
                             {
-                                let type_text = self.peek().text.to_ascii_uppercase();
+                                let type_text = self.peek_text().to_ascii_uppercase();
                                 let is_type = matches!(
                                     type_text.as_str(),
                                     "INT"
@@ -17345,7 +17396,7 @@ impl Parser {
                 {
                     // MySQL: double-quoted strings can be used as constraint names
                     // e.g., PRIMARY KEY "pk_name" (id) -> PRIMARY KEY `pk_name` (id)
-                    let s = self.advance().text.clone();
+                    let s = self.advance_text();
                     Some(Identifier {
                         name: s,
                         quoted: true,
@@ -17586,13 +17637,13 @@ impl Parser {
                 while !self.is_at_end() {
                     if self.check(TokenType::LParen) {
                         paren_depth += 1;
-                        expr_parts.push(self.advance().text);
+                        expr_parts.push(self.advance_text());
                     } else if self.check(TokenType::RParen) {
                         if paren_depth == 0 {
                             break;
                         }
                         paren_depth -= 1;
-                        expr_parts.push(self.advance().text);
+                        expr_parts.push(self.advance_text());
                     } else if paren_depth == 0 && self.check(TokenType::With) {
                         break;
                     } else if self.check(TokenType::String) {
@@ -17600,7 +17651,7 @@ impl Parser {
                         let token = self.advance();
                         expr_parts.push(format!("'{}'", token.text));
                     } else {
-                        expr_parts.push(self.advance().text);
+                        expr_parts.push(self.advance_text());
                     }
                 }
                 let expression = expr_parts
@@ -17612,7 +17663,7 @@ impl Parser {
 
                 // Parse WITH operator
                 self.expect(TokenType::With)?;
-                let operator = self.advance().text.clone();
+                let operator = self.advance_text();
 
                 elements.push(ExcludeElement {
                     expression,
@@ -17642,7 +17693,7 @@ impl Parser {
                 loop {
                     let key = self.expect_identifier()?;
                     self.expect(TokenType::Eq)?;
-                    let val = self.advance().text.clone();
+                    let val = self.advance_text();
                     params.push((key, val));
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -17772,7 +17823,7 @@ impl Parser {
             && !self.check(TokenType::Using)
             && self.is_identifier_token()
         {
-            Some(Identifier::new(self.advance().text))
+            Some(Identifier::new(self.advance_text()))
         } else {
             None
         };
@@ -17859,7 +17910,7 @@ impl Parser {
             } else if self.match_token(TokenType::Comment) {
                 // MySQL index COMMENT 'text'
                 if self.check(TokenType::String) {
-                    modifiers.comment = Some(self.advance().text);
+                    modifiers.comment = Some(self.advance_text());
                 }
             } else if self.match_identifier("VISIBLE") {
                 modifiers.visible = Some(true);
@@ -17869,7 +17920,7 @@ impl Parser {
                 // MySQL ENGINE_ATTRIBUTE = 'value'
                 self.match_token(TokenType::Eq);
                 if self.check(TokenType::String) {
-                    modifiers.engine_attribute = Some(self.advance().text);
+                    modifiers.engine_attribute = Some(self.advance_text());
                 }
             } else if self.check(TokenType::With) {
                 let saved_with = self.current;
@@ -17877,7 +17928,7 @@ impl Parser {
                 if self.match_identifier("PARSER") {
                     // MySQL WITH PARSER name
                     if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                        modifiers.with_parser = Some(self.advance().text);
+                        modifiers.with_parser = Some(self.advance_text());
                     }
                 } else if self.check(TokenType::LParen) {
                     // TSQL: WITH (PAD_INDEX=ON, STATISTICS_NORECOMPUTE=OFF, ...)
@@ -17888,9 +17939,9 @@ impl Parser {
                             break;
                         }
                         // Parse KEY=VALUE pair
-                        let key = self.advance().text.clone();
+                        let key = self.advance_text();
                         if self.match_token(TokenType::Eq) {
-                            let value = self.advance().text.clone();
+                            let value = self.advance_text();
                             modifiers.with_options.push((key, value));
                         }
                         if !self.match_token(TokenType::Comma) {
@@ -17922,7 +17973,7 @@ impl Parser {
                 } else if self.is_identifier_token() || self.check(TokenType::QuotedIdentifier) {
                     // TSQL: ON [filegroup] - parse and store
                     let quoted = self.check(TokenType::QuotedIdentifier);
-                    let name = self.advance().text.clone();
+                    let name = self.advance_text();
                     modifiers.on_filegroup = Some(Identifier {
                         name,
                         quoted,
@@ -17960,7 +18011,7 @@ impl Parser {
                 self.skip();
                 Some(MatchType::Full)
             } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let text = self.advance().text.to_ascii_uppercase();
+                let text = self.advance_text().to_ascii_uppercase();
                 match text.as_str() {
                     "PARTIAL" => Some(MatchType::Partial),
                     "SIMPLE" => Some(MatchType::Simple),
@@ -18004,7 +18055,7 @@ impl Parser {
                 self.skip();
                 Some(MatchType::Full)
             } else if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let text = self.advance().text.to_ascii_uppercase();
+                let text = self.advance_text().to_ascii_uppercase();
                 match text.as_str() {
                     "PARTIAL" => Some(MatchType::Partial),
                     "SIMPLE" => Some(MatchType::Simple),
@@ -18052,7 +18103,7 @@ impl Parser {
             Ok(ReferentialAction::Restrict)
         } else if self.match_token(TokenType::No) {
             // NO ACTION - NO is a token, ACTION is an identifier
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ACTION") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ACTION") {
                 self.skip();
             }
             Ok(ReferentialAction::NoAction)
@@ -18624,7 +18675,7 @@ impl Parser {
                 } else if token.token_type == TokenType::QuotedIdentifier {
                     parts.push(format!("\"{}\"", token.text));
                 } else {
-                    parts.push(token.text.clone());
+                    parts.push(token.text.to_string());
                 }
             }
             return Ok(Expression::Command(Box::new(crate::expressions::Command {
@@ -18682,7 +18733,7 @@ impl Parser {
         let on_filegroup = if self.match_token(TokenType::On) {
             // Get the filegroup/partition scheme name
             let token = self.advance();
-            let mut filegroup = token.text.clone();
+            let mut filegroup = token.text.to_string();
             // Check for partition scheme with column: ON partition_scheme(column)
             if self.match_token(TokenType::LParen) {
                 filegroup.push('(');
@@ -18755,12 +18806,12 @@ impl Parser {
                 && !self.check(TokenType::Desc)
                 && !self.check(TokenType::Nulls)
             {
-                let mut opclass_name = self.advance().text;
+                let mut opclass_name = self.advance_text();
                 // Handle qualified opclass names like public.gin_trgm_ops
                 while self.match_token(TokenType::Dot) {
                     opclass_name.push('.');
                     if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                        opclass_name.push_str(&self.advance().text);
+                        opclass_name.push_str(&self.advance_text());
                     }
                 }
                 Some(opclass_name)
@@ -18922,7 +18973,7 @@ impl Parser {
                     self.config.dialect,
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) {
-                    let text_upper = self.peek().text.to_ascii_uppercase();
+                    let text_upper = self.peek_text().to_ascii_uppercase();
                     if matches!(
                         text_upper.as_str(),
                         "DICTIONARY"
@@ -18942,7 +18993,7 @@ impl Parser {
                         let mut tokens: Vec<(String, TokenType)> = vec![
                             ("DROP".to_string(), TokenType::Var),
                             (
-                                self.previous().text.to_ascii_uppercase(),
+                                self.previous_text().to_ascii_uppercase(),
                                 self.previous().token_type,
                             ),
                         ];
@@ -18953,7 +19004,7 @@ impl Parser {
                             } else if token.token_type == TokenType::String {
                                 format!("'{}'", token.text)
                             } else {
-                                token.text.clone()
+                                token.text.to_string()
                             };
                             tokens.push((text, token.token_type));
                         }
@@ -18967,7 +19018,7 @@ impl Parser {
                     self.config.dialect,
                     Some(crate::dialects::DialectType::Snowflake)
                 ) {
-                    let text_upper = self.peek().text.to_ascii_uppercase();
+                    let text_upper = self.peek_text().to_ascii_uppercase();
                     let is_snowflake_drop = matches!(
                         text_upper.as_str(),
                         "STREAM"
@@ -18989,7 +19040,7 @@ impl Parser {
                         let mut tokens: Vec<(String, TokenType)> = vec![
                             ("DROP".to_string(), TokenType::Var),
                             (
-                                self.previous().text.to_ascii_uppercase(),
+                                self.previous_text().to_ascii_uppercase(),
                                 self.previous().token_type,
                             ),
                         ];
@@ -19005,7 +19056,7 @@ impl Parser {
                             } else if token.token_type == TokenType::String {
                                 format!("'{}'", token.text)
                             } else {
-                                token.text.clone()
+                                token.text.to_string()
                             };
                             tokens.push((text, token.token_type));
                         }
@@ -19401,17 +19452,17 @@ impl Parser {
                         // Parse user@host format: 'admin'@'localhost'
                         let mut definer_str = String::new();
                         if self.check(TokenType::String) {
-                            definer_str.push_str(&format!("'{}'", self.advance().text));
+                            definer_str.push_str(&format!("'{}'", self.advance_text()));
                         } else {
                             definer_str.push_str(&self.expect_identifier_or_keyword()?);
                         }
                         // Check for @ separator
-                        if !self.is_at_end() && self.peek().text == "@" {
-                            definer_str.push_str(&self.advance().text);
+                        if !self.is_at_end() && self.peek_text() == "@" {
+                            definer_str.push_str(&self.advance_text());
                             if self.check(TokenType::String) {
-                                definer_str.push_str(&format!("'{}'", self.advance().text));
+                                definer_str.push_str(&format!("'{}'", self.advance_text()));
                             } else if !self.is_at_end() {
-                                definer_str.push_str(&self.advance().text);
+                                definer_str.push_str(&self.advance_text());
                             }
                         }
                         view_definer = Some(definer_str);
@@ -19483,7 +19534,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -19512,7 +19563,7 @@ impl Parser {
                     if token.token_type == TokenType::RParen {
                         paren_depth -= 1;
                     }
-                    tokens.push((token.text.clone(), token.token_type));
+                    tokens.push((token.text.to_string(), token.token_type));
                 }
                 return Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -19539,7 +19590,7 @@ impl Parser {
                     if token.token_type == TokenType::RParen {
                         paren_depth -= 1;
                     }
-                    tokens.push((token.text.clone(), token.token_type));
+                    tokens.push((token.text.to_string(), token.token_type));
                 }
                 return Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -19772,7 +19823,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -19811,7 +19862,7 @@ impl Parser {
                     if token.token_type == TokenType::RParen {
                         paren_depth -= 1;
                     }
-                    tokens.push((token.text.clone(), token.token_type));
+                    tokens.push((token.text.to_string(), token.token_type));
                 }
                 return Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -19841,7 +19892,7 @@ impl Parser {
                     if token.token_type == TokenType::RParen {
                         paren_depth -= 1;
                     }
-                    tokens.push((token.text.clone(), token.token_type));
+                    tokens.push((token.text.to_string(), token.token_type));
                 }
                 return Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -20086,7 +20137,7 @@ impl Parser {
                 // Redshift: ALTER TABLE t ALTER SORTKEY AUTO|NONE|(col1, col2)
                 self.skip(); // consume SORTKEY
                 if self.match_texts(&["AUTO", "NONE"]) {
-                    let style = self.previous().text.to_ascii_uppercase();
+                    let style = self.previous_text().to_ascii_uppercase();
                     Ok(AlterTableAction::AlterSortKey {
                         this: Some(style),
                         expressions: Vec::new(),
@@ -20133,7 +20184,7 @@ impl Parser {
                 // Redshift: ALTER TABLE t ALTER DISTSTYLE ALL|EVEN|AUTO|KEY [DISTKEY col]
                 self.skip(); // consume DISTSTYLE
                 if self.match_texts(&["ALL", "EVEN", "AUTO"]) {
-                    let style = self.previous().text.to_ascii_uppercase();
+                    let style = self.previous_text().to_ascii_uppercase();
                     Ok(AlterTableAction::AlterDistStyle {
                         style,
                         distkey: None,
@@ -20201,7 +20252,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -20336,7 +20387,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -20522,7 +20573,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -20575,7 +20626,7 @@ impl Parser {
                     if self.check(TokenType::Comma) {
                         break;
                     }
-                    tokens.push((self.advance().text.clone(), TokenType::Var));
+                    tokens.push((self.advance_text(), TokenType::Var));
                 }
                 Ok(AlterTableAction::Raw {
                     sql: self.join_command_tokens(tokens),
@@ -20661,7 +20712,7 @@ impl Parser {
             // For ClickHouse, consume any unrecognized ALTER TABLE action as Raw
             // (covers UPDATE, DELETE, DETACH, ATTACH, FREEZE, MOVE, FETCH, etc.)
             {
-                let keyword = self.advance().text.clone();
+                let keyword = self.advance_text();
                 let mut tokens: Vec<(String, TokenType)> = vec![(keyword, TokenType::Var)];
                 let mut paren_depth = 0i32;
                 while !self.is_at_end() && !self.check(TokenType::Semicolon) {
@@ -20681,7 +20732,7 @@ impl Parser {
                     } else if token.token_type == TokenType::String {
                         format!("'{}'", token.text)
                     } else {
-                        token.text.clone()
+                        token.text.to_string()
                     };
                     tokens.push((text, token.token_type));
                 }
@@ -20701,7 +20752,7 @@ impl Parser {
         {
             // MySQL partition operations: REORGANIZE PARTITION, COALESCE PARTITION, etc.
             // Consume as Raw, respecting parenthesis depth
-            let keyword = self.advance().text.clone();
+            let keyword = self.advance_text();
             let mut tokens: Vec<(String, TokenType)> = vec![(keyword, TokenType::Var)];
             let mut paren_depth = 0i32;
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
@@ -20723,7 +20774,7 @@ impl Parser {
                 } else if token.token_type == TokenType::String {
                     format!("'{}'", token.text)
                 } else {
-                    token.text.clone()
+                    token.text.to_string()
                 };
                 tokens.push((text, token.token_type));
             }
@@ -20874,7 +20925,7 @@ impl Parser {
                 // Optional COLLATE (can be identifier or string literal like 'binary')
                 let collate = if self.match_token(TokenType::Collate) {
                     if self.check(TokenType::String) {
-                        let text = self.advance().text.clone();
+                        let text = self.advance_text();
                         Some(format!("'{}'", text))
                     } else {
                         Some(self.expect_identifier_or_keyword()?)
@@ -20921,7 +20972,7 @@ impl Parser {
             // Optional COLLATE (can be identifier or string literal like 'binary')
             let collate = if self.match_token(TokenType::Collate) {
                 if self.check(TokenType::String) {
-                    Some(self.advance().text.clone())
+                    Some(self.advance_text())
                 } else {
                     Some(self.expect_identifier_or_keyword()?)
                 }
@@ -20965,7 +21016,7 @@ impl Parser {
                 if token.token_type == TokenType::String {
                     parts.push(format!("'{}'", token.text));
                 } else {
-                    parts.push(token.text.clone());
+                    parts.push(token.text.to_string());
                 }
             }
             return Ok(Expression::Command(Box::new(crate::expressions::Command {
@@ -21145,7 +21196,7 @@ impl Parser {
             (alias, col_aliases)
         } else if self.check(TokenType::Var) && !self.check_keyword() {
             // Implicit alias: VALUES (0) foo(bar)
-            let alias_name = self.advance().text.clone();
+            let alias_name = self.advance_text();
             let alias = Some(Identifier::new(alias_name));
             let col_aliases = if self.match_token(TokenType::LParen) {
                 let aliases = self.parse_identifier_list()?;
@@ -21175,10 +21226,10 @@ impl Parser {
         self.expect(TokenType::Use)?;
 
         // Check for Snowflake: USE SECONDARY ROLES ALL|NONE|role1, role2, ...
-        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("SECONDARY") {
+        if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("SECONDARY") {
             self.skip(); // consume SECONDARY
                          // Check for ROLES
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLES") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ROLES") {
                 self.skip(); // consume ROLES
                              // Parse ALL, NONE, or comma-separated role list
                 let mut roles = Vec::new();
@@ -21187,7 +21238,7 @@ impl Parser {
                         || self.check(TokenType::All)
                         || self.check(TokenType::Identifier)
                     {
-                        let role = self.advance().text.clone();
+                        let role = self.advance_text();
                         roles.push(role);
                         if !self.match_token(TokenType::Comma) {
                             break;
@@ -21216,10 +21267,10 @@ impl Parser {
             Some(UseKind::Schema)
         } else if self.match_token(TokenType::Warehouse) {
             Some(UseKind::Warehouse)
-        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLE") {
+        } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ROLE") {
             self.skip();
             Some(UseKind::Role)
-        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("CATALOG") {
+        } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("CATALOG") {
             self.skip();
             Some(UseKind::Catalog)
         } else {
@@ -21297,7 +21348,7 @@ impl Parser {
         self.expect(TokenType::Cache)?;
 
         // Check for LAZY keyword
-        let lazy = self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("LAZY");
+        let lazy = self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("LAZY");
         if lazy {
             self.skip();
         }
@@ -21307,7 +21358,7 @@ impl Parser {
 
         // Check for OPTIONS clause
         let options =
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTIONS") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OPTIONS") {
                 self.skip();
                 self.expect(TokenType::LParen)?;
                 let mut opts = Vec::new();
@@ -21387,7 +21438,7 @@ impl Parser {
 
         // Parse the path (string literal)
         let inpath = if self.check(TokenType::String) {
-            self.advance().text
+            self.advance_text()
         } else {
             return Err(self.parse_error("Expected string literal after INPATH"));
         };
@@ -21424,7 +21475,7 @@ impl Parser {
         // Check for INPUTFORMAT clause
         let input_format = if self.match_token(TokenType::InputFormat) {
             if self.check(TokenType::String) {
-                Some(self.advance().text)
+                Some(self.advance_text())
             } else {
                 return Err(self.parse_error("Expected string literal after INPUTFORMAT"));
             }
@@ -21435,7 +21486,7 @@ impl Parser {
         // Check for SERDE clause
         let serde = if self.match_token(TokenType::Serde) {
             if self.check(TokenType::String) {
-                Some(self.advance().text)
+                Some(self.advance_text())
             } else {
                 return Err(self.parse_error("Expected string literal after SERDE"));
             }
@@ -21541,7 +21592,7 @@ impl Parser {
             self.match_token(TokenType::Savepoint);
             // Savepoint name
             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                let name = self.advance().text;
+                let name = self.advance_text();
                 (
                     Some(Box::new(Expression::Identifier(Identifier::new(name)))),
                     None,
@@ -21553,7 +21604,7 @@ impl Parser {
             && (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
         {
             // TSQL: ROLLBACK TRANSACTION transaction_name
-            let name = self.advance().text;
+            let name = self.advance_text();
             (
                 None,
                 Some(Box::new(Expression::Identifier(Identifier::new(name)))),
@@ -21589,7 +21640,7 @@ impl Parser {
             && !self.check(TokenType::With)
             && !self.check(TokenType::And)
         {
-            let name = self.advance().text;
+            let name = self.advance_text();
             Some(Box::new(Expression::Identifier(Identifier::new(name))))
         } else if has_transaction {
             // Store marker that TRANSACTION keyword was present
@@ -21729,7 +21780,7 @@ impl Parser {
             || self.match_identifier("IMMEDIATE")
             || self.match_identifier("EXCLUSIVE")
         {
-            Some(self.previous().text.clone())
+            Some(self.previous_text().to_string())
         } else {
             None
         };
@@ -21745,7 +21796,7 @@ impl Parser {
             && !self.check(TokenType::With)
         {
             // Could be a transaction name or @variable
-            let name = self.advance().text;
+            let name = self.advance_text();
             Some(name)
         } else {
             None
@@ -21763,7 +21814,7 @@ impl Parser {
         // Parse WITH MARK 'description' (TSQL)
         let mark = if self.match_token(TokenType::With) && self.match_identifier("MARK") {
             if self.check(TokenType::String) {
-                let desc = self.advance().text;
+                let desc = self.advance_text();
                 Some(Box::new(Expression::Literal(Box::new(Literal::String(
                     desc,
                 )))))
@@ -21788,7 +21839,7 @@ impl Parser {
             while (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
                 && !self.check(TokenType::Comma)
             {
-                mode_tokens.push(self.advance().text);
+                mode_tokens.push(self.advance_text());
             }
             if !mode_tokens.is_empty() {
                 mode_parts.push(mode_tokens.join(" "));
@@ -21901,7 +21952,7 @@ impl Parser {
             || self.match_identifier("READ")
         {
             // If we matched READ, add it to tokens
-            let read_matched = if self.previous().text.eq_ignore_ascii_case("READ") {
+            let read_matched = if self.previous_text().eq_ignore_ascii_case("READ") {
                 true
             } else {
                 false
@@ -21913,7 +21964,7 @@ impl Parser {
             while (self.is_identifier_token() || self.is_safe_keyword_as_identifier())
                 && !self.check(TokenType::Comma)
             {
-                mode_tokens.push(self.advance().text);
+                mode_tokens.push(self.advance_text());
             }
             if !mode_tokens.is_empty() {
                 mode_parts.push(mode_tokens.join(" "));
@@ -21953,7 +22004,7 @@ impl Parser {
         } else if self.check(TokenType::Desc) {
             let token = self.advance();
             token.comments
-        } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("EXPLAIN") {
+        } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("EXPLAIN") {
             let token = self.advance(); // consume EXPLAIN
             token.comments
         } else {
@@ -21983,7 +22034,7 @@ impl Parser {
         {
             // ClickHouse EXPLAIN styles
             let text_upper = if !self.is_at_end() {
-                self.peek().text.to_ascii_uppercase()
+                self.peek_text().to_ascii_uppercase()
             } else {
                 String::new()
             };
@@ -22021,7 +22072,7 @@ impl Parser {
             && (self.check(TokenType::Identifier)
                 || self.check(TokenType::Var)
                 || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.eq_ignore_ascii_case("HISTORY")
+            && self.peek_text().eq_ignore_ascii_case("HISTORY")
             && self.peek_nth(1).map(|t| t.token_type) != Some(TokenType::Dot)
         {
             self.skip(); // consume HISTORY
@@ -22031,7 +22082,7 @@ impl Parser {
             && (self.check(TokenType::Identifier)
                 || self.check(TokenType::Var)
                 || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.eq_ignore_ascii_case("DETAIL")
+            && self.peek_text().eq_ignore_ascii_case("DETAIL")
             && self.peek_nth(1).map(|t| t.token_type) != Some(TokenType::Dot)
         {
             self.skip(); // consume DETAIL
@@ -22083,9 +22134,9 @@ impl Parser {
                     && self.current + 1 < self.tokens.len()
                     && self.tokens[self.current + 1].token_type == TokenType::Eq
                 {
-                    let name = self.advance().text.to_lowercase();
+                    let name = self.advance_text().to_lowercase();
                     self.skip(); // consume =
-                    let value = self.advance().text.clone();
+                    let value = self.advance_text();
                     properties.push((name, value));
                     self.match_token(TokenType::Comma); // optional comma between settings
                 } else {
@@ -22155,17 +22206,17 @@ impl Parser {
                     while !self.is_at_end() {
                         if self.check(TokenType::LParen) {
                             paren_depth += 1;
-                            parts.push(self.advance().text.clone());
+                            parts.push(self.advance_text());
                         } else if self.check(TokenType::RParen) {
                             if paren_depth == 0 {
                                 break;
                             }
                             paren_depth -= 1;
-                            parts.push(self.advance().text.clone());
+                            parts.push(self.advance_text());
                         } else if self.check(TokenType::Comma) && paren_depth == 0 {
                             break;
                         } else {
-                            parts.push(self.advance().text.clone());
+                            parts.push(self.advance_text());
                         }
                     }
                     type_args.push(parts.join(" ").trim().to_uppercase());
@@ -22235,9 +22286,9 @@ impl Parser {
                 // Check for identifier or keyword that could be a property name
                 if self.check(TokenType::Var) || self.check(TokenType::Type) || self.check_keyword()
                 {
-                    let name = self.advance().text.to_lowercase();
+                    let name = self.advance_text().to_lowercase();
                     if self.match_token(TokenType::Eq) {
-                        let value = self.advance().text.clone();
+                        let value = self.advance_text();
                         properties.push((name, value));
                     } else {
                         // Not a property, put it back (can't easily undo, so break)
@@ -22330,7 +22381,7 @@ impl Parser {
             // This is needed because numbers don't pass the Var/keyword check
             let joined_check = this_parts.join(" ");
             if joined_check == "PLAN" && current.token_type == TokenType::Number {
-                let id = self.advance().text;
+                let id = self.advance_text();
                 target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                 break;
             }
@@ -22344,7 +22395,7 @@ impl Parser {
                     joined.as_str(),
                     "CREATE AGGREGATE" | "CREATE PIPELINE" | "CREATE PROJECTION"
                 ) {
-                    let name = self.advance().text;
+                    let name = self.advance_text();
                     target = Some(Expression::Identifier(Identifier::new(name)));
                     break;
                 }
@@ -22368,7 +22419,7 @@ impl Parser {
                             if name_tok.token_type == TokenType::Var
                                 || name_tok.token_type.is_keyword()
                             {
-                                let name = self.advance().text;
+                                let name = self.advance_text();
                                 target = Some(Expression::Identifier(Identifier::new(name)));
                             }
                         }
@@ -22380,12 +22431,12 @@ impl Parser {
                 if current.text.eq_ignore_ascii_case("INTO") && joined == "REPRODUCTION" {
                     this_parts.push("INTO".to_string());
                     self.skip();
-                    if !self.is_at_end() && self.peek().text.eq_ignore_ascii_case("OUTFILE") {
+                    if !self.is_at_end() && self.peek_text().eq_ignore_ascii_case("OUTFILE") {
                         this_parts.push("OUTFILE".to_string());
                         self.skip();
                         // Parse the filename
                         if !self.is_at_end() && self.check(TokenType::String) {
-                            let filename = self.advance().text;
+                            let filename = self.advance_text();
                             target = Some(Expression::Literal(Box::new(Literal::String(filename))));
                         }
                     }
@@ -22400,14 +22451,14 @@ impl Parser {
                         self.skip();
                         // Now check for number
                         if !self.is_at_end() && self.check(TokenType::Number) {
-                            let id = self.advance().text;
+                            let id = self.advance_text();
                             target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                         }
                         break;
                     }
                     // Check if current is a number (plan ID)
                     if current.token_type == TokenType::Number {
-                        let id = self.advance().text;
+                        let id = self.advance_text();
                         target = Some(Expression::Literal(Box::new(Literal::Number(id))));
                         break;
                     }
@@ -22465,7 +22516,7 @@ impl Parser {
                 )) {
                     let mut parts = Vec::new();
                     while !self.is_at_end() && self.peek().token_type != TokenType::Semicolon {
-                        parts.push(self.advance().text.clone());
+                        parts.push(self.advance_text());
                     }
                     target = Some(Expression::Identifier(Identifier::new(parts.join(" "))));
                     break;
@@ -22481,7 +22532,7 @@ impl Parser {
                     && !self.is_at_end()
                     && (self.check(TokenType::Var) || self.check(TokenType::QuotedIdentifier))
                     && !matches!(
-                        self.peek().text.to_ascii_uppercase().as_str(),
+                        self.peek_text().to_ascii_uppercase().as_str(),
                         "TABLE"
                             | "VIEW"
                             | "DICTIONARY"
@@ -22512,7 +22563,7 @@ impl Parser {
                         if engine_tok.token_type == TokenType::Var
                             || engine_tok.token_type.is_keyword()
                         {
-                            let engine_name = self.advance().text;
+                            let engine_name = self.advance_text();
                             target = Some(Expression::Identifier(Identifier::new(engine_name)));
                             // Parse STATUS or MUTEX
                             if !self.is_at_end() {
@@ -22563,10 +22614,10 @@ impl Parser {
                     || tok.token_type.is_keyword()
                     || tok.token_type == TokenType::Number
                 {
-                    parts.push(self.advance().text);
+                    parts.push(self.advance_text());
                 } else if tok.token_type == TokenType::String {
                     // Handle string literals (e.g., SHOW GROUPS FOR ROLE 'role_name')
-                    let text = self.advance().text;
+                    let text = self.advance_text();
                     parts.push(format!("'{}'", text));
                 } else {
                     break;
@@ -22821,7 +22872,7 @@ impl Parser {
                 }
                 let tok = self.peek();
                 if tok.token_type == TokenType::Var || tok.token_type.is_keyword() {
-                    privs.push(self.advance().text.to_ascii_uppercase());
+                    privs.push(self.advance_text().to_ascii_uppercase());
                     // Check for comma to continue
                     if !self.match_token(TokenType::Comma) {
                         break;
@@ -23213,7 +23264,7 @@ impl Parser {
                         if self.check(TokenType::String) {
                             // Parse 'key'='value' pair
                             let key_token = self.advance();
-                            let key = key_token.text.clone();
+                            let key = key_token.text.to_string();
                             if self.match_token(TokenType::Eq) {
                                 let val = self.parse_copy_param_value()?;
                                 values.push(Expression::Eq(Box::new(BinaryOp {
@@ -23233,7 +23284,7 @@ impl Parser {
                             || self.is_identifier_token()
                         {
                             // Parse identifier='value' pair (unquoted key)
-                            let key = self.advance().text.clone();
+                            let key = self.advance_text();
                             if self.match_token(TokenType::Eq) {
                                 let val = self.parse_copy_param_value()?;
                                 values.push(Expression::Eq(Box::new(BinaryOp {
@@ -23349,14 +23400,14 @@ impl Parser {
         if self.check(TokenType::String) {
             let token = self.advance();
             return Ok(Expression::Literal(Box::new(Literal::String(
-                token.text.clone(),
+                token.text.to_string(),
             ))));
         }
         // Handle quoted identifier (e.g., STORAGE_INTEGRATION = "storage")
         if self.check(TokenType::QuotedIdentifier) {
             let token = self.advance();
             return Ok(Expression::boxed_column(Column {
-                name: Identifier::quoted(token.text.clone()),
+                name: Identifier::quoted(token.text.to_string()),
                 table: None,
                 join_mark: false,
                 trailing_comments: Vec::new(),
@@ -23367,7 +23418,7 @@ impl Parser {
         if self.check(TokenType::Number) {
             let token = self.advance();
             return Ok(Expression::Literal(Box::new(Literal::Number(
-                token.text.clone(),
+                token.text.to_string(),
             ))));
         }
         if self.match_token(TokenType::True) {
@@ -23379,7 +23430,7 @@ impl Parser {
         // Identifier (e.g., FORMAT_NAME=my_format)
         if self.check(TokenType::Var) || self.check_keyword() {
             // Could be a qualified name like MY_DATABASE.MY_SCHEMA.MY_FORMAT
-            let first = self.advance().text.clone();
+            let first = self.advance_text();
             if self.match_token(TokenType::Dot) {
                 let second = self.expect_identifier_or_keyword()?;
                 if self.match_token(TokenType::Dot) {
@@ -23427,7 +23478,7 @@ impl Parser {
 
         // The String token contains @ and the entire path
         let string_token = self.advance();
-        let full_path = string_token.text.clone();
+        let full_path = string_token.text.to_string();
 
         // Split on / to get stage name and path
         let parts: Vec<&str> = full_path.splitn(2, '/').collect();
@@ -23486,19 +23537,19 @@ impl Parser {
 
         // The Var token already contains @ and the stage name
         let var_token = self.advance();
-        let mut name = var_token.text.clone();
+        let mut name = var_token.text.to_string();
 
         // Handle qualified names: @namespace.stage
         while self.match_token(TokenType::Dot) {
             name.push('.');
             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                name.push_str(&self.advance().text);
+                name.push_str(&self.advance_text());
             } else if self.check(TokenType::Percent) {
                 // Handle table stage in qualified path: @namespace.%table_name
                 self.skip();
                 name.push('%');
                 if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    name.push_str(&self.advance().text);
+                    name.push_str(&self.advance_text());
                 }
             } else {
                 break;
@@ -23519,7 +23570,7 @@ impl Parser {
                     || self.check(TokenType::To)
                     || self.is_safe_keyword_as_identifier()
                 {
-                    path_str.push_str(&self.advance().text);
+                    path_str.push_str(&self.advance_text());
                 } else if self.match_token(TokenType::Slash) {
                     path_str.push('/');
                 } else {
@@ -23594,7 +23645,7 @@ impl Parser {
             // Table name follows (can be qualified: schema.table)
             loop {
                 if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    name.push_str(&self.advance().text);
+                    name.push_str(&self.advance_text());
                 } else {
                     break;
                 }
@@ -23610,7 +23661,7 @@ impl Parser {
             loop {
                 if self.check(TokenType::QuotedIdentifier) {
                     // Preserve quotes for quoted identifiers
-                    let text = self.advance().text;
+                    let text = self.advance_text();
                     name.push('"');
                     name.push_str(&text);
                     name.push('"');
@@ -23619,13 +23670,13 @@ impl Parser {
                     self.skip();
                     name.push('%');
                     if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                        name.push_str(&self.advance().text);
+                        name.push_str(&self.advance_text());
                     }
                 } else if self.check(TokenType::Identifier)
                     || self.check(TokenType::Var)
                     || self.is_safe_keyword_as_identifier()
                 {
-                    name.push_str(&self.advance().text);
+                    name.push_str(&self.advance_text());
                 } else {
                     break;
                 }
@@ -23654,7 +23705,7 @@ impl Parser {
                     || self.check(TokenType::To)
                     || self.is_safe_keyword_as_identifier()
                 {
-                    path_str.push_str(&self.advance().text);
+                    path_str.push_str(&self.advance_text());
                 } else if self.match_token(TokenType::Slash) {
                     path_str.push('/');
                 } else {
@@ -23728,7 +23779,7 @@ impl Parser {
 
             // Get stage name
             if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token() {
-                stage_path.push_str(&self.advance().text);
+                stage_path.push_str(&self.advance_text());
             }
             // Parse qualified name parts: .schema.stage
             while self.check(TokenType::Dot) {
@@ -23736,7 +23787,7 @@ impl Parser {
                 stage_path.push('.');
                 if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token()
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
             // Parse path after stage: /path/to/file.csv
@@ -23755,7 +23806,7 @@ impl Parser {
                         || self.is_safe_keyword_as_identifier())
                         && !self.check_next(TokenType::Eq)
                     {
-                        stage_path.push_str(&self.advance().text);
+                        stage_path.push_str(&self.advance_text());
                     } else if self.match_token(TokenType::Slash) {
                         stage_path.push('/');
                     } else {
@@ -23768,15 +23819,15 @@ impl Parser {
 
         // Stage reference tokenized as a Var starting with @ (e.g., @random_stage)
         // This happens when the tokenizer combines @ with the following identifier
-        if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
-            let mut stage_path = self.advance().text.clone();
+        if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
+            let mut stage_path = self.advance_text();
             // Parse qualified name parts: .schema.stage
             while self.check(TokenType::Dot) {
                 self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token()
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
             // Parse path after stage: /path/to/file.csv
@@ -23793,7 +23844,7 @@ impl Parser {
                         || self.is_safe_keyword_as_identifier())
                         && !self.check_next(TokenType::Eq)
                     {
-                        stage_path.push_str(&self.advance().text);
+                        stage_path.push_str(&self.advance_text());
                     } else if self.match_token(TokenType::Slash) {
                         stage_path.push('/');
                     } else {
@@ -23808,7 +23859,7 @@ impl Parser {
         if self.check(TokenType::String) {
             let token = self.advance();
             return Ok(Expression::Literal(Box::new(Literal::String(
-                token.text.clone(),
+                token.text.to_string(),
             ))));
         }
 
@@ -23816,13 +23867,13 @@ impl Parser {
         if self.check(TokenType::QuotedIdentifier) {
             let token = self.advance();
             return Ok(Expression::Identifier(Identifier::quoted(
-                token.text.clone(),
+                token.text.to_string(),
             )));
         }
 
         // Identifier (could be a stage name without @)
         if self.check(TokenType::Var) || self.check_keyword() {
-            let ident = self.advance().text.clone();
+            let ident = self.advance_text();
             return Ok(Expression::boxed_column(Column {
                 name: Identifier::new(ident),
                 table: None,
@@ -23868,7 +23919,7 @@ impl Parser {
                         || self.check(TokenType::Dash))
                         && !self.check_next(TokenType::Eq)
                     {
-                        stage_path.push_str(&self.advance().text);
+                        stage_path.push_str(&self.advance_text());
                     }
                 }
                 return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
@@ -23877,7 +23928,7 @@ impl Parser {
             // Get stage name (could be quoted identifier)
             if self.check(TokenType::QuotedIdentifier) {
                 // Preserve quoted identifier with quotes
-                let text = &self.peek().text;
+                let text = &self.peek_text();
                 stage_path.push('"');
                 stage_path.push_str(text);
                 stage_path.push('"');
@@ -23886,7 +23937,7 @@ impl Parser {
                 || self.check_keyword()
                 || self.check(TokenType::Identifier)
             {
-                stage_path.push_str(&self.advance().text);
+                stage_path.push_str(&self.advance_text());
             }
 
             // Parse qualified name parts: .schema.stage (may include quoted identifiers)
@@ -23895,7 +23946,7 @@ impl Parser {
                 stage_path.push('.');
                 if self.check(TokenType::QuotedIdentifier) {
                     // Preserve quoted identifier with quotes
-                    let text = &self.peek().text;
+                    let text = &self.peek_text();
                     stage_path.push('"');
                     stage_path.push_str(text);
                     stage_path.push('"');
@@ -23904,7 +23955,7 @@ impl Parser {
                     || self.check_keyword()
                     || self.check(TokenType::Identifier)
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
 
@@ -23922,22 +23973,22 @@ impl Parser {
                     || self.check(TokenType::Dash))
                     && !self.check_next(TokenType::Eq)
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
             return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
         }
 
         // Stage reference tokenized as a Var starting with @ (e.g., @s1)
-        if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
-            let mut stage_path = self.advance().text.clone();
+        if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
+            let mut stage_path = self.advance_text();
 
             // Parse qualified name parts: .schema.stage (may include quoted identifiers)
             while self.check(TokenType::Dot) {
                 self.skip(); // consume .
                 stage_path.push('.');
                 if self.check(TokenType::QuotedIdentifier) {
-                    let text = &self.peek().text;
+                    let text = &self.peek_text();
                     stage_path.push('"');
                     stage_path.push_str(text);
                     stage_path.push('"');
@@ -23946,7 +23997,7 @@ impl Parser {
                     || self.check_keyword()
                     || self.check(TokenType::Identifier)
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
 
@@ -23964,7 +24015,7 @@ impl Parser {
                     || self.check(TokenType::Dash))
                     && !self.check_next(TokenType::Eq)
                 {
-                    stage_path.push_str(&self.advance().text);
+                    stage_path.push_str(&self.advance_text());
                 }
             }
             return Ok(Expression::Literal(Box::new(Literal::String(stage_path))));
@@ -23980,7 +24031,7 @@ impl Parser {
 
         // Parse source file path (usually file:///path/to/file)
         let (source, source_quoted) = if self.check(TokenType::String) {
-            (self.advance().text.clone(), true)
+            (self.advance_text(), true)
         } else {
             // Handle file://path syntax (parsed as identifier + colon + etc.)
             // Stop when we see @ (start of stage reference), ? (placeholder), or quoted string
@@ -23990,7 +24041,7 @@ impl Parser {
                 if self.check(TokenType::DAt) {
                     break;
                 }
-                if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
+                if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
                     break;
                 }
                 // Stop at ? (placeholder for stage destination), quoted string
@@ -24004,7 +24055,7 @@ impl Parser {
                     break;
                 }
                 let token = self.advance();
-                source_parts.push(token.text.clone());
+                source_parts.push(token.text.to_string());
             }
             (source_parts.join(""), false)
         };
@@ -24015,7 +24066,7 @@ impl Parser {
         } else if self.check(TokenType::String) || self.check(TokenType::DollarString) {
             // Quoted stage: '@SYSTEM$BIND/path' or $$@%"table"$$
             let tok = self.advance();
-            Expression::Literal(Box::new(Literal::String(tok.text.clone())))
+            Expression::Literal(Box::new(Literal::String(tok.text.to_string())))
         } else {
             self.parse_stage_reference_as_string()?
         };
@@ -24029,7 +24080,7 @@ impl Parser {
                 || self.check_keyword()
                 || self.check(TokenType::Overwrite);
             if is_param_name {
-                let name = self.advance().text.clone();
+                let name = self.advance_text();
                 let value = if self.match_token(TokenType::Eq) {
                     Some(self.parse_primary()?)
                 } else {
@@ -24167,7 +24218,7 @@ impl Parser {
         match token.token_type {
             TokenType::QuotedIdentifier => format!("`{}`", token.text),
             TokenType::String => format!("'{}'", token.text),
-            _ => token.text.clone(),
+            _ => token.text.to_string(),
         }
     }
 
@@ -24232,7 +24283,7 @@ impl Parser {
         let mut tokens = vec![(command_name, command_token.token_type)];
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
             let token = self.advance();
-            tokens.push((token.text.clone(), token.token_type));
+            tokens.push((token.text.to_string(), token.token_type));
         }
 
         Ok(Expression::Command(Box::new(Command {
@@ -24253,7 +24304,7 @@ impl Parser {
             let text = match token.token_type {
                 TokenType::String => format!("'{}'", token.text),
                 TokenType::QuotedIdentifier => format!("\"{}\"", token.text),
-                _ => token.text.clone(),
+                _ => token.text.to_string(),
             };
             tokens.push((text, token.token_type));
         }
@@ -24272,7 +24323,7 @@ impl Parser {
         let mut tokens = vec![("CALL".to_string(), call_token.token_type)];
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
             let token = self.advance();
-            tokens.push((token.text.clone(), token.token_type));
+            tokens.push((token.text.to_string(), token.token_type));
         }
 
         Ok(Expression::Command(Box::new(Command {
@@ -24394,7 +24445,7 @@ impl Parser {
             // Get the parameter name (starts with @)
             let token = self.advance();
             let param_name = if token.text.starts_with('@') {
-                token.text.clone()
+                token.text.to_string()
             } else {
                 format!("@{}", token.text)
             };
@@ -24542,7 +24593,7 @@ impl Parser {
             && self.check(TokenType::Grant)
             && {
                 self.skip();
-                self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTION")
+                self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OPTION")
             }
             && {
                 self.skip();
@@ -24616,7 +24667,7 @@ impl Parser {
         // Check for GRANT OPTION FOR
         let grant_option = if self.check(TokenType::Grant) {
             self.skip();
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OPTION") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OPTION") {
                 self.skip();
                 self.expect(TokenType::For)?;
                 true
@@ -24687,7 +24738,7 @@ impl Parser {
                     break;
                 }
                 if self.is_identifier_or_keyword_token() {
-                    priv_parts.push(self.advance().text.to_ascii_uppercase());
+                    priv_parts.push(self.advance_text().to_ascii_uppercase());
                 } else {
                     break;
                 }
@@ -24703,7 +24754,7 @@ impl Parser {
                 loop {
                     // Parse column name (identifier)
                     if self.is_identifier_or_keyword_token() {
-                        cols.push(self.advance().text.to_string());
+                        cols.push(self.advance_text().to_string());
                     } else if self.check(TokenType::RParen) {
                         break;
                     } else {
@@ -24764,7 +24815,7 @@ impl Parser {
             || self.check_identifier("TAG")
             || self.check_identifier("SHARE")
         {
-            let kind = self.advance().text.to_ascii_uppercase();
+            let kind = self.advance_text().to_ascii_uppercase();
             Ok(Some(kind))
         } else if self.check_identifier("FILE")
             && self.current + 1 < self.tokens.len()
@@ -24795,7 +24846,7 @@ impl Parser {
         loop {
             // Check for ROLE keyword (TokenType::Var with text "ROLE")
             let is_role =
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ROLE") {
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ROLE") {
                     self.skip();
                     true
                 } else {
@@ -24888,7 +24939,7 @@ impl Parser {
         let materialized = if self.match_token(TokenType::Materialized) {
             true
         } else if self.check(TokenType::Var)
-            && self.peek().text.eq_ignore_ascii_case("MATERIALIZED")
+            && self.peek_text().eq_ignore_ascii_case("MATERIALIZED")
         {
             self.skip();
             true
@@ -24904,7 +24955,7 @@ impl Parser {
         let this = if kind == "PROCEDURE" || kind == "FUNCTION" {
             // Parse name possibly with parameter types, preserving original case
             let name_token = self.advance();
-            let mut name_str = name_token.text.clone();
+            let mut name_str = name_token.text.to_string();
 
             // Parse additional qualified parts
             while self.match_token(TokenType::Dot) {
@@ -24981,7 +25032,7 @@ impl Parser {
         {
             let table = self.parse_table_ref()?;
             let state = if self.check(TokenType::On) || self.check_keyword_text("OFF") {
-                self.advance().text.to_uppercase()
+                self.advance_text().to_uppercase()
             } else {
                 return Err(self.parse_error("Expected ON or OFF after SET IDENTITY_INSERT table"));
             };
@@ -25009,7 +25060,7 @@ impl Parser {
         {
             let mut parts = vec!["SET".to_string()];
             while !self.is_at_end() && self.peek().token_type != TokenType::Semicolon {
-                parts.push(self.advance().text.clone());
+                parts.push(self.advance_text());
             }
             return Ok(Expression::Command(Box::new(crate::expressions::Command {
                 this: parts.join(" "),
@@ -25075,7 +25126,7 @@ impl Parser {
 
         // Track whether SET VAR/VARIABLE was used (only first item gets the VARIABLE kind)
         let mut set_is_variable = if self.check(TokenType::Var) {
-            let text = self.peek().text.to_uppercase();
+            let text = self.peek_text().to_uppercase();
             if text == "VARIABLE" || text == "VAR" {
                 // Look ahead: VAR/VARIABLE should be followed by another name, not by = or TO
                 if let Some(next) = self.tokens.get(self.current + 1) {
@@ -25136,7 +25187,7 @@ impl Parser {
                             || self.check(TokenType::Only)
                             || self.check(TokenType::Repeatable)
                         {
-                            char_tokens.push(self.advance().text);
+                            char_tokens.push(self.advance_text());
                         } else {
                             break;
                         }
@@ -25172,11 +25223,11 @@ impl Parser {
                     // @@SCOPE.variable or @@variable syntax (MySQL system variables)
                     self.skip(); // consume @@
                     let mut name_str = "@@".to_string();
-                    let first = self.advance().text.clone();
+                    let first = self.advance_text();
                     name_str.push_str(&first);
                     // Handle @@scope.variable (e.g., @@GLOBAL.max_connections)
                     while self.match_token(TokenType::Dot) {
-                        let next = self.advance().text.clone();
+                        let next = self.advance_text();
                         name_str.push('.');
                         name_str.push_str(&next);
                     }
@@ -25185,7 +25236,7 @@ impl Parser {
                     // @variable syntax (MySQL user variables)
                     self.skip(); // consume @
                     let mut name_str = "@".to_string();
-                    let first = self.advance().text.clone();
+                    let first = self.advance_text();
                     name_str.push_str(&first);
                     Expression::Identifier(Identifier::new(name_str))
                 } else if self.check(TokenType::LParen) {
@@ -25193,7 +25244,7 @@ impl Parser {
                     self.skip(); // consume (
                     let mut vars = Vec::new();
                     loop {
-                        let var_name = self.advance().text.clone();
+                        let var_name = self.advance_text();
                         vars.push(Expression::Column(Box::new(Column {
                             name: Identifier::new(var_name),
                             table: None,
@@ -25209,11 +25260,11 @@ impl Parser {
                     self.expect(TokenType::RParen)?;
                     Expression::Tuple(Box::new(crate::expressions::Tuple { expressions: vars }))
                 } else {
-                    let first = self.advance().text.clone();
+                    let first = self.advance_text();
                     let mut name_str = first;
                     // Handle dotted identifiers (e.g., schema.variable)
                     while self.match_token(TokenType::Dot) {
-                        let next = self.advance().text.clone();
+                        let next = self.advance_text();
                         name_str.push('.');
                         name_str.push_str(&next);
                     }
@@ -25221,7 +25272,7 @@ impl Parser {
                     // But not := which is assignment
                     while self.check(TokenType::Colon) && !self.check_next(TokenType::Eq) {
                         self.skip(); // consume :
-                        let next = self.advance().text.clone();
+                        let next = self.advance_text();
                         name_str.push(':');
                         name_str.push_str(&next);
                     }
@@ -25255,7 +25306,7 @@ impl Parser {
                 // Check if the next token looks like a value (ON/OFF without =)
                 // TSQL: SET XACT_ABORT ON, SET NOCOUNT ON
                 if self.check(TokenType::On) || self.check_keyword_text("OFF") {
-                    let val = self.advance().text;
+                    let val = self.advance_text();
                     // Include ON/OFF in the name so generator doesn't add "="
                     let name_with_val = match &name {
                         Expression::Column(col) => format!("{} {}", col.name.name, val),
@@ -25293,7 +25344,7 @@ impl Parser {
 
             // Parse value - handle ON/OFF keywords as identifiers (MySQL: SET autocommit = ON)
             let value = if self.check(TokenType::On) || self.check_keyword_text("OFF") {
-                Expression::Identifier(Identifier::new(self.advance().text.clone()))
+                Expression::Identifier(Identifier::new(self.advance_text()))
             } else if self.match_token(TokenType::Default) {
                 Expression::Identifier(Identifier::new("DEFAULT".to_string()))
             } else {
@@ -25468,7 +25519,7 @@ impl Parser {
         // Parse AT/BEFORE clause for time travel (Snowflake)
         // Note: BEFORE is a keyword token, AT is an identifier
         let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-            let keyword = self.previous().text.to_ascii_uppercase();
+            let keyword = self.previous_text().to_ascii_uppercase();
             self.expect(TokenType::LParen)?;
             // Parse the content: OFFSET => value or TIMESTAMP => value
             let mut result = format!("{} (", keyword);
@@ -25609,7 +25660,7 @@ impl Parser {
         // Parse AT/BEFORE clause for time travel (Snowflake)
         // Note: BEFORE is a keyword token, AT is an identifier
         let at_clause = if self.match_identifier("AT") || self.match_token(TokenType::Before) {
-            let keyword = self.previous().text.to_ascii_uppercase();
+            let keyword = self.previous_text().to_ascii_uppercase();
             self.expect(TokenType::LParen)?;
             // Parse the content: OFFSET => value or TIMESTAMP => value
             let mut result = format!("{} (", keyword);
@@ -25805,9 +25856,9 @@ impl Parser {
         // Parse RETURNS clause (may come before or after LANGUAGE)
         let mut returns_table_body: Option<String> = None;
         if self.match_token(TokenType::Returns) {
-            if self.check(TokenType::Var) && self.peek().text.starts_with('@') {
+            if self.check(TokenType::Var) && self.peek_text().starts_with('@') {
                 // TSQL: RETURNS @var TABLE (col_defs)
-                let var_name = self.advance().text.clone();
+                let var_name = self.advance_text();
                 if self.check(TokenType::Table) {
                     self.skip(); // consume TABLE
                     return_type = Some(DataType::Custom {
@@ -26085,7 +26136,7 @@ impl Parser {
                     body = Some(FunctionBody::DollarQuoted { content, tag });
                 } else if self.check(TokenType::String) {
                     let tok = self.advance();
-                    body = Some(FunctionBody::StringLiteral(tok.text.clone()));
+                    body = Some(FunctionBody::StringLiteral(tok.text.to_string()));
                 } else if self.match_token(TokenType::Begin) {
                     // Parse BEGIN...END block
                     let mut block_content = String::new();
@@ -26132,7 +26183,7 @@ impl Parser {
                     || self.match_identifier("FILE")
                     || self.match_identifier("ARCHIVE")
                 {
-                    let kind = self.previous().text.to_ascii_uppercase();
+                    let kind = self.previous_text().to_ascii_uppercase();
                     let uri = self.expect_string()?;
                     using_resources.push(FunctionUsingResource { kind, uri });
                     let _ = self.match_token(TokenType::Comma);
@@ -26168,7 +26219,7 @@ impl Parser {
                 handler_uses_eq = self.match_token(TokenType::Eq);
                 if self.check(TokenType::String) {
                     let tok = self.advance();
-                    handler = Some(tok.text.clone());
+                    handler = Some(tok.text.to_string());
                 }
                 if !property_order.contains(&FunctionPropertyKind::Handler) {
                     property_order.push(FunctionPropertyKind::Handler);
@@ -26179,7 +26230,7 @@ impl Parser {
                     || self.check(TokenType::Number)
                     || self.is_identifier_or_keyword_token()
                 {
-                    runtime_version = Some(self.advance().text.clone());
+                    runtime_version = Some(self.advance_text());
                 }
                 if !property_order.contains(&FunctionPropertyKind::RuntimeVersion) {
                     property_order.push(FunctionPropertyKind::RuntimeVersion);
@@ -26195,7 +26246,7 @@ impl Parser {
                             || self.check(TokenType::Number)
                             || self.check_keyword()
                         {
-                            parsed_packages.push(self.advance().text.clone());
+                            parsed_packages.push(self.advance_text());
                         } else {
                             break;
                         }
@@ -26303,26 +26354,26 @@ impl Parser {
             // Note: OUT, INOUT, VARIADIC are tokenized as Var, not as dedicated keywords
             if self.match_token(TokenType::In) {
                 // IN or IN OUT
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OUT") {
-                    let out_text = self.advance().text.clone(); // consume OUT
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OUT") {
+                    let out_text = self.advance_text(); // consume OUT
                     mode_text = Some(format!("IN {}", out_text));
                     mode = Some(ParameterMode::InOut);
                 } else {
                     mode_text = Some("IN".to_string());
                     mode = Some(ParameterMode::In);
                 }
-            } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("OUT") {
-                let text = self.advance().text.clone();
+            } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("OUT") {
+                let text = self.advance_text();
                 mode_text = Some(text);
                 mode = Some(ParameterMode::Out);
-            } else if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("INOUT") {
-                let text = self.advance().text.clone();
+            } else if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("INOUT") {
+                let text = self.advance_text();
                 mode_text = Some(text);
                 mode = Some(ParameterMode::InOut);
             } else if self.check(TokenType::Var)
-                && self.peek().text.eq_ignore_ascii_case("VARIADIC")
+                && self.peek_text().eq_ignore_ascii_case("VARIADIC")
             {
-                let text = self.advance().text.clone();
+                let text = self.advance_text();
                 mode_text = Some(text);
                 mode = Some(ParameterMode::Variadic);
             }
@@ -26454,7 +26505,7 @@ impl Parser {
             if !self.check(TokenType::Var) {
                 break;
             }
-            let name = self.advance().text.clone();
+            let name = self.advance_text();
             // Skip optional AS keyword between name and type
             self.match_token(TokenType::As);
             let data_type = self.parse_data_type()?;
@@ -26509,7 +26560,7 @@ impl Parser {
             && !self.check_next(TokenType::LBracket)
         // Not an array type
         {
-            let type_name = self.advance().text.clone();
+            let type_name = self.advance_text();
             // Check if the next token indicates we should use parse_data_type instead
             // For complex types, fall through to parse_data_type
             return Ok(DataType::Custom { name: type_name });
@@ -26559,7 +26610,7 @@ impl Parser {
     /// Parse CREATE PROCEDURE statement
     fn parse_create_procedure(&mut self, or_replace: bool, or_alter: bool) -> Result<Expression> {
         // Check if PROC shorthand was used before consuming the token
-        let use_proc_keyword = self.peek().text.eq_ignore_ascii_case("PROC");
+        let use_proc_keyword = self.peek_text().eq_ignore_ascii_case("PROC");
         self.expect(TokenType::Procedure)?;
 
         let if_not_exists =
@@ -26646,11 +26697,11 @@ impl Parser {
                 if self.check(TokenType::String) {
                     // TokenType::String means single-quoted - tokenizer strips quotes
                     let tok = self.advance();
-                    body = Some(FunctionBody::StringLiteral(tok.text.clone()));
+                    body = Some(FunctionBody::StringLiteral(tok.text.to_string()));
                 } else if self.check(TokenType::HeredocString) {
                     // $$...$$  dollar-quoted body (Snowflake/PostgreSQL)
                     let tok = self.advance();
-                    body = Some(FunctionBody::Block(tok.text.clone()));
+                    body = Some(FunctionBody::Block(tok.text.to_string()));
                 } else if self.match_token(TokenType::Begin) {
                     // Parse BEGIN ... END block as a list of statements
                     let mut statements = Vec::new();
@@ -26903,7 +26954,7 @@ impl Parser {
                 // Snowflake: COMMENT = 'value'
                 self.expect(TokenType::Eq)?;
                 let comment_val = self.expect(TokenType::String)?;
-                seq.comment = Some(comment_val.text.clone());
+                seq.comment = Some(comment_val.text.to_string());
                 seq.property_order.push(SeqPropKind::Comment);
             } else if self.match_identifier("SHARING") {
                 // Oracle: SHARING=value
@@ -27534,13 +27585,13 @@ impl Parser {
         // Parse task name (possibly qualified: db.schema.task)
         let mut name = String::new();
         if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token() {
-            name.push_str(&self.advance().text);
+            name.push_str(&self.advance_text());
         }
         while self.check(TokenType::Dot) {
             self.skip();
             name.push('.');
             if self.check(TokenType::Var) || self.check_keyword() || self.is_identifier_token() {
-                name.push_str(&self.advance().text);
+                name.push_str(&self.advance_text());
             }
         }
 
@@ -27814,19 +27865,7 @@ impl Parser {
     /// Assignment (:=) has lower precedence than OR, matching Python sqlglot's
     /// _parse_expression -> _parse_assignment -> _parse_disjunction chain
     fn parse_expression(&mut self) -> Result<Expression> {
-        #[cfg(feature = "stacker")]
-        {
-            let red_zone = if cfg!(debug_assertions) {
-                4 * 1024 * 1024
-            } else {
-                1024 * 1024
-            };
-            stacker::maybe_grow(red_zone, 8 * 1024 * 1024, || self.parse_expression_inner())
-        }
-        #[cfg(not(feature = "stacker"))]
-        {
-            self.parse_expression_inner()
-        }
+        self.with_recursive_stack(|parser| parser.parse_expression_inner())
     }
 
     fn parse_expression_inner(&mut self) -> Result<Expression> {
@@ -29134,7 +29173,7 @@ impl Parser {
                 // This can include schema names, dots, and operator symbols like ~
                 let mut op_text = String::new();
                 while !self.check(TokenType::RParen) && !self.is_at_end() {
-                    op_text.push_str(&self.peek().text);
+                    op_text.push_str(&self.peek_text());
                     self.skip();
                 }
                 self.expect(TokenType::RParen)?;
@@ -29442,12 +29481,12 @@ impl Parser {
         let mut expr = self.parse_multiplication()?;
 
         // Check for AT TIME ZONE (can be chained)
-        while self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("AT") {
+        while self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("AT") {
             self.skip(); // consume AT
                          // Check for TIME ZONE
             if self.check(TokenType::Time) {
                 self.skip(); // consume TIME
-                if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("ZONE") {
+                if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("ZONE") {
                     self.skip(); // consume ZONE
                     let zone = self.parse_unary()?;
                     expr = Expression::AtTimeZone(Box::new(AtTimeZone { this: expr, zone }));
@@ -29565,7 +29604,7 @@ impl Parser {
         }
 
         // Get the potential type name without consuming
-        let type_name = self.peek().text.to_ascii_uppercase();
+        let type_name = self.peek_text().to_ascii_uppercase();
 
         // Check if this looks like a known data type that supports literal syntax
         // These are types where PostgreSQL allows TYPE 'value' syntax
@@ -29618,7 +29657,7 @@ impl Parser {
         }
 
         let string_token = self.advance();
-        let value = Expression::Literal(Box::new(Literal::String(string_token.text.clone())));
+        let value = Expression::Literal(Box::new(Literal::String(string_token.text.to_string())));
 
         // JSON literal: JSON '"foo"' -> ParseJson expression (matches Python sqlglot)
         if matches!(data_type, DataType::Json | DataType::JsonB)
@@ -29726,10 +29765,10 @@ impl Parser {
         // Parse the literal value
         let value = if self.check(TokenType::String) {
             let tok = self.advance();
-            Expression::Literal(Box::new(Literal::String(tok.text.clone())))
+            Expression::Literal(Box::new(Literal::String(tok.text.to_string())))
         } else if self.check(TokenType::Number) {
             let tok = self.advance();
-            Expression::Literal(Box::new(Literal::Number(tok.text.clone())))
+            Expression::Literal(Box::new(Literal::Number(tok.text.to_string())))
         } else {
             self.current = start_pos;
             return Ok(None);
@@ -29794,7 +29833,7 @@ impl Parser {
             let expr = self.parse_bitwise_or()?;
             Ok(Expression::Abs(Box::new(UnaryFunc::new(expr))))
         } else if self.check(TokenType::Var)
-            && self.peek().text.starts_with('@')
+            && self.peek_text().starts_with('@')
             && matches!(
                 self.config.dialect,
                 Some(crate::dialects::DialectType::PostgreSQL)
@@ -29826,7 +29865,7 @@ impl Parser {
             let expr = self.parse_bitwise_or()?;
             Ok(Expression::Abs(Box::new(UnaryFunc::new(expr))))
         } else if self.check(TokenType::Var)
-            && self.peek().text.starts_with('@')
+            && self.peek_text().starts_with('@')
             && matches!(
                 self.config.dialect,
                 Some(crate::dialects::DialectType::DuckDB)
@@ -30005,10 +30044,10 @@ impl Parser {
                 // :: followed by identifier -> JSON_EXTRACT_JSON
                 // Check if next is a backtick-quoted identifier or regular identifier
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    self.advance().text
+                    self.advance_text()
                 } else if self.check(TokenType::Number) {
                     // a::2 -> JSON_EXTRACT_JSON(a, '2')
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     return Err(self.parse_error("Expected identifier after ::"));
                 };
@@ -30020,7 +30059,7 @@ impl Parser {
             } else if self.match_token(TokenType::DColonDollar) {
                 // ::$ followed by identifier -> JSON_EXTRACT_STRING
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     return Err(self.parse_error("Expected identifier after ::$"));
                 };
@@ -30032,7 +30071,7 @@ impl Parser {
             } else if self.match_token(TokenType::DColonPercent) {
                 // ::% followed by identifier -> JSON_EXTRACT_DOUBLE
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     return Err(self.parse_error("Expected identifier after ::%"));
                 };
@@ -30044,7 +30083,7 @@ impl Parser {
             } else if self.match_token(TokenType::DColonQMark) {
                 // ::? followed by identifier -> Keep as JSONMatchAny expression for now
                 let path_key = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     return Err(self.parse_error("Expected identifier after ::?"));
                 };
@@ -30138,7 +30177,7 @@ impl Parser {
                 // Quoted field name in variant access
                 // Snowflake: v:"fruit" → double-quoted key → stored as plain text 'fruit'
                 // Databricks: raw:`zip code` → backtick-quoted key → stored as bracket notation '["zip code"]'
-                let quoted_name = self.advance().text.clone();
+                let quoted_name = self.advance_text();
                 let is_snowflake = matches!(
                     self.config.dialect,
                     Some(crate::dialects::DialectType::Snowflake)
@@ -30181,7 +30220,7 @@ impl Parser {
                 if !path_string.is_empty() {
                     path_string.push('.');
                 }
-                let first_part = self.advance().text;
+                let first_part = self.advance_text();
                 path_string.push_str(&first_part);
                 had_initial_component = true;
             } else if self.check(TokenType::LBracket) {
@@ -30206,7 +30245,7 @@ impl Parser {
                     // Parse the index expression (typically a number, identifier, * for wildcard, or string key)
                     if self.check(TokenType::Number) {
                         path_string.push('[');
-                        let idx = self.advance().text;
+                        let idx = self.advance_text();
                         path_string.push_str(&idx);
                         self.expect(TokenType::RBracket)?;
                         path_string.push(']');
@@ -30222,7 +30261,7 @@ impl Parser {
                         // Databricks preserves string-key access as bracket notation, even
                         // for safe identifiers. Other dialects keep the older normalization
                         // to dot notation for simple keys.
-                        let key = self.advance().text;
+                        let key = self.advance_text();
                         self.expect(TokenType::RBracket)?;
                         // Check if the key contains spaces or special characters that require bracket notation
                         let needs_brackets = matches!(
@@ -30254,7 +30293,7 @@ impl Parser {
                         // Double-quoted string key access: ["zip code"]
                         // These are tokenized as QuotedIdentifier, not String
                         // Must be checked BEFORE is_identifier_token() since it includes QuotedIdentifier
-                        let key = self.advance().text;
+                        let key = self.advance_text();
                         self.expect(TokenType::RBracket)?;
                         // Always use bracket notation with double quotes for quoted identifiers
                         path_string.push_str("[\"");
@@ -30271,7 +30310,7 @@ impl Parser {
                         // inside brackets. We detect this by checking if the identifier is
                         // followed by a dot (making it a qualified column reference).
                         let saved_bracket_pos = self.current;
-                        let ident_text = self.advance().text.clone();
+                        let ident_text = self.advance_text();
                         if self.check(TokenType::Dot) {
                             // Dynamic bracket: [s.x] where s.x is a column reference
                             // Backtrack to before the identifier so we can parse the full expression
@@ -30319,7 +30358,7 @@ impl Parser {
                                         || self.is_safe_keyword_as_identifier()
                                         || self.is_reserved_keyword_as_identifier()
                                     {
-                                        let part = self.advance().text;
+                                        let part = self.advance_text();
                                         suffix_path.push_str(&part);
                                     } else {
                                         return Err(self.parse_error(
@@ -30399,7 +30438,7 @@ impl Parser {
                         || self.is_safe_keyword_as_identifier()
                         || self.is_reserved_keyword_as_identifier()
                     {
-                        let part = self.advance().text;
+                        let part = self.advance_text();
                         path_string.push_str(&part);
                     } else {
                         return Err(self.parse_error("Expected identifier after . in JSON path"));
@@ -30688,7 +30727,7 @@ impl Parser {
 
         // Check if this is a subquery (SELECT, WITH, DuckDB FROM-first, or ClickHouse EXPLAIN)
         let is_explain_subquery = self.check(TokenType::Var)
-            && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+            && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
             && self.peek_nth(1).map_or(false, |t| {
                 matches!(
                     t.token_type,
@@ -31146,7 +31185,7 @@ impl Parser {
     fn parse_identifier_primary(&mut self) -> Result<Expression> {
         // Check for no-paren functions like CURRENT_TIMESTAMP, CURRENT_DATE, etc.
         // These should be parsed as functions even without parentheses
-        let upper_name = self.peek().text.to_ascii_uppercase();
+        let upper_name = self.peek_text().to_ascii_uppercase();
         if !self.check_next(TokenType::LParen)
             && !self.check_next(TokenType::Dot)
             && crate::function_registry::is_no_paren_function_name_upper(upper_name.as_str())
@@ -31157,7 +31196,7 @@ impl Parser {
         {
             let token = self.advance();
             let func = Expression::Function(Box::new(Function {
-                name: token.text.clone(),
+                name: token.text.to_string(),
                 args: Vec::new(),
                 distinct: false,
                 trailing_comments: Vec::new(),
@@ -31309,7 +31348,7 @@ impl Parser {
                 return Ok(star_expr);
             }
             if self.check(TokenType::Number) {
-                let field_name = self.advance().text;
+                let field_name = self.advance_text();
                 let col_expr = Expression::Dot(Box::new(DotAccess {
                     this: Expression::boxed_column(Column {
                         name: ident,
@@ -31331,7 +31370,7 @@ impl Parser {
                 && self.tokens[self.current + 1].token_type == TokenType::Number
             {
                 self.skip();
-                let num = self.advance().text;
+                let num = self.advance_text();
                 let field_name = format!("-{}", num);
                 let col_expr = Expression::Dot(Box::new(DotAccess {
                     this: Expression::boxed_column(Column {
@@ -31357,7 +31396,7 @@ impl Parser {
                     || self.check(TokenType::Var)
                     || self.check_keyword()
                 {
-                    field_name.push_str(&self.advance().text);
+                    field_name.push_str(&self.advance_text());
                 }
                 let col_expr = Expression::Dot(Box::new(DotAccess {
                     this: Expression::boxed_column(Column {
@@ -31578,17 +31617,17 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expression> {
         // Handle APPROXIMATE COUNT(DISTINCT expr) - Redshift syntax
         // Parses as ApproxDistinct expression
-        if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("APPROXIMATE") {
+        if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("APPROXIMATE") {
             let saved_pos = self.current;
             self.skip(); // consume APPROXIMATE
 
             if self.check(TokenType::Var)
                 && matches!(
-                    self.peek().text.to_ascii_uppercase().as_str(),
+                    self.peek_text().to_ascii_uppercase().as_str(),
                     "PERCENTILE_DISC" | "PERCENTILE_CONT"
                 )
             {
-                let name = self.advance().text.to_ascii_uppercase();
+                let name = self.advance_text().to_ascii_uppercase();
                 self.expect(TokenType::LParen)?;
                 let args = if self.check(TokenType::RParen) {
                     Vec::new()
@@ -31669,7 +31708,7 @@ impl Parser {
             Some(crate::dialects::DialectType::PostgreSQL)
                 | Some(crate::dialects::DialectType::Redshift)
         ) {
-            if self.check(TokenType::Var) && self.peek().text.eq_ignore_ascii_case("VARIADIC") {
+            if self.check(TokenType::Var) && self.peek_text().eq_ignore_ascii_case("VARIADIC") {
                 self.skip(); // consume VARIADIC
                 let expr = self.parse_bitwise_or()?;
                 return Ok(Expression::Variadic(Box::new(
@@ -31689,8 +31728,8 @@ impl Parser {
                 | Some(crate::dialects::DialectType::StarRocks)
         ) {
             if self.check(TokenType::Var) || self.check(TokenType::Identifier) {
-                if self.peek().text.starts_with('_')
-                    && Self::is_mysql_charset_introducer(&self.peek().text.to_ascii_uppercase())
+                if self.peek_text().starts_with('_')
+                    && Self::is_mysql_charset_introducer(&self.peek_text().to_ascii_uppercase())
                 {
                     // Check if next token is a string literal or hex string
                     if self.current + 1 < self.tokens.len() {
@@ -31700,7 +31739,7 @@ impl Parser {
                             TokenType::String | TokenType::HexString | TokenType::BitString
                         ) {
                             let charset_token = self.advance(); // consume charset name
-                            let charset_name = charset_token.text.clone();
+                            let charset_name = charset_token.text.to_string();
                             let literal = self.parse_primary()?; // parse the string/hex literal
                             return Ok(Expression::Introducer(Box::new(
                                 crate::expressions::Introducer {
@@ -31790,7 +31829,7 @@ impl Parser {
 
             // Check for ODBC datetime literals: {d'2024-01-01'}, {t'12:00:00'}, {ts'2024-01-01 12:00:00'}
             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let type_text = self.peek().text.to_lowercase();
+                let type_text = self.peek_text().to_lowercase();
                 if (type_text == "d" || type_text == "t" || type_text == "ts")
                     && self.check_next(TokenType::String)
                 {
@@ -32032,7 +32071,7 @@ impl Parser {
         // DATE literal: DATE '2024-01-15' or DATE function: DATE(expr)
         if self.check(TokenType::Date) {
             let token = self.advance();
-            let original_text = token.text.clone();
+            let original_text = token.text.to_string();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
                 if self.config.dialect.is_none() {
@@ -32068,7 +32107,7 @@ impl Parser {
         // TIME literal: TIME '10:30:00' or TIME function: TIME(expr)
         if self.check(TokenType::Time) {
             let token = self.advance();
-            let original_text = token.text.clone();
+            let original_text = token.text.to_string();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
                 return Ok(Expression::Literal(Box::new(Literal::Time(str_token.text))));
@@ -32097,7 +32136,7 @@ impl Parser {
             || self.check_keyword_text("TIMESTAMP_TZ")
         {
             let token = self.advance();
-            let original_text = token.text.clone();
+            let original_text = token.text.to_string();
             let mut precision = None;
 
             if self.check(TokenType::LParen)
@@ -32144,7 +32183,7 @@ impl Parser {
         // Also handles TIMESTAMP(n) WITH TIME ZONE as a data type expression
         if self.check(TokenType::Timestamp) {
             let token = self.advance();
-            let original_text = token.text.clone();
+            let original_text = token.text.to_string();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
                 if self.config.dialect.is_none() {
@@ -32315,7 +32354,7 @@ impl Parser {
         // DATETIME literal: DATETIME '2024-01-15 10:30:00' or DATETIME function: DATETIME(expr)
         if self.check(TokenType::DateTime) {
             let token = self.advance();
-            let original_text = token.text.clone();
+            let original_text = token.text.to_string();
             if self.check(TokenType::String) {
                 let str_token = self.advance();
                 return Ok(Expression::Literal(Box::new(Literal::Datetime(
@@ -32391,7 +32430,7 @@ impl Parser {
             {
                 if let Some(next) = self.tokens.get(self.current) {
                     let is_adjacent = token.span.end == next.span.start;
-                    let next_text = next.text.as_str();
+                    let next_text = next.text();
                     let is_hex_prefix = next_text.starts_with('x') || next_text.starts_with('X');
                     if is_adjacent
                         && matches!(next.token_type, TokenType::Identifier | TokenType::Var)
@@ -32417,7 +32456,7 @@ impl Parser {
                         && matches!(next.token_type, TokenType::Identifier | TokenType::Var)
                         && next.text.starts_with('_')
                     {
-                        let suffix = next.text.clone();
+                        let suffix = next.text.to_string();
                         self.skip(); // consume suffix token
                         let combined = format!("{}{}", token.text, suffix);
                         let literal = Expression::Literal(Box::new(Literal::Number(combined)));
@@ -32657,7 +32696,7 @@ impl Parser {
         // These are standalone type expressions (not in CAST context)
         // But also handle STRUCT<TYPE>(args) which becomes CAST(STRUCT(args) AS STRUCT<TYPE>)
         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-            let name_upper = self.peek().text.to_ascii_uppercase();
+            let name_upper = self.peek_text().to_ascii_uppercase();
             if (name_upper == "ARRAY" || name_upper == "MAP" || name_upper == "STRUCT")
                 && self.check_next(TokenType::Lt)
             {
@@ -32833,7 +32872,7 @@ impl Parser {
         // Only treat as prefix operator when followed by an expression (not ( which would be BINARY() function,
         // and not when it would be a data type like BINARY in column definitions)
         if self.check(TokenType::Var)
-            && self.peek().text.eq_ignore_ascii_case("BINARY")
+            && self.peek_text().eq_ignore_ascii_case("BINARY")
             && !self.check_next(TokenType::LParen)
             && !self.check_next(TokenType::Dot)
             && !self.check_next(TokenType::RParen)
@@ -32874,7 +32913,7 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
-                name: token.text.clone(), // Preserve original case; generator handles normalization
+                name: token.text.to_string(), // Preserve original case; generator handles normalization
                 args,
                 distinct: false,
                 trailing_comments: Vec::new(),
@@ -32900,7 +32939,7 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
-                name: token.text.clone(),
+                name: token.text.to_string(),
                 args,
                 distinct: false,
                 trailing_comments: Vec::new(),
@@ -32932,7 +32971,7 @@ impl Parser {
             };
             self.expect(TokenType::RParen)?;
             let func = Expression::Function(Box::new(Function {
-                name: token.text.clone(),
+                name: token.text.to_string(),
                 args,
                 distinct: false,
                 trailing_comments: Vec::new(),
@@ -32983,7 +33022,7 @@ impl Parser {
                 };
                 self.expect(TokenType::RParen)?;
                 let func = Expression::Function(Box::new(Function {
-                    name: token.text.clone(),
+                    name: token.text.to_string(),
                     args,
                     distinct: false,
                     trailing_comments: Vec::new(),
@@ -32998,7 +33037,7 @@ impl Parser {
                 // No parens - parse as no-paren function
                 let token = self.advance();
                 let func = Expression::Function(Box::new(Function {
-                    name: token.text.clone(),
+                    name: token.text.to_string(),
                     args: Vec::new(),
                     distinct: false,
                     trailing_comments: Vec::new(),
@@ -33015,7 +33054,7 @@ impl Parser {
         // Type keyword followed by string literal -> CAST('value' AS TYPE)
         // E.g., NUMERIC '2.25' -> CAST('2.25' AS NUMERIC)
         if self.is_identifier_token() && self.check_next(TokenType::String) {
-            let upper_name = self.peek().text.to_ascii_uppercase();
+            let upper_name = self.peek_text().to_ascii_uppercase();
             if matches!(
                 upper_name.as_str(),
                 "NUMERIC" | "DECIMAL" | "BIGNUMERIC" | "BIGDECIMAL"
@@ -33098,7 +33137,7 @@ impl Parser {
             && (self.check_next(TokenType::Comma) || self.check_next(TokenType::Dot))
         {
             let token = self.advance();
-            let name = token.text.clone();
+            let name = token.text.to_string();
             if self.match_token(TokenType::Dot) {
                 // from.col qualified reference
                 let col_name = self.expect_identifier_or_keyword()?;
@@ -33130,7 +33169,7 @@ impl Parser {
             && !self.check_next(TokenType::LParen)
         {
             let token = self.advance();
-            let name = token.text.clone();
+            let name = token.text.to_string();
             if self.match_token(TokenType::Dot) {
                 let col_name = self.expect_identifier_or_keyword()?;
                 return Ok(Expression::Column(Box::new(crate::expressions::Column {
@@ -33206,10 +33245,10 @@ impl Parser {
             if self.match_token(TokenType::LParen) {
                 // Get the parameter name
                 if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    let name = self.advance().text;
+                    let name = self.advance_text();
                     self.expect(TokenType::RParen)?;
                     // Expect 's' after the closing paren
-                    if self.check(TokenType::Var) && self.peek().text == "s" {
+                    if self.check(TokenType::Var) && self.peek_text() == "s" {
                         self.skip(); // consume 's'
                     }
                     return Ok(Expression::Parameter(Box::new(Parameter {
@@ -33225,7 +33264,7 @@ impl Parser {
                 }
             }
             // Check for %s - anonymous parameter
-            if self.check(TokenType::Var) && self.peek().text == "s" {
+            if self.check(TokenType::Var) && self.peek_text() == "s" {
                 self.skip(); // consume 's'
                 return Ok(Expression::Parameter(Box::new(Parameter {
                     name: None,
@@ -33245,7 +33284,7 @@ impl Parser {
         // Structural keywords like FROM, WHERE, JOIN should NOT be usable as identifiers.
         if self.is_safe_keyword_as_identifier() {
             let token = self.advance();
-            let name = token.text.clone();
+            let name = token.text.to_string();
 
             // Check for function call (keyword followed by paren) - skip Teradata FORMAT phrase
             let is_teradata_format_phrase = matches!(
@@ -33289,7 +33328,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        field_name.push_str(&self.advance().text);
+                        field_name.push_str(&self.advance_text());
                     }
                     let col = Expression::Dot(Box::new(DotAccess {
                         this: Expression::boxed_column(Column {
@@ -33307,7 +33346,7 @@ impl Parser {
 
                 // Handle numeric field access: keyword.1, keyword.2 (ClickHouse tuple field access)
                 if self.check(TokenType::Number) {
-                    let field_name = self.advance().text;
+                    let field_name = self.advance_text();
                     let col_expr = Expression::Dot(Box::new(DotAccess {
                         this: Expression::boxed_column(Column {
                             name: Identifier::new(name),
@@ -33388,7 +33427,7 @@ impl Parser {
         if self.match_token(TokenType::AtAt) {
             // Get the variable name
             let name = if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                let mut n = self.advance().text;
+                let mut n = self.advance_text();
                 // Handle @@scope.variable (e.g., @@GLOBAL.max_connections, @@SESSION.sql_mode)
                 if self.match_token(TokenType::Dot) {
                     if self.check(TokenType::Identifier)
@@ -33396,13 +33435,13 @@ impl Parser {
                         || self.is_safe_keyword_as_identifier()
                     {
                         n.push('.');
-                        n.push_str(&self.advance().text);
+                        n.push_str(&self.advance_text());
                     }
                 }
                 n
             } else if self.check_keyword() {
                 // Handle @@keyword (e.g., @@sql_mode when sql_mode is a keyword)
-                self.advance().text
+                self.advance_text()
             } else {
                 return Err(self.parse_error("Expected variable name after @@"));
             };
@@ -33421,7 +33460,7 @@ impl Parser {
             // Get the variable name - can be identifier, quoted identifier, keyword, or string
             let (name, quoted, string_quoted) =
                 if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    (self.advance().text, false, false)
+                    (self.advance_text(), false, false)
                 } else if self.check(TokenType::QuotedIdentifier) {
                     // Quoted identifier like @"x"
                     let token = self.advance();
@@ -33509,7 +33548,7 @@ impl Parser {
             }
             // Get the parameter name
             if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                let name = self.advance().text;
+                let name = self.advance_text();
                 return Ok(Expression::Parameter(Box::new(Parameter {
                     name: Some(name),
                     index: None,
@@ -33535,7 +33574,7 @@ impl Parser {
                     let expression = if self.match_token(TokenType::Colon) {
                         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                             let expr_token = self.advance();
-                            Some(expr_token.text.clone())
+                            Some(expr_token.text.to_string())
                         } else {
                             return Err(self.parse_error("Expected identifier after : in ${...}"));
                         }
@@ -33544,7 +33583,7 @@ impl Parser {
                     };
                     self.expect(TokenType::RBrace)?;
                     return Ok(Expression::Parameter(Box::new(Parameter {
-                        name: Some(name_token.text.clone()),
+                        name: Some(name_token.text.to_string()),
                         index: None,
                         style: ParameterStyle::DollarBrace,
                         quoted: false,
@@ -33585,7 +33624,7 @@ impl Parser {
             {
                 let name_token = self.advance();
                 return Ok(Expression::Parameter(Box::new(Parameter {
-                    name: Some(name_token.text.clone()),
+                    name: Some(name_token.text.to_string()),
                     index: None,
                     style: ParameterStyle::Dollar,
                     quoted: false,
@@ -33603,10 +33642,10 @@ impl Parser {
             if self.match_token(TokenType::LParen) {
                 // Get the parameter name
                 if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    let name = self.advance().text;
+                    let name = self.advance_text();
                     self.expect(TokenType::RParen)?;
                     // Expect 's' after the closing paren
-                    if self.check(TokenType::Var) && self.peek().text == "s" {
+                    if self.check(TokenType::Var) && self.peek_text() == "s" {
                         self.skip(); // consume 's'
                     }
                     return Ok(Expression::Parameter(Box::new(Parameter {
@@ -33622,7 +33661,7 @@ impl Parser {
                 }
             }
             // Check for %s - anonymous parameter
-            if self.check(TokenType::Var) && self.peek().text == "s" {
+            if self.check(TokenType::Var) && self.peek_text() == "s" {
                 self.skip(); // consume 's'
                 return Ok(Expression::Parameter(Box::new(Parameter {
                     name: None,
@@ -33886,7 +33925,7 @@ impl Parser {
                         let alias_token = self.advance();
                         Expression::Alias(Box::new(crate::expressions::Alias {
                             this,
-                            alias: Identifier::new(alias_token.text.clone()),
+                            alias: Identifier::new(alias_token.text.to_string()),
                             column_aliases: Vec::new(),
                             alias_explicit_as: false,
                             alias_keyword: None,
@@ -33928,7 +33967,7 @@ impl Parser {
                             let alias_token = self.advance();
                             Expression::Alias(Box::new(crate::expressions::Alias {
                                 this: arg,
-                                alias: Identifier::new(alias_token.text.clone()),
+                                alias: Identifier::new(alias_token.text.to_string()),
                                 column_aliases: Vec::new(),
                                 alias_explicit_as: false,
                                 alias_keyword: None,
@@ -37785,7 +37824,7 @@ impl Parser {
             self.skip(); // consume SETTINGS
             loop {
                 let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     break;
                 };
@@ -37898,7 +37937,7 @@ impl Parser {
                 self.skip(); // consume AS
                 let alias_token = self.advance();
                 let alias_name = Identifier {
-                    name: alias_token.text.clone(),
+                    name: alias_token.text.to_string(),
                     quoted: alias_token.token_type == TokenType::QuotedIdentifier,
                     trailing_comments: Vec::new(),
                     span: None,
@@ -37927,12 +37966,12 @@ impl Parser {
 
     fn parse_single_function_argument(&mut self) -> Result<Expression> {
         let is_table_or_model_arg = if !self.is_at_end() {
-            self.check(TokenType::Table) || self.peek().text.eq_ignore_ascii_case("MODEL")
+            self.check(TokenType::Table) || self.peek_text().eq_ignore_ascii_case("MODEL")
         } else {
             false
         };
         let arg = if is_table_or_model_arg {
-            let prefix = self.peek().text.to_ascii_uppercase();
+            let prefix = self.peek_text().to_ascii_uppercase();
             let saved_pos = self.current;
             self.skip();
 
@@ -37953,7 +37992,7 @@ impl Parser {
                 self.current = saved_pos;
                 if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                     let ident_token = self.advance();
-                    let ident_name = ident_token.text.clone();
+                    let ident_name = ident_token.text.to_string();
                     if self.match_token(TokenType::FArrow) {
                         let value = self.parse_expression()?;
                         Expression::NamedArgument(Box::new(NamedArgument {
@@ -37979,7 +38018,7 @@ impl Parser {
         } else if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
             let saved_pos = self.current;
             let ident_token = self.advance();
-            let ident_name = ident_token.text.clone();
+            let ident_name = ident_token.text.to_string();
 
             if ident_name.eq_ignore_ascii_case("VARIADIC")
                 && matches!(
@@ -38063,11 +38102,11 @@ impl Parser {
                 self.skip();
                 let alias_token = self.advance();
                 let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
-                    let mut ident = Identifier::new(alias_token.text.clone());
+                    let mut ident = Identifier::new(alias_token.text.to_string());
                     ident.quoted = true;
                     ident
                 } else {
-                    Identifier::new(alias_token.text.clone())
+                    Identifier::new(alias_token.text.to_string())
                 };
                 Expression::Alias(Box::new(crate::expressions::Alias {
                     this: arg,
@@ -38163,7 +38202,7 @@ impl Parser {
             self.skip(); // consume SETTINGS
             loop {
                 let _key = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                    self.advance().text
+                    self.advance_text()
                 } else {
                     break;
                 };
@@ -38836,7 +38875,7 @@ impl Parser {
                     Some(crate::dialects::DialectType::ClickHouse)
                 ) && self.check(TokenType::QuotedIdentifier)
                 {
-                    let type_text = self.advance().text.clone();
+                    let type_text = self.advance_text();
                     // Re-parse the quoted identifier text as a data type
                     self.parse_data_type_from_text(&type_text)?
                 } else {
@@ -38972,7 +39011,7 @@ impl Parser {
                     || self.check_keyword()
                 {
                     let is_quoted = self.check(TokenType::QuotedIdentifier);
-                    let field_name = self.advance().text;
+                    let field_name = self.advance_text();
                     // Check if this is a method call (field followed by parentheses)
                     if self.check(TokenType::LParen) && !is_quoted {
                         // This is a method call like a.b.C() or x.EXTRACT()
@@ -39001,7 +39040,7 @@ impl Parser {
                     }
                 } else if self.check(TokenType::Number) {
                     // Handle numeric field access like a.0 or x.1
-                    let field_name = self.advance().text;
+                    let field_name = self.advance_text();
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
                         field: Identifier::new(field_name),
@@ -39019,7 +39058,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        field_name.push_str(&self.advance().text);
+                        field_name.push_str(&self.advance_text());
                     }
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
@@ -39038,7 +39077,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        type_name.push_str(&self.advance().text);
+                        type_name.push_str(&self.advance_text());
                     }
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
@@ -39054,7 +39093,7 @@ impl Parser {
                 {
                     // ClickHouse: tuple.-1 — negative tuple index
                     self.skip(); // consume -
-                    let num = self.advance().text;
+                    let num = self.advance_text();
                     expr = Expression::Dot(Box::new(DotAccess {
                         this: expr,
                         field: Identifier::new(format!("-{}", num)),
@@ -39066,10 +39105,10 @@ impl Parser {
                 // Parse COLLATE 'collation_name' or COLLATE "collation_name" or COLLATE collation_name
                 let (collation, quoted, double_quoted) = if self.check(TokenType::String) {
                     // Single-quoted string: COLLATE 'de_DE'
-                    (self.advance().text, true, false)
+                    (self.advance_text(), true, false)
                 } else if self.check(TokenType::QuotedIdentifier) {
                     // Double-quoted identifier: COLLATE "de_DE"
-                    (self.advance().text, false, true)
+                    (self.advance_text(), false, true)
                 } else {
                     // Unquoted identifier: COLLATE de_DE
                     (self.expect_identifier_or_keyword()?, false, false)
@@ -39096,11 +39135,11 @@ impl Parser {
                         // ::key -> JSON_EXTRACT_JSON(expr, 'key')
                         let path_key =
                             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                                self.advance().text
+                                self.advance_text()
                             } else if self.check(TokenType::Number) {
-                                self.advance().text
+                                self.advance_text()
                             } else if self.check(TokenType::QuotedIdentifier) {
-                                self.advance().text
+                                self.advance_text()
                             } else {
                                 return Err(self.parse_error(
                                     "Expected identifier or number after :: in JSON path",
@@ -39114,9 +39153,9 @@ impl Parser {
                         // ::$key -> JSON_EXTRACT_STRING(expr, 'key')
                         let path_key =
                             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                                self.advance().text
+                                self.advance_text()
                             } else if self.check(TokenType::Number) {
-                                self.advance().text
+                                self.advance_text()
                             } else {
                                 return Err(self.parse_error(
                                     "Expected identifier or number after ::$ in JSON path",
@@ -39130,9 +39169,9 @@ impl Parser {
                         // ::%key -> JSON_EXTRACT_DOUBLE(expr, 'key')
                         let path_key =
                             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                                self.advance().text
+                                self.advance_text()
                             } else if self.check(TokenType::Number) {
-                                self.advance().text
+                                self.advance_text()
                             } else {
                                 return Err(self.parse_error(
                                     "Expected identifier or number after ::% in JSON path",
@@ -39146,9 +39185,9 @@ impl Parser {
                         // ::?key -> SingleStoreJsonPathQMark function (for JSON_MATCH_ANY patterns)
                         let path_key =
                             if self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                                self.advance().text
+                                self.advance_text()
                             } else if self.check(TokenType::Number) {
-                                self.advance().text
+                                self.advance_text()
                             } else {
                                 return Err(self.parse_error(
                                     "Expected identifier or number after ::? in JSON path",
@@ -39336,7 +39375,7 @@ impl Parser {
         {
             // Look ahead to see if next token indicates this is a window name
             let pos = self.current;
-            let name = self.advance().text;
+            let name = self.advance_text();
             // If next token is a keyword that can follow a window name, this is a named reference
             if self.check(TokenType::Order)
                 || self.check(TokenType::Partition)
@@ -39497,17 +39536,17 @@ impl Parser {
         let (kind, kind_text) = if self.match_token(TokenType::Rows) {
             (
                 WindowFrameKind::Rows,
-                self.tokens[self.current - 1].text.clone(),
+                self.tokens[self.current - 1].text.to_string(),
             )
         } else if self.match_token(TokenType::Range) {
             (
                 WindowFrameKind::Range,
-                self.tokens[self.current - 1].text.clone(),
+                self.tokens[self.current - 1].text.to_string(),
             )
         } else if self.match_token(TokenType::Groups) {
             (
                 WindowFrameKind::Groups,
-                self.tokens[self.current - 1].text.clone(),
+                self.tokens[self.current - 1].text.to_string(),
             )
         } else {
             return Ok(None);
@@ -39562,16 +39601,16 @@ impl Parser {
             Ok((WindowFrameBound::CurrentRow, None))
         } else if self.match_token(TokenType::Unbounded) {
             if self.match_token(TokenType::Preceding) {
-                let text = self.tokens[self.current - 1].text.clone();
+                let text = self.tokens[self.current - 1].text.to_string();
                 Ok((WindowFrameBound::UnboundedPreceding, Some(text)))
             } else if self.match_token(TokenType::Following) {
-                let text = self.tokens[self.current - 1].text.clone();
+                let text = self.tokens[self.current - 1].text.to_string();
                 Ok((WindowFrameBound::UnboundedFollowing, Some(text)))
             } else {
                 Err(self.parse_error("Expected PRECEDING or FOLLOWING after UNBOUNDED"))
             }
         } else if self.match_token(TokenType::Preceding) {
-            let text = self.tokens[self.current - 1].text.clone();
+            let text = self.tokens[self.current - 1].text.to_string();
             // PRECEDING [value] (inverted syntax for some dialects)
             // If no value follows (e.g., just "PRECEDING" or "PRECEDING)"), use BarePreceding
             if self.check(TokenType::RParen) || self.check(TokenType::Comma) {
@@ -39581,7 +39620,7 @@ impl Parser {
                 Ok((WindowFrameBound::Preceding(Box::new(expr)), Some(text)))
             }
         } else if self.match_token(TokenType::Following) {
-            let text = self.tokens[self.current - 1].text.clone();
+            let text = self.tokens[self.current - 1].text.to_string();
             // FOLLOWING [value] (inverted syntax for some dialects)
             // If no value follows (e.g., just "FOLLOWING" or "FOLLOWING)"), use BareFollowing
             if self.check(TokenType::RParen) || self.check(TokenType::Comma) {
@@ -39595,10 +39634,10 @@ impl Parser {
             // Use parse_addition to handle expressions like 1 + 1 PRECEDING
             let expr = self.parse_addition()?;
             if self.match_token(TokenType::Preceding) {
-                let text = self.tokens[self.current - 1].text.clone();
+                let text = self.tokens[self.current - 1].text.to_string();
                 Ok((WindowFrameBound::Preceding(Box::new(expr)), Some(text)))
             } else if self.match_token(TokenType::Following) {
-                let text = self.tokens[self.current - 1].text.clone();
+                let text = self.tokens[self.current - 1].text.to_string();
                 Ok((WindowFrameBound::Following(Box::new(expr)), Some(text)))
             } else {
                 // Bare numeric bounds without PRECEDING/FOLLOWING
@@ -39849,7 +39888,7 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        let text = self.peek().text.to_ascii_uppercase();
+        let text = self.peek_text().to_ascii_uppercase();
         Self::parse_interval_unit_from_string(&text).is_some()
     }
 
@@ -39986,7 +40025,7 @@ impl Parser {
             return Ok(None);
         }
 
-        let text_upper = self.peek().text.to_ascii_uppercase();
+        let text_upper = self.peek_text().to_ascii_uppercase();
         let result = Self::parse_interval_unit_from_string(&text_upper)
             .map(|unit| (unit, Self::interval_unit_uses_plural_form(&text_upper)));
 
@@ -40025,7 +40064,7 @@ impl Parser {
 
         // Check NO_PAREN_FUNCTION_NAMES for string-based lookup
         // (handles cases where functions are tokenized as Var/Identifier)
-        let text_upper = self.peek().text.to_ascii_uppercase();
+        let text_upper = self.peek_text().to_ascii_uppercase();
         if crate::function_registry::is_no_paren_function_name_upper(text_upper.as_str()) {
             if !matches!(
                 self.config.dialect,
@@ -40053,7 +40092,7 @@ impl Parser {
 
         // Check if current token is an interval unit keyword (DAY, HOUR, MINUTE, SECOND, YEAR, MONTH)
         let start_unit_name = if !self.is_at_end() {
-            let text = self.peek().text.to_ascii_uppercase();
+            let text = self.peek_text().to_ascii_uppercase();
             if matches!(
                 text.as_str(),
                 "DAY" | "HOUR" | "MINUTE" | "SECOND" | "YEAR" | "MONTH"
@@ -40104,7 +40143,7 @@ impl Parser {
 
         // Parse end unit
         let end_unit_name = if !self.is_at_end() {
-            let text = self.peek().text.to_ascii_uppercase();
+            let text = self.peek_text().to_ascii_uppercase();
             if matches!(
                 text.as_str(),
                 "DAY" | "HOUR" | "MINUTE" | "SECOND" | "YEAR" | "MONTH"
@@ -40216,7 +40255,7 @@ impl Parser {
                 return true;
             }
         }
-        let text_upper = self.peek().text.to_ascii_uppercase();
+        let text_upper = self.peek_text().to_ascii_uppercase();
         if crate::function_registry::is_no_paren_function_name_upper(text_upper.as_str()) {
             if !matches!(
                 self.config.dialect,
@@ -40234,7 +40273,7 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        if self.peek().text.eq_ignore_ascii_case(keyword) {
+        if self.peek_text().eq_ignore_ascii_case(keyword) {
             self.skip();
             true
         } else {
@@ -40275,7 +40314,7 @@ impl Parser {
             return false;
         }
         for text in texts {
-            if self.peek().text.eq_ignore_ascii_case(text) {
+            if self.peek_text().eq_ignore_ascii_case(text) {
                 self.skip();
                 return true;
             }
@@ -40593,7 +40632,7 @@ impl Parser {
         // SQL standard: NATIONAL CHAR/CHARACTER → NCHAR
         if name == "NATIONAL" {
             let next_upper = if !self.is_at_end() {
-                self.peek().text.to_ascii_uppercase()
+                self.peek_text().to_ascii_uppercase()
             } else {
                 String::new()
             };
@@ -41067,7 +41106,7 @@ impl Parser {
                     && !self.check(TokenType::RParen)
                     && !self.check(TokenType::Comma)
                 {
-                    Some(self.advance().text.to_ascii_uppercase())
+                    Some(self.advance_text().to_ascii_uppercase())
                 } else {
                     None
                 };
@@ -41077,7 +41116,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance().text.to_ascii_uppercase())
+                        Some(self.advance_text().to_ascii_uppercase())
                     } else {
                         None
                     }
@@ -41305,7 +41344,7 @@ impl Parser {
                         Some(crate::dialects::DialectType::ClickHouse)
                     ) && self.check(TokenType::String)
                     {
-                        let arg = self.advance().text;
+                        let arg = self.advance_text();
                         self.expect(TokenType::RParen)?;
                         return Ok(DataType::Custom {
                             name: format!("Object('{}')", arg),
@@ -41436,7 +41475,7 @@ impl Parser {
                                 let val = if negative {
                                     format!("-{}", num_token.text)
                                 } else {
-                                    num_token.text.clone()
+                                    num_token.text.to_string()
                                 };
                                 assignments.push(Some(val));
                             } else {
@@ -41593,7 +41632,7 @@ impl Parser {
                                     *last = format!("{} {}", last, token.text);
                                 }
                             } else {
-                                args.push(token.text.clone());
+                                args.push(token.text.to_string());
                             }
                             after_comma = self.match_token(TokenType::Comma);
                         }
@@ -42056,7 +42095,7 @@ impl Parser {
                     && !self.check(TokenType::Not)
                     && !self.check(TokenType::Null)
                 {
-                    Some(self.advance().text.to_ascii_uppercase())
+                    Some(self.advance_text().to_ascii_uppercase())
                 } else {
                     None
                 };
@@ -42066,7 +42105,7 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance().text.to_ascii_uppercase())
+                        Some(self.advance_text().to_ascii_uppercase())
                     } else {
                         None
                     }
@@ -42528,7 +42567,8 @@ impl Parser {
             });
         }
         // Save parser state and temporarily swap in the sub-tokens
-        let saved_tokens = std::mem::replace(&mut self.tokens, tokens);
+        let parser_tokens = tokens.into_iter().map(ParserToken::from).collect();
+        let saved_tokens = std::mem::replace(&mut self.tokens, parser_tokens);
         let saved_current = std::mem::replace(&mut self.current, 0);
         let result = self.parse_data_type();
         // Restore original parser state
@@ -42788,7 +42828,7 @@ impl Parser {
                 || (!paren_style && (self.check(TokenType::Gt) || self.check(TokenType::GtGt)))
             {
                 // Check if we just matched OPTIONS - if so, retreat
-                if self.previous().text.eq_ignore_ascii_case("OPTIONS") {
+                if self.previous_text().eq_ignore_ascii_case("OPTIONS") {
                     self.current -= 1;
                 }
                 // Anonymous field: just a type name
@@ -43020,16 +43060,16 @@ impl Parser {
                     // ClickHouse: allow string literals in EXCEPT ('col_regex')
                     // and keywords like 'key', 'index' as column names
                     let col = if self.check(TokenType::String) {
-                        self.advance().text
+                        self.advance_text()
                     } else if self.is_safe_keyword_as_identifier() {
-                        self.advance().text
+                        self.advance_text()
                     } else {
                         self.expect_identifier()?
                     };
                     // Handle qualified column names like A.COL_1
                     if self.match_token(TokenType::Dot) {
                         let subcol = if self.is_safe_keyword_as_identifier() {
-                            self.advance().text
+                            self.advance_text()
                         } else {
                             self.expect_identifier()?
                         };
@@ -43047,9 +43087,9 @@ impl Parser {
                 // or EXCEPT 'regex' (ClickHouse)
                 loop {
                     let col = if self.check(TokenType::String) {
-                        self.advance().text
+                        self.advance_text()
                     } else if self.is_safe_keyword_as_identifier() {
-                        self.advance().text
+                        self.advance_text()
                     } else {
                         self.expect_identifier()?
                     };
@@ -43185,7 +43225,7 @@ impl Parser {
     /// Peek at current token
     /// Returns reference to current token, or last token if at end
     #[inline]
-    fn peek(&self) -> &Token {
+    fn peek(&self) -> &ParserToken {
         if self.current >= self.tokens.len() {
             // Return last token as fallback when at end
             // In practice, callers should check is_at_end() before calling peek()
@@ -43197,7 +43237,7 @@ impl Parser {
     }
 
     /// Look ahead by n positions (0 = current token)
-    fn peek_nth(&self, n: usize) -> Option<&Token> {
+    fn peek_nth(&self, n: usize) -> Option<&ParserToken> {
         let idx = self.current + n;
         if idx < self.tokens.len() {
             Some(&self.tokens[idx])
@@ -43215,12 +43255,46 @@ impl Parser {
             return self
                 .tokens
                 .last()
-                .cloned()
+                .map(|token| self.materialize_token(token))
                 .expect("Token list should not be empty");
         }
-        let token = self.tokens[self.current].clone();
+        let token = self.materialize_token(&self.tokens[self.current]);
         self.current += 1;
         token
+    }
+
+    #[inline]
+    fn advance_text(&mut self) -> String {
+        if self.current >= self.tokens.len() {
+            return self
+                .tokens
+                .last()
+                .map(ParserToken::text_owned)
+                .expect("Token list should not be empty");
+        }
+        let text = self.tokens[self.current].text_owned();
+        self.current += 1;
+        text
+    }
+
+    #[inline]
+    fn peek_text(&self) -> &str {
+        self.peek().text()
+    }
+
+    #[inline]
+    fn previous_text(&self) -> &str {
+        self.previous().text()
+    }
+
+    fn materialize_token(&self, token: &ParserToken) -> Token {
+        Token {
+            token_type: token.token_type,
+            text: token.text_owned(),
+            span: token.span,
+            comments: token.comments.clone(),
+            trailing_comments: token.trailing_comments.clone(),
+        }
     }
 
     /// Advance to next token without returning it (when result is unused)
@@ -43232,7 +43306,7 @@ impl Parser {
     }
 
     /// Get the previous token (last consumed)
-    fn previous(&self) -> &Token {
+    fn previous(&self) -> &ParserToken {
         &self.tokens[self.current - 1]
     }
 
@@ -43620,7 +43694,7 @@ impl Parser {
             }
 
             prev_token_type = Some(t.token_type);
-            prev_token_text = Some(t.text.clone());
+            prev_token_text = Some(t.text.to_string());
         }
         result
     }
@@ -43668,7 +43742,7 @@ impl Parser {
         if self.is_at_end() {
             false
         } else {
-            self.peek().text.eq_ignore_ascii_case(keyword)
+            self.peek_text().eq_ignore_ascii_case(keyword)
         }
     }
 
@@ -43703,7 +43777,7 @@ impl Parser {
         if (self.check(TokenType::Identifier)
             || self.check(TokenType::Var)
             || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.eq_ignore_ascii_case(text)
+            && self.peek_text().eq_ignore_ascii_case(text)
         {
             self.skip();
             true
@@ -43721,7 +43795,7 @@ impl Parser {
         (self.check(TokenType::Identifier)
             || self.check(TokenType::Var)
             || self.check(TokenType::QuotedIdentifier))
-            && self.peek().text.eq_ignore_ascii_case(text)
+            && self.peek_text().eq_ignore_ascii_case(text)
     }
 
     /// Check if current token is a "safe" keyword that can be used as an identifier.
@@ -43732,11 +43806,11 @@ impl Parser {
         if self.is_at_end() {
             return false;
         }
-        if self.peek().text.eq_ignore_ascii_case("PERCENT") {
+        if self.peek_text().eq_ignore_ascii_case("PERCENT") {
             return true;
         }
         // "%" symbol — only treat as PERCENT modifier if followed by a boundary
-        if self.peek().text == "%" {
+        if self.peek_text() == "%" {
             let next_idx = self.current + 1;
             if next_idx >= self.tokens.len() {
                 return true; // at end — it's PERCENT
@@ -44035,7 +44109,7 @@ impl Parser {
             let got_text = if self.is_at_end() {
                 "".to_string()
             } else {
-                self.peek().text.clone()
+                self.peek_text().to_string()
             };
             let start = self.current.saturating_sub(3);
             let end = (self.current + 4).min(self.tokens.len());
@@ -44067,7 +44141,8 @@ impl Parser {
                 },
                 comments: Vec::new(),
                 trailing_comments: Vec::new(),
-            };
+            }
+            .into();
             Ok(Token {
                 token_type: TokenType::Gt,
                 text: ">".to_string(),
@@ -44095,7 +44170,7 @@ impl Parser {
     /// Expect a string literal and return its value
     fn expect_string(&mut self) -> Result<String> {
         if self.check(TokenType::String) || self.check(TokenType::DollarString) {
-            Ok(self.advance().text)
+            Ok(self.advance_text())
         } else {
             Err(self.parse_error(format!(
                 "Expected string, got {:?}",
@@ -44119,7 +44194,7 @@ impl Parser {
     /// This handles both DAt token and Var tokens that start with @
     fn is_stage_reference(&self) -> bool {
         self.check(TokenType::DAt)
-            || (self.check(TokenType::Var) && self.peek().text.starts_with('@'))
+            || (self.check(TokenType::Var) && self.peek_text().starts_with('@'))
     }
 
     /// Check if the current token could be a MySQL numeric-starting identifier (e.g., 00f, 1d)
@@ -44151,7 +44226,7 @@ impl Parser {
     /// Merges the number token with connected identifier tokens
     fn parse_mysql_numeric_identifier(&mut self) -> Identifier {
         let num_token = self.advance();
-        let mut name = num_token.text.clone();
+        let mut name = num_token.text.to_string();
         // Merge with connected identifier/var tokens
         while !self.is_at_end()
             && self.is_connected()
@@ -44354,7 +44429,7 @@ impl Parser {
     /// Expect an identifier
     fn expect_identifier(&mut self) -> Result<String> {
         if self.is_identifier_token() {
-            Ok(self.advance().text)
+            Ok(self.advance_text())
         } else if self.check(TokenType::LBrace)
             && matches!(
                 self.config.dialect,
@@ -44386,7 +44461,7 @@ impl Parser {
     /// Expect an identifier or keyword (for aliases, column names, etc.)
     fn expect_identifier_or_keyword(&mut self) -> Result<String> {
         if self.is_identifier_or_keyword_token() {
-            Ok(self.advance().text)
+            Ok(self.advance_text())
         } else if self.check(TokenType::LBrace)
             && matches!(
                 self.config.dialect,
@@ -44419,7 +44494,7 @@ impl Parser {
     /// This is more permissive than expect_identifier but excludes structural keywords
     fn expect_identifier_or_safe_keyword(&mut self) -> Result<String> {
         if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-            Ok(self.advance().text)
+            Ok(self.advance_text())
         } else if self.check(TokenType::LBrace)
             && matches!(
                 self.config.dialect,
@@ -44544,7 +44619,7 @@ impl Parser {
     fn expect_number(&mut self) -> Result<i64> {
         let negative = self.match_token(TokenType::Dash);
         if self.check(TokenType::Number) {
-            let text = self.advance().text;
+            let text = self.advance_text();
             let val = text
                 .parse::<i64>()
                 .map_err(|_| self.parse_error(format!("Invalid number: {}", text)))?;
@@ -44744,6 +44819,63 @@ impl Parser {
         self.parse_expression_list_with_capacity(0)
     }
 
+    /// Estimate wide SELECT-list capacity without adding a scan to ordinary queries.
+    fn estimate_select_expression_capacity(&self) -> usize {
+        const MIN_TOKENS_FOR_PREALLOCATION: usize = 128;
+
+        if self.tokens.len().saturating_sub(self.current) < MIN_TOKENS_FOR_PREALLOCATION {
+            return 0;
+        }
+
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut commas = 0usize;
+        let mut has_any_token = false;
+
+        for token in &self.tokens[self.current..] {
+            let token_type = token.token_type;
+            if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                if matches!(
+                    token_type,
+                    TokenType::From
+                        | TokenType::Where
+                        | TokenType::Into
+                        | TokenType::Union
+                        | TokenType::Intersect
+                        | TokenType::Except
+                        | TokenType::Order
+                        | TokenType::Limit
+                        | TokenType::Qualify
+                        | TokenType::Semicolon
+                ) {
+                    break;
+                }
+                if token_type == TokenType::Comma {
+                    commas += 1;
+                }
+            }
+
+            match token_type {
+                TokenType::LParen => paren_depth += 1,
+                TokenType::RParen => {
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                        break;
+                    }
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                TokenType::LBracket => bracket_depth += 1,
+                TokenType::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+                TokenType::LBrace => brace_depth += 1,
+                TokenType::RBrace => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            has_any_token = true;
+        }
+
+        usize::from(has_any_token) + commas
+    }
+
     /// Estimate top-level expression count until the next unmatched `)`.
     ///
     /// This is used for pre-allocating comma-separated lists like `IN (...)`
@@ -44800,7 +44932,7 @@ impl Parser {
             let expr = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
                 let saved_pos = self.current;
                 let ident_token = self.advance();
-                let ident_name = ident_token.text.clone();
+                let ident_name = ident_token.text.to_string();
 
                 // Check for arrow (simple lambda: a -> body)
                 if self.match_token(TokenType::Arrow) {
@@ -45017,7 +45149,7 @@ impl Parser {
             let mut display_name = name.clone();
             if self.match_token(TokenType::LParen) {
                 if self.check(TokenType::Number) {
-                    let len = self.advance().text;
+                    let len = self.advance_text();
                     display_name = format!("{}({})", name, len);
                 }
                 self.expect(TokenType::RParen)?;
@@ -45098,7 +45230,7 @@ impl Parser {
             Some(if self.source.is_some() {
                 self.source_text_range(token.span.start, token.span.end)
             } else {
-                token.text.clone()
+                token.text.to_string()
             })
         } else {
             None
@@ -45163,7 +45295,7 @@ impl Parser {
     pub fn parse_alter_diststyle(&mut self) -> Result<Option<Expression>> {
         // Check for ALL, EVEN, AUTO
         if self.match_texts(&["ALL", "EVEN", "AUTO"]) {
-            let style = self.previous().text.to_ascii_uppercase();
+            let style = self.previous_text().to_ascii_uppercase();
             return Ok(Some(Expression::DistStyleProperty(Box::new(
                 DistStyleProperty {
                     this: Box::new(Expression::Identifier(Identifier::new(style))),
@@ -45263,7 +45395,7 @@ impl Parser {
 
         // Check for AUTO or NONE
         if self.match_texts(&["AUTO", "NONE"]) {
-            let style = self.previous().text.to_ascii_uppercase();
+            let style = self.previous_text().to_ascii_uppercase();
             return Ok(Some(Expression::AlterSortKey(Box::new(AlterSortKey {
                 this: Some(Box::new(Expression::Identifier(Identifier::new(style)))),
                 expressions: Vec::new(),
@@ -45785,7 +45917,7 @@ impl Parser {
 
         // SET LOGGED or SET UNLOGGED
         if self.match_texts(&["LOGGED", "UNLOGGED"]) {
-            let option = self.previous().text.to_ascii_uppercase();
+            let option = self.previous_text().to_ascii_uppercase();
             alter_set.option = Some(Box::new(Expression::Identifier(Identifier::new(option))));
             return Ok(Some(Expression::AlterSet(Box::new(alter_set))));
         }
@@ -45793,7 +45925,7 @@ impl Parser {
         // SET WITHOUT CLUSTER or SET WITHOUT OIDS
         if self.match_text_seq(&["WITHOUT"]) {
             if self.match_texts(&["CLUSTER", "OIDS"]) {
-                let option = format!("WITHOUT {}", self.previous().text.to_ascii_uppercase());
+                let option = format!("WITHOUT {}", self.previous_text().to_ascii_uppercase());
                 alter_set.option = Some(Box::new(Expression::Identifier(Identifier::new(option))));
                 return Ok(Some(Expression::AlterSet(Box::new(alter_set))));
             }
@@ -45925,7 +46057,7 @@ impl Parser {
             "SAMPLE",
         ];
         while self.match_texts(&analyze_styles) {
-            let style = self.previous().text.to_ascii_uppercase();
+            let style = self.previous_text().to_ascii_uppercase();
             if style == "BUFFER_USAGE_LIMIT" {
                 // Parse number after BUFFER_USAGE_LIMIT
                 if let Some(num) = self.parse_number()? {
@@ -45961,7 +46093,7 @@ impl Parser {
         } else if self.match_text_seq(&["TABLES"]) {
             kind = Some("TABLES".to_string());
             if self.match_token(TokenType::From) || self.match_token(TokenType::In) {
-                let dir = self.previous().text.to_ascii_uppercase();
+                let dir = self.previous_text().to_ascii_uppercase();
                 kind = Some(format!("TABLES {}", dir));
                 // Parse database name as identifier
                 let db_name = self.expect_identifier()?;
@@ -45975,7 +46107,7 @@ impl Parser {
             this = self.parse_table_parts()?;
         } else if self.match_texts(&["LOCAL", "NO_WRITE_TO_BINLOG"]) {
             // MySQL: ANALYZE LOCAL TABLE tbl / ANALYZE NO_WRITE_TO_BINLOG TABLE tbl
-            let opt_text = self.previous().text.to_ascii_uppercase();
+            let opt_text = self.previous_text().to_ascii_uppercase();
             options.push(Expression::Identifier(Identifier::new(opt_text)));
             if self.match_token(TokenType::Table) {
                 kind = Some("TABLE".to_string());
@@ -46097,7 +46229,7 @@ impl Parser {
                     // Parse key (can be a string literal or identifier)
                     let key = if self.check(TokenType::String) {
                         self.skip();
-                        let key_str = self.previous().text.clone();
+                        let key_str = self.previous_text().to_string();
                         Expression::Literal(Box::new(Literal::String(key_str)))
                     } else {
                         self.parse_id_var()?
@@ -46144,7 +46276,7 @@ impl Parser {
     /// Python: parser.py:8055-8059
     /// Note: AnalyzeColumns not in expressions.rs, using Identifier instead
     pub fn parse_analyze_columns(&mut self) -> Result<Option<Expression>> {
-        let prev_text = self.previous().text.to_ascii_uppercase();
+        let prev_text = self.previous_text().to_ascii_uppercase();
         if self.match_text_seq(&["COLUMNS"]) {
             return Ok(Some(Expression::Identifier(Identifier::new(format!(
                 "{} COLUMNS",
@@ -46175,7 +46307,7 @@ impl Parser {
     /// parse_analyze_histogram - Parses ANALYZE ... HISTOGRAM ON
     /// Python: parser.py:8073-8108
     pub fn parse_analyze_histogram(&mut self) -> Result<Option<Expression>> {
-        let action = self.previous().text.to_ascii_uppercase(); // DROP or UPDATE
+        let action = self.previous_text().to_ascii_uppercase(); // DROP or UPDATE
         let mut expressions = Vec::new();
         let mut update_options: Option<Box<Expression>> = None;
         let mut expression: Option<Box<Expression>> = None;
@@ -46220,7 +46352,7 @@ impl Parser {
 
         if self.match_token(TokenType::With) {
             if self.match_texts(&["SYNC", "ASYNC"]) {
-                let mode = self.previous().text.to_ascii_uppercase();
+                let mode = self.previous_text().to_ascii_uppercase();
                 if self.match_text_seq(&["MODE"]) {
                     mode_str = Some(format!("WITH {} MODE", mode));
                 }
@@ -46276,7 +46408,7 @@ impl Parser {
 
         // Parse AUTO UPDATE or MANUAL UPDATE (MySQL 8.0.27+)
         if self.match_texts(&["MANUAL", "AUTO"]) {
-            let mode = self.previous().text.to_ascii_uppercase();
+            let mode = self.previous_text().to_ascii_uppercase();
             if self.check(TokenType::Update) {
                 update_options = Some(Box::new(Expression::Identifier(Identifier::new(mode))));
                 self.skip(); // consume UPDATE
@@ -46308,7 +46440,7 @@ impl Parser {
     /// parse_analyze_statistics - Parses ANALYZE ... STATISTICS
     /// Python: parser.py:8002-8031
     pub fn parse_analyze_statistics(&mut self) -> Result<Option<Expression>> {
-        let kind = self.previous().text.to_ascii_uppercase();
+        let kind = self.previous_text().to_ascii_uppercase();
         let option = if self.match_text_seq(&["DELTA"]) {
             Some(Box::new(Expression::Identifier(Identifier::new(
                 "DELTA".to_string(),
@@ -46400,7 +46532,7 @@ impl Parser {
                 ))));
             } else if self.match_text_seq(&["CASCADE", "COMPLETE"]) {
                 if self.match_texts(&["ONLINE", "OFFLINE"]) {
-                    let mode = self.previous().text.to_ascii_uppercase();
+                    let mode = self.previous_text().to_ascii_uppercase();
                     this = Some(Box::new(Expression::Identifier(Identifier::new(format!(
                         "CASCADE COMPLETE {}",
                         mode
@@ -46464,19 +46596,21 @@ impl Parser {
                 let mut opts = Vec::new();
                 loop {
                     // Parse option: KEY [VALUE]
-                    let key_name = self.advance().text.to_ascii_uppercase();
+                    let key_name = self.advance_text().to_ascii_uppercase();
                     let key = Expression::Identifier(Identifier::new(key_name));
                     let value = if !self.check(TokenType::Comma) && !self.check(TokenType::RParen) {
                         // The value can be an identifier, string, boolean, etc.
                         let val_token = self.advance();
                         let val_expr = if val_token.token_type == TokenType::String {
-                            Expression::Literal(Box::new(Literal::String(val_token.text.clone())))
+                            Expression::Literal(Box::new(Literal::String(
+                                val_token.text.to_string(),
+                            )))
                         } else if val_token.token_type == TokenType::True {
                             Expression::Boolean(BooleanLiteral { value: true })
                         } else if val_token.token_type == TokenType::False {
                             Expression::Boolean(BooleanLiteral { value: false })
                         } else {
-                            Expression::Identifier(Identifier::new(val_token.text.clone()))
+                            Expression::Identifier(Identifier::new(val_token.text.to_string()))
                         };
                         Some(Box::new(val_expr))
                     } else {
@@ -46585,7 +46719,7 @@ impl Parser {
         if self.match_identifier("PREPARE") {
             // Parse the statement name
             let name = if !self.is_at_end() && !self.check(TokenType::Semicolon) {
-                self.advance().text.clone()
+                self.advance_text()
             } else {
                 String::new()
             };
@@ -46605,7 +46739,7 @@ impl Parser {
             let mut parts = vec!["DEALLOCATE".to_string()];
             while !self.is_at_end() && !self.check(TokenType::Semicolon) {
                 let token = self.advance();
-                parts.push(token.text.clone());
+                parts.push(token.text.to_string());
             }
             Ok(Expression::Command(Box::new(Command {
                 this: parts.join(" "),
@@ -46623,7 +46757,7 @@ impl Parser {
         let start_text = if self.current > 0 {
             self.tokens
                 .get(self.current - 1)
-                .map(|t| t.text.clone())
+                .map(|t| t.text.to_string())
                 .unwrap_or_default()
         } else {
             String::new()
@@ -46633,7 +46767,7 @@ impl Parser {
         let mut tokens_info: Vec<(String, TokenType)> = Vec::new();
         while !self.is_at_end() {
             let token = self.advance();
-            tokens_info.push((token.text.clone(), token.token_type.clone()));
+            tokens_info.push((token.text.to_string(), token.token_type.clone()));
         }
 
         // Join tokens intelligently, avoiding spaces around punctuation
@@ -46692,7 +46826,7 @@ impl Parser {
                 if self.tokens[i].token_type == TokenType::String {
                     parts.push(format!("'{}'", self.tokens[i].text.replace('\'', "''")));
                 } else {
-                    parts.push(self.tokens[i].text.clone());
+                    parts.push(self.tokens[i].text.to_string());
                 }
             }
             parts.join(" ")
@@ -47096,7 +47230,7 @@ impl Parser {
             let tok = self.advance();
             Some(Box::new(Expression::Var(Box::new(
                 crate::expressions::Var {
-                    this: tok.text.clone(),
+                    this: tok.text.to_string(),
                 },
             ))))
         } else {
@@ -47544,7 +47678,7 @@ impl Parser {
             Some(crate::dialects::DialectType::ClickHouse)
         ) {
             if self.match_texts(&["HIERARCHICAL", "IS_OBJECT_ID", "INJECTIVE"]) {
-                let attr_name = self.previous().text.to_ascii_uppercase();
+                let attr_name = self.previous_text().to_ascii_uppercase();
                 return Ok(Some(Expression::Property(Box::new(
                     crate::expressions::Property {
                         this: Box::new(Expression::Identifier(Identifier::new(attr_name))),
@@ -47833,7 +47967,7 @@ impl Parser {
     /// Used for commands that we don't have specific parsing for
     pub fn parse_command(&mut self) -> Result<Option<Expression>> {
         // Get the command keyword from the previous token
-        let command_text = self.previous().text.to_ascii_uppercase();
+        let command_text = self.previous_text().to_ascii_uppercase();
 
         // Collect remaining tokens as the command expression (until statement end)
         // Use (text, token_type) tuples for smart spacing with join_command_tokens
@@ -47858,7 +47992,7 @@ impl Parser {
             } else if token.token_type == TokenType::String {
                 format!("'{}'", token.text)
             } else {
-                token.text.clone()
+                token.text.to_string()
             };
             tokens.push((text, token.token_type));
         }
@@ -48141,7 +48275,7 @@ impl Parser {
                 if let Some(func) = self.parse_function()? {
                     Some(Box::new(func))
                 } else if !self.is_at_end() {
-                    let type_name = self.advance().text.clone();
+                    let type_name = self.advance_text();
                     if self.check(TokenType::LParen) {
                         self.skip();
                         let mut args = Vec::new();
@@ -48219,7 +48353,7 @@ impl Parser {
                 })?;
                 let type_str = if self.match_token(TokenType::Type) {
                     if !self.is_at_end() {
-                        let t = self.advance().text.clone();
+                        let t = self.advance_text();
                         format!(" TYPE {}", t)
                     } else {
                         String::new()
@@ -48347,7 +48481,7 @@ impl Parser {
                 && self.match_texts(&["AVRO", "JSON"])
             {
                 // FORMAT AS AVRO/JSON
-                let format_type = self.previous().text.to_ascii_uppercase();
+                let format_type = self.previous_text().to_ascii_uppercase();
                 let field = self.parse_field()?;
                 (
                     Some(Expression::Var(Box::new(Var {
@@ -48945,7 +49079,7 @@ impl Parser {
             id
         } else if self.match_token(TokenType::Mod) {
             // % wildcard for any host
-            Expression::Identifier(Identifier::new(self.previous().text.clone()))
+            Expression::Identifier(Identifier::new(self.previous_text().to_string()))
         } else {
             return Ok(None);
         };
@@ -48999,7 +49133,7 @@ impl Parser {
         // Parse the kind (e.g., HASHED, FLAT, CLICKHOUSE, CACHE, etc.)
         // Accept Var, Identifier, or keyword tokens as the kind name
         let kind_str = if self.is_identifier_token() || self.check_keyword() {
-            self.advance().text.clone()
+            self.advance_text()
         } else {
             String::new()
         };
@@ -49014,10 +49148,10 @@ impl Parser {
                 let key = if let Some(k) = self.parse_id_var()? {
                     Some(k)
                 } else if self.is_safe_keyword_as_identifier() || self.check_keyword() {
-                    let name = self.advance().text.clone();
+                    let name = self.advance_text();
                     Some(Expression::Identifier(Identifier::new(name)))
                 } else if !self.check(TokenType::RParen) && !self.check(TokenType::Comma) {
-                    let name = self.advance().text.clone();
+                    let name = self.advance_text();
                     Some(Expression::Identifier(Identifier::new(name)))
                 } else {
                     None
@@ -49113,7 +49247,7 @@ impl Parser {
                     .is_some_and(|t| t.token_type == TokenType::Number)
             {
                 parser.advance(); // consume -
-                let num = parser.advance().text.clone();
+                let num = parser.advance().text.to_string();
                 return Ok(Some(Expression::Literal(Box::new(Literal::Number(
                     format!("-{}", num),
                 )))));
@@ -49124,10 +49258,10 @@ impl Parser {
             parser.parse_primary_or_var()
         };
 
-        let (min_val, max_val) = if self.peek().text.eq_ignore_ascii_case("MIN") {
+        let (min_val, max_val) = if self.peek_text().eq_ignore_ascii_case("MIN") {
             self.skip(); // consume MIN
             let min = parse_bound(self)?;
-            if self.peek().text.eq_ignore_ascii_case("MAX") {
+            if self.peek_text().eq_ignore_ascii_case("MAX") {
                 self.skip(); // consume MAX
             }
             let max = parse_bound(self)?;
@@ -49765,7 +49899,7 @@ impl Parser {
 
         loop {
             let is_table_or_model_arg = !self.is_at_end()
-                && (self.check(TokenType::Table) || self.peek().text.eq_ignore_ascii_case("MODEL"));
+                && (self.check(TokenType::Table) || self.peek_text().eq_ignore_ascii_case("MODEL"));
 
             let expr_start = self.current;
 
@@ -49773,7 +49907,7 @@ impl Parser {
             let expr = if let Some(star_like) = self.parse_clickhouse_bare_star_like()? {
                 Some(star_like)
             } else if is_table_or_model_arg {
-                let prefix = self.peek().text.to_ascii_uppercase();
+                let prefix = self.peek_text().to_ascii_uppercase();
                 let saved_pos = self.current;
                 self.skip(); // consume TABLE or MODEL
 
@@ -49818,12 +49952,12 @@ impl Parser {
                     let alias_token = self.advance();
                     let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
                         // Preserve quoted identifiers
-                        let raw = alias_token.text.clone();
+                        let raw = alias_token.text.to_string();
                         let mut ident = Identifier::new(raw);
                         ident.quoted = true;
                         ident
                     } else {
-                        Identifier::new(alias_token.text.clone())
+                        Identifier::new(alias_token.text.to_string())
                     };
                     args.push(Expression::Alias(Box::new(crate::expressions::Alias {
                         this: expr,
@@ -49857,7 +49991,7 @@ impl Parser {
 
         let token = self.peek().clone();
         let token_type = token.token_type.clone();
-        let name = token.text.clone();
+        let name = token.text.to_string();
         let _upper_name = name.to_ascii_uppercase();
 
         // Check for no-paren functions like CURRENT_DATE, CURRENT_TIMESTAMP
@@ -50156,7 +50290,7 @@ impl Parser {
             }
 
             // Get the current token text
-            let text = self.peek().text.to_ascii_uppercase();
+            let text = self.peek_text().to_ascii_uppercase();
             privilege_parts.push(text);
             self.skip();
         }
@@ -50225,7 +50359,7 @@ impl Parser {
             "ROLE",
             "USER",
         ]) {
-            let kind_text = self.previous().text.to_ascii_uppercase();
+            let kind_text = self.previous_text().to_ascii_uppercase();
             Some(Expression::Var(Box::new(Var { this: kind_text })))
         } else {
             None
@@ -50475,7 +50609,7 @@ impl Parser {
     pub fn parse_heredoc(&mut self) -> Result<Option<Expression>> {
         // Check if current token is a HEREDOC_STRING type
         if self.match_token(TokenType::HeredocString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Heredoc(Box::new(Heredoc {
                 this: Box::new(Expression::Literal(Box::new(Literal::String(text)))),
                 tag: None,
@@ -50493,7 +50627,7 @@ impl Parser {
 
         // Check if next token is connected (no whitespace) and collect tag
         if !self.is_at_end() {
-            let next_text = self.peek().text.to_ascii_uppercase();
+            let next_text = self.peek_text().to_ascii_uppercase();
             if next_text == "$" {
                 // Simple $$ ... $$ case
                 self.skip();
@@ -50519,7 +50653,7 @@ impl Parser {
 
         while !self.is_at_end() {
             // Build current sequence to check for closing tag
-            let current_text = self.peek().text.clone();
+            let current_text = self.peek_text().to_string();
 
             // Check if we've reached the closing tag
             if current_text == "$" || current_text.eq_ignore_ascii_case(&closing_tag) {
@@ -50527,7 +50661,7 @@ impl Parser {
                 let start_pos = self.current;
                 let mut matched = true;
                 for expected in &tags {
-                    if self.is_at_end() || !self.peek().text.eq_ignore_ascii_case(expected) {
+                    if self.is_at_end() || !self.peek_text().eq_ignore_ascii_case(expected) {
                         matched = false;
                         break;
                     }
@@ -50546,7 +50680,7 @@ impl Parser {
                 self.current = start_pos;
             }
 
-            content_parts.push(self.advance().text.clone());
+            content_parts.push(self.advance_text());
         }
 
         Err(self.parse_error(&format!("No closing {} found", closing_tag)))
@@ -50566,7 +50700,7 @@ impl Parser {
         let mut parts = Vec::new();
         while !self.is_at_end() {
             let token = self.advance();
-            parts.push(token.text.clone());
+            parts.push(token.text.to_string());
         }
 
         if parts.is_empty() {
@@ -50595,7 +50729,7 @@ impl Parser {
 
         // Check for AT, BEFORE, or END keywords
         let this = if self.match_texts(&["AT", "BEFORE", "END"]) {
-            self.previous().text.to_ascii_uppercase()
+            self.previous_text().to_ascii_uppercase()
         } else {
             return Ok(None);
         };
@@ -50608,7 +50742,7 @@ impl Parser {
         }
 
         let kind = if self.match_texts(&["OFFSET", "STATEMENT", "STREAM", "TIMESTAMP", "VERSION"]) {
-            self.previous().text.to_ascii_uppercase()
+            self.previous_text().to_ascii_uppercase()
         } else {
             // Backtrack if not the right pattern
             self.current = start_index;
@@ -50647,7 +50781,7 @@ impl Parser {
 
         // Try to match Var token type
         if self.match_token(TokenType::Var) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Identifier(Identifier {
                 name: text,
                 quoted: false,
@@ -50658,7 +50792,7 @@ impl Parser {
 
         // Try to match string as identifier (some dialects allow this)
         if self.match_token(TokenType::String) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Identifier(Identifier {
                 name: text,
                 quoted: true,
@@ -50691,7 +50825,7 @@ impl Parser {
         // Match quoted identifiers (e.g., "column_name" or `column_name`)
         if self.match_token(TokenType::QuotedIdentifier) || self.match_token(TokenType::Identifier)
         {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             let quoted = self.previous().token_type == TokenType::QuotedIdentifier;
             return Ok(Some(Expression::Identifier(Identifier {
                 name: text,
@@ -50714,7 +50848,7 @@ impl Parser {
                 if self.source.is_some() {
                     self.source_text_range(token.span.start, token.span.end)
                 } else {
-                    token.text.clone()
+                    token.text.to_string()
                 }
             });
 
@@ -51163,7 +51297,7 @@ impl Parser {
             Expression::Null(_) => {
                 // Just return as an identifier
                 Ok(Some(Expression::Identifier(Identifier {
-                    name: token.text.clone(),
+                    name: token.text.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
                     span: None,
@@ -51171,7 +51305,7 @@ impl Parser {
             }
             _ => Ok(Some(Expression::Introducer(Box::new(Introducer {
                 this: Box::new(Expression::Identifier(Identifier {
-                    name: token.text.clone(),
+                    name: token.text.to_string(),
                     quoted: false,
                     trailing_comments: Vec::new(),
                     span: None,
@@ -51286,7 +51420,7 @@ impl Parser {
 
         // Check for CROSS APPLY / OUTER APPLY (SQL Server)
         if self.match_text_seq(&["CROSS", "APPLY"]) || self.match_text_seq(&["OUTER", "APPLY"]) {
-            let is_outer = self.previous().text.eq_ignore_ascii_case("OUTER");
+            let is_outer = self.previous_text().eq_ignore_ascii_case("OUTER");
             let table = self.parse_table_expression()?;
             return Ok(Some(Expression::Join(Box::new(Join {
                 this: table,
@@ -51346,21 +51480,21 @@ impl Parser {
     pub fn parse_join_parts(&mut self) -> (Option<String>, Option<String>, Option<String>) {
         // Parse join method (ASOF, NATURAL, POSITIONAL)
         let method = if self.match_texts(&["ASOF", "NATURAL", "POSITIONAL"]) {
-            Some(self.previous().text.to_ascii_uppercase())
+            Some(self.previous_text().to_ascii_uppercase())
         } else {
             None
         };
 
         // Parse join side (LEFT, RIGHT, FULL)
         let side = if self.match_texts(&["LEFT", "RIGHT", "FULL"]) {
-            Some(self.previous().text.to_ascii_uppercase())
+            Some(self.previous_text().to_ascii_uppercase())
         } else {
             None
         };
 
         // Parse join kind (ANTI, CROSS, INNER, OUTER, SEMI)
         let kind = if self.match_texts(&["ANTI", "CROSS", "INNER", "OUTER", "SEMI"]) {
-            Some(self.previous().text.to_ascii_uppercase())
+            Some(self.previous_text().to_ascii_uppercase())
         } else if self.match_token(TokenType::StraightJoin) {
             Some("STRAIGHT_JOIN".to_string())
         } else {
@@ -52282,7 +52416,7 @@ impl Parser {
     pub fn parse_match_recognize_measure(&mut self) -> Result<Option<Expression>> {
         // Check for optional FINAL or RUNNING keyword
         let window_frame = if self.match_texts(&["FINAL", "RUNNING"]) {
-            let text = self.previous().text.to_ascii_uppercase();
+            let text = self.previous_text().to_ascii_uppercase();
             Some(if text == "FINAL" {
                 MatchRecognizeSemantics::Final
             } else {
@@ -52969,7 +53103,7 @@ impl Parser {
         overwrite: bool,
     ) -> Result<Option<Expression>> {
         // Get kind from previous token (ALL or FIRST)
-        let kind = self.previous().text.to_ascii_uppercase();
+        let kind = self.previous_text().to_ascii_uppercase();
 
         let mut expressions = Vec::new();
 
@@ -53351,7 +53485,7 @@ impl Parser {
     /// Handles Hive/Spark numeric suffixes encoded as "number::TYPE" by the tokenizer
     pub fn parse_number(&mut self) -> Result<Option<Expression>> {
         if self.match_token(TokenType::Number) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             // Check for numeric literal suffix encoded as "number::TYPE"
             if let Some(sep_pos) = text.find("::") {
                 let num_part = &text[..sep_pos];
@@ -53405,7 +53539,7 @@ impl Parser {
         if !self.match_token(TokenType::Var) {
             return Ok(None);
         }
-        let type_indicator = self.previous().text.to_lowercase();
+        let type_indicator = self.previous_text().to_lowercase();
 
         // Parse the string value
         let value = self.parse_string()?;
@@ -53643,7 +53777,7 @@ impl Parser {
             // Collect the operator text between parens
             let mut op_text = String::new();
             while !self.check(TokenType::RParen) && !self.is_at_end() {
-                op_text.push_str(&self.peek().text);
+                op_text.push_str(&self.peek_text());
                 self.skip();
             }
             self.expect(TokenType::RParen)?;
@@ -53869,7 +54003,7 @@ impl Parser {
     pub fn parse_parameter(&mut self) -> Result<Option<Expression>> {
         // Check for parameter token types
         if self.match_token(TokenType::Parameter) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Parameter(Box::new(Parameter {
                 name: Some(text),
                 index: None,
@@ -53882,7 +54016,7 @@ impl Parser {
 
         // Check for session parameter (@@name)
         if self.match_token(TokenType::SessionParameter) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::SessionParameter(Box::new(
                 SessionParameter {
                     this: Box::new(Expression::Identifier(Identifier::new(text))),
@@ -53915,7 +54049,7 @@ impl Parser {
             self.config.dialect,
             Some(crate::dialects::DialectType::ClickHouse)
         ) && self.check(TokenType::Var)
-            && self.peek().text.eq_ignore_ascii_case("EXPLAIN")
+            && self.peek_text().eq_ignore_ascii_case("EXPLAIN")
         {
             let query = self.parse_clickhouse_command_until_rparen()?;
             self.expect(TokenType::RParen)?;
@@ -54005,7 +54139,7 @@ impl Parser {
             return Ok(None);
         }
 
-        let subpartition = self.previous().text.eq_ignore_ascii_case("SUBPARTITION");
+        let subpartition = self.previous_text().eq_ignore_ascii_case("SUBPARTITION");
 
         // Parse wrapped CSV of disjunction expressions
         if !self.match_token(TokenType::LParen) {
@@ -54130,7 +54264,7 @@ impl Parser {
         }
 
         // Determine if it's BUCKET or TRUNCATE based on previous token
-        let is_bucket = self.previous().text.eq_ignore_ascii_case("BUCKET");
+        let is_bucket = self.previous_text().eq_ignore_ascii_case("BUCKET");
 
         // Parse wrapped arguments
         self.expect(TokenType::LParen)?;
@@ -54366,7 +54500,7 @@ impl Parser {
         let every = if self.match_token(TokenType::Interval) {
             let number = self.parse_expression()?;
             let unit = if self.is_identifier_token() || self.is_safe_keyword_as_identifier() {
-                let unit_text = self.advance().text.to_ascii_uppercase();
+                let unit_text = self.advance_text().to_ascii_uppercase();
                 // Convert unit text to IntervalUnit
                 let interval_unit = match unit_text.as_str() {
                     "YEAR" | "YEARS" => crate::expressions::IntervalUnit::Year,
@@ -54740,7 +54874,7 @@ impl Parser {
         // Process pipe syntax chain: |> transform1 |> transform2 |> ...
         while self.match_token(TokenType::PipeGt) {
             let start_pos = self.current;
-            let operator_text = self.peek().text.to_ascii_uppercase();
+            let operator_text = self.peek_text().to_ascii_uppercase();
 
             // Try to match known pipe syntax transforms
             let transform_result = match operator_text.as_str() {
@@ -54984,7 +55118,7 @@ impl Parser {
         }
         // Match colon placeholder (:name) - handled by Parameter token
         if self.match_token(TokenType::Parameter) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Parameter(Box::new(Parameter {
                 name: Some(text),
                 index: None,
@@ -55016,7 +55150,7 @@ impl Parser {
             self.current = start;
             return Ok(None);
         }
-        let name = self.advance().text.clone();
+        let name = self.advance_text();
 
         if !self.match_token(TokenType::Colon) {
             self.current = start;
@@ -55267,7 +55401,7 @@ impl Parser {
                 // Parse ON DELETE/UPDATE action
                 let on_what = if !self.is_at_end() {
                     let token = self.advance();
-                    token.text.clone()
+                    token.text.to_string()
                 } else {
                     break;
                 };
@@ -55455,7 +55589,7 @@ impl Parser {
         } else if let Some(id_expr) = self.parse_id_var()? {
             id_expr
         } else if self.is_safe_keyword_as_identifier() {
-            let name = self.advance().text;
+            let name = self.advance_text();
             Expression::Identifier(Identifier {
                 name,
                 quoted: false,
@@ -55688,7 +55822,7 @@ impl Parser {
             );
             if is_delimiter {
                 let alias_token = self.advance();
-                let alias_name = alias_token.text.clone();
+                let alias_name = alias_token.text.to_string();
                 return Expression::Alias(Box::new(crate::expressions::Alias::new(
                     expr,
                     Identifier::new(alias_name),
@@ -55990,7 +56124,7 @@ impl Parser {
             );
             if is_delimiter {
                 let alias_token = self.advance();
-                let alias_name = alias_token.text.clone();
+                let alias_name = alias_token.text.to_string();
                 return Expression::Alias(Box::new(crate::expressions::Alias::new(
                     expr,
                     Identifier::new(alias_name),
@@ -56020,11 +56154,11 @@ impl Parser {
                 self.skip(); // consume AS
                 let alias_token = self.advance();
                 let alias_name = if alias_token.token_type == TokenType::QuotedIdentifier {
-                    let mut ident = Identifier::new(alias_token.text.clone());
+                    let mut ident = Identifier::new(alias_token.text.to_string());
                     ident.quoted = true;
                     ident
                 } else {
-                    Identifier::new(alias_token.text.clone())
+                    Identifier::new(alias_token.text.to_string())
                 };
                 return Expression::Alias(Box::new(crate::expressions::Alias::new(
                     expr, alias_name,
@@ -56042,7 +56176,7 @@ impl Parser {
 
         let token = self.advance();
         let quoted = matches!(token.token_type, TokenType::QuotedIdentifier);
-        let name = token.text.clone();
+        let name = token.text.to_string();
 
         let ident = Expression::Identifier(Identifier {
             name,
@@ -56794,7 +56928,7 @@ impl Parser {
         if !self.is_at_end() {
             let token = self.advance();
             Ok(Some(Expression::Var(Box::new(Var {
-                this: token.text.clone(),
+                this: token.text.to_string(),
             }))))
         } else {
             Ok(None)
@@ -57251,7 +57385,7 @@ impl Parser {
         // Parse right side: value
         // First try string literals (preserve quoting), then booleans/numbers, then identifiers
         let right_val = if self.check(TokenType::String) {
-            let text = self.advance().text.clone();
+            let text = self.advance_text();
             Expression::Literal(Box::new(Literal::String(text)))
         } else if self.check(TokenType::False) {
             self.skip();
@@ -58153,45 +58287,45 @@ impl Parser {
     pub fn parse_string(&mut self) -> Result<Option<Expression>> {
         // Regular string literal
         if self.match_token(TokenType::String) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
         // National string (N'...')
         if self.match_token(TokenType::NationalString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(
                 Literal::NationalString(text),
             ))));
         }
         // Raw string (r"..." or r'...')
         if self.match_token(TokenType::RawString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::RawString(
                 text,
             )))));
         }
         // Heredoc string
         if self.match_token(TokenType::HeredocString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
         // Hex string (X'...' or 0x...)
         if self.match_token(TokenType::HexString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::HexString(
                 text,
             )))));
         }
         // Bit string (B'...')
         if self.match_token(TokenType::BitString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::BitString(
                 text,
             )))));
         }
         // Byte string (b"..." - BigQuery style)
         if self.match_token(TokenType::ByteString) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Literal(Box::new(Literal::ByteString(
                 text,
             )))));
@@ -58277,7 +58411,7 @@ impl Parser {
     /// Used for cases where a string can be used as an identifier (e.g., MySQL)
     pub fn parse_string_as_identifier(&mut self) -> Result<Option<Expression>> {
         if self.match_token(TokenType::String) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             // Remove quotes if present
             let name = if text.starts_with('\'') && text.ends_with('\'') && text.len() >= 2 {
                 text[1..text.len() - 1].to_string()
@@ -58719,7 +58853,7 @@ impl Parser {
 
         let alias_token = self.advance();
         let is_quoted = alias_token.token_type == TokenType::QuotedIdentifier;
-        let mut alias_ident = Identifier::new(alias_token.text.clone());
+        let mut alias_ident = Identifier::new(alias_token.text.to_string());
         if is_quoted {
             alias_ident.quoted = true;
         }
@@ -58783,7 +58917,7 @@ impl Parser {
         } else {
             // MySQL style: USE INDEX, IGNORE INDEX, FORCE INDEX
             while self.match_texts(&["USE", "IGNORE", "FORCE"]) {
-                let hint_type = self.previous().text.to_ascii_uppercase();
+                let hint_type = self.previous_text().to_ascii_uppercase();
 
                 // Match INDEX or KEY
                 let _ = self.match_texts(&["INDEX", "KEY"]);
@@ -58824,7 +58958,7 @@ impl Parser {
                             || self.check(TokenType::PrimaryKey)
                         {
                             // Accept keywords as index names (e.g., PRIMARY)
-                            let name = self.advance().text.clone();
+                            let name = self.advance_text();
                             ids.push(Expression::Identifier(Identifier::new(name)));
                         } else {
                             break;
@@ -58961,7 +59095,7 @@ impl Parser {
         // Accept keywords as identifiers in table part context (e.g., db.cluster where "cluster" is a keyword)
         // This mirrors Python sqlglot's ID_VAR_TOKENS which includes many keyword types
         if self.check_keyword_as_identifier() {
-            let text = self.peek().text.clone();
+            let text = self.peek_text().to_string();
             self.skip();
             return Ok(Some(Expression::Identifier(Identifier {
                 name: text,
@@ -59307,12 +59441,12 @@ impl Parser {
                     while !self.is_at_end() {
                         if paren_depth == 0
                             && (self.check(TokenType::Comma)
-                                || self.peek().text.eq_ignore_ascii_case("DELETE")
-                                || self.peek().text.eq_ignore_ascii_case("RECOMPRESS")
-                                || self.peek().text.eq_ignore_ascii_case("TO")
-                                || self.peek().text.eq_ignore_ascii_case("WHERE")
-                                || self.peek().text.eq_ignore_ascii_case("GROUP")
-                                || self.peek().text.eq_ignore_ascii_case("SET"))
+                                || self.peek_text().eq_ignore_ascii_case("DELETE")
+                                || self.peek_text().eq_ignore_ascii_case("RECOMPRESS")
+                                || self.peek_text().eq_ignore_ascii_case("TO")
+                                || self.peek_text().eq_ignore_ascii_case("WHERE")
+                                || self.peek_text().eq_ignore_ascii_case("GROUP")
+                                || self.peek_text().eq_ignore_ascii_case("SET"))
                         {
                             break;
                         }
@@ -59580,7 +59714,7 @@ impl Parser {
         let index_type = if self.match_token(TokenType::Using) {
             self.skip();
             Some(Box::new(Expression::Var(Box::new(Var {
-                this: self.previous().text.clone(),
+                this: self.previous_text().to_string(),
             }))))
         } else {
             None
@@ -59645,7 +59779,7 @@ impl Parser {
             ) {
                 let has_as = self.match_token(TokenType::As);
                 if has_as || self.check(TokenType::Identifier) || self.check(TokenType::Var) {
-                    let alias_name = self.advance().text;
+                    let alias_name = self.advance_text();
                     offset_alias = Some(crate::expressions::Identifier {
                         name: alias_name,
                         quoted: false,
@@ -59664,7 +59798,7 @@ impl Parser {
             if self.check(TokenType::Identifier) || self.check(TokenType::QuotedIdentifier) {
                 let is_quoted = self.check(TokenType::QuotedIdentifier);
                 let token = self.advance();
-                let mut ident = Identifier::new(token.text.clone());
+                let mut ident = Identifier::new(token.text.to_string());
                 if is_quoted {
                     ident.quoted = true;
                 }
@@ -59865,7 +59999,7 @@ impl Parser {
                 loop {
                     // Support DEFAULT keyword in VALUES
                     if self.match_texts(&["DEFAULT"]) {
-                        let text = self.previous().text.to_ascii_uppercase();
+                        let text = self.previous_text().to_ascii_uppercase();
                         expressions.push(Expression::Var(Box::new(Var { this: text })));
                     } else {
                         // Try to parse an expression
@@ -59908,7 +60042,7 @@ impl Parser {
     /// Python: if self._match(TokenType.VAR): return exp.Var(this=self._prev.text)
     pub fn parse_var(&mut self) -> Result<Option<Expression>> {
         if self.match_token(TokenType::Var) {
-            let text = self.previous().text.clone();
+            let text = self.previous_text().to_string();
             return Ok(Some(Expression::Var(Box::new(Var { this: text }))));
         }
         // Fall back to placeholder parsing
@@ -59995,7 +60129,7 @@ impl Parser {
         // Parse the kind and expression
         let (kind, expression) = if self.match_texts(&["FROM", "BETWEEN"]) {
             // FROM start TO end or BETWEEN start AND end
-            let kind_str = self.previous().text.to_ascii_uppercase();
+            let kind_str = self.previous_text().to_ascii_uppercase();
             let start = self.parse_bitwise()?;
             self.match_texts(&["TO", "AND"]);
             let end = self.parse_bitwise()?;
@@ -60482,7 +60616,7 @@ impl Parser {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
-            let name = self.peek().text.clone();
+            let name = self.peek_text().to_string();
             self.skip();
             Some(Expression::Var(Box::new(Var { this: name })))
         } else {
@@ -60527,7 +60661,7 @@ impl Parser {
             primary
         } else {
             // Fallback: try to parse as a var
-            let text = self.peek().text.clone();
+            let text = self.peek_text().to_string();
             self.skip();
             Expression::Var(Box::new(Var { this: text }))
         };
@@ -60544,14 +60678,14 @@ impl Parser {
     fn parse_primary_for_option(&mut self) -> Result<Option<Expression>> {
         // String literal
         if self.check(TokenType::String) {
-            let text = self.peek().text.clone();
+            let text = self.peek_text().to_string();
             self.skip();
             return Ok(Some(Expression::Literal(Box::new(Literal::String(text)))));
         }
 
         // Number
         if self.check(TokenType::Number) {
-            let text = self.peek().text.clone();
+            let text = self.peek_text().to_string();
             self.skip();
             return Ok(Some(Expression::Literal(Box::new(Literal::Number(text)))));
         }
@@ -60574,7 +60708,7 @@ impl Parser {
                 && !self.check(TokenType::Eq)
                 && !self.is_at_end())
         {
-            let text = self.peek().text.clone();
+            let text = self.peek_text().to_string();
             // Don't consume if it's a closing paren or could be the next property key followed by =
             if self.check(TokenType::RParen) {
                 return Ok(None);
@@ -60685,7 +60819,7 @@ impl Parser {
             if let Some(Expression::Identifier(id)) = self.parse_identifier()? {
                 columns.push(id);
             } else if self.is_identifier_or_keyword_token() {
-                let name = self.advance().text;
+                let name = self.advance_text();
                 columns.push(Identifier {
                     name,
                     quoted: false,
@@ -61013,7 +61147,7 @@ impl Parser {
             loop {
                 // Check for stop keywords before parsing a column
                 if !self.is_at_end() {
-                    let next_text = self.peek().text.to_ascii_uppercase();
+                    let next_text = self.peek_text().to_ascii_uppercase();
                     if next_text == "COLUMNS" || next_text == "RETURNING" {
                         break;
                     }
@@ -61090,12 +61224,12 @@ impl Parser {
     fn parse_unload(&mut self) -> Result<Expression> {
         // Collect entire statement as a Command
         let mut parts = Vec::new();
-        parts.push(self.advance().text.clone()); // consume UNLOAD
+        parts.push(self.advance_text()); // consume UNLOAD
         parts.push(" ".to_string()); // space after UNLOAD
 
         while !self.is_at_end() && !self.check(TokenType::Semicolon) {
             let token_type = self.peek().token_type;
-            let token_text = self.peek().text.clone();
+            let token_text = self.peek_text().to_string();
 
             // Track string literals
             if token_type == TokenType::String {
@@ -61128,7 +61262,7 @@ impl Parser {
                 // Collect until RBracket
                 while !self.is_at_end() && !self.check(TokenType::RBracket) {
                     let inner_type = self.peek().token_type;
-                    let inner_text = self.peek().text.clone();
+                    let inner_text = self.peek_text().to_string();
                     if inner_type == TokenType::String {
                         parts.push(format!("'{}'", inner_text.replace('\'', "''")));
                     } else {
@@ -61202,7 +61336,7 @@ impl Parser {
                     if self.tokens[i].token_type == TokenType::String {
                         parts.push(format!("'{}'", self.tokens[i].text.replace('\'', "''")));
                     } else {
-                        parts.push(self.tokens[i].text.clone());
+                        parts.push(self.tokens[i].text.to_string());
                     }
                     if i + 1 < self.current {
                         parts.push(" ".to_string());

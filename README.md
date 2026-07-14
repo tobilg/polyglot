@@ -1,8 +1,8 @@
 # Polyglot
 
-Rust/Wasm-powered SQL transpiler for 32+ dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
+Rust/Wasm-powered SQL transpiler for more than 30 SQL dialects, inspired by [sqlglot](https://github.com/tobymao/sqlglot).
 
-Polyglot parses, generates, transpiles, and formats SQL across 32+ database dialects. It ships as:
+Polyglot parses, generates, transpiles, and formats SQL across more than 30 SQL dialects. It ships as:
 - a Rust crate ([`polyglot-sql`](https://crates.io/crates/polyglot-sql/))
 - a TypeScript/WASM SDK ([`@polyglot-sql/sdk`](https://www.npmjs.com/package/@polyglot-sql/sdk))
 - a Python package ([`polyglot-sql`](https://pypi.org/project/polyglot-sql/))
@@ -14,7 +14,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Features
 
-- **Transpile** SQL between any pair of 32 dialects
+- **Transpile** SQL between any pair of more than 30 SQL dialects
 - **Parse** SQL into a fully-typed AST
 - **Generate** SQL back from AST nodes
 - **Format** / pretty-print SQL
@@ -27,7 +27,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 - **C FFI** shared/static library for multi-language bindings (`polyglot-sql-ffi`)
 - **Python bindings** powered by PyO3 (`polyglot-sql` on PyPI)
 
-## Supported Dialects (32)
+## Supported Dialects
 
 | | | | | |
 |---|---|---|---|---|
@@ -37,7 +37,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 | MySQL | Oracle | PostgreSQL | Presto | Redshift |
 | RisingWave | SingleStore | Snowflake | Solr | Spark |
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
-| Trino | TSQL | | | |
+| Trino | TSQL | DataFusion | Generic SQL | |
 
 ## Quick Start
 
@@ -277,7 +277,7 @@ If you want to disable `stacker` for a native Rust build, turn off default featu
 
 ```toml
 [dependencies]
-polyglot-sql = { version = "0.4.0", default-features = false, features = ["all-dialects", "transpile"] }
+polyglot-sql = { version = "0.6.0", default-features = false, features = ["all-dialects", "transpile"] }
 ```
 
 That can reduce overhead slightly on trusted inputs, but you lose the default stack-growth protection for deeply nested SQL.
@@ -445,6 +445,10 @@ make bench-python           # Python sqlglot benchmarks (JSON output)
 cargo bench -p polyglot-sql  # Criterion benchmarks
 ```
 
+SQLGlot comparison targets build Polyglot with the same `python_release` profile used for
+published Python wheels. This keeps benchmark optimizer settings aligned with the shipped Python
+package; the first build can take several minutes because it uses thin LTO.
+
 ### Fuzzing
 
 ```bash
@@ -464,7 +468,7 @@ cargo +nightly fuzz run fuzz_transpile
 | `make generate-ffi-header` | Generate C header via cbindgen/build.rs |
 | `make build-ffi-example` | Build + run C example against FFI lib |
 | `make develop-python` | Build/install Python extension in uv-managed env |
-| `make build-python` | Build Python wheels with maturin |
+| `make build-python` | Build Python wheels with maturin (`python_release` profile) |
 | `make test-ffi` | Run FFI integration tests |
 | `make test-rust` | Run SQLGlot-named Rust tests in `polyglot-sql` |
 | `make test-rust-all` | Run all 10,220 SQLGlot fixture cases |

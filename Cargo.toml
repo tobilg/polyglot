@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/polyglot-sql",
+    "crates/polyglot-sql-ast-derive",
     "crates/polyglot-sql-function-catalogs",
     "crates/polyglot-sql-wasm",
     "crates/polyglot-sql-ffi",
@@ -12,7 +13,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.5.16"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 authors = ["polyglot contributors"]
@@ -51,6 +52,16 @@ inherits = "release"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[profile.native_release]
+inherits = "release"
+opt-level = 3
+panic = "unwind"
+
+[profile.python_release]
+inherits = "release"
+opt-level = 2
+lto = "thin"
 
 [profile.ffi_release]
 inherits = "release"

@@ -1,6 +1,6 @@
 # Polyglot SQL
 
-Rust/Wasm-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across 32 database dialects.
+Rust/Wasm-powered SQL transpiler for TypeScript. Parse, generate, transpile, format, and build SQL across more than 30 SQL dialects.
 
 ## Packages
 
@@ -76,7 +76,7 @@ Default guard values: `maxInputBytes=16 MiB`, `maxTokens=1_000_000`, `maxAstNode
 
 ## Supported Dialects
 
-Athena, BigQuery, ClickHouse, CockroachDB, Databricks, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL (SQL Server), and Doris.
+Athena, BigQuery, ClickHouse, CockroachDB, DataFusion, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Generic SQL, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, and TSQL (SQL Server).
 
 ## Links
 

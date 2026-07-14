@@ -469,12 +469,8 @@ export function isInitialized(): boolean {
  * @returns The transpiled SQL statements
  *
  * @remarks
- * **Per-dialect builds:** When using a per-dialect sub-path import
- * (e.g., `@polyglot-sql/sdk/clickhouse`), only same-dialect transpilation
- * and conversion to/from {@link Dialect.Generic} are supported.
- * Cross-dialect transpilation (e.g., ClickHouse → PostgreSQL) will return
- * `{ success: false, error: "Cross-dialect transpilation not available in this build" }`.
- * Use {@link getDialects} to check which dialects are available at runtime.
+ * The published npm package includes all supported dialects. Use
+ * {@link getDialects} to inspect the dialects available in the loaded WASM module.
  *
  * @example
  * ```typescript
@@ -501,7 +497,12 @@ export function transpile(
       }
       if (typeof wasm.transpile_with_options === 'function') {
         return JSON.parse(
-          wasm.transpile_with_options(sql, read, write, JSON.stringify(options)),
+          wasm.transpile_with_options(
+            sql,
+            read,
+            write,
+            JSON.stringify(options),
+          ),
         ) as TranspileResult;
       }
       return {
@@ -748,9 +749,8 @@ export function formatWithOptions(
 /**
  * Get list of supported dialects in this build.
  *
- * The full build (`@polyglot-sql/sdk`) includes all 34 dialects.
- * Per-dialect builds (e.g., `@polyglot-sql/sdk/clickhouse`) include only
- * `"generic"` and the selected dialect.
+ * The published npm package includes all supported dialects. Custom WASM builds
+ * created from source can expose a subset selected through Cargo features.
  *
  * Use this function to check dialect availability before calling {@link transpile}.
  *
@@ -759,8 +759,7 @@ export function formatWithOptions(
  * @example
  * ```typescript
  * const dialects = getDialects();
- * // Full build: ["generic", "postgresql", "mysql", "bigquery", ...]
- * // Per-dialect: ["generic", "clickhouse"]
+ * // ["generic", "postgresql", "mysql", "bigquery", ...]
  *
  * if (dialects.includes("postgresql")) {
  *   // Safe to transpile to PostgreSQL
@@ -920,8 +919,7 @@ export class Polyglot {
    * Transpile SQL from one dialect to another.
    *
    * @remarks
-   * Per-dialect builds only support same-dialect and to/from Generic transpilation.
-   * Use {@link Polyglot.getDialects} to check available dialects.
+   * Use {@link Polyglot.getDialects} to inspect available dialects.
    */
   transpile(
     sql: string,
@@ -993,7 +991,6 @@ export class Polyglot {
 
   /**
    * Get supported dialects in this build.
-   * Per-dialect builds return only `"generic"` and the selected dialect.
    */
   getDialects(): string[] {
     return getDialects();
@@ -1133,6 +1130,7 @@ export {
 export type { DiffEdit, DiffOptions, DiffResult, EditType } from './diff';
 // Re-export diff module
 export { changesOnly, diff, hasChanges } from './diff';
+export type { DataType } from './generated/DataType';
 export type {
   LineageNode,
   LineageResult,
@@ -1168,7 +1166,6 @@ export type {
   SetOperationType,
   StepKind,
 } from './planner';
-export type { DataType } from './generated/DataType';
 // Re-export planner module
 export { plan } from './planner';
 export type {
