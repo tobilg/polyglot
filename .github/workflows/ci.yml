@@ -491,37 +491,59 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish dependency crate to crates.io
+      - name: Publish dependency crates to crates.io
         run: |
           set -euo pipefail
-          crate="polyglot-sql-function-catalogs"
+          version="${GITHUB_REF_NAME#v}"
+          crates=(
+            "polyglot-sql-ast-derive"
+            "polyglot-sql-function-catalogs"
+          )
+          for crate in "${crates[@]}"; do
+            if ./scripts/check-crate-version.sh "$crate" "$version"; then
+              echo "${crate} ${version} already present on crates.io"
+            else
+              cargo publish -p "$crate"
+            fi
+          done
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for dependency crates index availability
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          crates=(
+            "polyglot-sql-ast-derive"
+            "polyglot-sql-function-catalogs"
+          )
+          for crate in "${crates[@]}"; do
+            available=false
+            for attempt in $(seq 1 30); do
+              if ./scripts/check-crate-version.sh "$crate" "$version"; then
+                echo "${crate} ${version} is available on crates.io"
+                available=true
+                break
+              fi
+              echo "Waiting for ${crate} ${version} to appear on crates.io (attempt ${attempt}/30)"
+              sleep 10
+            done
+            if [[ "$available" != true ]]; then
+              echo "Timed out waiting for ${crate} ${version} to appear on crates.io"
+              exit 1
+            fi
+          done
+
+      - name: Publish main crate to crates.io
+        run: |
+          set -euo pipefail
+          crate="polyglot-sql"
           version="${GITHUB_REF_NAME#v}"
           if ./scripts/check-crate-version.sh "$crate" "$version"; then
             echo "${crate} ${version} already present on crates.io"
           else
             cargo publish -p "$crate"
           fi
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Wait for dependency crate index availability
-        run: |
-          set -euo pipefail
-          crate="polyglot-sql-function-catalogs"
-          version="${GITHUB_REF_NAME#v}"
-          for attempt in $(seq 1 30); do
-            if ./scripts/check-crate-version.sh "$crate" "$version"; then
-              echo "${crate} ${version} is available on crates.io"
-              exit 0
-            fi
-            echo "Waiting for ${crate} ${version} to appear on crates.io (attempt ${attempt}/30)"
-            sleep 10
-          done
-          echo "Timed out waiting for ${crate} ${version} to appear on crates.io"
-          exit 1
-
-      - name: Publish main crate to crates.io
-        run: cargo publish -p polyglot-sql
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

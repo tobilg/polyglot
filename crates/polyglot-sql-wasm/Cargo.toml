@@ -7,6 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 description = "WebAssembly bindings for polyglot-sql"
+publish = false
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-producers"]

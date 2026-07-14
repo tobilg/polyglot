@@ -99,7 +99,7 @@ function-catalog-all-dialects = [
 ]
 
 [dependencies]
-polyglot-sql-ast-derive = { path = "../polyglot-sql-ast-derive" }
+polyglot-sql-ast-derive = { path = "../polyglot-sql-ast-derive", version = "0.6.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

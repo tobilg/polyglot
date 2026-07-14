@@ -43,6 +43,62 @@ class ConsistencyCheckerTests(unittest.TestCase):
 
             self.assertTrue(any("packages/sdk/package.json" in issue for issue in issues))
 
+    def test_version_check_reports_unversioned_publishable_path_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self._write_version_fixture(root, package_version="0.6.0")
+            metadata = self._metadata(
+                root,
+                package_version="0.6.0",
+                dependencies=[
+                    {
+                        "name": "polyglot-sql-ast-derive",
+                        "path": str(root / "crates/polyglot-sql-ast-derive"),
+                        "req": "*",
+                        "kind": None,
+                    }
+                ],
+            )
+
+            issues = consistency.check_versions(root, metadata)
+
+            self.assertTrue(any("must specify version '0.6.0'" in issue for issue in issues))
+
+    def test_version_check_reports_nonpublishable_path_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            self._write_version_fixture(root, package_version="0.6.0")
+            metadata = self._metadata(
+                root,
+                package_version="0.6.0",
+                dependencies=[
+                    {
+                        "name": "polyglot-sql-ast-derive",
+                        "path": str(root / "crates/polyglot-sql-ast-derive"),
+                        "req": "^0.6.0",
+                        "kind": None,
+                    }
+                ],
+            )
+            derive_id = f"path+file://{root}/crates/polyglot-sql-ast-derive#0.6.0"
+            metadata["workspace_members"].append(derive_id)
+            metadata["packages"].append(
+                {
+                    "id": derive_id,
+                    "name": "polyglot-sql-ast-derive",
+                    "version": "0.6.0",
+                    "manifest_path": str(
+                        root / "crates/polyglot-sql-ast-derive/Cargo.toml"
+                    ),
+                    "dependencies": [],
+                    "publish": [],
+                }
+            )
+
+            issues = consistency.check_versions(root, metadata)
+
+            self.assertTrue(any("depends on non-publishable package" in issue for issue in issues))
+
     def test_historical_versions_are_outside_active_copy_check(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -87,7 +143,9 @@ class ConsistencyCheckerTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _metadata(root: Path, package_version: str) -> dict:
+    def _metadata(
+        root: Path, package_version: str, dependencies: list[dict] | None = None
+    ) -> dict:
         package_id = f"path+file://{root}/crates/polyglot-sql#0.6.0"
         return {
             "workspace_members": [package_id],
@@ -97,7 +155,8 @@ class ConsistencyCheckerTests(unittest.TestCase):
                     "name": "polyglot-sql",
                     "version": package_version,
                     "manifest_path": str(root / "crates/polyglot-sql/Cargo.toml"),
-                    "dependencies": [],
+                    "dependencies": dependencies or [],
+                    "publish": None,
                 }
             ],
         }

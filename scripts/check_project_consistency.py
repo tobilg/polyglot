@@ -64,24 +64,48 @@ def check_versions(root: Path, metadata: dict | None = None) -> list[str]:
     expected = workspace_version(root)
     metadata = metadata or cargo_metadata(root)
     workspace_members = set(metadata["workspace_members"])
+    workspace_packages = {
+        package["name"]: package
+        for package in metadata["packages"]
+        if package["id"] in workspace_members
+    }
 
-    for package in metadata["packages"]:
-        if package["id"] not in workspace_members:
-            continue
+    for package in workspace_packages.values():
         if package["version"] != expected:
             issues.append(
                 f"{package['manifest_path']}: package version {package['version']!r} "
                 f"does not match workspace version {expected!r}"
             )
         for dependency in package["dependencies"]:
-            if (
+            if not (
                 dependency["name"].startswith("polyglot-sql")
                 and dependency.get("path")
-                and not _version_requirement_matches(dependency["req"], expected)
             ):
+                continue
+
+            requirement = dependency["req"]
+            if not _version_requirement_matches(requirement, expected):
                 issues.append(
                     f"{package['manifest_path']}: dependency {dependency['name']!r} uses "
-                    f"{dependency['req']!r}, expected {expected!r}"
+                    f"{requirement!r}, expected {expected!r}"
+                )
+
+            package_is_publishable = package.get("publish") != []
+            dependency_is_runtime = dependency.get("kind") != "dev"
+            if not (package_is_publishable and dependency_is_runtime):
+                continue
+
+            if requirement == "*":
+                issues.append(
+                    f"{package['manifest_path']}: publishable package dependency "
+                    f"{dependency['name']!r} must specify version {expected!r}"
+                )
+
+            dependency_package = workspace_packages.get(dependency["name"])
+            if dependency_package and dependency_package.get("publish") == []:
+                issues.append(
+                    f"{package['manifest_path']}: publishable package depends on "
+                    f"non-publishable package {dependency['name']!r}"
                 )
 
     for package_path in sorted((root / "packages").glob("*/package.json")):
