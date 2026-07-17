@@ -15,11 +15,18 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
   through the Rust, Python, C FFI, Go, WASM, and TypeScript parse/generate APIs.
 
 ### Changed
+- CTE-heavy lineage now indexes each scope once and traverses stable scope IDs
+  instead of repeatedly cloning nested CTE scope trees. The public `Scope` and
+  lineage APIs remain unchanged, while benchmarks now cover flat, nested, and
+  multiply referenced CTE shapes.
 - Strict PostgreSQL/CockroachDB-to-T-SQL/Fabric transpilation now keeps the
   existing best-effort `VARCHAR(MAX)` conversion for column-to-text casts whose
   source type is unavailable, rather than rejecting otherwise valid queries.
 
 ### Fixed
+- PostgreSQL-family parsing now accepts parenthesized `EXPLAIN` option lists,
+  including comma-separated flags and values, while preserving parenthesized
+  query bodies and normalizing `ANALYZE` consistently with the bare form.
 - PostgreSQL compound intervals now retain all fields and lower through
   operand-aware `DATEADD` chains for T-SQL/Fabric, including fractional
   seconds, subtraction, and `TIME` wraparound. Strict mode rejects unresolved

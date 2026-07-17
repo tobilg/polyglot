@@ -18,7 +18,6 @@ use crate::scope::{
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 
 /// A node in the column lineage graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +72,20 @@ fn source_kind_for_scope_context(
     source_name: &str,
     reference_node_name: &str,
 ) -> SourceKind {
+    source_kind_for_scope_context_with_type(
+        scope,
+        scope.scope_type,
+        source_name,
+        reference_node_name,
+    )
+}
+
+fn source_kind_for_scope_context_with_type(
+    scope: &Scope,
+    scope_type: ScopeType,
+    source_name: &str,
+    reference_node_name: &str,
+) -> SourceKind {
     if source_name.is_empty() && reference_node_name.is_empty() {
         return SourceKind::Root;
     }
@@ -82,7 +95,7 @@ fn source_kind_for_scope_context(
     if scope.cte_sources.contains_key(source_name) {
         return SourceKind::Cte;
     }
-    match scope.scope_type {
+    match scope_type {
         ScopeType::Cte => SourceKind::Cte,
         ScopeType::DerivedTable => SourceKind::DerivedTable,
         ScopeType::Udtf => SourceKind::Virtual,
@@ -99,6 +112,23 @@ fn apply_scope_context(
     node.source_name = source_name.to_string();
     node.reference_node_name = reference_node_name.to_string();
     node.source_kind = source_kind_for_scope_context(scope, source_name, reference_node_name);
+}
+
+fn apply_scope_context_with_type(
+    node: &mut LineageNode,
+    scope: &Scope,
+    scope_type: ScopeType,
+    source_name: &str,
+    reference_node_name: &str,
+) {
+    node.source_name = source_name.to_string();
+    node.reference_node_name = reference_node_name.to_string();
+    node.source_kind = source_kind_for_scope_context_with_type(
+        scope,
+        scope_type,
+        source_name,
+        reference_node_name,
+    );
 }
 
 /// Iterator for walking the lineage graph
@@ -229,7 +259,7 @@ fn lineage_from_expression(
     let scope = build_scope(sql);
     to_node(
         ColumnRef::Name(column),
-        &scope,
+        scope,
         dialect,
         "",
         "",
@@ -249,7 +279,7 @@ pub(crate) fn lineage_by_index_from_expression(
     let scope = build_scope(&normalized);
     to_node(
         ColumnRef::Index(column_index),
-        &scope,
+        scope,
         dialect,
         "",
         "",
@@ -801,19 +831,81 @@ pub fn collect_source_tables(node: &LineageNode, tables: &mut HashSet<String>) {
 /// on circular or deeply nested CTE chains.
 const MAX_LINEAGE_DEPTH: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ScopeId(usize);
+
+struct IndexedScope {
+    scope: Scope,
+    subquery_scopes: Vec<ScopeId>,
+    derived_table_scopes: Vec<ScopeId>,
+    cte_scopes: Vec<ScopeId>,
+    union_scopes: Vec<ScopeId>,
+}
+
+struct LineageScopeContext {
+    scopes: Vec<IndexedScope>,
+}
+
+impl LineageScopeContext {
+    fn from_scope(scope: Scope) -> (Self, ScopeId) {
+        let mut context = Self { scopes: Vec::new() };
+        let root = context.insert_scope(scope);
+        (context, root)
+    }
+
+    fn insert_scope(&mut self, mut scope: Scope) -> ScopeId {
+        let subquery_scopes = std::mem::take(&mut scope.subquery_scopes)
+            .into_iter()
+            .map(|child| self.insert_scope(child))
+            .collect();
+        let derived_table_scopes = std::mem::take(&mut scope.derived_table_scopes)
+            .into_iter()
+            .map(|child| self.insert_scope(child))
+            .collect();
+        let cte_scopes = std::mem::take(&mut scope.cte_scopes)
+            .into_iter()
+            .map(|child| self.insert_scope(child))
+            .collect();
+        let union_scopes = std::mem::take(&mut scope.union_scopes)
+            .into_iter()
+            .map(|child| self.insert_scope(child))
+            .collect();
+
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(IndexedScope {
+            scope,
+            subquery_scopes,
+            derived_table_scopes,
+            cte_scopes,
+            union_scopes,
+        });
+        id
+    }
+
+    fn indexed(&self, id: ScopeId) -> &IndexedScope {
+        &self.scopes[id.0]
+    }
+
+    fn scope(&self, id: ScopeId) -> &Scope {
+        &self.indexed(id).scope
+    }
+}
+
 /// Recursively build a lineage node for a column in a scope.
 fn to_node(
     column: ColumnRef<'_>,
-    scope: &Scope,
+    scope: Scope,
     dialect: Option<DialectType>,
     scope_name: &str,
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
 ) -> Result<LineageNode> {
+    let (context, scope_id) = LineageScopeContext::from_scope(scope);
     to_node_inner(
         column,
-        scope,
+        &context,
+        scope_id,
         dialect,
         scope_name,
         source_name,
@@ -826,13 +918,14 @@ fn to_node(
 
 fn to_node_inner(
     column: ColumnRef<'_>,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     scope_name: &str,
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
-    ancestor_cte_scopes: &[Rc<Scope>],
+    ancestor_cte_scopes: &[ScopeId],
     depth: usize,
 ) -> Result<LineageNode> {
     if depth > MAX_LINEAGE_DEPTH {
@@ -840,18 +933,13 @@ fn to_node_inner(
             "lineage recursion depth exceeded (>{MAX_LINEAGE_DEPTH}) — possible circular CTE reference for scope '{scope_name}'"
         )));
     }
+    let scope = context.scope(scope_id);
     let scope_expr = &scope.expression;
 
     // Build combined CTE scopes: current scope's cte_scopes + ancestors
-    let mut all_cte_scopes: Vec<Rc<Scope>> = scope
-        .cte_scopes
-        .iter()
-        .map(|s| Rc::new(s.clone()))
-        .collect();
-    for s in ancestor_cte_scopes {
-        all_cte_scopes.push(Rc::clone(s));
-    }
-    let descendant_cte_scopes = descendant_cte_scope_clones(&all_cte_scopes, scope);
+    let mut all_cte_scopes = context.indexed(scope_id).cte_scopes.clone();
+    all_cte_scopes.extend_from_slice(ancestor_cte_scopes);
+    let descendant_cte_scopes = descendant_cte_scope_ids(&all_cte_scopes, scope_id);
 
     // 0. Unwrap CTE scope — CTE scope expressions are Expression::Cte(...)
     //    but we need the inner query (SELECT/UNION) for column lookup.
@@ -862,30 +950,12 @@ fn to_node_inner(
         effective_expr,
         Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_)
     ) {
-        // For CTE wrapping a set op, create a temporary scope with the inner expression
-        if matches!(scope_expr, Expression::Cte(_)) {
-            let mut inner_scope = Scope::new(effective_expr.clone());
-            inner_scope.union_scopes = scope.union_scopes.clone();
-            inner_scope.sources = scope.sources.clone();
-            inner_scope.cte_sources = scope.cte_sources.clone();
-            inner_scope.cte_scopes = scope.cte_scopes.clone();
-            inner_scope.derived_table_scopes = scope.derived_table_scopes.clone();
-            inner_scope.subquery_scopes = scope.subquery_scopes.clone();
-            return handle_set_operation(
-                &column,
-                &inner_scope,
-                dialect,
-                scope_name,
-                source_name,
-                reference_node_name,
-                trim_selects,
-                &descendant_cte_scopes,
-                depth,
-            );
-        }
         return handle_set_operation(
             &column,
-            scope,
+            context,
+            scope_id,
+            effective_expr,
+            matches!(scope_expr, Expression::Cte(_)).then_some(ScopeType::Root),
             dialect,
             scope_name,
             source_name,
@@ -954,11 +1024,12 @@ fn to_node_inner(
 
     // 6. Subqueries in select — trace through scalar subqueries
     for query in query_expressions_in_scope(&select_expr) {
-        for sq_scope in &scope.subquery_scopes {
-            if sq_scope.expression == *query {
+        for &sq_scope_id in &context.indexed(scope_id).subquery_scopes {
+            if context.scope(sq_scope_id).expression == *query {
                 if let Ok(child) = to_node_inner(
                     ColumnRef::Index(0),
-                    sq_scope,
+                    context,
+                    sq_scope_id,
                     dialect,
                     &column_name,
                     "",
@@ -982,7 +1053,8 @@ fn to_node_inner(
             let tbl = &table_id.name;
             resolve_qualified_column(
                 &mut node,
-                scope,
+                context,
+                scope_id,
                 dialect,
                 tbl,
                 col_name,
@@ -1001,7 +1073,8 @@ fn to_node_inner(
                     if let Some(ref table_id) = alias_ref.table {
                         resolve_qualified_column(
                             &mut node,
-                            scope,
+                            context,
+                            scope_id,
                             dialect,
                             &table_id.name,
                             &alias_ref.column,
@@ -1013,7 +1086,8 @@ fn to_node_inner(
                     } else {
                         resolve_unqualified_column(
                             &mut node,
-                            scope,
+                            context,
+                            scope_id,
                             dialect,
                             &alias_ref.column,
                             &column_name,
@@ -1028,7 +1102,8 @@ fn to_node_inner(
 
             resolve_unqualified_column(
                 &mut node,
-                scope,
+                context,
+                scope_id,
                 dialect,
                 col_name,
                 &column_name,
@@ -1042,24 +1117,12 @@ fn to_node_inner(
     Ok(node)
 }
 
-fn descendant_cte_scope_clones(
-    all_cte_scopes: &[Rc<Scope>],
-    current_scope: &Scope,
-) -> Vec<Rc<Scope>> {
+fn descendant_cte_scope_ids(all_cte_scopes: &[ScopeId], current_scope: ScopeId) -> Vec<ScopeId> {
     all_cte_scopes
         .iter()
-        .filter(|scope| !is_same_cte_scope(scope, current_scope))
-        .map(Rc::clone)
+        .copied()
+        .filter(|scope| *scope != current_scope)
         .collect()
-}
-
-fn is_same_cte_scope(a: &Scope, b: &Scope) -> bool {
-    match (&a.expression, &b.expression) {
-        (Expression::Cte(x), Expression::Cte(y)) => {
-            x.alias.name == y.alias.name && a.expression == b.expression
-        }
-        _ => a.expression == b.expression,
-    }
 }
 
 fn effective_scope_expression(expr: &Expression) -> &Expression {
@@ -1113,16 +1176,19 @@ fn query_expressions_in_scope(expr: &Expression) -> Vec<&Expression> {
 
 fn handle_set_operation(
     column: &ColumnRef<'_>,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
+    scope_expr: &Expression,
+    scope_type_override: Option<ScopeType>,
     dialect: Option<DialectType>,
     scope_name: &str,
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
-    ancestor_cte_scopes: &[Rc<Scope>],
+    ancestor_cte_scopes: &[ScopeId],
     depth: usize,
 ) -> Result<LineageNode> {
-    let scope_expr = &scope.expression;
+    let scope = context.scope(scope_id);
 
     // Determine column index
     let col_index = match column {
@@ -1136,13 +1202,24 @@ fn handle_set_operation(
     };
 
     let mut node = LineageNode::new(&col_name, scope_expr.clone(), scope_expr.clone());
-    apply_scope_context(&mut node, scope, source_name, reference_node_name);
+    if let Some(scope_type) = scope_type_override {
+        apply_scope_context_with_type(
+            &mut node,
+            scope,
+            scope_type,
+            source_name,
+            reference_node_name,
+        );
+    } else {
+        apply_scope_context(&mut node, scope, source_name, reference_node_name);
+    }
 
     // Recurse into each union branch
-    for branch_scope in &scope.union_scopes {
+    for &branch_scope_id in &context.indexed(scope_id).union_scopes {
         if let Ok(child) = to_node_inner(
             ColumnRef::Index(col_index),
-            branch_scope,
+            context,
+            branch_scope_id,
             dialect,
             scope_name,
             "",
@@ -1164,15 +1241,17 @@ fn handle_set_operation(
 
 fn resolve_qualified_column(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     table: &str,
     col_name: &str,
     parent_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) {
+    let scope = context.scope(scope_id);
     // Resolve CTE alias: if `table` is a FROM alias for a CTE (e.g., `FROM my_cte AS t`),
     // resolve it to the actual CTE name so the CTE scope lookup succeeds.
     let resolved_cte_name = resolve_cte_alias(scope, table);
@@ -1187,7 +1266,8 @@ fn resolve_qualified_column(
             Expression::Pivot(pivot) => {
                 if attach_pivot_dependencies(
                     node,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     pivot,
                     col_name,
@@ -1201,7 +1281,8 @@ fn resolve_qualified_column(
             Expression::Unpivot(unpivot) => {
                 if attach_unpivot_dependencies(
                     node,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     unpivot,
                     col_name,
@@ -1220,13 +1301,16 @@ fn resolve_qualified_column(
     // and ancestor CTE scopes (for sibling CTEs in parent WITH clauses).
     let is_cte = scope.cte_sources.contains_key(effective_table)
         || all_cte_scopes.iter().any(
-            |s| matches!(&s.expression, Expression::Cte(cte) if cte.alias.name == effective_table),
+            |scope_id| matches!(&context.scope(*scope_id).expression, Expression::Cte(cte) if cte.alias.name == effective_table),
         );
     if is_cte {
-        if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, effective_table) {
+        if let Some(child_scope_id) =
+            find_child_scope_in(context, all_cte_scopes, scope_id, effective_table)
+        {
             if let Ok(child) = to_node_inner(
                 ColumnRef::Name(col_name),
-                child_scope,
+                context,
+                child_scope_id,
                 dialect,
                 parent_name,
                 effective_table,
@@ -1258,10 +1342,11 @@ fn resolve_qualified_column(
     // Check if table is a derived table (is_scope = true in sources)
     if let Some(source_info) = scope.sources.get(table) {
         if source_info.is_scope {
-            if let Some(child_scope) = find_child_scope(scope, table) {
+            if let Some(child_scope_id) = find_child_scope(context, scope_id, table) {
                 if let Ok(child) = to_node_inner(
                     ColumnRef::Name(col_name),
-                    child_scope,
+                    context,
+                    child_scope_id,
                     dialect,
                     parent_name,
                     table,
@@ -1285,7 +1370,8 @@ fn resolve_qualified_column(
             if source_info.kind == SourceKind::Virtual {
                 attach_virtual_source_dependencies(
                     &mut child,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     table,
                     &source_info.expression,
@@ -1306,18 +1392,20 @@ fn resolve_qualified_column(
 
 fn attach_pivot_dependencies(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     pivot: &crate::expressions::Pivot,
     col_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) -> bool {
     if pivot.unpivot {
         return false;
     }
 
+    let scope = context.scope(scope_id);
     let mapping = pivot_lineage_column_mapping(pivot, scope, dialect);
     let Some(input_columns) = mapping.get(&normalize_column_name(col_name, dialect)) else {
         if pivot_implicit_source_column(pivot, col_name) {
@@ -1327,7 +1415,8 @@ fn attach_pivot_dependencies(
             };
             attach_pivot_input_column(
                 node,
-                scope,
+                context,
+                scope_id,
                 dialect,
                 &pivot.this,
                 &col_ref,
@@ -1343,7 +1432,8 @@ fn attach_pivot_dependencies(
     for col_ref in input_columns {
         attach_pivot_input_column(
             node,
-            scope,
+            context,
+            scope_id,
             dialect,
             &pivot.this,
             col_ref,
@@ -1357,12 +1447,13 @@ fn attach_pivot_dependencies(
 
 fn attach_unpivot_dependencies(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     unpivot: &crate::expressions::Unpivot,
     col_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) -> bool {
     let mapping = unpivot_column_mapping(unpivot, dialect);
@@ -1373,7 +1464,8 @@ fn attach_unpivot_dependencies(
     for col_ref in input_columns {
         attach_pivot_input_column(
             node,
-            scope,
+            context,
+            scope_id,
             dialect,
             &unpivot.this,
             col_ref,
@@ -1689,14 +1781,16 @@ fn unpivot_entry_columns(expr: &Expression) -> Vec<SimpleColumnRef> {
 
 fn attach_pivot_input_column(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     source_expr: &Expression,
     col_ref: &SimpleColumnRef,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) {
+    let scope = context.scope(scope_id);
     match source_expr {
         Expression::Table(table) => {
             let table_name = col_ref
@@ -1707,7 +1801,8 @@ fn attach_pivot_input_column(
             if scope.cte_sources.contains_key(table_name) {
                 resolve_qualified_column(
                     node,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     table_name,
                     &col_ref.column,
@@ -1738,7 +1833,11 @@ fn attach_pivot_input_column(
             }
         }
         Expression::Subquery(subquery) => {
-            let source_scope = build_scope(&subquery.this);
+            let Some(source_scope_id) =
+                find_derived_scope_for_query(context, scope_id, &subquery.this)
+            else {
+                return;
+            };
             let child = if let Some(table) = &col_ref.table {
                 let mut child_node = LineageNode::new(
                     &col_ref.column,
@@ -1747,7 +1846,8 @@ fn attach_pivot_input_column(
                 );
                 resolve_qualified_column(
                     &mut child_node,
-                    &source_scope,
+                    context,
+                    source_scope_id,
                     dialect,
                     &table.name,
                     &col_ref.column,
@@ -1760,7 +1860,8 @@ fn attach_pivot_input_column(
             } else {
                 to_node_inner(
                     ColumnRef::Name(&col_ref.column),
-                    &source_scope,
+                    context,
+                    source_scope_id,
                     dialect,
                     "",
                     "",
@@ -1776,7 +1877,8 @@ fn attach_pivot_input_column(
         }
         Expression::Paren(paren) => attach_pivot_input_column(
             node,
-            scope,
+            context,
+            scope_id,
             dialect,
             &paren.this,
             col_ref,
@@ -1788,7 +1890,8 @@ fn attach_pivot_input_column(
             if let Some(table) = &col_ref.table {
                 resolve_qualified_column(
                     node,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     &table.name,
                     &col_ref.column,
@@ -1831,14 +1934,16 @@ fn resolve_cte_alias(scope: &Scope, name: &str) -> Option<String> {
 
 fn resolve_unqualified_column(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     col_name: &str,
     parent_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) {
+    let scope = context.scope(scope_id);
     // Try to find which source this column belongs to.
     // Build the source list from the actual FROM/JOIN clauses to avoid
     // mixing in CTE definitions that are in scope but not referenced.
@@ -1847,7 +1952,8 @@ fn resolve_unqualified_column(
     if let Some(tbl) = unique_virtual_source_for_column(scope, &from_source_names, col_name) {
         resolve_qualified_column(
             node,
-            scope,
+            context,
+            scope_id,
             dialect,
             &tbl,
             col_name,
@@ -1863,7 +1969,8 @@ fn resolve_unqualified_column(
         let tbl = &from_source_names[0];
         resolve_qualified_column(
             node,
-            scope,
+            context,
+            scope_id,
             dialect,
             tbl,
             col_name,
@@ -1997,14 +2104,16 @@ fn default_virtual_output_columns(expr: &Expression) -> Box<dyn Iterator<Item = 
 
 fn attach_virtual_source_dependencies(
     node: &mut LineageNode,
-    scope: &Scope,
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
     dialect: Option<DialectType>,
     source_alias: &str,
     source_expr: &Expression,
     trim_selects: bool,
-    all_cte_scopes: &[Rc<Scope>],
+    all_cte_scopes: &[ScopeId],
     depth: usize,
 ) {
+    let scope = context.scope(scope_id);
     let parent_name = node.name.clone();
     let mut seen = HashSet::new();
     for col_ref in find_column_refs_in_expr(source_expr, dialect) {
@@ -2023,7 +2132,8 @@ fn attach_virtual_source_dependencies(
             }
             resolve_qualified_column(
                 node,
-                scope,
+                context,
+                scope_id,
                 dialect,
                 &table,
                 &col_ref.column,
@@ -2037,7 +2147,8 @@ fn attach_virtual_source_dependencies(
             if non_virtual_sources.len() == 1 {
                 resolve_qualified_column(
                     node,
-                    scope,
+                    context,
+                    scope_id,
                     dialect,
                     &non_virtual_sources[0],
                     &col_ref.column,
@@ -2438,13 +2549,21 @@ fn trim_source(select_expr: &Expression, target_expr: &Expression) -> Expression
 }
 
 /// Find the child scope (CTE or derived table) for a given source name.
-fn find_child_scope<'a>(scope: &'a Scope, source_name: &str) -> Option<&'a Scope> {
+fn find_child_scope(
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
+    source_name: &str,
+) -> Option<ScopeId> {
+    let indexed = context.indexed(scope_id);
+    let scope = &indexed.scope;
+
     // Check CTE scopes
     if scope.cte_sources.contains_key(source_name) {
-        for cte_scope in &scope.cte_scopes {
+        for &cte_scope_id in &indexed.cte_scopes {
+            let cte_scope = context.scope(cte_scope_id);
             if let Expression::Cte(cte) = &cte_scope.expression {
                 if cte.alias.name == source_name {
-                    return Some(cte_scope);
+                    return Some(cte_scope_id);
                 }
             }
         }
@@ -2454,9 +2573,10 @@ fn find_child_scope<'a>(scope: &'a Scope, source_name: &str) -> Option<&'a Scope
     if let Some(source_info) = scope.sources.get(source_name) {
         if source_info.is_scope && !scope.cte_sources.contains_key(source_name) {
             if let Some(query) = derived_source_query(&source_info.expression) {
-                for dt_scope in &scope.derived_table_scopes {
+                for &dt_scope_id in &indexed.derived_table_scopes {
+                    let dt_scope = context.scope(dt_scope_id);
                     if expressions_equivalent_after_wrappers(&dt_scope.expression, query) {
-                        return Some(dt_scope);
+                        return Some(dt_scope_id);
                     }
                 }
             }
@@ -2469,25 +2589,31 @@ fn find_child_scope<'a>(scope: &'a Scope, source_name: &str) -> Option<&'a Scope
 /// Find a CTE scope by name, searching through a combined list of CTE scopes.
 /// This handles nested CTEs where the current scope doesn't have the CTE scope
 /// as a direct child but knows about it via cte_sources.
-fn find_child_scope_in<'a>(
-    all_cte_scopes: &'a [Rc<Scope>],
-    scope: &'a Scope,
+fn find_child_scope_in(
+    context: &LineageScopeContext,
+    all_cte_scopes: &[ScopeId],
+    scope_id: ScopeId,
     source_name: &str,
-) -> Option<&'a Scope> {
+) -> Option<ScopeId> {
+    let indexed = context.indexed(scope_id);
+    let scope = &indexed.scope;
+
     // First try the scope's own cte_scopes
-    for cte_scope in &scope.cte_scopes {
+    for &cte_scope_id in &indexed.cte_scopes {
+        let cte_scope = context.scope(cte_scope_id);
         if let Expression::Cte(cte) = &cte_scope.expression {
             if cte.alias.name == source_name {
-                return Some(cte_scope);
+                return Some(cte_scope_id);
             }
         }
     }
 
     // Then search through all ancestor CTE scopes
-    for cte_scope in all_cte_scopes {
+    for &cte_scope_id in all_cte_scopes {
+        let cte_scope = context.scope(cte_scope_id);
         if let Expression::Cte(cte) = &cte_scope.expression {
             if cte.alias.name == source_name {
-                return Some(cte_scope.as_ref());
+                return Some(cte_scope_id);
             }
         }
     }
@@ -2496,9 +2622,10 @@ fn find_child_scope_in<'a>(
     if let Some(source_info) = scope.sources.get(source_name) {
         if source_info.is_scope {
             if let Some(query) = derived_source_query(&source_info.expression) {
-                for dt_scope in &scope.derived_table_scopes {
+                for &dt_scope_id in &indexed.derived_table_scopes {
+                    let dt_scope = context.scope(dt_scope_id);
                     if expressions_equivalent_after_wrappers(&dt_scope.expression, query) {
-                        return Some(dt_scope);
+                        return Some(dt_scope_id);
                     }
                 }
             }
@@ -2506,6 +2633,24 @@ fn find_child_scope_in<'a>(
     }
 
     None
+}
+
+fn find_derived_scope_for_query(
+    context: &LineageScopeContext,
+    scope_id: ScopeId,
+    query: &Expression,
+) -> Option<ScopeId> {
+    context
+        .indexed(scope_id)
+        .derived_table_scopes
+        .iter()
+        .copied()
+        .find(|derived_scope_id| {
+            expressions_equivalent_after_wrappers(
+                &context.scope(*derived_scope_id).expression,
+                query,
+            )
+        })
 }
 
 /// Create a terminal lineage node for a table.column reference.
@@ -4658,6 +4803,54 @@ FROM t JOIN UNNEST(t.items) AS item ON TRUE
     }
 
     #[test]
+    fn test_lineage_deeply_nested_cte_reaches_base_table() {
+        let expr = parse(
+            "WITH outer_cte AS (\
+             WITH middle_cte AS (\
+             WITH inner_cte AS (SELECT x AS col FROM base_table) \
+             SELECT col FROM inner_cte\
+             ) SELECT col FROM middle_cte\
+             ) SELECT col FROM outer_cte",
+        );
+        let node = lineage("col", &expr, None, false).unwrap();
+
+        assert_lineage_contains(&node, "base_table.x");
+        for cte_name in ["outer_cte", "middle_cte", "inner_cte"] {
+            assert!(
+                node.walk().any(|child| child.source_name == cte_name),
+                "expected lineage to include CTE {cte_name}, got {:?}",
+                lineage_names(&node)
+            );
+        }
+    }
+
+    #[test]
+    fn test_lineage_reused_nested_cte_traces_each_reference() {
+        let expr = parse(
+            "WITH shared AS (\
+             WITH nested AS (SELECT x AS col FROM base_table) \
+             SELECT col FROM nested\
+             ) \
+             SELECT s0.col + s1.col + s2.col AS total \
+             FROM shared AS s0 \
+             CROSS JOIN shared AS s1 \
+             CROSS JOIN shared AS s2",
+        );
+        let node = lineage("total", &expr, None, false).unwrap();
+
+        let base_references = node
+            .walk()
+            .filter(|child| child.name == "base_table.x")
+            .count();
+        assert_eq!(
+            base_references,
+            3,
+            "each shared CTE reference should reach base_table.x: {:?}",
+            lineage_names(&node)
+        );
+    }
+
+    #[test]
     fn test_trim_selects_true() {
         let expr = parse("SELECT a, b, c FROM t");
         let node = lineage("a", &expr, None, true).unwrap();
@@ -5815,6 +6008,13 @@ LEFT JOIN import_orders AS o ON u.id = o.user_id"#;
 
         assert_lineage_contains(&node, "t1.x");
         assert_lineage_contains(&node, "t2.x");
+        for cte_name in ["a", "b"] {
+            assert!(
+                node.walk().any(|child| child.source_name == cte_name),
+                "expected set-operation lineage to retain CTE source {cte_name}: {:?}",
+                lineage_names(&node)
+            );
+        }
     }
 
     #[test]
