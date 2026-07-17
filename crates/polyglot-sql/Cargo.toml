@@ -141,3 +141,7 @@ harness = false
 [[bench]]
 name = "allocation_hotspots"
 harness = false
+
+[[bench]]
+name = "lineage"
+harness = false

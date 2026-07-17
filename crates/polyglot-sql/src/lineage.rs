@@ -18,6 +18,7 @@ use crate::scope::{
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// A node in the column lineage graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -831,7 +832,7 @@ fn to_node_inner(
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
-    ancestor_cte_scopes: &[Scope],
+    ancestor_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) -> Result<LineageNode> {
     if depth > MAX_LINEAGE_DEPTH {
@@ -842,9 +843,13 @@ fn to_node_inner(
     let scope_expr = &scope.expression;
 
     // Build combined CTE scopes: current scope's cte_scopes + ancestors
-    let mut all_cte_scopes: Vec<&Scope> = scope.cte_scopes.iter().collect();
+    let mut all_cte_scopes: Vec<Rc<Scope>> = scope
+        .cte_scopes
+        .iter()
+        .map(|s| Rc::new(s.clone()))
+        .collect();
     for s in ancestor_cte_scopes {
-        all_cte_scopes.push(s);
+        all_cte_scopes.push(Rc::clone(s));
     }
     let descendant_cte_scopes = descendant_cte_scope_clones(&all_cte_scopes, scope);
 
@@ -1037,12 +1042,24 @@ fn to_node_inner(
     Ok(node)
 }
 
-fn descendant_cte_scope_clones(all_cte_scopes: &[&Scope], current_scope: &Scope) -> Vec<Scope> {
+fn descendant_cte_scope_clones(
+    all_cte_scopes: &[Rc<Scope>],
+    current_scope: &Scope,
+) -> Vec<Rc<Scope>> {
     all_cte_scopes
         .iter()
-        .filter(|scope| scope.expression != current_scope.expression)
-        .map(|scope| (*scope).clone())
+        .filter(|scope| !is_same_cte_scope(scope, current_scope))
+        .map(Rc::clone)
         .collect()
+}
+
+fn is_same_cte_scope(a: &Scope, b: &Scope) -> bool {
+    match (&a.expression, &b.expression) {
+        (Expression::Cte(x), Expression::Cte(y)) => {
+            x.alias.name == y.alias.name && a.expression == b.expression
+        }
+        _ => a.expression == b.expression,
+    }
 }
 
 fn effective_scope_expression(expr: &Expression) -> &Expression {
@@ -1102,7 +1119,7 @@ fn handle_set_operation(
     source_name: &str,
     reference_node_name: &str,
     trim_selects: bool,
-    ancestor_cte_scopes: &[Scope],
+    ancestor_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) -> Result<LineageNode> {
     let scope_expr = &scope.expression;
@@ -1153,7 +1170,7 @@ fn resolve_qualified_column(
     col_name: &str,
     parent_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) {
     // Resolve CTE alias: if `table` is a FROM alias for a CTE (e.g., `FROM my_cte AS t`),
@@ -1207,8 +1224,6 @@ fn resolve_qualified_column(
         );
     if is_cte {
         if let Some(child_scope) = find_child_scope_in(all_cte_scopes, scope, effective_table) {
-            // Build ancestor CTE scopes from all_cte_scopes for the recursive call
-            let ancestors: Vec<Scope> = all_cte_scopes.iter().map(|s| (*s).clone()).collect();
             if let Ok(child) = to_node_inner(
                 ColumnRef::Name(col_name),
                 child_scope,
@@ -1217,7 +1232,7 @@ fn resolve_qualified_column(
                 effective_table,
                 parent_name,
                 trim_selects,
-                &ancestors,
+                all_cte_scopes,
                 depth + 1,
             ) {
                 node.downstream.push(child);
@@ -1244,7 +1259,6 @@ fn resolve_qualified_column(
     if let Some(source_info) = scope.sources.get(table) {
         if source_info.is_scope {
             if let Some(child_scope) = find_child_scope(scope, table) {
-                let ancestors: Vec<Scope> = all_cte_scopes.iter().map(|s| (*s).clone()).collect();
                 if let Ok(child) = to_node_inner(
                     ColumnRef::Name(col_name),
                     child_scope,
@@ -1253,7 +1267,7 @@ fn resolve_qualified_column(
                     table,
                     parent_name,
                     trim_selects,
-                    &ancestors,
+                    all_cte_scopes,
                     depth + 1,
                 ) {
                     node.downstream.push(child);
@@ -1297,7 +1311,7 @@ fn attach_pivot_dependencies(
     pivot: &crate::expressions::Pivot,
     col_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) -> bool {
     if pivot.unpivot {
@@ -1348,7 +1362,7 @@ fn attach_unpivot_dependencies(
     unpivot: &crate::expressions::Unpivot,
     col_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) -> bool {
     let mapping = unpivot_column_mapping(unpivot, dialect);
@@ -1680,7 +1694,7 @@ fn attach_pivot_input_column(
     source_expr: &Expression,
     col_ref: &SimpleColumnRef,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) {
     match source_expr {
@@ -1752,10 +1766,7 @@ fn attach_pivot_input_column(
                     "",
                     "",
                     trim_selects,
-                    &all_cte_scopes
-                        .iter()
-                        .map(|scope| (*scope).clone())
-                        .collect::<Vec<_>>(),
+                    all_cte_scopes,
                     depth + 1,
                 )
             };
@@ -1825,7 +1836,7 @@ fn resolve_unqualified_column(
     col_name: &str,
     parent_name: &str,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) {
     // Try to find which source this column belongs to.
@@ -1991,7 +2002,7 @@ fn attach_virtual_source_dependencies(
     source_alias: &str,
     source_expr: &Expression,
     trim_selects: bool,
-    all_cte_scopes: &[&Scope],
+    all_cte_scopes: &[Rc<Scope>],
     depth: usize,
 ) {
     let parent_name = node.name.clone();
@@ -2459,7 +2470,7 @@ fn find_child_scope<'a>(scope: &'a Scope, source_name: &str) -> Option<&'a Scope
 /// This handles nested CTEs where the current scope doesn't have the CTE scope
 /// as a direct child but knows about it via cte_sources.
 fn find_child_scope_in<'a>(
-    all_cte_scopes: &[&'a Scope],
+    all_cte_scopes: &'a [Rc<Scope>],
     scope: &'a Scope,
     source_name: &str,
 ) -> Option<&'a Scope> {
@@ -2476,7 +2487,7 @@ fn find_child_scope_in<'a>(
     for cte_scope in all_cte_scopes {
         if let Expression::Cte(cte) = &cte_scope.expression {
             if cte.alias.name == source_name {
-                return Some(cte_scope);
+                return Some(cte_scope.as_ref());
             }
         }
     }
