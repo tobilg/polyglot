@@ -25,7 +25,7 @@ By default, `polyglot-sql` enables the full public API. Parser-only consumers ca
 disable default features and opt into only the dialect parsers they need:
 
 ```toml
-polyglot-sql = { version = "0.6.1", default-features = false }
+polyglot-sql = { version = "0.6.2", default-features = false }
 ```
 
 ```toml

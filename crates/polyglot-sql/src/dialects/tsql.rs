@@ -544,6 +544,21 @@ impl DialectImpl for TSQLDialect {
             // Scalar SELECT positions are wrapped by the shared T-SQL boolean materializer.
             Expression::StartsWith(f) => Ok(Self::starts_with_predicate(f.this, f.expression)),
 
+            // PostgreSQL decode(text, 'hex') -> T-SQL hexadecimal binary conversion.
+            Expression::DecodeCase(mut f)
+                if f.expressions.len() == 2
+                    && Self::literal_string(&f.expressions[1])
+                        .is_some_and(|format| format.eq_ignore_ascii_case("hex")) =>
+            {
+                Ok(Self::tsql_convert(
+                    DataType::Custom {
+                        name: "VARBINARY(MAX)".to_string(),
+                    },
+                    f.expressions.remove(0),
+                    Some(2),
+                ))
+            }
+
             // PostgreSQL TO_NUMBER with simple literal masks can be represented as TRY_CONVERT.
             // More complex masks intentionally remain as TO_NUMBER so strict mode rejects them.
             Expression::ToNumber(f) => Ok(Self::to_number_or_fallback(*f)),
@@ -744,6 +759,99 @@ impl TSQLDialect {
         Expression::Function(Box::new(Function::new(name, args)))
     }
 
+    fn make_time(mut args: Vec<Expression>) -> Expression {
+        let seconds = args.pop().expect("MAKE_TIME has three arguments");
+        let minute = args.pop().expect("MAKE_TIME has three arguments");
+        let hour = args.pop().expect("MAKE_TIME has three arguments");
+
+        if let Some((whole_seconds, microseconds)) = Self::literal_time_parts(&seconds) {
+            let (fractions, precision) = if microseconds == 0 {
+                (Expression::number(0), Expression::number(0))
+            } else {
+                (Expression::number(microseconds), Expression::number(6))
+            };
+
+            return Self::function(
+                "TIMEFROMPARTS",
+                vec![
+                    hour,
+                    minute,
+                    Expression::number(whole_seconds),
+                    fractions,
+                    precision,
+                ],
+            );
+        }
+
+        // TIMEFROMPARTS requires integral seconds and fractions. Round the
+        // PostgreSQL double-precision seconds argument to microseconds before
+        // splitting the integer value, without dropping fractional seconds.
+        let rounded_microseconds = Self::cast(
+            Self::function(
+                "ROUND",
+                vec![
+                    Expression::Mul(Box::new(BinaryOp::new(
+                        seconds,
+                        Expression::number(1_000_000),
+                    ))),
+                    Expression::number(0),
+                ],
+            ),
+            DataType::BigInt { length: None },
+        );
+
+        Self::function(
+            "TIMEFROMPARTS",
+            vec![
+                hour,
+                minute,
+                Expression::Div(Box::new(BinaryOp::new(
+                    rounded_microseconds.clone(),
+                    Expression::number(1_000_000),
+                ))),
+                Expression::Mod(Box::new(BinaryOp::new(
+                    rounded_microseconds,
+                    Expression::number(1_000_000),
+                ))),
+                Expression::number(6),
+            ],
+        )
+    }
+
+    fn literal_time_parts(expr: &Expression) -> Option<(i64, i64)> {
+        let value = match expr {
+            Expression::Literal(lit) => match lit.as_ref() {
+                Literal::Number(value) => value.parse::<f64>().ok()?,
+                _ => return None,
+            },
+            Expression::Paren(paren) => return Self::literal_time_parts(&paren.this),
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast)
+                if Self::is_numeric_data_type(&cast.to) =>
+            {
+                let parts = Self::literal_time_parts(&cast.this);
+                return match (&cast.to, parts) {
+                    // Zero is unchanged by every numeric cast. Other literal
+                    // casts are folded only when their floating-point
+                    // semantics cannot truncate the seconds value.
+                    (_, Some((0, 0))) => Some((0, 0)),
+                    (DataType::Float { .. } | DataType::Double { .. }, parts) => parts,
+                    _ => None,
+                };
+            }
+            _ => return None,
+        };
+
+        if !value.is_finite() || value < 0.0 || value > i64::MAX as f64 / 1_000_000.0 {
+            return None;
+        }
+
+        let total_microseconds = (value * 1_000_000.0).round() as i64;
+        Some((
+            total_microseconds / 1_000_000,
+            total_microseconds % 1_000_000,
+        ))
+    }
+
     fn lower(this: Expression) -> Expression {
         Expression::Lower(Box::new(UnaryFunc::new(this)))
     }
@@ -770,6 +878,16 @@ impl TSQLDialect {
             ),
             DataType::Text,
         )
+    }
+
+    fn tsql_postgres_to_hex(expression: Expression) -> Expression {
+        let hex = Self::tsql_hex_from_varbinary(expression);
+        let without_leading_zeroes = Self::function("LTRIM", vec![hex, Expression::string("0")]);
+        let non_empty = Self::function(
+            "NULLIF",
+            vec![without_leading_zeroes, Expression::string("")],
+        );
+        Self::function("ISNULL", vec![non_empty, Expression::string("0")])
     }
 
     fn tsql_md5_hex(expression: Expression) -> Expression {
@@ -2434,6 +2552,22 @@ impl TSQLDialect {
                 Ok(Self::tsql_md5_hex(args.remove(0)))
             }
 
+            "SHA256" if f.args.len() == 1 => {
+                let mut args = f.args;
+                Ok(Self::function(
+                    "HASHBYTES",
+                    vec![Expression::string("SHA2_256"), args.remove(0)],
+                ))
+            }
+
+            "SHA512" if f.args.len() == 1 => {
+                let mut args = f.args;
+                Ok(Self::function(
+                    "HASHBYTES",
+                    vec![Expression::string("SHA2_512"), args.remove(0)],
+                ))
+            }
+
             // PostgreSQL octet_length(text/bytea) -> DATALENGTH(...)
             "OCTET_LENGTH" if f.args.len() == 1 => Ok(Self::function("DATALENGTH", f.args)),
 
@@ -2446,12 +2580,12 @@ impl TSQLDialect {
                 ))))
             }
 
-            // PostgreSQL to_hex(int) -> lowercase hex text. SQL Server's varbinary
-            // conversion is an approximation for numeric inputs, matching the existing
-            // cross-dialect behavior rather than preserving PostgreSQL integer width rules.
+            // PostgreSQL to_hex(int) -> unpadded lowercase hex text. SQL Server's
+            // binary conversion preserves the integer width, so remove only leading
+            // zeroes and retain a single zero for the all-zero value.
             "TO_HEX" if f.args.len() == 1 => {
                 let mut args = f.args;
-                Ok(Self::tsql_hex_from_varbinary(args.remove(0)))
+                Ok(Self::tsql_postgres_to_hex(args.remove(0)))
             }
 
             // PostgreSQL encode(bytea, 'hex') -> lowercase hex text.
@@ -2469,6 +2603,23 @@ impl TSQLDialect {
                         vec![this, encoding],
                     ))))
                 }
+            }
+
+            // Preserve support for manually constructed/generic DECODE ASTs in addition
+            // to the parser's typed DecodeCase representation.
+            "DECODE"
+                if f.args.len() == 2
+                    && Self::literal_string(&f.args[1])
+                        .is_some_and(|format| format.eq_ignore_ascii_case("hex")) =>
+            {
+                let mut args = f.args;
+                Ok(Self::tsql_convert(
+                    DataType::Custom {
+                        name: "VARBINARY(MAX)".to_string(),
+                    },
+                    args.remove(0),
+                    Some(2),
+                ))
             }
 
             // PostgreSQL repeat(text, count) -> SQL Server REPLICATE(text, count)
@@ -2513,6 +2664,10 @@ impl TSQLDialect {
 
             // PostgreSQL make_date(year, month, day) -> SQL Server DATEFROMPARTS.
             "MAKE_DATE" if f.args.len() == 3 => Ok(Self::function("DATEFROMPARTS", f.args)),
+
+            // PostgreSQL make_time(hour, minute, double-precision seconds) ->
+            // SQL Server TIMEFROMPARTS(hour, minute, seconds, fractions, precision).
+            "MAKE_TIME" if f.args.len() == 3 => Ok(Self::make_time(f.args)),
 
             // PostgreSQL/Oracle-style TO_DATE(value, fmt) -> typed parse expression.
             // The generator will emit native CONVERT(DATE, value, style) when

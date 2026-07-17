@@ -94,17 +94,116 @@ fn postgres_json_constructors_and_aggregates_map_to_tsql_json_functions() {
         ),
         (
             "SELECT json_agg(a) FROM t",
-            "SELECT JSON_ARRAYAGG(a) FROM t",
+            "SELECT JSON_ARRAYAGG(a NULL ON NULL) FROM t",
         ),
         (
             "SELECT jsonb_agg(a) FROM t",
-            "SELECT JSON_ARRAYAGG(a) FROM t",
+            "SELECT JSON_ARRAYAGG(a NULL ON NULL) FROM t",
+        ),
+        (
+            "SELECT json_agg(a ORDER BY b) FROM t",
+            "SELECT JSON_ARRAYAGG(a ORDER BY CASE WHEN b IS NULL THEN 1 ELSE 0 END, b NULL ON NULL) FROM t",
         ),
     ];
 
     for (sql, expected) in cases {
         assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
     }
+}
+
+#[test]
+fn native_json_arrayagg_keeps_tsql_default_null_handling() {
+    assert_eq!(
+        transpile(
+            "SELECT JSON_ARRAYAGG(a) FROM t",
+            DialectType::TSQL,
+            DialectType::TSQL,
+        )
+        .expect("T-SQL identity transpilation should succeed"),
+        ["SELECT JSON_ARRAYAGG(a) FROM t"]
+    );
+}
+
+#[test]
+fn postgres_json_constructor_return_types_map_to_tsql_compatible_output() {
+    let cases = [
+        (
+            "SELECT json_array(1, 2, 3 RETURNING json) AS j",
+            "SELECT JSON_ARRAY(1, 2, 3) AS j",
+        ),
+        (
+            "SELECT json_object('a': 1 RETURNING jsonb) AS j",
+            "SELECT JSON_OBJECT('a': 1) AS j",
+        ),
+        (
+            "SELECT json_arrayagg(x ORDER BY x NULL ON NULL RETURNING json) FROM t",
+            "SELECT JSON_ARRAYAGG(x ORDER BY x NULL ON NULL) FROM t",
+        ),
+        (
+            "SELECT json_objectagg(k: v ABSENT ON NULL RETURNING json) FROM t",
+            "SELECT JSON_OBJECTAGG(k: v ABSENT ON NULL) FROM t",
+        ),
+        (
+            "SELECT json_array(json_object('a': 1 RETURNING json) RETURNING json) AS j",
+            "SELECT JSON_ARRAY(JSON_OBJECT('a': 1)) AS j",
+        ),
+        (
+            "SELECT json_object('a': payload FORMAT JSON NULL ON NULL RETURNING json FORMAT JSON ENCODING UTF8) AS j FROM t",
+            "SELECT JSON_OBJECT('a': payload FORMAT JSON NULL ON NULL) AS j FROM t",
+        ),
+        (
+            "SELECT json_array(1 RETURNING varchar(64)) AS j",
+            "SELECT CAST(JSON_ARRAY(1) AS VARCHAR(64)) AS j",
+        ),
+        (
+            "SELECT json_object('a': 1 RETURNING text) AS j",
+            "SELECT CAST(JSON_OBJECT('a': 1) AS VARCHAR(MAX)) AS j",
+        ),
+        (
+            "SELECT json_arrayagg(x RETURNING char(20)) FROM t",
+            "SELECT CAST(JSON_ARRAYAGG(x) AS CHAR(20)) FROM t",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
+    }
+
+    assert_eq!(
+        pg_to_tsql("SELECT json_array(1 RETURNING bytea)"),
+        "SELECT JSON_ARRAY(1)"
+    );
+}
+
+#[test]
+fn postgres_json_constructor_unsafe_return_types_fail_for_tsql_in_strict_mode() {
+    for sql in [
+        "SELECT json_array(1 RETURNING bytea)",
+        "SELECT json_object('a': 1 RETURNING custom_json_type)",
+        "SELECT json_array(json_object('a': 1 RETURNING bytea) RETURNING json)",
+    ] {
+        let err = Dialect::get(DialectType::PostgreSQL)
+            .transpile_with(sql, DialectType::TSQL, TranspileOptions::strict())
+            .expect_err("strict mode should reject an unsafe JSON constructor return type");
+
+        assert!(
+            err.to_string().contains("SQL/JSON constructor RETURNING"),
+            "unexpected error for {sql}: {err}"
+        );
+    }
+}
+
+#[test]
+fn tsql_json_constructor_return_type_identity_is_unchanged() {
+    assert_eq!(
+        transpile(
+            "SELECT JSON_ARRAY(1 RETURNING json)",
+            DialectType::TSQL,
+            DialectType::TSQL,
+        )
+        .expect("T-SQL identity transpilation should succeed"),
+        vec!["SELECT JSON_ARRAY(1 RETURNING NVARCHAR(MAX))"]
+    );
 }
 
 #[test]
@@ -213,6 +312,18 @@ fn postgres_math_and_string_functions_map_to_tsql_semantics() {
             "SELECT md5('abc')",
             "SELECT LOWER(CONVERT(VARCHAR(32), HASHBYTES('MD5', 'abc'), 2))",
         ),
+        (
+            "SELECT sha256(b) FROM t",
+            "SELECT HASHBYTES('SHA2_256', b) FROM t",
+        ),
+        (
+            "SELECT sha512(b) FROM t",
+            "SELECT HASHBYTES('SHA2_512', b) FROM t",
+        ),
+        (
+            "SELECT decode('aa', 'hex')",
+            "SELECT CONVERT(VARBINARY(MAX), 'aa', 2)",
+        ),
         ("SELECT octet_length('hello')", "SELECT DATALENGTH('hello')"),
         (
             "SELECT bit_length('hello')",
@@ -220,11 +331,11 @@ fn postgres_math_and_string_functions_map_to_tsql_semantics() {
         ),
         (
             "SELECT starts_with('hello', 'he')",
-            "SELECT CAST(CASE WHEN LEFT('hello', LEN('he')) = 'he' THEN 1 ELSE 0 END AS BIT)",
+            "SELECT CAST(CASE WHEN LEFT('hello', LEN('he')) = 'he' THEN 1 WHEN NOT LEFT('hello', LEN('he')) = 'he' THEN 0 ELSE NULL END AS BIT)",
         ),
         (
             "SELECT to_hex(255)",
-            "SELECT LOWER(CONVERT(VARCHAR(MAX), CAST(255 AS VARBINARY(MAX)), 2))",
+            "SELECT ISNULL(NULLIF(LTRIM(LOWER(CONVERT(VARCHAR(MAX), CAST(255 AS VARBINARY(MAX)), 2)), '0'), ''), '0')",
         ),
         (
             "SELECT encode('abc', 'hex')",
@@ -238,6 +349,93 @@ fn postgres_math_and_string_functions_map_to_tsql_semantics() {
 
     for (sql, expected) in cases {
         assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_deparsed_string_forms_map_to_tsql_semantics() {
+    let cases = [
+        (
+            "SELECT (s ~~ like_escape('h#%'::text, '#'::text)) FROM t",
+            "SELECT CAST(CASE WHEN (s LIKE 'h#%' ESCAPE '#') THEN 1 WHEN NOT (s LIKE 'h#%' ESCAPE '#') THEN 0 ELSE NULL END AS BIT) FROM t",
+        ),
+        (
+            "SELECT substring(s FROM 3) FROM t",
+            "SELECT SUBSTRING(s, 3, 2147483647) FROM t",
+        ),
+        (
+            "SELECT substring(s, 3) FROM t",
+            "SELECT SUBSTRING(s, 3, 2147483647) FROM t",
+        ),
+        (
+            "SELECT trim(both 'x'::text from s) FROM t",
+            "SELECT TRIM('x' FROM s) FROM t",
+        ),
+        (
+            "SELECT ltrim(s, 'xyz'::text) FROM t",
+            "SELECT LTRIM(s, 'xyz') FROM t",
+        ),
+        (
+            "SELECT translate(s, 'abc'::text, 'xyz'::text) FROM t",
+            "SELECT TRANSLATE(s, 'abc', 'xyz') FROM t",
+        ),
+        (
+            "SELECT translate(s, 'ab', 'xyz') FROM t",
+            "SELECT TRANSLATE(s, 'ab', 'xy') FROM t",
+        ),
+        (
+            "SELECT translate('12345', '134', 'a')",
+            "SELECT 'a25'",
+        ),
+        (
+            "SELECT to_hex(16777215)",
+            "SELECT ISNULL(NULLIF(LTRIM(LOWER(CONVERT(VARCHAR(MAX), CAST(16777215 AS VARBINARY(MAX)), 2)), '0'), ''), '0')",
+        ),
+        (
+            "SELECT to_hex(0)",
+            "SELECT ISNULL(NULLIF(LTRIM(LOWER(CONVERT(VARCHAR(MAX), CAST(0 AS VARBINARY(MAX)), 2)), '0'), ''), '0')",
+        ),
+        (
+            "SELECT to_hex(-1234)",
+            "SELECT ISNULL(NULLIF(LTRIM(LOWER(CONVERT(VARCHAR(MAX), CAST(-1234 AS VARBINARY(MAX)), 2)), '0'), ''), '0')",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_string_semantics_without_tsql_equivalent_fail_in_strict_mode() {
+    let cases = [
+        (
+            "SELECT substring(s FROM '[a-z]+') FROM t",
+            "regular-expression SUBSTRING",
+        ),
+        (
+            "SELECT substring(s, '[a-z]+'::text) FROM t",
+            "regular-expression SUBSTRING",
+        ),
+        (
+            "SELECT translate(s, '134', 'a') FROM t",
+            "TRANSLATE with source and replacement lengths",
+        ),
+        (
+            "SELECT translate(s, from_chars, to_chars) FROM t",
+            "TRANSLATE with source and replacement lengths",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        let err = Dialect::get(DialectType::PostgreSQL)
+            .transpile_with(sql, DialectType::TSQL, TranspileOptions::strict())
+            .expect_err("strict mode should reject unsupported PostgreSQL string semantics");
+
+        assert!(
+            err.to_string().contains(expected),
+            "unexpected error for {sql}: {err}"
+        );
     }
 }
 
@@ -266,8 +464,30 @@ fn postgres_math_functions_without_tsql_equivalent_fail_in_strict_mode() {
 fn postgres_string_functions_with_unsupported_tsql_shapes_fail_in_strict_mode() {
     let cases = [
         ("SELECT encode('abc', 'base64')", "ENCODE"),
+        ("SELECT decode('YQ==', 'base64')", "DECODE"),
+        ("SELECT decode('aa', format_name)", "DECODE"),
         ("SELECT quote_literal(name) FROM t", "QUOTE_LITERAL"),
         ("SELECT to_number('123.45', format_mask)", "TO_NUMBER"),
+        (
+            "SELECT regexp_replace(s, 'a', 'b') FROM t",
+            "REGEXP_REPLACE",
+        ),
+        ("SELECT regexp_count(s, 'a') FROM t", "REGEXP_COUNT"),
+        ("SELECT regexp_instr(s, 'a') FROM t", "REGEXP_INSTR"),
+        ("SELECT regexp_substr(s, 'a') FROM t", "REGEXP_SUBSTR"),
+        (
+            "SELECT regexp_split_to_array(s, 'a') FROM t",
+            "REGEXP_SPLIT_TO_ARRAY",
+        ),
+        (
+            "SELECT regexp_split_to_table(s, 'a') FROM t",
+            "REGEXP_SPLIT_TO_TABLE",
+        ),
+        ("SELECT sha224(b) FROM t", "SHA224"),
+        ("SELECT sha384(b) FROM t", "SHA384"),
+        ("SELECT to_bin(-1234)", "TO_BIN"),
+        ("SELECT to_oct(1234)", "TO_OCT"),
+        ("SELECT unistr('\\0064at')", "UNISTR"),
     ];
 
     for (sql, expected) in cases {
@@ -303,19 +523,19 @@ fn postgres_regex_operators_map_to_tsql_patindex_predicates_in_default_mode() {
     let cases = [
         (
             "SELECT name ~ '^a.*z$' FROM t",
-            "SELECT CAST(CASE WHEN PATINDEX('^a.*z$', name) > 0 THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN PATINDEX('^a.*z$', name) > 0 THEN 1 WHEN NOT PATINDEX('^a.*z$', name) > 0 THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
         (
             "SELECT name ~* 'abc' FROM t",
-            "SELECT CAST(CASE WHEN PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 1 WHEN NOT PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
         (
             "SELECT name !~ 'abc' FROM t",
-            "SELECT CAST(CASE WHEN NOT PATINDEX('abc', name) > 0 THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN NOT PATINDEX('abc', name) > 0 THEN 1 WHEN NOT NOT PATINDEX('abc', name) > 0 THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
         (
             "SELECT name !~* 'abc' FROM t",
-            "SELECT CAST(CASE WHEN NOT PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN NOT PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 1 WHEN NOT NOT PATINDEX(LOWER('abc'), LOWER(name)) > 0 THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
     ];
 
@@ -329,7 +549,7 @@ fn postgres_similar_to_maps_to_tsql_like_when_pattern_is_compatible() {
     let cases = [
         (
             "SELECT name SIMILAR TO 'a%' FROM t",
-            "SELECT CAST(CASE WHEN name LIKE 'a%' THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN name LIKE 'a%' THEN 1 WHEN NOT name LIKE 'a%' THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
         (
             "SELECT id FROM t WHERE name SIMILAR TO 'Brand#[1-3][0-9]'",
@@ -337,7 +557,7 @@ fn postgres_similar_to_maps_to_tsql_like_when_pattern_is_compatible() {
         ),
         (
             "SELECT name NOT SIMILAR TO 'z%' FROM t",
-            "SELECT CAST(CASE WHEN NOT name LIKE 'z%' THEN 1 ELSE 0 END AS BIT) FROM t",
+            "SELECT CAST(CASE WHEN NOT name LIKE 'z%' THEN 1 WHEN NOT NOT name LIKE 'z%' THEN 0 ELSE NULL END AS BIT) FROM t",
         ),
     ];
 
@@ -416,15 +636,15 @@ fn postgres_extract_and_date_part_fields_map_to_valid_tsql_dateparts() {
         ),
         (
             "SELECT date_part('dow', ts) AS c FROM t",
-            "SELECT DATEPART(WEEKDAY, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(WEEKDAY, ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT date_part('hour', ts) AS c FROM t",
-            "SELECT DATEPART(hour, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(hour, ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT date_part('isoweek', ts) AS c FROM t",
-            "SELECT DATEPART(ISO_WEEK, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(ISO_WEEK, ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT EXTRACT(epoch FROM ts) AS c FROM t",
@@ -432,7 +652,7 @@ fn postgres_extract_and_date_part_fields_map_to_valid_tsql_dateparts() {
         ),
         (
             "SELECT date_part('epoch', ts) AS c FROM t",
-            "SELECT DATEDIFF(SECOND, CAST('1970-01-01' AS DATETIME2), ts) AS c FROM t",
+            "SELECT CAST(DATEDIFF(SECOND, CAST('1970-01-01' AS DATETIME2), ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT EXTRACT(isodow FROM ts) AS c FROM t",
@@ -440,19 +660,19 @@ fn postgres_extract_and_date_part_fields_map_to_valid_tsql_dateparts() {
         ),
         (
             "SELECT date_part('isodow', ts) AS c FROM t",
-            "SELECT (((DATEPART(WEEKDAY, ts) + @@DATEFIRST - 2) % 7) + 1) AS c FROM t",
+            "SELECT CAST((((DATEPART(WEEKDAY, ts) + @@DATEFIRST - 2) % 7) + 1) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT date_part('year'::text, ts) AS c FROM t",
-            "SELECT DATEPART(year, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(year, ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT date_part('month'::text, ts) AS c FROM t",
-            "SELECT DATEPART(month, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(month, ts) AS FLOAT) AS c FROM t",
         ),
         (
             "SELECT date_part('dow'::text, ts) AS c FROM t",
-            "SELECT DATEPART(WEEKDAY, ts) AS c FROM t",
+            "SELECT CAST(DATEPART(WEEKDAY, ts) AS FLOAT) AS c FROM t",
         ),
     ];
 
@@ -529,6 +749,33 @@ fn postgres_to_timestamp_and_to_date_formats_map_to_valid_tsql_convert_signature
 
     for (sql, expected) in cases {
         assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_make_time_maps_to_tsql_timefromparts_without_losing_fractional_seconds() {
+    let cases = [
+        (
+            "SELECT make_time(8, 20, 0.0::double precision) FROM t",
+            "SELECT TIMEFROMPARTS(8, 20, 0, 0, 0) FROM t",
+        ),
+        (
+            "SELECT make_time(8, 20, 23.5) FROM t",
+            "SELECT TIMEFROMPARTS(8, 20, 23, 500000, 6) FROM t",
+        ),
+        (
+            "SELECT make_time(hour_col, minute_col, second_col) FROM t",
+            "SELECT TIMEFROMPARTS(hour_col, minute_col, CAST(ROUND(second_col * 1000000, 0) AS BIGINT) / 1000000, CAST(ROUND(second_col * 1000000, 0) AS BIGINT) % 1000000, 6) FROM t",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "default mode failed for {sql}");
+        assert_eq!(
+            pg_to_tsql_strict(sql),
+            expected,
+            "strict mode failed for {sql}"
+        );
     }
 }
 
@@ -612,6 +859,70 @@ fn postgres_format_string_interpolation_maps_to_tsql_concat() {
         (
             "SELECT format('literal %% %s', f1) FROM text_tbl",
             "SELECT CONCAT('literal % ', f1) FROM text_tbl",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+        assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_single_value_concat_functions_map_to_valid_tsql() {
+    let cases = [
+        ("SELECT concat('one')", "SELECT CONCAT('one', '')"),
+        ("SELECT concat(1)", "SELECT CONCAT(1, '')"),
+        ("SELECT concat(NULL)", "SELECT CONCAT(NULL, '')"),
+        ("SELECT concat_ws('#', 'one')", "SELECT CONCAT('one', '')"),
+        ("SELECT concat_ws('#', NULL)", "SELECT CONCAT(NULL, '')"),
+        (
+            "SELECT concat_ws(separator, value) FROM t",
+            "SELECT CASE WHEN separator IS NULL THEN NULL ELSE CONCAT(value, '') END FROM t",
+        ),
+        (
+            "SELECT concat_ws(NULL, value) FROM t",
+            "SELECT CASE WHEN NULL IS NULL THEN NULL ELSE CONCAT(value, '') END FROM t",
+        ),
+        ("SELECT concat('one', 'two')", "SELECT CONCAT('one', 'two')"),
+        (
+            "SELECT concat_ws('#', 'one', 'two')",
+            "SELECT CONCAT_WS('#', 'one', 'two')",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+        assert_eq!(pg_to_tsql_strict(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_concat_operator_casts_non_string_operands_for_tsql() {
+    let cases = [
+        (
+            "SELECT 'four: '::text || (2 + 2)",
+            "SELECT CAST('four: ' AS VARCHAR(MAX)) + CAST((2 + 2) AS VARCHAR(MAX))",
+        ),
+        (
+            "SELECT (2 + 2) || ' :four'::text",
+            "SELECT CAST((2 + 2) AS VARCHAR(MAX)) + CAST(' :four' AS VARCHAR(MAX))",
+        ),
+        (
+            "SELECT 'date: '::text || DATE '2024-01-02'",
+            "SELECT CAST('date: ' AS VARCHAR(MAX)) + CAST(CAST('2024-01-02' AS DATE) AS VARCHAR(MAX))",
+        ),
+        (
+            "SELECT 'x'::text || NULL",
+            "SELECT CAST('x' AS VARCHAR(MAX)) + CAST(NULL AS VARCHAR(MAX))",
+        ),
+        (
+            "SELECT 'left'::text || 'right'::text",
+            "SELECT CAST('left' AS VARCHAR(MAX)) + CAST('right' AS VARCHAR(MAX))",
+        ),
+        (
+            "SELECT 'a'::text || value || (2 + 2) FROM t",
+            "SELECT CAST('a' AS VARCHAR(MAX)) + CAST(value AS VARCHAR(MAX)) + CAST((2 + 2) AS VARCHAR(MAX)) FROM t",
         ),
     ];
 
@@ -1378,7 +1689,7 @@ fn postgres_row_value_in_values_rewrites_inside_scalar_boolean_for_tsql() {
     let out = pg_to_tsql_strict("SELECT (a, b) IN (VALUES (1, 2), (3, 4)) AS matched FROM t");
     assert_eq!(
         out,
-        "SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM (VALUES (1, 2), (3, 4)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE _polyglot_values._polyglot_value_1 = t.a AND _polyglot_values._polyglot_value_2 = t.b) THEN 1 ELSE 0 END AS BIT) AS matched FROM t"
+        "SELECT CAST(CASE WHEN EXISTS(SELECT 1 FROM (VALUES (1, 2), (3, 4)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE _polyglot_values._polyglot_value_1 = t.a AND _polyglot_values._polyglot_value_2 = t.b) THEN 1 WHEN NOT EXISTS(SELECT 1 FROM (VALUES (1, 2), (3, 4)) AS _polyglot_values(_polyglot_value_1, _polyglot_value_2) WHERE (_polyglot_values._polyglot_value_1 = t.a OR _polyglot_values._polyglot_value_1 IS NULL OR t.a IS NULL) AND (_polyglot_values._polyglot_value_2 = t.b OR _polyglot_values._polyglot_value_2 IS NULL OR t.b IS NULL)) THEN 0 ELSE NULL END AS BIT) AS matched FROM t"
     );
 }
 
@@ -1583,23 +1894,23 @@ fn postgres_scalar_boolean_values_map_to_tsql_case_values() {
     let cases = [
         (
             "SELECT (l_quantity > 30) AS b FROM tpch.lineitem",
-            "SELECT CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT) AS b FROM tpch.lineitem",
+            "SELECT CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT) AS b FROM tpch.lineitem",
         ),
         (
             "SELECT COUNT(*) AS c FROM tpch.lineitem GROUP BY (l_quantity > 30)",
-            "SELECT COUNT_BIG(*) AS c FROM tpch.lineitem GROUP BY CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT)",
+            "SELECT COUNT_BIG(*) AS c FROM tpch.lineitem GROUP BY CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT)",
         ),
         (
             "SELECT (l_quantity > 30) AS b, COUNT(*) AS c FROM tpch.lineitem WHERE l_orderkey < 1000 GROUP BY (l_quantity > 30) ORDER BY b",
-            "SELECT CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT) AS b, COUNT_BIG(*) AS c FROM tpch.lineitem WHERE l_orderkey < 1000 GROUP BY CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT) ORDER BY CASE WHEN b IS NULL THEN 1 ELSE 0 END, b",
+            "SELECT CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT) AS b, COUNT_BIG(*) AS c FROM tpch.lineitem WHERE l_orderkey < 1000 GROUP BY CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT) ORDER BY CASE WHEN b IS NULL THEN 1 ELSE 0 END, b",
         ),
         (
             "SELECT l_quantity FROM tpch.lineitem ORDER BY (l_quantity > 30)",
-            "SELECT l_quantity FROM tpch.lineitem ORDER BY CASE WHEN CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT) IS NULL THEN 1 ELSE 0 END, CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT)",
+            "SELECT l_quantity FROM tpch.lineitem ORDER BY CASE WHEN CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT) IS NULL THEN 1 ELSE 0 END, CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT)",
         ),
         (
             "SELECT COUNT(*) OVER (PARTITION BY (l_quantity > 30)) AS c FROM tpch.lineitem",
-            "SELECT COUNT_BIG(*) OVER (PARTITION BY CAST(CASE WHEN (l_quantity > 30) THEN 1 ELSE 0 END AS BIT)) AS c FROM tpch.lineitem",
+            "SELECT COUNT_BIG(*) OVER (PARTITION BY CAST(CASE WHEN (l_quantity > 30) THEN 1 WHEN NOT (l_quantity > 30) THEN 0 ELSE NULL END AS BIT)) AS c FROM tpch.lineitem",
         ),
     ];
 
@@ -2196,6 +2507,104 @@ fn date_plus_abbreviated_time_intervals_rewrite_to_dateadd() {
 }
 
 #[test]
+fn postgres_compound_intervals_use_operand_aware_dateadd_chains() {
+    let cases = [
+        (
+            "SELECT TIME '01:30' + INTERVAL '02:01'",
+            "SELECT DATEADD(MINUTE, 1, DATEADD(HOUR, 2, CAST('01:30' AS TIME)))",
+        ),
+        (
+            "SELECT TIME '01:30' - INTERVAL '02:01'",
+            "SELECT DATEADD(MINUTE, -1, DATEADD(HOUR, -2, CAST('01:30' AS TIME)))",
+        ),
+        (
+            "SELECT TIME '01:30' + INTERVAL '36:01'",
+            "SELECT DATEADD(MINUTE, 1, DATEADD(HOUR, 12, CAST('01:30' AS TIME)))",
+        ),
+        (
+            "SELECT TIME '01:30' + INTERVAL '1 month 04:01'",
+            "SELECT DATEADD(MINUTE, 1, DATEADD(HOUR, 4, CAST('01:30' AS TIME)))",
+        ),
+        (
+            "SELECT TIME '01:30' + INTERVAL '1 month'",
+            "SELECT CAST('01:30' AS TIME)",
+        ),
+        (
+            "SELECT TIME '01:30' + INTERVAL '2147483648 hours'",
+            "SELECT DATEADD(HOUR, 8, CAST('01:30' AS TIME))",
+        ),
+        (
+            "SELECT TIMESTAMP '2024-01-01 00:00:00' + INTERVAL '1 month 2 days 03:04:05.000006'",
+            "SELECT DATEADD(MICROSECOND, 6, DATEADD(SECOND, 5, DATEADD(MINUTE, 4, DATEADD(HOUR, 3, DATEADD(DAY, 2, DATEADD(MONTH, 1, CAST('2024-01-01 00:00:00' AS DATETIME2)))))))",
+        ),
+        (
+            "SELECT DATE '2024-01-01' + INTERVAL '1 day 02:03'",
+            "SELECT DATEADD(MINUTE, 3, DATEADD(HOUR, 2, DATEADD(DAY, 1, CAST(CAST('2024-01-01' AS DATE) AS DATETIME2))))",
+        ),
+        (
+            "SELECT DATE '2024-01-01' + INTERVAL '1 hour'",
+            "SELECT DATEADD(HOUR, 1, CAST(CAST('2024-01-01' AS DATE) AS DATETIME2))",
+        ),
+        (
+            "SELECT TIMESTAMP '2024-01-01 00:00:00' + INTERVAL 'P1Y2M3DT4H5M6.7S'",
+            "SELECT DATEADD(MICROSECOND, 700000, DATEADD(SECOND, 6, DATEADD(MINUTE, 5, DATEADD(HOUR, 4, DATEADD(DAY, 3, DATEADD(MONTH, 14, CAST('2024-01-01 00:00:00' AS DATETIME2)))))))",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected, "failed for {sql}");
+    }
+}
+
+#[test]
+fn postgres_qualified_compound_interval_preserves_fractional_second_precision() {
+    let sql = "SELECT TIMESTAMP '2024-01-01 00:00:00' + INTERVAL '1 day 02:03:04.5678' DAY(3) TO SECOND(2)";
+    assert_eq!(
+        pg_to_tsql(sql),
+        "SELECT DATEADD(MICROSECOND, 570000, DATEADD(SECOND, 4, DATEADD(MINUTE, 3, DATEADD(HOUR, 2, DATEADD(DAY, 1, CAST('2024-01-01 00:00:00' AS DATETIME2))))))"
+    );
+}
+
+#[test]
+fn strict_compound_interval_requires_resolved_operand_type() {
+    let err = Dialect::get(DialectType::PostgreSQL)
+        .transpile_with(
+            "SELECT ts + INTERVAL '1 day 02:00' FROM t",
+            DialectType::TSQL,
+            TranspileOptions::strict(),
+        )
+        .expect_err("strict mode should reject an ambiguous compound interval");
+    assert!(
+        err.to_string().contains("unresolved operand type"),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(
+        pg_to_tsql("SELECT ts + INTERVAL '1 day 02:00' FROM t"),
+        "SELECT DATEADD(HOUR, 2, DATEADD(DAY, 1, ts)) FROM t"
+    );
+    assert_eq!(
+        pg_to_tsql_strict("SELECT ts + INTERVAL '02:01' FROM t"),
+        "SELECT DATEADD(MINUTE, 1, DATEADD(HOUR, 2, ts)) FROM t"
+    );
+}
+
+#[test]
+fn strict_compound_interval_rejects_dateadd_overflow() {
+    let err = Dialect::get(DialectType::PostgreSQL)
+        .transpile_with(
+            "SELECT TIMESTAMP '2024-01-01' + INTERVAL '2147483648 months 01:00'",
+            DialectType::TSQL,
+            TranspileOptions::strict(),
+        )
+        .expect_err("strict mode should reject DATEADD amounts outside the i32 range");
+    assert!(
+        err.to_string().contains("DATEADD integer range"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn date_plus_cast_abbreviated_interval_rewrites_to_dateadd() {
     let out = pg_to_tsql("SELECT shipdate + CAST('4 mins' AS INTERVAL) FROM lineitem");
     assert_eq!(out, "SELECT DATEADD(MINUTE, 4, shipdate) FROM lineitem");
@@ -2263,13 +2672,21 @@ fn any_eq_outer_array_cast_empty_rewrites_to_always_false() {
 
 #[test]
 fn any_eq_ruleutils_outer_array_cast_rewrites_to_in() {
-    let out = pg_to_tsql(
-        "SELECT s FROM t WHERE ((s)::text = ANY ((ARRAY['a'::character varying, 'b'::character varying])::text[]))",
-    );
-    assert_eq!(
-        out,
-        "SELECT s FROM t WHERE (CAST((s) AS VARCHAR(MAX)) IN (CAST(CAST('a' AS VARCHAR) AS VARCHAR(MAX)), CAST(CAST('b' AS VARCHAR) AS VARCHAR(MAX))))"
-    );
+    let cases = [
+        (
+            "SELECT s FROM t WHERE ((s)::text = ANY ((ARRAY['a'::character varying, 'b'::character varying])::text[]))",
+            "SELECT s FROM t WHERE (CAST((s) AS VARCHAR(MAX)) IN (CAST(CAST('a' AS VARCHAR) AS VARCHAR(MAX)), CAST(CAST('b' AS VARCHAR) AS VARCHAR(MAX))))",
+        ),
+        (
+            "SELECT count(*) FROM orders WHERE (o_orderstatus)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying])::text[])",
+            "SELECT COUNT_BIG(*) FROM orders WHERE CAST((o_orderstatus) AS VARCHAR(MAX)) IN (CAST(CAST('open' AS VARCHAR) AS VARCHAR(MAX)), CAST(CAST('closed' AS VARCHAR) AS VARCHAR(MAX)))",
+        ),
+    ];
+
+    for (sql, expected) in cases {
+        assert_eq!(pg_to_tsql(sql), expected);
+        assert_eq!(pg_to_tsql_strict(sql), expected);
+    }
 }
 
 #[test]

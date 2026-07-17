@@ -815,6 +815,22 @@ pub(super) fn is_postgres_unknown_null_cast(cast: &Cast) -> bool {
     matches!(cast.this, Expression::Null(_)) && is_postgres_unknown_type(&cast.to)
 }
 
+fn without_parens(mut expression: &Expression) -> &Expression {
+    while let Expression::Paren(paren) = expression {
+        expression = &paren.this;
+    }
+    expression
+}
+
+fn without_parens_mut(mut expression: &mut Expression) -> &mut Expression {
+    loop {
+        match expression {
+            Expression::Paren(paren) => expression = &mut paren.this,
+            expression => return expression,
+        }
+    }
+}
+
 pub(super) fn is_postgres_float_to_integer_cast(cast: &Cast) -> bool {
     let is_float_type = |data_type: &DataType| {
         matches!(data_type, DataType::Float { .. } | DataType::Double { .. })
@@ -831,7 +847,7 @@ pub(super) fn is_postgres_float_to_integer_cast(cast: &Cast) -> bool {
         cast.to,
         DataType::SmallInt { .. } | DataType::Int { .. } | DataType::BigInt { .. }
     );
-    let float_input = match &cast.this {
+    let float_input = match without_parens(&cast.this) {
         Expression::Cast(inner) | Expression::TryCast(inner) | Expression::SafeCast(inner) => {
             is_float_type(&inner.to)
         }
@@ -844,7 +860,7 @@ pub(super) fn is_postgres_float_to_integer_cast(cast: &Cast) -> bool {
 pub(super) fn rewrite_postgres_float_to_integer_cast(mut cast: Cast) -> Expression {
     if is_postgres_float_to_integer_cast(&cast) {
         if let Expression::Cast(inner) | Expression::TryCast(inner) | Expression::SafeCast(inner) =
-            &mut cast.this
+            without_parens_mut(&mut cast.this)
         {
             if let DataType::Custom { name } = &inner.to {
                 inner.to = match name.to_ascii_uppercase().as_str() {

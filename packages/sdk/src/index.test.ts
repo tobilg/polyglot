@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as wasmModule from '../wasm/polyglot_sql_wasm.js';
+import { lit } from './builders';
 import * as sdk from './index';
 import {
   analyzeQuery,
@@ -179,6 +180,19 @@ describe('Polyglot SDK', () => {
       expect((execute.ast![0] as any).execute.arguments).toHaveLength(1);
     });
 
+    it('should parse and generate TiDB DDL extensions', () => {
+      const sql =
+        'CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))';
+      const parsed = parse(sql, Dialect.TiDB);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.ast?.[0]).toHaveProperty('create_table');
+
+      const generated = generate(parsed.ast, Dialect.TiDB);
+      expect(generated.success).toBe(true);
+      expect(generated.sql).toEqual([sql]);
+    });
+
     it('should handle malformed SQL gracefully', () => {
       const result = parse('SELECT FROM WHERE', Dialect.Generic);
       // The parser may handle some invalid SQL gracefully
@@ -221,6 +235,36 @@ describe('Polyglot SDK', () => {
 
       expect(generateResult.success).toBe(true);
       expect(generateResult.sql![0]).toContain('PREPARE leak (INT) AS SELECT');
+    });
+
+    it('should roundtrip generated Snowflake string escapes', () => {
+      const quoteLiteral = lit("O'Reilly");
+      const backslashLiteral = lit(String.raw`C:\user\n`);
+
+      try {
+        const quoteResult = generate(
+          [quoteLiteral.toJSON()],
+          Dialect.Snowflake,
+        );
+        expect(quoteResult.success).toBe(true);
+        expect(quoteResult.sql).toEqual([String.raw`'O\'Reilly'`]);
+
+        const parsed = parse(
+          `SELECT ${quoteResult.sql![0]}`,
+          Dialect.Snowflake,
+        );
+        expect(parsed.success).toBe(true);
+
+        const backslashResult = generate(
+          [backslashLiteral.toJSON()],
+          Dialect.Snowflake,
+        );
+        expect(backslashResult.success).toBe(true);
+        expect(backslashResult.sql).toEqual([String.raw`'C:\\user\\n'`]);
+      } finally {
+        quoteLiteral.free();
+        backslashLiteral.free();
+      }
     });
   });
 

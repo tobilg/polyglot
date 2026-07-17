@@ -5,6 +5,7 @@ use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
+    TsqlJsonConstructorReturnType,
     PostgresJsonBuildObjectToJsonObject,
     PostgresJsonAggToJsonArrayAgg,
     JsonExtractToGetJsonObject,
@@ -39,6 +40,7 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
+            Action::TsqlJsonConstructorReturnType => rewrite_tsql_json_constructor_return_type(e),
             Action::PostgresJsonBuildObjectToJsonObject => match e {
                 Expression::Function(f) => Ok(Expression::JsonObject(
                     build_json_object_from_pairs(f.args)
@@ -47,16 +49,42 @@ pub(super) fn rewrite(
                 _ => Ok(e),
             },
             Action::PostgresJsonAggToJsonArrayAgg => match e {
-                Expression::Function(f) if f.args.len() == 1 => {
-                    let mut args = f.args;
-                    Ok(Expression::JsonArrayAgg(Box::new(
-                        crate::expressions::JsonArrayAggFunc {
-                            this: args.remove(0),
-                            order_by: None,
-                            null_handling: None,
-                            filter: None,
-                        },
-                    )))
+                Expression::Function(mut f) if f.args.len() == 1 && !f.distinct => Ok(
+                    Expression::JsonArrayAgg(Box::new(crate::expressions::JsonArrayAggFunc {
+                        this: f.args.remove(0),
+                        order_by: None,
+                        null_handling: Some(JsonNullHandling::NullOnNull),
+                        filter: None,
+                    })),
+                ),
+                Expression::Function(mut f) => {
+                    f.name = "JSON_ARRAYAGG".to_string();
+                    Ok(Expression::Function(f))
+                }
+                Expression::AggregateFunction(mut af)
+                    if af.args.len() == 1
+                        && !af.distinct
+                        && af.filter.is_none()
+                        && af.limit.is_none()
+                        && af.ignore_nulls.is_none() =>
+                {
+                    for ordered in &mut af.order_by {
+                        if ordered.nulls_first.is_none() {
+                            // PostgreSQL treats NULL as larger than every non-NULL value.
+                            ordered.nulls_first = Some(ordered.desc);
+                        }
+                    }
+                    let order_by = if af.order_by.is_empty() {
+                        None
+                    } else {
+                        Some(std::mem::take(&mut af.order_by))
+                    };
+                    Ok(Expression::JsonArrayAgg(Box::new(JsonArrayAggFunc {
+                        this: af.args.remove(0),
+                        order_by,
+                        null_handling: Some(JsonNullHandling::NullOnNull),
+                        filter: None,
+                    })))
                 }
                 Expression::AggregateFunction(mut af) => {
                     af.name = "JSON_ARRAYAGG".to_string();
@@ -771,6 +799,165 @@ pub(super) fn rewrite(
     })()?;
 
     Ok(RewriteOutcome::Rewritten(expression))
+}
+
+#[derive(Debug)]
+enum TsqlJsonReturnType {
+    Json,
+    Character(DataType),
+    Unsupported,
+}
+
+pub(super) fn has_json_constructor_return_type(expression: &Expression) -> bool {
+    match expression {
+        Expression::JsonObject(function) => function.returning_type.is_some(),
+        Expression::JSONObject(function) => function.return_type.is_some(),
+        Expression::JSONArray(function) => function.return_type.is_some(),
+        Expression::JSONArrayAgg(function) => function.return_type.is_some(),
+        Expression::JSONObjectAgg(function) => function.return_type.is_some(),
+        _ => false,
+    }
+}
+
+pub(super) fn unsupported_tsql_json_constructor_return_type(
+    expression: &Expression,
+) -> Option<String> {
+    let return_type = match expression {
+        Expression::JsonObject(function) => function.returning_type.as_ref(),
+        Expression::JSONObject(function) => expression_data_type(function.return_type.as_deref()),
+        Expression::JSONArray(function) => expression_data_type(function.return_type.as_deref()),
+        Expression::JSONArrayAgg(function) => expression_data_type(function.return_type.as_deref()),
+        Expression::JSONObjectAgg(function) => {
+            expression_data_type(function.return_type.as_deref())
+        }
+        _ => return None,
+    };
+
+    match return_type {
+        Some(data_type)
+            if matches!(
+                classify_tsql_json_return_type(data_type),
+                TsqlJsonReturnType::Unsupported
+            ) =>
+        {
+            Some(format!("{data_type:?}"))
+        }
+        Some(_) => None,
+        None if has_json_constructor_return_type(expression) => {
+            Some("non-data-type expression".to_string())
+        }
+        None => None,
+    }
+}
+
+fn expression_data_type(expression: Option<&Expression>) -> Option<&DataType> {
+    match expression {
+        Some(Expression::DataType(data_type)) => Some(data_type),
+        Some(Expression::JSONFormat(format)) => expression_data_type(format.this.as_deref()),
+        _ => None,
+    }
+}
+
+fn classify_tsql_json_return_type(data_type: &DataType) -> TsqlJsonReturnType {
+    match data_type {
+        DataType::Json | DataType::JsonB => TsqlJsonReturnType::Json,
+        DataType::Char { .. }
+        | DataType::VarChar { .. }
+        | DataType::String { .. }
+        | DataType::Text
+        | DataType::TextWithLength { .. } => TsqlJsonReturnType::Character(data_type.clone()),
+        _ => TsqlJsonReturnType::Unsupported,
+    }
+}
+
+fn rewrite_tsql_json_constructor_return_type(expression: Expression) -> Result<Expression> {
+    let (constructor, return_type) = match expression {
+        Expression::JsonObject(mut function) => {
+            for (key, value) in &mut function.pairs {
+                rewrite_nested_json_expression(key)?;
+                rewrite_nested_json_expression(value)?;
+            }
+            let return_type = function.returning_type.take();
+            function.format_json = false;
+            function.encoding = None;
+            (Expression::JsonObject(function), return_type)
+        }
+        Expression::JSONObject(mut function) => {
+            rewrite_nested_json_expressions(&mut function.expressions)?;
+            let return_type = take_expression_data_type(&mut function.return_type);
+            function.encoding = None;
+            (Expression::JSONObject(function), return_type)
+        }
+        Expression::JSONArray(mut function) => {
+            rewrite_nested_json_expressions(&mut function.expressions)?;
+            let return_type = take_expression_data_type(&mut function.return_type);
+            (Expression::JSONArray(function), return_type)
+        }
+        Expression::JSONArrayAgg(mut function) => {
+            function.this = Box::new(rewrite_nested_tsql_json_constructor_return_types(
+                *function.this,
+            )?);
+            let return_type = take_expression_data_type(&mut function.return_type);
+            (Expression::JSONArrayAgg(function), return_type)
+        }
+        Expression::JSONObjectAgg(mut function) => {
+            rewrite_nested_json_expressions(&mut function.expressions)?;
+            let return_type = take_expression_data_type(&mut function.return_type);
+            function.encoding = None;
+            (Expression::JSONObjectAgg(function), return_type)
+        }
+        other => return Ok(other),
+    };
+
+    match return_type.map(|data_type| classify_tsql_json_return_type(&data_type)) {
+        Some(TsqlJsonReturnType::Character(data_type)) => Ok(Expression::Cast(Box::new(Cast {
+            this: constructor,
+            to: data_type,
+            trailing_comments: Vec::new(),
+            double_colon_syntax: false,
+            format: None,
+            default: None,
+            inferred_type: None,
+        }))),
+        Some(TsqlJsonReturnType::Json | TsqlJsonReturnType::Unsupported) | None => Ok(constructor),
+    }
+}
+
+fn rewrite_nested_json_expressions(expressions: &mut [Expression]) -> Result<()> {
+    for expression in expressions {
+        rewrite_nested_json_expression(expression)?;
+    }
+    Ok(())
+}
+
+fn rewrite_nested_json_expression(expression: &mut Expression) -> Result<()> {
+    let owned = std::mem::replace(expression, Expression::Null(Null));
+    *expression = rewrite_nested_tsql_json_constructor_return_types(owned)?;
+    Ok(())
+}
+
+fn rewrite_nested_tsql_json_constructor_return_types(expression: Expression) -> Result<Expression> {
+    crate::dialects::transform_recursive(expression, &|node| {
+        if has_json_constructor_return_type(&node) {
+            rewrite_tsql_json_constructor_return_type(node)
+        } else {
+            Ok(node)
+        }
+    })
+}
+
+fn take_expression_data_type(return_type: &mut Option<Box<Expression>>) -> Option<DataType> {
+    into_expression_data_type(return_type.take().map(|expression| *expression))
+}
+
+fn into_expression_data_type(expression: Option<Expression>) -> Option<DataType> {
+    match expression {
+        Some(Expression::DataType(data_type)) => Some(data_type),
+        Some(Expression::JSONFormat(format)) => {
+            into_expression_data_type(format.this.map(|expression| *expression))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn decompose_json_path(path: &str) -> Vec<String> {

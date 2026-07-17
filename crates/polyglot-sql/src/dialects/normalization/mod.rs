@@ -10,6 +10,7 @@ mod aggregates;
 mod collections;
 mod json;
 mod operators;
+mod postgres_interval;
 mod scalar;
 mod statements;
 pub(in crate::dialects) mod temporal;
@@ -19,6 +20,7 @@ mod types;
 struct NormalizationContext {
     source: DialectType,
     target: DialectType,
+    strict: bool,
 }
 
 pub(super) fn rewrite_postgres_float_to_integer_cast(cast: Cast) -> Expression {
@@ -27,6 +29,12 @@ pub(super) fn rewrite_postgres_float_to_integer_cast(cast: Cast) -> Expression {
 
 pub(super) fn is_postgres_unknown_type(data_type: &DataType) -> bool {
     types::is_postgres_unknown_type(data_type)
+}
+
+pub(super) fn unsupported_tsql_json_constructor_return_type(
+    expression: &Expression,
+) -> Option<String> {
+    json::unsupported_tsql_json_constructor_return_type(expression)
 }
 
 enum RewriteOutcome {
@@ -50,10 +58,15 @@ pub(super) fn normalize(
     expr: Expression,
     source: DialectType,
     target: DialectType,
+    strict: bool,
 ) -> Result<Expression> {
     use crate::expressions::{Case, Cast, DataType, Function, Identifier, Literal};
 
-    let context = NormalizationContext { source, target };
+    let context = NormalizationContext {
+        source,
+        target,
+        strict,
+    };
 
     // This is intentionally a small routing enum. Each domain owns its concrete
     // actions, while this dispatcher preserves the original global precedence.
@@ -1422,7 +1435,7 @@ pub(super) fn normalize(
                         && matches!(target, DialectType::TSQL | DialectType::Fabric)
                         && temporal::is_postgres_time_date_part(&e) =>
                 {
-                    Action::Temporal(temporal::Action::PostgresTimeDatePartForTsql)
+                    Action::Temporal(temporal::Action::PostgresDatePartForTsql)
                 }
                 Expression::Function(f) => {
                     let name = f.name.to_ascii_uppercase();
@@ -1430,9 +1443,9 @@ pub(super) fn normalize(
                     // Map to JSON_PARSE(x) for Trino/Presto/Athena to preserve semantics.
                     if matches!(source, DialectType::PostgreSQL)
                         && matches!(target, DialectType::TSQL | DialectType::Fabric)
-                        && temporal::is_postgres_time_date_part(&e)
+                        && temporal::is_postgres_date_part_function(&e)
                     {
-                        Action::Temporal(temporal::Action::PostgresTimeDatePartForTsql)
+                        Action::Temporal(temporal::Action::PostgresDatePartForTsql)
                     } else if name == "JSON"
                         && f.args.len() == 1
                         && matches!(source, DialectType::DuckDB)
@@ -1675,6 +1688,18 @@ pub(super) fn normalize(
                     } else {
                         // Generic function normalization for non-BigQuery sources
                         match name.as_str() {
+                            "CONCAT" if f.args.len() == 1
+                                && matches!(source, DialectType::PostgreSQL)
+                                && matches!(target, DialectType::TSQL | DialectType::Fabric) =>
+                            {
+                                Action::Scalar(scalar::Action::PostgresSingleValueConcatToTsql)
+                            }
+                            "CONCAT_WS" if f.args.len() == 2
+                                && matches!(source, DialectType::PostgreSQL)
+                                && matches!(target, DialectType::TSQL | DialectType::Fabric) =>
+                            {
+                                Action::Scalar(scalar::Action::PostgresSingleValueConcatToTsql)
+                            }
                             "ARBITRARY" | "AGGREGATE"
                             | "REGEXP_MATCHES" | "REGEXP_FULL_MATCH"
                             | "STRUCT_EXTRACT"
@@ -1896,6 +1921,7 @@ pub(super) fn normalize(
                             "JSON_AGG" | "JSONB_AGG"
                                 if Dialect::is_postgres_family_source(source)
                                     && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                                    && !f.quoted
                                     && f.args.len() == 1 =>
                             {
                                 Action::Json(json::Action::PostgresJsonAggToJsonArrayAgg)
@@ -2018,6 +2044,13 @@ pub(super) fn normalize(
                         }
                         _ => Action::None,
                     }
+                }
+                ref expression
+                    if source != target
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                        && json::has_json_constructor_return_type(expression) =>
+                {
+                    Action::Json(json::Action::TsqlJsonConstructorReturnType)
                 }
                 Expression::JSONArrayAgg(_) => match target {
                     DialectType::PostgreSQL => Action::Scalar(scalar::Action::GenericFunctionNormalize),
@@ -3501,6 +3534,14 @@ pub(super) fn normalize(
                 {
                     Action::Scalar(scalar::Action::CbrtToPower)
                 }
+                // PostgreSQL string concatenation coerces non-string operands to text.
+                // T-SQL's overloaded + needs explicit string operands to avoid numeric addition.
+                Expression::Concat(ref _op)
+                    if matches!(source, DialectType::PostgreSQL)
+                        && matches!(target, DialectType::TSQL | DialectType::Fabric) =>
+                {
+                    Action::Operators(operators::Action::PostgresPipeConcatToTsql)
+                }
                 // a || b (Concat operator) -> CONCAT function for Presto/Trino
                 Expression::Concat(ref _op)
                     if matches!(source, DialectType::PostgreSQL | DialectType::Redshift)
@@ -3520,7 +3561,7 @@ pub(super) fn normalize(
                     // Handle inline transforms that don't need a dedicated action
                     if matches!(target, DialectType::TSQL | DialectType::Fabric) {
                         if let Some(rewritten) =
-                            Dialect::rewrite_tsql_interval_arithmetic(&e, source)
+                            temporal::rewrite_tsql_interval_arithmetic(&e, &context)?
                         {
                             return Ok(rewritten);
                         }

@@ -455,6 +455,30 @@ fn test_parse_generate_roundtrip() {
 }
 
 #[test]
+fn test_parse_generate_tidb_ddl_roundtrip() {
+    let sql = c("CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))");
+    let dialect = c("tidb");
+
+    let (parse_status, parse_data, parse_error) =
+        consume_result(polyglot_parse_one(sql.as_ptr(), dialect.as_ptr()));
+    assert_eq!(parse_status, 0, "parse_error={parse_error:?}");
+    let payload = parse_data.expect("missing parse result");
+    let parsed: Value = serde_json::from_str(&payload).expect("invalid parse json");
+    assert!(parsed.get("create_table").is_some(), "payload={parsed}");
+
+    let ast_json = c(&format!("[{payload}]"));
+    let (gen_status, gen_data, gen_error) =
+        consume_result(polyglot_generate(ast_json.as_ptr(), dialect.as_ptr()));
+    assert_eq!(gen_status, 0, "gen_error={gen_error:?}");
+    let statements: Vec<String> =
+        serde_json::from_str(&gen_data.expect("missing generate output")).expect("invalid json");
+    assert_eq!(
+        statements,
+        vec!["CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))"]
+    );
+}
+
+#[test]
 fn test_generate_accepts_ast_json_compatibility_null_shapes() {
     let dialect = c("generic");
     let ast_json = c(r#"[{},{"null":{}}]"#);

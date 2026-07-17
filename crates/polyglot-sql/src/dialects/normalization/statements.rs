@@ -787,6 +787,7 @@ pub(super) fn transform_select_into(
                         partition_of: None,
                         post_table_properties: Vec::new(),
                         mysql_table_options: Vec::new(),
+                        tidb_table_options: Vec::new(),
                         inherits: Vec::new(),
                         on_property: None,
                         copy_grants: false,

@@ -4,7 +4,10 @@
 //! They cover parsing, generation, and transpilation between dialects.
 
 use polyglot_sql::dialects::{Dialect, DialectType};
-use polyglot_sql::generator::{Generator, UnsupportedLevel};
+use polyglot_sql::expressions::{
+    AlterTableAction, Expression, SplitTableMode, TiDBTableOptionKind,
+};
+use polyglot_sql::generator::{Generator, GeneratorConfig, UnsupportedLevel};
 use polyglot_sql::parser::Parser;
 
 /// Helper function to test roundtrip: parse SQL and regenerate it
@@ -1527,6 +1530,148 @@ mod new_dialect_tests {
             ),
             "SELECT IFNULL(a, b) FROM t"
         );
+    }
+
+    fn tidb_roundtrip(sql: &str) -> String {
+        transpile(sql, DialectType::TiDB, DialectType::TiDB)
+    }
+
+    #[test]
+    fn test_tidb_auto_random_column_attribute() {
+        for sql in [
+            "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))",
+            "CREATE TABLE posts (id BIGINT PRIMARY KEY AUTO_RANDOM, title VARCHAR(255))",
+            "CREATE TABLE posts (id BIGINT AUTO_RANDOM(6), PRIMARY KEY (id))",
+            "CREATE TABLE posts (id BIGINT AUTO_RANDOM(5, 54), PRIMARY KEY (id))",
+        ] {
+            assert_eq!(tidb_roundtrip(sql), sql);
+        }
+
+        let commented = "CREATE TABLE posts (id BIGINT /*T![auto_rand] AUTO_RANDOM(5, 54) */ PRIMARY KEY, title VARCHAR(255))";
+        assert_eq!(tidb_roundtrip(commented), commented);
+    }
+
+    #[test]
+    fn test_tidb_table_options_and_executable_comments() {
+        assert_eq!(
+            tidb_roundtrip(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY) ENGINE=InnoDB SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=2 AUTO_RANDOM_BASE=100"
+            ),
+            "CREATE TABLE t (id BIGINT PRIMARY KEY) ENGINE=InnoDB SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=2 AUTO_RANDOM_BASE=100"
+        );
+        assert_eq!(
+            tidb_roundtrip(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY, created_at TIMESTAMP) TTL=`created_at` + INTERVAL 3 MONTH TTL_ENABLE='OFF' TTL_JOB_INTERVAL='24h' PLACEMENT POLICY=p1"
+            ),
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, created_at TIMESTAMP) TTL=`created_at` + INTERVAL 3 MONTH TTL_ENABLE='OFF' TTL_JOB_INTERVAL='24h' PLACEMENT POLICY=p1"
+        );
+        assert_eq!(
+            tidb_roundtrip(
+                "CREATE TABLE t (id BIGINT PRIMARY KEY, created_at TIMESTAMP) /*T![ttl] TTL=`created_at` + INTERVAL 3 MONTH TTL_ENABLE='OFF' */ /*T![placement] PLACEMENT POLICY=DEFAULT */"
+            ),
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, created_at TIMESTAMP) /*T![ttl] TTL=`created_at` + INTERVAL 3 MONTH TTL_ENABLE='OFF' */ /*T![placement] PLACEMENT POLICY=DEFAULT */"
+        );
+    }
+
+    #[test]
+    fn test_tidb_alter_table_extensions() {
+        for sql in [
+            "ALTER TABLE t MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
+            "ALTER TABLE t SHARD_ROW_ID_BITS=4",
+            "ALTER TABLE t AUTO_RANDOM_BASE=0",
+            "ALTER TABLE t FORCE AUTO_RANDOM_BASE=1000",
+            "ALTER TABLE t PLACEMENT POLICY=DEFAULT",
+            "ALTER TABLE t TTL=`created_at` + INTERVAL 1 MONTH",
+            "ALTER TABLE t TTL_ENABLE='OFF'",
+            "ALTER TABLE t TTL_JOB_INTERVAL='24h'",
+            "ALTER TABLE t REMOVE TTL",
+        ] {
+            assert_eq!(tidb_roundtrip(sql), sql);
+        }
+
+        assert_eq!(
+            tidb_roundtrip("ALTER TABLE t /*T![ttl] TTL=`created_at` + INTERVAL 1 MONTH */"),
+            "ALTER TABLE t /*T![ttl] TTL=`created_at` + INTERVAL 1 MONTH */"
+        );
+    }
+
+    #[test]
+    fn test_tidb_split_and_flashback_table() {
+        for sql in [
+            "SPLIT TABLE t BETWEEN (0) AND (1000000) REGIONS 16",
+            "SPLIT TABLE t BY (10000), (90000)",
+            "SPLIT TABLE t INDEX idx BY ('a', 1), ('b', 2)",
+            "SPLIT PARTITION TABLE t BETWEEN (0) AND (10000) REGIONS 4",
+            "SPLIT PARTITION TABLE t PARTITION (p1, p2) INDEX idx BETWEEN (0) AND (20000) REGIONS 2",
+            "FLASHBACK TABLE t",
+            "FLASHBACK TABLE db.t TO t_restored",
+        ] {
+            assert_eq!(tidb_roundtrip(sql), sql);
+        }
+    }
+
+    #[test]
+    fn test_tidb_ast_preserves_extension_parameters() {
+        let statements = Dialect::get(DialectType::TiDB)
+            .parse("CREATE TABLE t (id BIGINT AUTO_RANDOM(5, 54) PRIMARY KEY) SHARD_ROW_ID_BITS=4")
+            .unwrap();
+        let Expression::CreateTable(create) = &statements[0] else {
+            panic!("expected CREATE TABLE");
+        };
+        let auto_random = create.columns[0].auto_random.as_ref().unwrap();
+        assert_eq!(auto_random.shard_bits, Some(5));
+        assert_eq!(auto_random.range_bits, Some(54));
+        assert!(matches!(
+            create.tidb_table_options[0].kind,
+            TiDBTableOptionKind::ShardRowIdBits { bits: 4 }
+        ));
+
+        let split = Dialect::get(DialectType::TiDB)
+            .parse("SPLIT TABLE t BY (1), (2)")
+            .unwrap();
+        let Expression::SplitTable(split) = &split[0] else {
+            panic!("expected SPLIT TABLE");
+        };
+        assert!(matches!(
+            &split.mode,
+            SplitTableMode::By { points } if points.len() == 2
+        ));
+
+        let alter = Dialect::get(DialectType::TiDB)
+            .parse("ALTER TABLE t REMOVE TTL")
+            .unwrap();
+        let Expression::AlterTable(alter) = &alter[0] else {
+            panic!("expected ALTER TABLE");
+        };
+        assert!(matches!(
+            alter.actions[0],
+            AlterTableAction::RemoveTiDBTtl { .. }
+        ));
+    }
+
+    #[test]
+    fn test_tidb_extensions_are_dialect_scoped() {
+        let mysql = transpile(
+            "CREATE TABLE t (id BIGINT AUTO_RANDOM PRIMARY KEY) PRE_SPLIT_REGIONS=2",
+            DialectType::TiDB,
+            DialectType::MySQL,
+        );
+        assert!(mysql.contains("/*T![auto_rand] AUTO_RANDOM */"));
+        assert!(mysql.contains("/*T! PRE_SPLIT_REGIONS=2 */"));
+
+        let ast = Dialect::get(DialectType::TiDB)
+            .parse("FLASHBACK TABLE t")
+            .unwrap();
+        let mut generator = Generator::with_config(GeneratorConfig {
+            dialect: Some(DialectType::MySQL),
+            unsupported_level: UnsupportedLevel::Raise,
+            ..Default::default()
+        });
+        assert!(generator.generate(&ast[0]).is_err());
+
+        assert!(Dialect::get(DialectType::TiDB)
+            .parse("CREATE TABLE t (id BIGINT /*T![auto_rand] AUTO_RANDOM(5, x) */ PRIMARY KEY)")
+            .is_err());
     }
 
     // Cross-dialect tests for Phase 6.3 dialects

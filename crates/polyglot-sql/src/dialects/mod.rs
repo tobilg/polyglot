@@ -189,6 +189,8 @@ use crate::tokens::{Token, Tokenizer, TokenizerConfig};
 use crate::traversal::ExpressionWalk;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(feature = "transpile")]
+use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, RwLock};
 
 /// Enumeration of all supported SQL dialects.
@@ -685,6 +687,8 @@ where
             | Expression::IsFalse(_)
             | Expression::Subquery(_)
             | Expression::Exists(_)
+            | Expression::Any(_)
+            | Expression::All(_)
             | Expression::TableArgument(_)
             | Expression::And(_)
             | Expression::Or(_)
@@ -693,6 +697,8 @@ where
             | Expression::Mul(_)
             | Expression::Div(_)
             | Expression::Eq(_)
+            | Expression::NullSafeEq(_)
+            | Expression::NullSafeNeq(_)
             | Expression::Lt(_)
             | Expression::Gt(_)
             | Expression::Neq(_)
@@ -3208,6 +3214,7 @@ impl Dialect {
             DialectType::TSQL => {
                 let expr = transforms::eliminate_qualify(expr)?;
                 let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
+                let expr = transforms::normalize_grouping_sets_for_tsql(expr)?;
                 let expr =
                     transforms::expand_distinct_grouping_sets_for_tsql(expr, DialectType::TSQL)?;
                 let expr = transforms::ensure_bools(expr)?;
@@ -3221,6 +3228,7 @@ impl Dialect {
             // but keeps Fabric-specific APPLY and derived-table behavior separate.
             #[cfg(feature = "dialect-fabric")]
             DialectType::Fabric => {
+                let expr = transforms::normalize_grouping_sets_for_tsql(expr)?;
                 let expr =
                     transforms::expand_distinct_grouping_sets_for_tsql(expr, DialectType::Fabric)?;
                 let expr = transforms::ensure_bools(expr)?;
@@ -3415,7 +3423,13 @@ impl Dialect {
                     target,
                     opts,
                 )?;
-                Self::reject_postgres_tsql_strict_unknown_text_casts(
+                Self::reject_tsql_strict_json_constructor_return_types(
+                    &expr,
+                    self.dialect_type,
+                    target,
+                    opts,
+                )?;
+                Self::reject_postgres_tsql_strict_json_aggregate_modifiers(
                     &expr,
                     self.dialect_type,
                     target,
@@ -3696,7 +3710,15 @@ impl Dialect {
                 };
 
                 // Apply cross-dialect semantic normalizations
-                let normalized = normalization::normalize(normalized, self.dialect_type, target)?;
+                let normalized = normalization::normalize(
+                    normalized,
+                    self.dialect_type,
+                    target,
+                    matches!(
+                        opts.unsupported_level,
+                        UnsupportedLevel::Raise | UnsupportedLevel::Immediate
+                    ),
+                )?;
 
                 let normalized = if matches!(target, DialectType::TSQL | DialectType::Fabric) {
                     Self::normalize_tsql_fetch_overlaps_date_bin(normalized)?
@@ -3832,6 +3854,16 @@ impl Dialect {
                 ) && matches!(target, DialectType::TSQL | DialectType::Fabric)
                 {
                     Self::normalize_postgres_boolean_semantics_for_tsql(normalized)?
+                } else {
+                    normalized
+                };
+
+                let normalized = if matches!(
+                    self.dialect_type,
+                    DialectType::PostgreSQL | DialectType::CockroachDB
+                ) && matches!(target, DialectType::TSQL | DialectType::Fabric)
+                {
+                    Self::normalize_postgres_string_semantics_for_tsql(normalized)?
                 } else {
                     normalized
                 };
@@ -4034,7 +4066,67 @@ impl Dialect {
             }
         }
 
+        Self::drop_tsql_unbounded_nested_set_order_by(transformed)
+    }
+
+    fn drop_tsql_unbounded_nested_set_order_by(mut expr: Expression) -> Result<Expression> {
+        let root_order_by = Self::take_tsql_root_set_order_by(&mut expr);
+
+        let mut transformed = transform_recursive(expr, &|node| match node {
+            Expression::Union(mut union) => {
+                if union.limit.is_none() && union.offset.is_none() {
+                    union.order_by = None;
+                }
+                Ok(Expression::Union(union))
+            }
+            Expression::Intersect(mut intersect) => {
+                if intersect.limit.is_none() && intersect.offset.is_none() {
+                    intersect.order_by = None;
+                }
+                Ok(Expression::Intersect(intersect))
+            }
+            Expression::Except(mut except) => {
+                if except.limit.is_none() && except.offset.is_none() {
+                    except.order_by = None;
+                }
+                Ok(Expression::Except(except))
+            }
+            other => Ok(other),
+        })?;
+
+        if let Some(order_by) = root_order_by {
+            Self::restore_tsql_root_set_order_by(&mut transformed, order_by);
+        }
+
         Ok(transformed)
+    }
+
+    fn take_tsql_root_set_order_by(expr: &mut Expression) -> Option<OrderBy> {
+        match expr {
+            Expression::Union(union) => union.order_by.take(),
+            Expression::Intersect(intersect) => intersect.order_by.take(),
+            Expression::Except(except) => except.order_by.take(),
+            Expression::Subquery(subquery) if subquery.alias.is_none() => {
+                Self::take_tsql_root_set_order_by(&mut subquery.this)
+            }
+            Expression::Paren(paren) => Self::take_tsql_root_set_order_by(&mut paren.this),
+            _ => None,
+        }
+    }
+
+    fn restore_tsql_root_set_order_by(expr: &mut Expression, order_by: OrderBy) {
+        match expr {
+            Expression::Union(union) => union.order_by = Some(order_by),
+            Expression::Intersect(intersect) => intersect.order_by = Some(order_by),
+            Expression::Except(except) => except.order_by = Some(order_by),
+            Expression::Subquery(subquery) if subquery.alias.is_none() => {
+                Self::restore_tsql_root_set_order_by(&mut subquery.this, order_by);
+            }
+            Expression::Paren(paren) => {
+                Self::restore_tsql_root_set_order_by(&mut paren.this, order_by);
+            }
+            _ => {}
+        }
     }
 
     fn legalize_tsql_select_offset(select: &mut crate::expressions::Select) {
@@ -4112,6 +4204,14 @@ impl Dialect {
         }
 
         let mut diagnostics = Vec::new();
+        let structural_grouping_tuples =
+            if matches!(source, DialectType::PostgreSQL | DialectType::CockroachDB)
+                && matches!(target, DialectType::TSQL | DialectType::Fabric)
+            {
+                Self::collect_tsql_grouping_tuple_nodes(expr)
+            } else {
+                HashSet::new()
+            };
 
         for node in expr.dfs() {
             if matches!(target, DialectType::Fabric | DialectType::Hive)
@@ -4282,7 +4382,10 @@ impl Dialect {
                 }
                 if matches!(target, DialectType::TSQL | DialectType::Fabric) {
                     if let Some(composite_semantics) =
-                        Self::postgres_tsql_unsupported_composite_semantics(node)
+                        Self::postgres_tsql_unsupported_composite_semantics(
+                            node,
+                            structural_grouping_tuples.contains(&(node as *const Expression)),
+                        )
                     {
                         Self::push_unsupported_diagnostic(
                             &mut diagnostics,
@@ -4311,7 +4414,16 @@ impl Dialect {
                             &format!("PostgreSQL {array_semantics}"),
                         );
                     }
-                    if let Some(function_name) = Self::postgres_tsql_unsupported_function_name(node)
+                    if let Some(string_semantics) =
+                        Self::postgres_tsql_unsupported_string_semantics(node)
+                    {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {string_semantics}"),
+                        );
+                    }
+                    if let Some(function_name) =
+                        Self::postgres_tsql_unsupported_function_name(node, target)
                     {
                         Self::push_unsupported_diagnostic(
                             &mut diagnostics,
@@ -4384,7 +4496,56 @@ impl Dialect {
         Ok(())
     }
 
-    fn reject_postgres_tsql_strict_unknown_text_casts(
+    fn reject_tsql_strict_json_constructor_return_types(
+        expr: &Expression,
+        source: DialectType,
+        target: DialectType,
+        opts: &TranspileOptions,
+    ) -> Result<()> {
+        if !matches!(
+            opts.unsupported_level,
+            UnsupportedLevel::Raise | UnsupportedLevel::Immediate
+        ) || source == target
+            || !matches!(target, DialectType::TSQL | DialectType::Fabric)
+        {
+            return Ok(());
+        }
+
+        let mut diagnostics = Vec::new();
+        for node in expr.dfs() {
+            if let Some(return_type) =
+                normalization::unsupported_tsql_json_constructor_return_type(node)
+            {
+                let message =
+                    format!("SQL/JSON constructor RETURNING {return_type} cannot be preserved");
+                Self::push_unsupported_diagnostic(&mut diagnostics, &message);
+                if opts.unsupported_level == UnsupportedLevel::Immediate {
+                    break;
+                }
+            }
+        }
+
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+
+        let limit = if opts.unsupported_level == UnsupportedLevel::Immediate {
+            1
+        } else {
+            opts.max_unsupported.max(1)
+        };
+        let mut messages = diagnostics.iter().take(limit).cloned().collect::<Vec<_>>();
+        if diagnostics.len() > limit {
+            messages.push(format!("... and {} more", diagnostics.len() - limit));
+        }
+
+        Err(crate::error::Error::unsupported(
+            messages.join("; "),
+            target.to_string(),
+        ))
+    }
+
+    fn reject_postgres_tsql_strict_json_aggregate_modifiers(
         expr: &Expression,
         source: DialectType,
         target: DialectType,
@@ -4399,21 +4560,106 @@ impl Dialect {
             return Ok(());
         }
 
-        if expr.dfs().any(|node| {
-            matches!(
-                node,
-                Expression::Cast(cast)
-                    if matches!(cast.to, DataType::Text)
-                        && Self::is_column_expr(&cast.this)
-            )
-        }) {
-            return Err(crate::error::Error::unsupported(
-                "PostgreSQL cast of a column with an unknown source type to text",
-                target.to_string(),
-            ));
+        let mut diagnostics = Vec::new();
+        for node in expr.dfs() {
+            match node {
+                Expression::Function(function)
+                    if !function.quoted
+                        && matches!(
+                            function.name.to_ascii_uppercase().as_str(),
+                            "JSON_AGG" | "JSONB_AGG"
+                        ) =>
+                {
+                    let name = function.name.to_ascii_uppercase();
+                    if function.args.len() != 1 {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with invalid argument count"),
+                        );
+                    }
+                    if function.distinct {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with DISTINCT"),
+                        );
+                    }
+                }
+                Expression::AggregateFunction(function)
+                    if matches!(
+                        function.name.to_ascii_uppercase().as_str(),
+                        "JSON_AGG" | "JSONB_AGG"
+                    ) =>
+                {
+                    let name = function.name.to_ascii_uppercase();
+                    if function.args.len() != 1 {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with invalid argument count"),
+                        );
+                    }
+                    if function.distinct {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with DISTINCT"),
+                        );
+                    }
+                    if function.filter.is_some() {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with FILTER"),
+                        );
+                    }
+                    if function.limit.is_some() || function.ignore_nulls.is_some() {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with unsupported aggregate modifiers"),
+                        );
+                    }
+                }
+                Expression::Filter(filter) => {
+                    if let Some(name) = Self::postgres_json_aggregate_name(&filter.this) {
+                        Self::push_unsupported_diagnostic(
+                            &mut diagnostics,
+                            &format!("PostgreSQL {name} with FILTER"),
+                        );
+                    }
+                }
+                _ => {}
+            }
+
+            if opts.unsupported_level == UnsupportedLevel::Immediate && !diagnostics.is_empty() {
+                break;
+            }
         }
 
-        Ok(())
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+
+        let limit = if opts.unsupported_level == UnsupportedLevel::Immediate {
+            1
+        } else {
+            opts.max_unsupported.max(1)
+        };
+        let mut messages = diagnostics.iter().take(limit).cloned().collect::<Vec<_>>();
+        if diagnostics.len() > limit {
+            messages.push(format!("... and {} more", diagnostics.len() - limit));
+        }
+
+        Err(crate::error::Error::unsupported(
+            messages.join("; "),
+            target.to_string(),
+        ))
+    }
+
+    fn postgres_json_aggregate_name(expr: &Expression) -> Option<String> {
+        let name = match expr {
+            Expression::Function(function) if !function.quoted => &function.name,
+            Expression::AggregateFunction(function) => &function.name,
+            _ => return None,
+        };
+        let name = name.to_ascii_uppercase();
+        matches!(name.as_str(), "JSON_AGG" | "JSONB_AGG").then_some(name)
     }
 
     fn push_unsupported_diagnostic(diagnostics: &mut Vec<String>, message: &str) {
@@ -4942,11 +5188,113 @@ impl Dialect {
         }
     }
 
-    fn postgres_tsql_unsupported_composite_semantics(expr: &Expression) -> Option<&'static str> {
-        match expr {
-            Expression::Tuple(_) | Expression::Struct(_) | Expression::StructFunc(_) => {
-                Some("row/composite values")
+    fn collect_tsql_grouping_tuple_nodes(expr: &Expression) -> HashSet<*const Expression> {
+        let mut tuples = HashSet::new();
+
+        for node in expr.dfs() {
+            let Expression::Select(select) = node else {
+                continue;
+            };
+            let Some(group_by) = &select.group_by else {
+                continue;
+            };
+
+            for expression in &group_by.expressions {
+                Self::collect_tsql_grouping_element_tuples(expression, &mut tuples);
             }
+        }
+
+        tuples
+    }
+
+    fn collect_tsql_grouping_element_tuples(
+        expr: &Expression,
+        tuples: &mut HashSet<*const Expression>,
+    ) {
+        match expr {
+            Expression::GroupingSets(grouping_sets) => {
+                for expression in &grouping_sets.expressions {
+                    Self::collect_tsql_grouping_unit_tuples(expression, tuples);
+                }
+            }
+            Expression::Rollup(rollup) => {
+                for expression in &rollup.expressions {
+                    Self::collect_tsql_grouping_unit_tuples(expression, tuples);
+                }
+            }
+            Expression::Cube(cube) => {
+                for expression in &cube.expressions {
+                    Self::collect_tsql_grouping_unit_tuples(expression, tuples);
+                }
+            }
+            Expression::Function(function)
+                if !function.quoted
+                    && (function.name.eq_ignore_ascii_case("GROUPING SETS")
+                        || function.name.eq_ignore_ascii_case("ROLLUP")
+                        || function.name.eq_ignore_ascii_case("CUBE")) =>
+            {
+                for expression in &function.args {
+                    Self::collect_tsql_grouping_unit_tuples(expression, tuples);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_tsql_grouping_unit_tuples(
+        expr: &Expression,
+        tuples: &mut HashSet<*const Expression>,
+    ) {
+        match expr {
+            Expression::Tuple(tuple) => {
+                tuples.insert(expr as *const Expression);
+                for expression in &tuple.expressions {
+                    match expression {
+                        Expression::Tuple(_) | Expression::Paren(_) => {
+                            Self::collect_tsql_grouping_unit_tuples(expression, tuples);
+                        }
+                        Expression::GroupingSets(_)
+                        | Expression::Rollup(_)
+                        | Expression::Cube(_) => {
+                            Self::collect_tsql_grouping_element_tuples(expression, tuples);
+                        }
+                        Expression::Function(function)
+                            if !function.quoted
+                                && (function.name.eq_ignore_ascii_case("GROUPING SETS")
+                                    || function.name.eq_ignore_ascii_case("ROLLUP")
+                                    || function.name.eq_ignore_ascii_case("CUBE")) =>
+                        {
+                            Self::collect_tsql_grouping_element_tuples(expression, tuples);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Expression::Paren(paren) => {
+                Self::collect_tsql_grouping_unit_tuples(&paren.this, tuples);
+            }
+            Expression::GroupingSets(_) | Expression::Rollup(_) | Expression::Cube(_) => {
+                Self::collect_tsql_grouping_element_tuples(expr, tuples);
+            }
+            Expression::Function(function)
+                if !function.quoted
+                    && (function.name.eq_ignore_ascii_case("GROUPING SETS")
+                        || function.name.eq_ignore_ascii_case("ROLLUP")
+                        || function.name.eq_ignore_ascii_case("CUBE")) =>
+            {
+                Self::collect_tsql_grouping_element_tuples(expr, tuples);
+            }
+            _ => {}
+        }
+    }
+
+    fn postgres_tsql_unsupported_composite_semantics(
+        expr: &Expression,
+        structural_grouping_tuple: bool,
+    ) -> Option<&'static str> {
+        match expr {
+            Expression::Tuple(_) if !structural_grouping_tuple => Some("row/composite values"),
+            Expression::Struct(_) | Expression::StructFunc(_) => Some("row/composite values"),
             Expression::Function(function)
                 if !function.quoted && function.name.eq_ignore_ascii_case("ROW") =>
             {
@@ -5491,12 +5839,20 @@ impl Dialect {
         )
     }
 
-    fn postgres_tsql_unsupported_function_name(expr: &Expression) -> Option<&'static str> {
+    fn postgres_tsql_unsupported_function_name(
+        expr: &Expression,
+        target: DialectType,
+    ) -> Option<&'static str> {
         match expr {
             Expression::Lpad(_) => Some("LPAD"),
             Expression::Rpad(_) => Some("RPAD"),
             Expression::SplitPart(_) => Some("SPLIT_PART"),
             Expression::Initcap(_) => Some("INITCAP"),
+            Expression::RegexpReplace(_) => Some("REGEXP_REPLACE"),
+            Expression::RegexpInstr(_) => Some("REGEXP_INSTR"),
+            Expression::RegexpCount(_) => Some("REGEXP_COUNT"),
+            Expression::RegexpSplit(_) => Some("REGEXP_SPLIT"),
+            Expression::DecodeCase(_) => Some("DECODE"),
             Expression::ToJson(_) => Some("TO_JSON"),
             Expression::JSONBObjectAgg(_) => Some("JSONB_OBJECT_AGG"),
             Expression::ToNumber(_) => Some("TO_NUMBER"),
@@ -5517,16 +5873,19 @@ impl Dialect {
             Expression::RegrSxy(_) => Some("REGR_SXY"),
             Expression::RegrSyy(_) => Some("REGR_SYY"),
             Expression::Function(function) => {
-                Self::postgres_tsql_unsupported_function_name_str(&function.name)
+                Self::postgres_tsql_unsupported_function_name_str(&function.name, target)
             }
             Expression::AggregateFunction(function) => {
-                Self::postgres_tsql_unsupported_function_name_str(&function.name)
+                Self::postgres_tsql_unsupported_function_name_str(&function.name, target)
             }
             _ => None,
         }
     }
 
-    fn postgres_tsql_unsupported_function_name_str(name: &str) -> Option<&'static str> {
+    fn postgres_tsql_unsupported_function_name_str(
+        name: &str,
+        target: DialectType,
+    ) -> Option<&'static str> {
         if name.eq_ignore_ascii_case("LPAD") {
             Some("LPAD")
         } else if name.eq_ignore_ascii_case("RPAD") {
@@ -5553,6 +5912,32 @@ impl Dialect {
             Some("JSONB_ARRAY_ELEMENTS_TEXT")
         } else if name.eq_ignore_ascii_case("ENCODE") {
             Some("ENCODE")
+        } else if name.eq_ignore_ascii_case("DECODE") {
+            Some("DECODE")
+        } else if name.eq_ignore_ascii_case("REGEXP_REPLACE") {
+            Some("REGEXP_REPLACE")
+        } else if name.eq_ignore_ascii_case("REGEXP_COUNT") {
+            Some("REGEXP_COUNT")
+        } else if name.eq_ignore_ascii_case("REGEXP_INSTR") {
+            Some("REGEXP_INSTR")
+        } else if name.eq_ignore_ascii_case("REGEXP_SUBSTR") {
+            Some("REGEXP_SUBSTR")
+        } else if name.eq_ignore_ascii_case("REGEXP_SPLIT") {
+            Some("REGEXP_SPLIT")
+        } else if name.eq_ignore_ascii_case("REGEXP_SPLIT_TO_ARRAY") {
+            Some("REGEXP_SPLIT_TO_ARRAY")
+        } else if name.eq_ignore_ascii_case("REGEXP_SPLIT_TO_TABLE") {
+            Some("REGEXP_SPLIT_TO_TABLE")
+        } else if name.eq_ignore_ascii_case("SHA224") {
+            Some("SHA224")
+        } else if name.eq_ignore_ascii_case("SHA384") {
+            Some("SHA384")
+        } else if name.eq_ignore_ascii_case("TO_BIN") {
+            Some("TO_BIN")
+        } else if name.eq_ignore_ascii_case("TO_OCT") {
+            Some("TO_OCT")
+        } else if target == DialectType::TSQL && name.eq_ignore_ascii_case("UNISTR") {
+            Some("UNISTR")
         } else if name.eq_ignore_ascii_case("AGE") {
             Some("AGE")
         } else if name.eq_ignore_ascii_case("ERF") {
@@ -5630,6 +6015,7 @@ impl Dialect {
         transform_recursive(expr, &|e| match e {
             Expression::Trim(trim) => {
                 let mut trim = *trim;
+                trim.characters = trim.characters.map(Self::strip_postgres_text_literal_cast);
                 match trim.position {
                     crate::expressions::TrimPosition::Both
                         if trim.position_explicit && trim.characters.is_some() =>
@@ -5657,6 +6043,363 @@ impl Dialect {
             }
             other => Ok(other),
         })
+    }
+
+    fn normalize_postgres_string_semantics_for_tsql(expr: Expression) -> Result<Expression> {
+        transform_recursive(expr, &|e| match e {
+            Expression::Like(mut op) => {
+                Self::recover_postgres_like_escape(&mut op);
+                Ok(Expression::Like(op))
+            }
+            Expression::ILike(mut op) => {
+                Self::recover_postgres_like_escape(&mut op);
+                Ok(Expression::ILike(op))
+            }
+            Expression::Substring(mut substring)
+                if substring.length.is_none()
+                    && Self::is_explicitly_numeric_expression(&substring.start) =>
+            {
+                substring.length = Some(Expression::number(i32::MAX as i64));
+                Ok(Expression::Substring(substring))
+            }
+            Expression::Trim(mut trim) => {
+                trim.characters = trim.characters.map(Self::strip_postgres_text_literal_cast);
+                Ok(Expression::Trim(trim))
+            }
+            Expression::Function(mut function)
+                if !function.quoted
+                    && matches!(
+                        function.name.to_ascii_uppercase().as_str(),
+                        "BTRIM" | "LTRIM" | "RTRIM"
+                    )
+                    && function.args.len() == 2 =>
+            {
+                function.args[1] = Self::strip_postgres_text_literal_cast(function.args[1].clone());
+                Ok(Expression::Function(function))
+            }
+            Expression::Translate(translate) => {
+                Ok(Self::normalize_postgres_translate_for_tsql(*translate))
+            }
+            Expression::Function(function)
+                if !function.quoted
+                    && function.name.eq_ignore_ascii_case("TRANSLATE")
+                    && function.args.len() == 3 =>
+            {
+                Ok(Self::normalize_postgres_translate_function_for_tsql(
+                    *function,
+                ))
+            }
+            other => Ok(other),
+        })
+    }
+
+    fn recover_postgres_like_escape(op: &mut crate::expressions::LikeOp) {
+        if op.escape.is_some() {
+            return;
+        }
+
+        let Expression::Function(function) = &op.right else {
+            return;
+        };
+        if function.quoted
+            || function.distinct
+            || !function.name.eq_ignore_ascii_case("LIKE_ESCAPE")
+            || function.args.len() != 2
+        {
+            return;
+        }
+
+        let pattern = function.args[0].clone();
+        let escape = function.args[1].clone();
+        op.right = Self::strip_postgres_text_literal_cast(pattern);
+        op.escape = Some(Self::strip_postgres_text_literal_cast(escape));
+    }
+
+    fn normalize_postgres_translate_for_tsql(
+        mut translate: crate::expressions::Translate,
+    ) -> Expression {
+        let (Some(from), Some(to)) = (&translate.from_, &translate.to) else {
+            return Expression::Translate(Box::new(translate));
+        };
+
+        let (Some(from_value), Some(to_value)) = (
+            Self::postgres_text_literal_value(from),
+            Self::postgres_text_literal_value(to),
+        ) else {
+            return Expression::Translate(Box::new(translate));
+        };
+        let from_value = from_value.to_string();
+        let to_value = to_value.to_string();
+
+        if from_value.chars().count() > to_value.chars().count() {
+            if let Some(input) = Self::postgres_text_literal_value(&translate.this) {
+                return Expression::string(Self::translate_postgres_literal(
+                    input,
+                    &from_value,
+                    &to_value,
+                ));
+            }
+            return Expression::Translate(Box::new(translate));
+        }
+
+        translate.from_ = Some(Box::new(Self::strip_postgres_text_literal_cast(
+            *translate.from_.expect("checked above"),
+        )));
+        let normalized_to = if from_value.chars().count() < to_value.chars().count() {
+            Expression::string(
+                to_value
+                    .chars()
+                    .take(from_value.chars().count())
+                    .collect::<String>(),
+            )
+        } else {
+            Self::strip_postgres_text_literal_cast(*translate.to.expect("checked above"))
+        };
+        translate.to = Some(Box::new(normalized_to));
+        Expression::Translate(Box::new(translate))
+    }
+
+    fn normalize_postgres_translate_function_for_tsql(mut function: Function) -> Expression {
+        let from = Self::postgres_text_literal_value(&function.args[1]);
+        let to = Self::postgres_text_literal_value(&function.args[2]);
+        let (Some(from), Some(to)) = (from, to) else {
+            return Expression::Function(Box::new(function));
+        };
+        let from = from.to_string();
+        let to = to.to_string();
+
+        if from.chars().count() > to.chars().count() {
+            if let Some(input) = Self::postgres_text_literal_value(&function.args[0]) {
+                return Expression::string(Self::translate_postgres_literal(input, &from, &to));
+            }
+            return Expression::Function(Box::new(function));
+        }
+
+        function.args[1] = Self::strip_postgres_text_literal_cast(function.args[1].clone());
+        function.args[2] = if from.chars().count() < to.chars().count() {
+            Expression::string(to.chars().take(from.chars().count()).collect::<String>())
+        } else {
+            Self::strip_postgres_text_literal_cast(function.args[2].clone())
+        };
+        Expression::Function(Box::new(function))
+    }
+
+    fn translate_postgres_literal(input: &str, from: &str, to: &str) -> String {
+        let from = from.chars().collect::<Vec<_>>();
+        let to = to.chars().collect::<Vec<_>>();
+        let mut output = String::with_capacity(input.len());
+
+        for ch in input.chars() {
+            match from.iter().position(|candidate| *candidate == ch) {
+                Some(index) if index < to.len() => output.push(to[index]),
+                Some(_) => {}
+                None => output.push(ch),
+            }
+        }
+
+        output
+    }
+
+    fn postgres_tsql_unsupported_string_semantics(expr: &Expression) -> Option<&'static str> {
+        match expr {
+            Expression::Substring(substring) if substring.length.is_none() => {
+                if Self::postgres_text_literal_value(&substring.start).is_some() {
+                    Some("regular-expression SUBSTRING")
+                } else {
+                    Some("SUBSTRING without a statically numeric start position")
+                }
+            }
+            Expression::Translate(translate) => {
+                let from = translate
+                    .from_
+                    .as_deref()
+                    .and_then(Self::postgres_text_literal_value);
+                let to = translate
+                    .to
+                    .as_deref()
+                    .and_then(Self::postgres_text_literal_value);
+                match (from, to) {
+                    (Some(from), Some(to)) if from.chars().count() == to.chars().count() => None,
+                    _ => Some("TRANSLATE with source and replacement lengths that differ or cannot be proven equal"),
+                }
+            }
+            Expression::Function(function)
+                if !function.quoted && function.name.eq_ignore_ascii_case("LIKE_ESCAPE") =>
+            {
+                Some("LIKE_ESCAPE helper outside a LIKE predicate")
+            }
+            Expression::Function(function)
+                if !function.quoted
+                    && function.name.eq_ignore_ascii_case("TRANSLATE")
+                    && function.args.len() == 3 =>
+            {
+                let from = Self::postgres_text_literal_value(&function.args[1]);
+                let to = Self::postgres_text_literal_value(&function.args[2]);
+                match (from, to) {
+                    (Some(from), Some(to)) if from.chars().count() == to.chars().count() => None,
+                    _ => Some("TRANSLATE with source and replacement lengths that differ or cannot be proven equal"),
+                }
+            }
+            Expression::Trim(trim)
+                if trim
+                    .characters
+                    .as_ref()
+                    .is_some_and(Self::is_unbounded_text_cast) =>
+            {
+                Some("TRIM character set cast to an unbounded text type")
+            }
+            Expression::Function(function)
+                if !function.quoted
+                    && matches!(
+                        function.name.to_ascii_uppercase().as_str(),
+                        "LTRIM" | "RTRIM"
+                    )
+                    && function.args.len() == 2
+                    && Self::is_unbounded_text_cast(&function.args[1]) =>
+            {
+                Some("TRIM character set cast to an unbounded text type")
+            }
+            _ => None,
+        }
+    }
+
+    fn strip_postgres_text_literal_cast(expr: Expression) -> Expression {
+        match expr {
+            Expression::Cast(cast)
+                if Self::is_text_data_type(&cast.to)
+                    && Self::postgres_text_literal_value(&cast.this).is_some() =>
+            {
+                Self::strip_postgres_text_literal_cast(cast.this)
+            }
+            Expression::TryCast(cast)
+                if Self::is_text_data_type(&cast.to)
+                    && Self::postgres_text_literal_value(&cast.this).is_some() =>
+            {
+                Self::strip_postgres_text_literal_cast(cast.this)
+            }
+            Expression::SafeCast(cast)
+                if Self::is_text_data_type(&cast.to)
+                    && Self::postgres_text_literal_value(&cast.this).is_some() =>
+            {
+                Self::strip_postgres_text_literal_cast(cast.this)
+            }
+            Expression::Paren(mut paren)
+                if Self::postgres_text_literal_value(&paren.this).is_some() =>
+            {
+                paren.this = Self::strip_postgres_text_literal_cast(paren.this);
+                Expression::Paren(paren)
+            }
+            other => other,
+        }
+    }
+
+    fn postgres_text_literal_value(expr: &Expression) -> Option<&str> {
+        match expr {
+            Expression::Literal(literal) if literal.is_string() => Some(literal.value_str()),
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast)
+                if Self::is_text_data_type(&cast.to) =>
+            {
+                Self::postgres_text_literal_value(&cast.this)
+            }
+            Expression::Alias(alias) => Self::postgres_text_literal_value(&alias.this),
+            Expression::Paren(paren) => Self::postgres_text_literal_value(&paren.this),
+            _ => None,
+        }
+    }
+
+    fn is_text_data_type(data_type: &DataType) -> bool {
+        match data_type {
+            DataType::Char { .. }
+            | DataType::VarChar { .. }
+            | DataType::String { .. }
+            | DataType::Text
+            | DataType::TextWithLength { .. } => true,
+            DataType::Custom { name } => {
+                let base = name
+                    .split_once('(')
+                    .map_or(name.as_str(), |(base, _)| base)
+                    .trim();
+                matches!(
+                    base.to_ascii_uppercase().as_str(),
+                    "CHAR"
+                        | "NCHAR"
+                        | "VARCHAR"
+                        | "NVARCHAR"
+                        | "TEXT"
+                        | "NTEXT"
+                        | "STRING"
+                        | "CHARACTER VARYING"
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn is_unbounded_text_cast(expr: &Expression) -> bool {
+        let data_type = match expr {
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+                &cast.to
+            }
+            Expression::Paren(paren) => return Self::is_unbounded_text_cast(&paren.this),
+            _ => return false,
+        };
+
+        match data_type {
+            DataType::Text => true,
+            DataType::VarChar { length: None, .. } | DataType::String { length: None } => true,
+            DataType::Custom { name } => name.to_ascii_uppercase().contains("(MAX)"),
+            _ => false,
+        }
+    }
+
+    fn is_explicitly_numeric_expression(expr: &Expression) -> bool {
+        if expr.inferred_type().is_some_and(Self::is_numeric_data_type) {
+            return true;
+        }
+
+        match expr {
+            Expression::Literal(literal) => literal.is_number(),
+            Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+                Self::is_numeric_data_type(&cast.to)
+            }
+            Expression::Alias(alias) => Self::is_explicitly_numeric_expression(&alias.this),
+            Expression::Paren(paren) => Self::is_explicitly_numeric_expression(&paren.this),
+            Expression::Neg(unary) => Self::is_explicitly_numeric_expression(&unary.this),
+            _ => false,
+        }
+    }
+
+    fn is_numeric_data_type(data_type: &DataType) -> bool {
+        match data_type {
+            DataType::TinyInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::Int { .. }
+            | DataType::BigInt { .. }
+            | DataType::Float { .. }
+            | DataType::Double { .. }
+            | DataType::Decimal { .. } => true,
+            DataType::Custom { name } => {
+                let base = name
+                    .split_once('(')
+                    .map_or(name.as_str(), |(base, _)| base)
+                    .trim();
+                matches!(
+                    base.to_ascii_uppercase().as_str(),
+                    "TINYINT"
+                        | "SMALLINT"
+                        | "INT"
+                        | "INTEGER"
+                        | "BIGINT"
+                        | "DECIMAL"
+                        | "NUMERIC"
+                        | "REAL"
+                        | "FLOAT"
+                        | "MONEY"
+                        | "SMALLMONEY"
+                )
+            }
+            _ => false,
+        }
     }
 
     fn normalize_postgres_only_for_tsql(expr: Expression) -> Result<Expression> {
@@ -5869,7 +6612,7 @@ impl Dialect {
                 except.right = Self::rewrite_boolean_values_for_tsql(right)?;
                 Ok(Expression::Except(except))
             }
-            other => Self::rewrite_tsql_boolean_embedded_queries(other),
+            other => Self::rewrite_tsql_boolean_nested_contexts(other),
         }
     }
 
@@ -6015,7 +6758,7 @@ impl Dialect {
             from.expressions = from
                 .expressions
                 .into_iter()
-                .map(Self::rewrite_tsql_boolean_embedded_queries)
+                .map(Self::rewrite_tsql_boolean_nested_contexts)
                 .collect::<Result<Vec<_>>>()?;
             select.from = Some(from);
         }
@@ -6024,7 +6767,7 @@ impl Dialect {
             .joins
             .into_iter()
             .map(|mut join| {
-                join.this = Self::rewrite_tsql_boolean_embedded_queries(join.this)?;
+                join.this = Self::rewrite_tsql_boolean_nested_contexts(join.this)?;
                 if let Some(on) = join.on.take() {
                     join.on = Some(Self::rewrite_tsql_boolean_predicate_context(on)?);
                 }
@@ -6036,7 +6779,7 @@ impl Dialect {
                 join.pivots = join
                     .pivots
                     .into_iter()
-                    .map(Self::rewrite_tsql_boolean_embedded_queries)
+                    .map(Self::rewrite_tsql_boolean_nested_contexts)
                     .collect::<Result<Vec<_>>>()?;
                 Ok(join)
             })
@@ -6046,7 +6789,7 @@ impl Dialect {
             .lateral_views
             .into_iter()
             .map(|mut lateral_view| {
-                lateral_view.this = Self::rewrite_tsql_boolean_embedded_queries(lateral_view.this)?;
+                lateral_view.this = Self::rewrite_tsql_boolean_nested_contexts(lateral_view.this)?;
                 Ok(lateral_view)
             })
             .collect::<Result<Vec<_>>>()?;
@@ -6123,22 +6866,22 @@ impl Dialect {
         }
 
         if let Some(mut sample) = select.sample.take() {
-            sample.size = Self::rewrite_tsql_boolean_embedded_queries(sample.size)?;
+            sample.size = Self::rewrite_tsql_boolean_nested_contexts(sample.size)?;
             if let Some(offset) = sample.offset.take() {
-                sample.offset = Some(Self::rewrite_tsql_boolean_embedded_queries(offset)?);
+                sample.offset = Some(Self::rewrite_tsql_boolean_nested_contexts(offset)?);
             }
             if let Some(bucket_numerator) = sample.bucket_numerator.take() {
                 sample.bucket_numerator = Some(Box::new(
-                    Self::rewrite_tsql_boolean_embedded_queries(*bucket_numerator)?,
+                    Self::rewrite_tsql_boolean_nested_contexts(*bucket_numerator)?,
                 ));
             }
             if let Some(bucket_denominator) = sample.bucket_denominator.take() {
                 sample.bucket_denominator = Some(Box::new(
-                    Self::rewrite_tsql_boolean_embedded_queries(*bucket_denominator)?,
+                    Self::rewrite_tsql_boolean_nested_contexts(*bucket_denominator)?,
                 ));
             }
             if let Some(bucket_field) = sample.bucket_field.take() {
-                sample.bucket_field = Some(Box::new(Self::rewrite_tsql_boolean_embedded_queries(
+                sample.bucket_field = Some(Box::new(Self::rewrite_tsql_boolean_nested_contexts(
                     *bucket_field,
                 )?));
             }
@@ -6149,13 +6892,13 @@ impl Dialect {
             select.settings = Some(
                 settings
                     .into_iter()
-                    .map(Self::rewrite_tsql_boolean_embedded_queries)
+                    .map(Self::rewrite_tsql_boolean_nested_contexts)
                     .collect::<Result<Vec<_>>>()?,
             );
         }
 
         if let Some(format) = select.format.take() {
-            select.format = Some(Self::rewrite_tsql_boolean_embedded_queries(format)?);
+            select.format = Some(Self::rewrite_tsql_boolean_nested_contexts(format)?);
         }
 
         if let Some(mut windows) = select.windows.take() {
@@ -6215,20 +6958,11 @@ impl Dialect {
             return Expression::string(if boolean.value { "true" } else { "false" });
         }
 
-        let false_predicate = Expression::Not(Box::new(crate::expressions::UnaryOp {
-            this: predicate.clone(),
-            inferred_type: None,
-        }));
-        Expression::Case(Box::new(crate::expressions::Case {
-            operand: None,
-            whens: vec![
-                (predicate, Expression::string("true")),
-                (false_predicate, Expression::string("false")),
-            ],
-            else_: Some(Expression::null()),
-            comments: Vec::new(),
-            inferred_type: None,
-        }))
+        Self::three_valued_boolean_case(
+            predicate,
+            Expression::string("true"),
+            Expression::string("false"),
+        )
     }
 
     fn rewrite_tsql_boolean_scalar_value(expr: Expression) -> Result<Expression> {
@@ -6245,8 +6979,12 @@ impl Dialect {
         }
 
         if Self::is_tsql_boolean_value_expression(&expr) {
+            // Tuple/subquery equality currently lowers only its positive branch to EXISTS.
+            // Keep its established two-way scalar fallback until that rewrite models UNKNOWN.
+            let can_be_unknown = Self::tsql_boolean_expression_can_be_unknown(&expr)
+                && !Self::node_is_row_value_subquery_comparison(&expr);
             let predicate = Self::rewrite_tsql_boolean_predicate_context(expr)?;
-            return Ok(Self::tsql_boolean_value_case(predicate));
+            return Ok(Self::tsql_boolean_value_case(predicate, can_be_unknown));
         }
 
         match expr {
@@ -6261,7 +6999,7 @@ impl Dialect {
             Expression::Cast(mut cast) => {
                 cast.this = Self::rewrite_tsql_boolean_scalar_value(cast.this)?;
                 if let Some(format) = cast.format.take() {
-                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_embedded_queries(
+                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_nested_contexts(
                         *format,
                     )?));
                 }
@@ -6274,7 +7012,7 @@ impl Dialect {
             Expression::TryCast(mut cast) => {
                 cast.this = Self::rewrite_tsql_boolean_scalar_value(cast.this)?;
                 if let Some(format) = cast.format.take() {
-                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_embedded_queries(
+                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_nested_contexts(
                         *format,
                     )?));
                 }
@@ -6287,7 +7025,7 @@ impl Dialect {
             Expression::SafeCast(mut cast) => {
                 cast.this = Self::rewrite_tsql_boolean_scalar_value(cast.this)?;
                 if let Some(format) = cast.format.take() {
-                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_embedded_queries(
+                    cast.format = Some(Box::new(Self::rewrite_tsql_boolean_nested_contexts(
                         *format,
                     )?));
                 }
@@ -6331,7 +7069,7 @@ impl Dialect {
             }
             Expression::WindowFunction(mut window_function) => {
                 window_function.this =
-                    Self::rewrite_tsql_boolean_embedded_queries(window_function.this)?;
+                    Self::rewrite_tsql_boolean_nested_contexts(window_function.this)?;
                 Self::rewrite_tsql_boolean_over_values(&mut window_function.over)?;
                 if let Some(mut keep) = window_function.keep.take() {
                     keep.order_by = Self::rewrite_tsql_boolean_ordered_values(keep.order_by)?;
@@ -6340,7 +7078,7 @@ impl Dialect {
                 Ok(Expression::WindowFunction(window_function))
             }
             Expression::WithinGroup(mut within_group) => {
-                within_group.this = Self::rewrite_tsql_boolean_embedded_queries(within_group.this)?;
+                within_group.this = Self::rewrite_tsql_boolean_nested_contexts(within_group.this)?;
                 within_group.order_by =
                     Self::rewrite_tsql_boolean_ordered_values(within_group.order_by)?;
                 Ok(Expression::WithinGroup(within_group))
@@ -6350,16 +7088,16 @@ impl Dialect {
                 Ok(Expression::Subquery(subquery))
             }
             Expression::Select(select) => Self::rewrite_boolean_values_in_tsql_select(select),
-            other => Self::rewrite_tsql_boolean_embedded_queries(other),
+            other => Self::rewrite_tsql_boolean_nested_contexts(other),
         }
     }
 
     fn rewrite_tsql_boolean_predicate_context(expr: Expression) -> Result<Expression> {
-        let expr = Self::rewrite_tsql_boolean_embedded_queries(expr)?;
+        let expr = Self::rewrite_tsql_boolean_nested_contexts(expr)?;
         Ok(crate::transforms::ensure_bool_condition(expr))
     }
 
-    fn rewrite_tsql_boolean_embedded_queries(expr: Expression) -> Result<Expression> {
+    fn rewrite_tsql_boolean_nested_contexts(expr: Expression) -> Result<Expression> {
         transform_recursive(expr, &|e| match e {
             Expression::Select(select) => Self::rewrite_boolean_values_in_tsql_select(select),
             Expression::Subquery(mut subquery) => {
@@ -6369,8 +7107,27 @@ impl Dialect {
             Expression::Union(_) | Expression::Intersect(_) | Expression::Except(_) => {
                 Self::rewrite_boolean_values_for_tsql(e)
             }
-            other => Ok(other),
+            other => Self::rewrite_tsql_boolean_cast_operand(other),
         })
+    }
+
+    fn rewrite_tsql_boolean_cast_operand(expr: Expression) -> Result<Expression> {
+        macro_rules! rewrite_cast_operand {
+            ($variant:ident, $cast:expr) => {{
+                let mut cast = $cast;
+                if Self::is_tsql_boolean_value_expression(&cast.this) {
+                    cast.this = Self::rewrite_tsql_boolean_scalar_value(cast.this)?;
+                }
+                Ok(Expression::$variant(cast))
+            }};
+        }
+
+        match expr {
+            Expression::Cast(cast) => rewrite_cast_operand!(Cast, cast),
+            Expression::TryCast(cast) => rewrite_cast_operand!(TryCast, cast),
+            Expression::SafeCast(cast) => rewrite_cast_operand!(SafeCast, cast),
+            other => Ok(other),
+        }
     }
 
     fn rewrite_tsql_boolean_ordered_values(
@@ -6459,14 +7216,38 @@ impl Dialect {
         }
     }
 
-    fn tsql_boolean_value_case(predicate: Expression) -> Expression {
-        let case = Expression::Case(Box::new(crate::expressions::Case {
-            operand: None,
-            whens: vec![(predicate, Expression::number(1))],
-            else_: Some(Expression::number(0)),
-            comments: Vec::new(),
-            inferred_type: None,
-        }));
+    fn tsql_boolean_expression_can_be_unknown(expr: &Expression) -> bool {
+        match expr {
+            Expression::Boolean(_)
+            | Expression::IsNull(_)
+            | Expression::IsTrue(_)
+            | Expression::IsFalse(_)
+            | Expression::Exists(_)
+            | Expression::NullSafeEq(_)
+            | Expression::NullSafeNeq(_)
+            | Expression::EqualNull(_) => false,
+            Expression::Paren(paren) => Self::tsql_boolean_expression_can_be_unknown(&paren.this),
+            Expression::Not(op) => Self::tsql_boolean_expression_can_be_unknown(&op.this),
+            Expression::And(op) | Expression::Or(op) => {
+                Self::tsql_boolean_expression_can_be_unknown(&op.left)
+                    || Self::tsql_boolean_expression_can_be_unknown(&op.right)
+            }
+            _ => true,
+        }
+    }
+
+    fn tsql_boolean_value_case(predicate: Expression, can_be_unknown: bool) -> Expression {
+        let case = if can_be_unknown {
+            Self::three_valued_boolean_case(predicate, Expression::number(1), Expression::number(0))
+        } else {
+            Expression::Case(Box::new(crate::expressions::Case {
+                operand: None,
+                whens: vec![(predicate, Expression::number(1))],
+                else_: Some(Expression::number(0)),
+                comments: Vec::new(),
+                inferred_type: None,
+            }))
+        };
 
         Expression::Cast(Box::new(Cast {
             this: case,
@@ -6475,6 +7256,33 @@ impl Dialect {
             double_colon_syntax: false,
             format: None,
             default: None,
+            inferred_type: None,
+        }))
+    }
+
+    fn three_valued_boolean_case(
+        predicate: Expression,
+        true_value: Expression,
+        false_value: Expression,
+    ) -> Expression {
+        let false_operand = if matches!(predicate, Expression::And(_) | Expression::Or(_)) {
+            Expression::Paren(Box::new(crate::expressions::Paren {
+                this: predicate.clone(),
+                trailing_comments: Vec::new(),
+            }))
+        } else {
+            predicate.clone()
+        };
+        let false_predicate = Expression::Not(Box::new(crate::expressions::UnaryOp {
+            this: false_operand,
+            inferred_type: None,
+        }));
+
+        Expression::Case(Box::new(crate::expressions::Case {
+            operand: None,
+            whens: vec![(predicate, true_value), (false_predicate, false_value)],
+            else_: Some(Expression::null()),
+            comments: Vec::new(),
             inferred_type: None,
         }))
     }
@@ -8101,7 +8909,7 @@ impl Dialect {
         })
     }
 
-    fn rewrite_tsql_interval_arithmetic(
+    fn rewrite_tsql_interval_arithmetic_legacy(
         expr: &Expression,
         source: DialectType,
     ) -> Option<Expression> {

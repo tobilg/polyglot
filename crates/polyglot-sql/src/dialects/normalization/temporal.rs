@@ -1,11 +1,16 @@
+use super::postgres_interval::{
+    self, DecomposeOutcome, ParsedInterval, MICROS_PER_DAY, MICROS_PER_HOUR, MICROS_PER_MINUTE,
+    MICROS_PER_SECOND,
+};
 use super::{scalar, types, NormalizationContext, RewriteOutcome};
 use crate::dialects::{Dialect, DialectType};
+use crate::error::Error;
 use crate::error::Result;
 use crate::expressions::*;
 
 #[derive(Debug)]
 pub(super) enum Action {
-    PostgresTimeDatePartForTsql,
+    PostgresDatePartForTsql,
     ConvertTimezoneToExpr,
     EpochConvert,
     EpochMsConvert,
@@ -51,7 +56,7 @@ pub(super) fn rewrite(
     let e = expression;
     let expression = (|| -> Result<Expression> {
         match action {
-            Action::PostgresTimeDatePartForTsql => rewrite_postgres_time_date_part_for_tsql(e),
+            Action::PostgresDatePartForTsql => rewrite_postgres_date_part_for_tsql(e),
             Action::ConvertTimezoneToExpr => {
                 // Convert Function("CONVERT_TIMEZONE", args) to Expression::ConvertTimezone
                 // This prevents Redshift's transform_expr from expanding 2-arg to 3-arg with 'UTC'
@@ -2709,6 +2714,18 @@ pub(super) fn is_postgres_time_date_part(expression: &Expression) -> bool {
     postgres_time_date_part(expression).is_some()
 }
 
+pub(super) fn is_postgres_date_part_function(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Function(function)
+            if function.args.len() == 2
+                && matches!(
+                    function.name.to_ascii_uppercase().as_str(),
+                    "DATE_PART" | "DATEPART"
+                )
+    )
+}
+
 fn postgres_time_date_part(expression: &Expression) -> Option<(PostgresTimeDatePart, Expression)> {
     match expression {
         Expression::Extract(extract) if is_time_value(&extract.this) => {
@@ -2789,9 +2806,319 @@ fn is_time_value(expression: &Expression) -> bool {
     }
 }
 
-fn rewrite_postgres_time_date_part_for_tsql(expression: Expression) -> Result<Expression> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemporalOperand {
+    Time,
+    Date,
+    Timestamp,
+    Unknown,
+}
+
+pub(super) fn rewrite_tsql_interval_arithmetic(
+    expression: &Expression,
+    context: &NormalizationContext,
+) -> Result<Option<Expression>> {
+    let (base, interval, subtract) = match expression {
+        Expression::Add(operation) if is_interval_value(&operation.right) => {
+            (&operation.left, &operation.right, false)
+        }
+        Expression::Sub(operation) if is_interval_value(&operation.right) => {
+            (&operation.left, &operation.right, true)
+        }
+        _ => {
+            return Ok(Dialect::rewrite_tsql_interval_arithmetic_legacy(
+                expression,
+                context.source,
+            ));
+        }
+    };
+
+    if !Dialect::is_postgres_family_source(context.source) {
+        return Ok(Dialect::rewrite_tsql_interval_arithmetic_legacy(
+            expression,
+            context.source,
+        ));
+    }
+
+    match postgres_interval::decompose(interval) {
+        DecomposeOutcome::NotLiteral => Ok(Dialect::rewrite_tsql_interval_arithmetic_legacy(
+            expression,
+            context.source,
+        )),
+        DecomposeOutcome::Invalid => unsupported_or_preserve(
+            expression,
+            context,
+            "PostgreSQL interval literal cannot be represented safely",
+        ),
+        DecomposeOutcome::Parsed(parsed) => {
+            if let Some(simple) = parsed.simple {
+                if i32::try_from(simple.amount).is_ok()
+                    && legacy_simple_interval_is_safe(base, simple.unit)
+                {
+                    return Ok(Dialect::rewrite_tsql_interval_arithmetic_legacy(
+                        expression,
+                        context.source,
+                    ));
+                }
+            }
+            rewrite_decomposed_interval(expression, base, parsed, subtract, context)
+        }
+    }
+}
+
+fn rewrite_decomposed_interval(
+    original: &Expression,
+    base: &Expression,
+    mut parsed: ParsedInterval,
+    subtract: bool,
+    context: &NormalizationContext,
+) -> Result<Option<Expression>> {
+    if subtract {
+        let Some(months) = parsed.value.months.checked_neg() else {
+            return unsupported_or_preserve(
+                original,
+                context,
+                "PostgreSQL interval exceeds the DATEADD integer range",
+            );
+        };
+        let Some(days) = parsed.value.days.checked_neg() else {
+            return unsupported_or_preserve(
+                original,
+                context,
+                "PostgreSQL interval exceeds the DATEADD integer range",
+            );
+        };
+        let Some(micros) = parsed.value.micros.checked_neg() else {
+            return unsupported_or_preserve(
+                original,
+                context,
+                "PostgreSQL interval exceeds the DATEADD integer range",
+            );
+        };
+        parsed.value.months = months;
+        parsed.value.days = days;
+        parsed.value.micros = micros;
+    }
+
+    let operand = temporal_operand(base);
+    if operand == TemporalOperand::Unknown
+        && parsed.has_date_fields
+        && parsed.has_time_fields
+        && context.strict
+    {
+        return Err(Error::unsupported(
+            "compound PostgreSQL interval arithmetic with an unresolved operand type",
+            context.target.to_string(),
+        ));
+    }
+
+    let (base, components) = match operand {
+        TemporalOperand::Time => {
+            let micros = parsed.value.micros % MICROS_PER_DAY;
+            (base.clone(), time_components(micros))
+        }
+        TemporalOperand::Date => {
+            let base = if parsed.has_time_fields {
+                timestamp_cast(base.clone())
+            } else {
+                base.clone()
+            };
+            (base, timestamp_components(parsed))
+        }
+        TemporalOperand::Timestamp | TemporalOperand::Unknown => {
+            (base.clone(), timestamp_components(parsed))
+        }
+    };
+
+    let Some(rewritten) = build_dateadd_chain(base, &components) else {
+        return unsupported_or_preserve(
+            original,
+            context,
+            "PostgreSQL interval exceeds the DATEADD integer range",
+        );
+    };
+    Ok(Some(rewritten))
+}
+
+fn legacy_simple_interval_is_safe(base: &Expression, unit: IntervalUnit) -> bool {
+    let is_date_unit = matches!(
+        unit,
+        IntervalUnit::Year
+            | IntervalUnit::Quarter
+            | IntervalUnit::Month
+            | IntervalUnit::Week
+            | IntervalUnit::Day
+    );
+    match temporal_operand(base) {
+        TemporalOperand::Time => !is_date_unit,
+        TemporalOperand::Date => is_date_unit,
+        TemporalOperand::Timestamp | TemporalOperand::Unknown => true,
+    }
+}
+
+fn unsupported_or_preserve(
+    original: &Expression,
+    context: &NormalizationContext,
+    feature: &str,
+) -> Result<Option<Expression>> {
+    if context.strict {
+        Err(Error::unsupported(feature, context.target.to_string()))
+    } else {
+        Ok(Some(original.clone()))
+    }
+}
+
+fn is_interval_value(expression: &Expression) -> bool {
+    match expression {
+        Expression::Interval(_) => true,
+        Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+            matches!(cast.to, DataType::Interval { .. })
+                || matches!(&cast.to, DataType::Custom { name } if name.eq_ignore_ascii_case("INTERVAL"))
+        }
+        _ => false,
+    }
+}
+
+fn temporal_operand(expression: &Expression) -> TemporalOperand {
+    if is_time_value(expression) {
+        return TemporalOperand::Time;
+    }
+    match expression {
+        Expression::Literal(literal) => match literal.as_ref() {
+            Literal::Date(_) => TemporalOperand::Date,
+            Literal::Timestamp(_) => TemporalOperand::Timestamp,
+            _ => TemporalOperand::Unknown,
+        },
+        Expression::Cast(cast) | Expression::TryCast(cast) | Expression::SafeCast(cast) => {
+            temporal_data_type(&cast.to)
+        }
+        Expression::Paren(paren) => temporal_operand(&paren.this),
+        Expression::Alias(alias) => temporal_operand(&alias.this),
+        Expression::CurrentDate(_)
+        | Expression::Date(_)
+        | Expression::MakeDate(_)
+        | Expression::ToDate(_)
+        | Expression::DateStrToDate(_) => TemporalOperand::Date,
+        Expression::CurrentTimestamp(_)
+        | Expression::CurrentTimestampLTZ(_)
+        | Expression::Localtimestamp(_)
+        | Expression::CurrentDatetime(_) => TemporalOperand::Timestamp,
+        Expression::Function(function)
+            if matches!(
+                function.name.to_ascii_uppercase().as_str(),
+                "GETDATE" | "SYSDATETIME" | "CURRENT_TIMESTAMP" | "NOW"
+            ) =>
+        {
+            TemporalOperand::Timestamp
+        }
+        other => other
+            .inferred_type()
+            .map(temporal_data_type)
+            .unwrap_or(TemporalOperand::Unknown),
+    }
+}
+
+fn temporal_data_type(data_type: &DataType) -> TemporalOperand {
+    match data_type {
+        DataType::Date => TemporalOperand::Date,
+        DataType::Time { .. } => TemporalOperand::Time,
+        DataType::Timestamp { .. } => TemporalOperand::Timestamp,
+        DataType::Custom { name } => {
+            let name = name.trim().to_ascii_uppercase();
+            if name == "DATE" {
+                TemporalOperand::Date
+            } else if name == "TIME" || name.starts_with("TIME(") {
+                TemporalOperand::Time
+            } else if name.starts_with("TIMESTAMP")
+                || name.starts_with("DATETIME")
+                || name.starts_with("SMALLDATETIME")
+            {
+                TemporalOperand::Timestamp
+            } else {
+                TemporalOperand::Unknown
+            }
+        }
+        _ => TemporalOperand::Unknown,
+    }
+}
+
+fn timestamp_cast(expression: Expression) -> Expression {
+    Expression::Cast(Box::new(Cast {
+        this: expression,
+        to: DataType::Timestamp {
+            precision: None,
+            timezone: false,
+        },
+        trailing_comments: Vec::new(),
+        double_colon_syntax: false,
+        format: None,
+        default: None,
+        inferred_type: None,
+    }))
+}
+
+fn timestamp_components(parsed: ParsedInterval) -> Vec<(&'static str, i128)> {
+    let mut micros = parsed.value.micros;
+    let hours = micros / MICROS_PER_HOUR;
+    micros %= MICROS_PER_HOUR;
+    let minutes = micros / MICROS_PER_MINUTE;
+    micros %= MICROS_PER_MINUTE;
+    let seconds = micros / MICROS_PER_SECOND;
+    micros %= MICROS_PER_SECOND;
+    vec![
+        ("MONTH", parsed.value.months),
+        ("DAY", parsed.value.days),
+        ("HOUR", hours),
+        ("MINUTE", minutes),
+        ("SECOND", seconds),
+        ("MICROSECOND", micros),
+    ]
+}
+
+fn time_components(mut micros: i128) -> Vec<(&'static str, i128)> {
+    let hours = micros / MICROS_PER_HOUR;
+    micros %= MICROS_PER_HOUR;
+    let minutes = micros / MICROS_PER_MINUTE;
+    micros %= MICROS_PER_MINUTE;
+    let seconds = micros / MICROS_PER_SECOND;
+    micros %= MICROS_PER_SECOND;
+    vec![
+        ("HOUR", hours),
+        ("MINUTE", minutes),
+        ("SECOND", seconds),
+        ("MICROSECOND", micros),
+    ]
+}
+
+fn build_dateadd_chain(
+    mut expression: Expression,
+    components: &[(&'static str, i128)],
+) -> Option<Expression> {
+    for (unit, amount) in components {
+        if *amount == 0 {
+            continue;
+        }
+        let amount = i32::try_from(*amount).ok()?;
+        expression = Expression::Function(Box::new(Function::new(
+            "DATEADD",
+            vec![
+                Expression::Identifier(Identifier::new(*unit)),
+                Expression::Literal(Box::new(Literal::Number(amount.to_string()))),
+                expression,
+            ],
+        )));
+    }
+    Some(expression)
+}
+
+fn rewrite_postgres_date_part_for_tsql(expression: Expression) -> Result<Expression> {
+    let returns_double_precision = is_postgres_date_part_function(&expression);
     let Some((field, value)) = postgres_time_date_part(&expression) else {
-        return Ok(expression);
+        return Ok(if returns_double_precision {
+            cast_postgres_date_part_to_double(expression)
+        } else {
+            expression
+        });
     };
 
     let date_part = |name: &str, value: Expression| {
@@ -2861,7 +3188,26 @@ fn rewrite_postgres_time_date_part_for_tsql(expression: Expression) -> Result<Ex
         }
     };
 
-    Ok(rewritten)
+    Ok(if returns_double_precision {
+        cast_postgres_date_part_to_double(rewritten)
+    } else {
+        rewritten
+    })
+}
+
+fn cast_postgres_date_part_to_double(expression: Expression) -> Expression {
+    Expression::Cast(Box::new(Cast {
+        this: expression,
+        to: DataType::Double {
+            precision: None,
+            scale: None,
+        },
+        trailing_comments: Vec::new(),
+        double_colon_syntax: false,
+        format: None,
+        default: None,
+        inferred_type: None,
+    }))
 }
 
 pub(super) fn date_trunc_to_mysql(unit: &str, expr: &Expression) -> Result<Expression> {

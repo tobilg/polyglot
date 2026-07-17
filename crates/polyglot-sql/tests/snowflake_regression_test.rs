@@ -4,7 +4,9 @@
 /// (snowflake-connector-python) that previously failed to parse.
 ///
 /// Related: https://github.com/tobilg/polyglot/issues/164
-use polyglot_sql::dialects::DialectType;
+use polyglot_sql::dialects::{Dialect, DialectType};
+use polyglot_sql::expressions::{Expression, Literal};
+use polyglot_sql::tokens::TokenType;
 use polyglot_sql::{generate, parse_one, transpile};
 
 fn parse_and_generate(sql: &str) -> String {
@@ -15,6 +17,85 @@ fn parse_and_generate(sql: &str) -> String {
 fn parse_then_generate(sql: &str) -> String {
     let expr = parse_one(sql, DialectType::Snowflake).expect("Snowflake SQL should parse");
     generate(&expr, DialectType::Snowflake).expect("Snowflake AST should generate")
+}
+
+fn snowflake_string_value(sql: &str) -> String {
+    Dialect::get(DialectType::Snowflake)
+        .tokenize(sql)
+        .expect("Snowflake SQL should tokenize")
+        .into_iter()
+        .find(|token| token.token_type == TokenType::String)
+        .expect("SQL should contain a string token")
+        .text
+}
+
+// =====================================================================
+// String escape semantics
+// =====================================================================
+
+#[test]
+fn test_snowflake_backslash_and_doubled_quote_roundtrip() {
+    let backslash_escaped = r"SELECT 'O\'Reilly'";
+    let doubled_quote = "SELECT 'O''Reilly'";
+
+    assert_eq!(snowflake_string_value(backslash_escaped), "O'Reilly");
+    assert_eq!(snowflake_string_value(doubled_quote), "O'Reilly");
+    assert_eq!(parse_then_generate(backslash_escaped), backslash_escaped);
+    assert_eq!(parse_then_generate(doubled_quote), backslash_escaped);
+    assert!(parse_one(backslash_escaped, DialectType::Snowflake).is_ok());
+}
+
+#[test]
+fn test_snowflake_documented_escape_sequences() {
+    assert_eq!(
+        snowflake_string_value(r"SELECT '\b\f\n\r\t\0'"),
+        "\x08\x0C\n\r\t\0"
+    );
+    assert_eq!(
+        snowflake_string_value(r"SELECT '\041\x21\u26c4'"),
+        "!!\u{26c4}"
+    );
+    assert_eq!(snowflake_string_value(r#"SELECT '\'\"\\'"#), "'\"\\");
+    assert_eq!(snowflake_string_value(r"SELECT '\z\a\v\Z\%\_'"), "zavZ%_");
+}
+
+#[test]
+fn test_snowflake_malformed_numeric_escapes_drop_only_the_backslash() {
+    assert_eq!(
+        snowflake_string_value(r"SELECT '\x2-\u26c-\777'"),
+        "x2-u26c-777"
+    );
+}
+
+#[test]
+fn test_snowflake_generated_literal_preserves_backslashes_and_controls() {
+    let value = "O'Reilly C:\\user\\n\0\x08\x0C\n\r\t";
+    let expression = Expression::Literal(Box::new(Literal::String(value.to_string())));
+    let sql = generate(&expression, DialectType::Snowflake).expect("literal should generate");
+
+    assert_eq!(sql, r"'O\'Reilly C:\\user\\n\x00\b\f\n\r\t'");
+    assert_eq!(snowflake_string_value(&sql), value);
+}
+
+#[test]
+fn test_snowflake_dollar_quoted_strings_keep_escapes_literal() {
+    let sql = r"SELECT $$O\'Reilly\n\x21\u26c4$$";
+    let tokens = Dialect::get(DialectType::Snowflake)
+        .tokenize(sql)
+        .expect("dollar-quoted string should tokenize");
+    let string = tokens
+        .into_iter()
+        .find(|token| token.token_type == TokenType::DollarString)
+        .expect("SQL should contain a dollar string");
+
+    assert_eq!(string.text, r"O\'Reilly\n\x21\u26c4");
+}
+
+#[test]
+fn test_snowflake_function_string_body_uses_literal_escaping() {
+    let sql = r"CREATE OR REPLACE FUNCTION repro_fn() RETURNS INT LANGUAGE PYTHON HANDLER = 'fn' RUNTIME_VERSION='3.11' PACKAGES=() AS '\ndef fn():\n    return 1\n'";
+
+    assert_eq!(parse_then_generate(sql), sql);
 }
 
 // =====================================================================

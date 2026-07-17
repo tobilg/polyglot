@@ -75,6 +75,29 @@ def test_parse_postgres_execute_prepared_statement():
     assert ast.sql("postgres") == "EXECUTE leak(1)"
 
 
+def test_parse_tidb_ddl_returns_typed_statements_and_roundtrips():
+    create = polyglot_sql.parse_one(
+        "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))",
+        dialect="tidb",
+    )
+    assert isinstance(create, polyglot_sql.CreateTable)
+    assert create.sql("tidb") == (
+        "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))"
+    )
+
+    split = polyglot_sql.parse_one(
+        "SPLIT TABLE posts BETWEEN (1) AND (1000) REGIONS 4", dialect="tidb"
+    )
+    assert isinstance(split, polyglot_sql.SplitTable)
+    assert split.sql("tidb") == (
+        "SPLIT TABLE posts BETWEEN (1) AND (1000) REGIONS 4"
+    )
+
+    flashback = polyglot_sql.parse_one("FLASHBACK TABLE posts", dialect="tidb")
+    assert isinstance(flashback, polyglot_sql.FlashbackTable)
+    assert flashback.sql("tidb") == "FLASHBACK TABLE posts"
+
+
 def test_parse_multiple_statements_returns_n_entries():
     ast_list = polyglot_sql.parse("SELECT 1; SELECT 2", dialect="postgres")
     assert len(ast_list) == 2

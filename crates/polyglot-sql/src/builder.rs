@@ -1638,6 +1638,7 @@ impl SelectBuilder {
             partition_of: None,
             post_table_properties: vec![],
             mysql_table_options: vec![],
+            tidb_table_options: vec![],
             inherits: vec![],
             on_property: None,
             copy_grants: false,

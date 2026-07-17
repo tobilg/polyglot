@@ -5,7 +5,10 @@ use polyglot_sql::expressions::{
     Cast, DataType, Expression, JoinKind, LikeOp, Literal, StructField,
 };
 use polyglot_sql::generator::{Generator, GeneratorConfig};
-use polyglot_sql::{parse, rename_tables, replace_by_type, DialectType, Parser};
+use polyglot_sql::{
+    parse, rename_tables, replace_by_type, transform, transform_map, DialectType, ExpressionWalk,
+    Parser,
+};
 
 fn parse_one(sql: &str) -> Expression {
     Parser::parse_sql(sql)
@@ -41,6 +44,45 @@ fn first_index(order: &[String], target: &str) -> usize {
         .unwrap_or_else(|| panic!("missing {target} in visit order: {order:?}"))
 }
 
+fn rename_predicate_children(node: Expression) -> Expression {
+    match node {
+        Expression::Table(mut table) => {
+            if table
+                .schema
+                .as_ref()
+                .is_some_and(|schema| schema.name == "src")
+            {
+                table.schema = Some(polyglot_sql::expressions::Identifier::quoted("dst"));
+            }
+            Expression::Table(table)
+        }
+        Expression::Column(mut column) => {
+            column.name.name = match column.name.name.as_str() {
+                "x" => "lhs".to_string(),
+                "y" => "rhs".to_string(),
+                _ => column.name.name,
+            };
+            Expression::Column(column)
+        }
+        other => other,
+    }
+}
+
+fn assert_predicate_children_renamed(sql: &str) {
+    let expression = parse_one_dialect(sql, DialectType::PostgreSQL);
+    let transformed = transform_map(expression, &|node| Ok(rename_predicate_children(node)))
+        .expect("predicate child transform should succeed");
+    let sql = generate_with_dialect(&transformed, DialectType::PostgreSQL);
+
+    assert!(sql.contains("\"dst\".a"), "{sql}");
+    assert!(sql.contains("lhs"), "{sql}");
+    assert!(sql.contains("rhs"), "{sql}");
+    assert!(!sql.contains("src."), "{sql}");
+    if sql.contains("FROM") && sql.matches("FROM").count() > 1 {
+        assert!(sql.contains("\"dst\".b"), "{sql}");
+    }
+}
+
 #[test]
 fn transform_recursive_visits_children_before_parents() {
     let expr = parse_one("SELECT a + 1 AS x");
@@ -59,6 +101,99 @@ fn transform_recursive_visits_children_before_parents() {
     assert!(first_index(&order, "literal") < first_index(&order, "add"));
     assert!(first_index(&order, "add") < first_index(&order, "alias"));
     assert!(first_index(&order, "alias") < first_index(&order, "select"));
+}
+
+#[test]
+fn transform_map_visits_quantified_comparison_children() {
+    for sql in [
+        "SELECT * FROM src.a WHERE x = ANY (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x <> ALL (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x < ANY (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x <= ALL (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x > ANY (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x >= ALL (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x = SOME (SELECT y FROM src.b)",
+        "SELECT x = ANY(ARRAY[y]) FROM src.a",
+    ] {
+        assert_predicate_children_renamed(sql);
+    }
+}
+
+#[test]
+fn transform_map_visits_null_safe_comparison_children() {
+    for sql in [
+        "SELECT * FROM src.a WHERE x IS DISTINCT FROM (SELECT y FROM src.b)",
+        "SELECT * FROM src.a WHERE x IS NOT DISTINCT FROM (SELECT y FROM src.b)",
+    ] {
+        assert_predicate_children_renamed(sql);
+    }
+}
+
+#[test]
+fn affected_predicates_preserve_bottom_up_transform_order() {
+    for (sql, parent) in [
+        (
+            "SELECT * FROM src.a WHERE x = ANY (SELECT y FROM src.b)",
+            "any",
+        ),
+        (
+            "SELECT * FROM src.a WHERE x = ALL (SELECT y FROM src.b)",
+            "all",
+        ),
+        (
+            "SELECT * FROM src.a WHERE x IS NOT DISTINCT FROM (SELECT y FROM src.b)",
+            "null_safe_eq",
+        ),
+        (
+            "SELECT * FROM src.a WHERE x IS DISTINCT FROM (SELECT y FROM src.b)",
+            "null_safe_neq",
+        ),
+    ] {
+        let expression = parse_one_dialect(sql, DialectType::PostgreSQL);
+        let order = RefCell::new(Vec::new());
+        transform_recursive(expression, &|node| {
+            let label = match &node {
+                Expression::Column(column) => format!("column:{}", column.name.name),
+                Expression::Table(table) => format!("table:{}", table.name.name),
+                _ => node.variant_name().to_string(),
+            };
+            order.borrow_mut().push(label);
+            Ok(node)
+        })
+        .expect("transform should succeed");
+
+        let order = order.into_inner();
+        assert!(first_index(&order, "column:x") < first_index(&order, parent));
+        assert!(first_index(&order, "column:y") < first_index(&order, parent));
+        assert!(first_index(&order, "table:b") < first_index(&order, parent));
+    }
+}
+
+#[test]
+fn delegated_transform_entry_points_visit_quantified_subqueries() {
+    let sql = "SELECT * FROM a WHERE x > ALL (SELECT y FROM b)";
+    let rename_nested_table = |node: Expression| match node {
+        Expression::Table(mut table) if table.name.name == "b" => {
+            table.name.name = "renamed_b".to_string();
+            Expression::Table(table)
+        }
+        other => other,
+    };
+
+    let transformed = transform(parse_one_dialect(sql, DialectType::PostgreSQL), &|node| {
+        Ok(Some(rename_nested_table(node)))
+    })
+    .expect("optional transform should succeed");
+    assert!(generate_with_dialect(&transformed, DialectType::PostgreSQL).contains("FROM renamed_b"));
+
+    let transformed = parse_one_dialect(sql, DialectType::PostgreSQL)
+        .transform_owned(|node| Ok(Some(rename_nested_table(node))))
+        .expect("owned transform should succeed");
+    assert!(generate_with_dialect(&transformed, DialectType::PostgreSQL).contains("FROM renamed_b"));
+
+    let mapping = HashMap::from([("b".to_string(), "renamed_b".to_string())]);
+    let transformed = rename_tables(parse_one_dialect(sql, DialectType::PostgreSQL), &mapping);
+    assert!(generate_with_dialect(&transformed, DialectType::PostgreSQL).contains("FROM renamed_b"));
 }
 
 #[test]

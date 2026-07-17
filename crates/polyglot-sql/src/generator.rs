@@ -3442,6 +3442,8 @@ impl Generator {
             Expression::DropTable(dt) => self.generate_drop_table(dt),
             Expression::Undrop(u) => self.generate_undrop(u),
             Expression::AlterTable(at) => self.generate_alter_table(at),
+            Expression::SplitTable(st) => self.generate_split_table(st),
+            Expression::FlashbackTable(ft) => self.generate_flashback_table(ft),
             Expression::CreateIndex(ci) => self.generate_create_index(ci),
             Expression::DropIndex(di) => self.generate_drop_index(di),
             Expression::CreateView(cv) => self.generate_create_view(cv),
@@ -9040,6 +9042,7 @@ impl Generator {
         let is_mysql_compatible = matches!(
             self.config.dialect,
             Some(DialectType::MySQL)
+                | Some(DialectType::TiDB)
                 | Some(DialectType::SingleStore)
                 | Some(DialectType::Doris)
                 | Some(DialectType::StarRocks)
@@ -9079,6 +9082,16 @@ impl Generator {
                 }
                 self.write(value);
             }
+        }
+
+        for option in &ct.tidb_table_options {
+            if self.config.pretty {
+                self.write_newline();
+                self.write_indent();
+            } else {
+                self.write_space();
+            }
+            self.generate_tidb_table_option(option, false)?;
         }
 
         // Spark/Databricks: USING PARQUET for temporary tables that don't already have a storage format
@@ -9548,6 +9561,12 @@ impl Generator {
                             }
                         } // close else for DuckDB skip
                     }
+                    ConstraintType::AutoRandom => {
+                        if let Some(ref auto_random) = col.auto_random {
+                            self.write_space();
+                            self.generate_tidb_auto_random(auto_random)?;
+                        }
+                    }
                     ConstraintType::References => {
                         // Find next References constraint
                         while references_idx < col.constraints.len() {
@@ -9864,6 +9883,11 @@ impl Generator {
             if col.auto_increment {
                 self.write_space();
                 self.generate_auto_increment_keyword(col)?;
+            }
+
+            if let Some(ref auto_random) = col.auto_random {
+                self.write_space();
+                self.generate_tidb_auto_random(auto_random)?;
             }
 
             // Column-level constraints from Vec
@@ -10959,6 +10983,103 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_split_table(&mut self, split: &SplitTable) -> Result<()> {
+        if !matches!(self.config.dialect, Some(DialectType::TiDB)) {
+            return self
+                .write_unsupported_comment("SPLIT TABLE is only supported by the TiDB dialect");
+        }
+
+        match &split.partition_scope {
+            SplitTablePartitionScope::Table => self.write_keyword("SPLIT TABLE"),
+            SplitTablePartitionScope::AllPartitions
+            | SplitTablePartitionScope::Partitions { .. } => {
+                self.write_keyword("SPLIT PARTITION TABLE")
+            }
+        }
+        self.write_space();
+        self.generate_table(&split.table)?;
+        if let SplitTablePartitionScope::Partitions { names } = &split.partition_scope {
+            self.write_space();
+            self.write_keyword("PARTITION");
+            self.write(" (");
+            for (index, name) in names.iter().enumerate() {
+                if index > 0 {
+                    self.write(", ");
+                }
+                self.generate_identifier(name)?;
+            }
+            self.write(")");
+        }
+        if let Some(index) = &split.index {
+            self.write_space();
+            self.write_keyword("INDEX");
+            self.write_space();
+            self.generate_identifier(index)?;
+        }
+        match &split.mode {
+            SplitTableMode::Between {
+                lower,
+                upper,
+                regions,
+            } => {
+                self.write_space();
+                self.write_keyword("BETWEEN");
+                self.write_space();
+                self.generate_tidb_split_values(lower)?;
+                self.write_space();
+                self.write_keyword("AND");
+                self.write_space();
+                self.generate_tidb_split_values(upper)?;
+                self.write_space();
+                self.write_keyword("REGIONS");
+                self.write_space();
+                self.write(&regions.to_string());
+            }
+            SplitTableMode::By { points } => {
+                self.write_space();
+                self.write_keyword("BY");
+                self.write_space();
+                for (index, point) in points.iter().enumerate() {
+                    if index > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_tidb_split_values(point)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn generate_tidb_split_values(&mut self, values: &[Expression]) -> Result<()> {
+        self.write("(");
+        for (index, value) in values.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(value)?;
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_flashback_table(&mut self, flashback: &FlashbackTable) -> Result<()> {
+        if !matches!(self.config.dialect, Some(DialectType::TiDB)) {
+            return self.write_unsupported_comment(
+                "FLASHBACK TABLE is only supported by the TiDB dialect",
+            );
+        }
+        self.write_keyword("FLASHBACK TABLE");
+        self.write_space();
+        self.generate_table(&flashback.table)?;
+        if let Some(rename_to) = &flashback.rename_to {
+            self.write_space();
+            self.write_keyword("TO");
+            self.write_space();
+            self.generate_identifier(rename_to)?;
+        }
+        Ok(())
+    }
+
     fn generate_alter_table(&mut self, at: &AlterTable) -> Result<()> {
         // Athena: ALTER TABLE uses Hive engine (backticks)
         let saved_athena_hive_context = self.athena_hive_context;
@@ -11249,6 +11370,38 @@ impl Generator {
                     self.generate_identifier(name)?;
                     self.write_space();
                     self.generate_alter_column_action(action)?;
+                }
+            }
+            AlterTableAction::ModifyColumn {
+                column,
+                if_exists,
+                position,
+            } => {
+                if !matches!(
+                    self.config.dialect,
+                    Some(DialectType::TiDB) | Some(DialectType::MySQL)
+                ) {
+                    return self.write_unsupported_comment(
+                        "MODIFY COLUMN is only supported by MySQL-compatible dialects",
+                    );
+                }
+                self.write_keyword("MODIFY COLUMN");
+                self.write_space();
+                if *if_exists {
+                    self.write_keyword("IF EXISTS");
+                    self.write_space();
+                }
+                self.generate_column_def(column)?;
+                if let Some(position) = position {
+                    self.write_space();
+                    match position {
+                        ColumnPosition::First => self.write_keyword("FIRST"),
+                        ColumnPosition::After(name) => {
+                            self.write_keyword("AFTER");
+                            self.write_space();
+                            self.generate_identifier(name)?;
+                        }
+                    }
                 }
             }
             AlterTableAction::RenameTable(new_name) => {
@@ -11682,6 +11835,21 @@ impl Generator {
                     self.write_keyword("FROM");
                     self.write_space();
                     self.generate_expression(src)?;
+                }
+            }
+            AlterTableAction::SetTiDBTableOption { option, force } => {
+                self.generate_tidb_table_option(option, *force)?;
+            }
+            AlterTableAction::RemoveTiDBTtl { executable_comment } => {
+                if !matches!(self.config.dialect, Some(DialectType::TiDB)) {
+                    return self.write_unsupported_comment(
+                        "REMOVE TTL is only supported by the TiDB dialect",
+                    );
+                }
+                if *executable_comment {
+                    self.write("/*T![ttl] REMOVE TTL */");
+                } else {
+                    self.write_keyword("REMOVE TTL");
                 }
             }
             AlterTableAction::Raw { sql } => {
@@ -13805,9 +13973,7 @@ impl Generator {
                     } else {
                         self.write(" ");
                     }
-                    self.write("'");
-                    self.write(s);
-                    self.write("'");
+                    self.generate_string_literal(s)?;
                 }
                 FunctionBody::Expression(expr) => {
                     self.write_keyword("AS");
@@ -14177,9 +14343,8 @@ impl Generator {
                 }
                 FunctionBody::StringLiteral(s) => {
                     self.write_keyword("AS");
-                    self.write(" '");
-                    self.write(s);
-                    self.write("'");
+                    self.write_space();
+                    self.generate_string_literal(s)?;
                 }
                 FunctionBody::Expression(expr) => {
                     self.write_keyword("AS");
@@ -15788,6 +15953,11 @@ impl Generator {
                 self.write(t);
                 self.write("' AS TIME)");
             }
+            Some(DialectType::Fabric) => {
+                self.write("CAST('");
+                self.write(t);
+                self.write("' AS TIME(6))");
+            }
             // Standard SQL: TIME '...'
             _ => {
                 self.write_keyword("TIME");
@@ -16146,17 +16316,16 @@ impl Generator {
                     self.write("'");
                 }
             }
-            // Snowflake: Uses backslash escaping (STRING_ESCAPES = ["\\", "'"])
-            // The tokenizer preserves backslash escape sequences literally (e.g., input '\\'
-            // becomes string value '\\'), so we should NOT re-escape backslashes.
-            // We only need to escape single quotes.
+            // Snowflake uses backslash escaping (STRING_ESCAPES = ["\\", "'"]).
             Some(DialectType::Snowflake) => {
                 self.write("'");
                 for c in s.chars() {
                     match c {
                         '\'' => self.write("\\'"),
-                        // Backslashes are already escaped in the tokenized string, don't re-escape
-                        // Only escape special characters that might not have been escaped
+                        '\\' => self.write("\\\\"),
+                        '\0' => self.write("\\x00"),
+                        '\x08' => self.write("\\b"),
+                        '\x0C' => self.write("\\f"),
                         '\n' => self.write("\\n"),
                         '\r' => self.write("\\r"),
                         '\t' => self.write("\\t"),
@@ -27870,6 +28039,150 @@ impl Generator {
                     self.write_keyword("NOORDER");
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn generate_tidb_auto_random(&mut self, auto_random: &TiDBAutoRandom) -> Result<()> {
+        let is_tidb = matches!(self.config.dialect, Some(DialectType::TiDB));
+        let is_mysql = matches!(self.config.dialect, Some(DialectType::MySQL));
+
+        if !is_tidb && !is_mysql {
+            return self
+                .write_unsupported_comment("AUTO_RANDOM is only supported by the TiDB dialect");
+        }
+        if is_mysql {
+            self.unsupported("MySQL ignores TiDB AUTO_RANDOM executable comments")?;
+        }
+
+        let use_comment = auto_random.executable_comment || is_mysql;
+        if use_comment {
+            self.write("/*T![auto_rand] ");
+        }
+        self.write_keyword("AUTO_RANDOM");
+        if let Some(shard_bits) = auto_random.shard_bits {
+            self.write("(");
+            self.write(&shard_bits.to_string());
+            if let Some(range_bits) = auto_random.range_bits {
+                self.write(", ");
+                self.write(&range_bits.to_string());
+            }
+            self.write(")");
+        }
+        if use_comment {
+            self.write(" */");
+        }
+        Ok(())
+    }
+
+    fn generate_tidb_table_option(&mut self, option: &TiDBTableOption, force: bool) -> Result<()> {
+        let is_tidb = matches!(self.config.dialect, Some(DialectType::TiDB));
+        let is_mysql = matches!(self.config.dialect, Some(DialectType::MySQL));
+        if !is_tidb && !is_mysql {
+            return self.write_unsupported_comment(
+                "TiDB table options are not supported by the target dialect",
+            );
+        }
+        if is_mysql {
+            self.unsupported("MySQL ignores TiDB table-option executable comments")?;
+        }
+
+        let use_comment = option.executable_comment || is_mysql;
+        if use_comment {
+            match option.kind {
+                TiDBTableOptionKind::Ttl { .. }
+                | TiDBTableOptionKind::TtlEnable { .. }
+                | TiDBTableOptionKind::TtlJobInterval { .. } => self.write("/*T![ttl] "),
+                TiDBTableOptionKind::PlacementPolicy { .. } => self.write("/*T![placement] "),
+                _ => self.write("/*T! "),
+            }
+        }
+        if force {
+            self.write_keyword("FORCE");
+            self.write_space();
+        }
+        match &option.kind {
+            TiDBTableOptionKind::ShardRowIdBits { bits } => {
+                self.write_keyword("SHARD_ROW_ID_BITS");
+                self.write("=");
+                self.write(&bits.to_string());
+            }
+            TiDBTableOptionKind::PreSplitRegions { regions } => {
+                self.write_keyword("PRE_SPLIT_REGIONS");
+                self.write("=");
+                self.write(&regions.to_string());
+            }
+            TiDBTableOptionKind::AutoRandomBase { value } => {
+                self.write_keyword("AUTO_RANDOM_BASE");
+                self.write("=");
+                self.write(&value.to_string());
+            }
+            TiDBTableOptionKind::PlacementPolicy { policy } => {
+                self.write_keyword("PLACEMENT POLICY");
+                self.write("=");
+                if let Some(policy) = policy {
+                    self.generate_identifier(policy)?;
+                } else {
+                    self.write_keyword("DEFAULT");
+                }
+            }
+            TiDBTableOptionKind::Ttl {
+                column,
+                interval,
+                enabled,
+            } => {
+                self.write_keyword("TTL");
+                self.write("=");
+                self.generate_identifier(column)?;
+                self.write(" + ");
+                self.generate_tidb_ttl_interval(interval)?;
+                if let Some(enabled) = enabled {
+                    self.write_space();
+                    self.write_keyword("TTL_ENABLE");
+                    self.write("='");
+                    self.write(if *enabled { "ON" } else { "OFF" });
+                    self.write("'");
+                }
+            }
+            TiDBTableOptionKind::TtlEnable { enabled } => {
+                self.write_keyword("TTL_ENABLE");
+                self.write("='");
+                self.write(if *enabled { "ON" } else { "OFF" });
+                self.write("'");
+            }
+            TiDBTableOptionKind::TtlJobInterval { interval } => {
+                self.write_keyword("TTL_JOB_INTERVAL");
+                self.write("=");
+                self.generate_string_literal(interval)?;
+            }
+        }
+        if use_comment {
+            self.write(" */");
+        }
+        Ok(())
+    }
+
+    fn generate_tidb_ttl_interval(&mut self, interval: &Interval) -> Result<()> {
+        self.write_keyword("INTERVAL");
+        if let Some(value) = &interval.this {
+            self.write_space();
+            if let Expression::Literal(literal) = value {
+                if let Literal::String(value) = literal.as_ref() {
+                    if value.parse::<f64>().is_ok() {
+                        self.write(value);
+                    } else {
+                        self.generate_string_literal(value)?;
+                    }
+                } else {
+                    self.generate_expression(value)?;
+                }
+            } else {
+                self.generate_expression(value)?;
+            }
+        }
+        if let Some(unit) = &interval.unit {
+            self.write_space();
+            self.write_interval_unit_spec(unit)?;
         }
         Ok(())
     }

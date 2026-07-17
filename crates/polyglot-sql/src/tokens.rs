@@ -2686,69 +2686,7 @@ impl<'a, C: TokenizerCursor, T: TokenOutput> TokenizerState<'a, C, T> {
                     break;
                 }
 
-                // Handle escape sequences
-                self.advance(); // Consume the backslash
-                if !self.is_at_end() {
-                    let escaped = self.advance();
-                    match escaped {
-                        'n' => value.push('\n'),
-                        'r' => value.push('\r'),
-                        't' => value.push('\t'),
-                        '0' => value.push('\0'),
-                        'Z' => value.push('\x1A'), // Ctrl+Z (MySQL)
-                        'a' => value.push('\x07'), // Alert/bell
-                        'b' => value.push('\x08'), // Backspace
-                        'f' => value.push('\x0C'), // Form feed
-                        'v' => value.push('\x0B'), // Vertical tab
-                        'x' => {
-                            // Hex escape: \xNN (exactly 2 hex digits)
-                            let mut hex = String::with_capacity(2);
-                            for _ in 0..2 {
-                                if !self.is_at_end() && self.peek().is_ascii_hexdigit() {
-                                    hex.push(self.advance());
-                                }
-                            }
-                            if hex.len() == 2 {
-                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                                    value.push(byte as char);
-                                } else {
-                                    value.push('\\');
-                                    value.push('x');
-                                    value.push_str(&hex);
-                                }
-                            } else {
-                                // Not enough hex digits, preserve literally
-                                value.push('\\');
-                                value.push('x');
-                                value.push_str(&hex);
-                            }
-                        }
-                        '\\' => value.push('\\'),
-                        '\'' => value.push('\''),
-                        '"' => value.push('"'),
-                        '%' => {
-                            // MySQL: \% in LIKE patterns
-                            value.push('%');
-                        }
-                        '_' => {
-                            // MySQL: \_ in LIKE patterns
-                            value.push('_');
-                        }
-                        // For unrecognized escape sequences:
-                        // If escape_follow_chars is set, only preserve backslash for chars in that list
-                        // Otherwise (empty list), preserve backslash + char for unrecognized escapes
-                        _ => {
-                            if !self.config.escape_follow_chars.is_empty() {
-                                // MySQL-style: discard backslash for unrecognized escapes
-                                value.push(escaped);
-                            } else {
-                                // Standard: preserve backslash + char
-                                value.push('\\');
-                                value.push(escaped);
-                            }
-                        }
-                    }
-                }
+                self.scan_backslash_escape(&mut value);
             } else {
                 value.push(self.advance());
             }
@@ -2791,69 +2729,7 @@ impl<'a, C: TokenizerCursor, T: TokenOutput> TokenizerState<'a, C, T> {
                     break;
                 }
             } else if c == '\\' && self.config.string_escapes.contains(&'\\') {
-                // Handle escape sequences
-                self.advance(); // Consume the backslash
-                if !self.is_at_end() {
-                    let escaped = self.advance();
-                    match escaped {
-                        'n' => value.push('\n'),
-                        'r' => value.push('\r'),
-                        't' => value.push('\t'),
-                        '0' => value.push('\0'),
-                        'Z' => value.push('\x1A'), // Ctrl+Z (MySQL)
-                        'a' => value.push('\x07'), // Alert/bell
-                        'b' => value.push('\x08'), // Backspace
-                        'f' => value.push('\x0C'), // Form feed
-                        'v' => value.push('\x0B'), // Vertical tab
-                        'x' => {
-                            // Hex escape: \xNN (exactly 2 hex digits)
-                            let mut hex = String::with_capacity(2);
-                            for _ in 0..2 {
-                                if !self.is_at_end() && self.peek().is_ascii_hexdigit() {
-                                    hex.push(self.advance());
-                                }
-                            }
-                            if hex.len() == 2 {
-                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                                    value.push(byte as char);
-                                } else {
-                                    value.push('\\');
-                                    value.push('x');
-                                    value.push_str(&hex);
-                                }
-                            } else {
-                                // Not enough hex digits, preserve literally
-                                value.push('\\');
-                                value.push('x');
-                                value.push_str(&hex);
-                            }
-                        }
-                        '\\' => value.push('\\'),
-                        '\'' => value.push('\''),
-                        '"' => value.push('"'),
-                        '%' => {
-                            // MySQL: \% in LIKE patterns
-                            value.push('%');
-                        }
-                        '_' => {
-                            // MySQL: \_ in LIKE patterns
-                            value.push('_');
-                        }
-                        // For unrecognized escape sequences:
-                        // If escape_follow_chars is set, only preserve backslash for chars in that list
-                        // Otherwise (empty list), preserve backslash + char for unrecognized escapes
-                        _ => {
-                            if !self.config.escape_follow_chars.is_empty() {
-                                // MySQL-style: discard backslash for unrecognized escapes
-                                value.push(escaped);
-                            } else {
-                                // Standard: preserve backslash + char
-                                value.push('\\');
-                                value.push(escaped);
-                            }
-                        }
-                    }
-                }
+                self.scan_backslash_escape(&mut value);
             } else {
                 value.push(self.advance());
             }
@@ -2872,6 +2748,113 @@ impl<'a, C: TokenizerCursor, T: TokenOutput> TokenizerState<'a, C, T> {
         self.advance(); // Closing quote
         self.add_token_with_text(TokenType::String, value);
         Ok(())
+    }
+
+    fn scan_backslash_escape(&mut self, value: &mut String) {
+        self.advance(); // Backslash
+        if self.is_at_end() {
+            value.push('\\');
+            return;
+        }
+
+        let escaped = self.advance();
+        let restricted = !self.config.escape_follow_chars.is_empty();
+        let always_allowed = matches!(escaped, '\\' | '\'' | '"');
+        if restricted && !always_allowed && !self.config.escape_follow_chars.contains(&escaped) {
+            value.push(escaped);
+            return;
+        }
+
+        let supports_octal =
+            restricted && ('1'..='7').any(|digit| self.config.escape_follow_chars.contains(&digit));
+        if supports_octal && escaped.is_digit(8) {
+            if let Some(codepoint) = self.peek_radix_digits(2, 8).and_then(|suffix| {
+                let first = escaped.to_digit(8)?;
+                first.checked_mul(64)?.checked_add(suffix)
+            }) {
+                if let Ok(byte) = u8::try_from(codepoint) {
+                    self.advance_count(2);
+                    value.push(byte as char);
+                    return;
+                }
+            }
+
+            if escaped == '0' {
+                value.push('\0');
+            } else {
+                value.push(escaped);
+            }
+            return;
+        }
+
+        match escaped {
+            'n' => value.push('\n'),
+            'r' => value.push('\r'),
+            't' => value.push('\t'),
+            '0' => value.push('\0'),
+            'Z' => value.push('\x1A'),
+            'a' => value.push('\x07'),
+            'b' => value.push('\x08'),
+            'f' => value.push('\x0C'),
+            'v' => value.push('\x0B'),
+            'x' => {
+                if let Some(codepoint) = self.peek_radix_digits(2, 16) {
+                    self.advance_count(2);
+                    value.push(codepoint as u8 as char);
+                } else if restricted {
+                    // Invalid Snowflake numeric escapes are ordinary unknown escapes.
+                    value.push('x');
+                } else {
+                    // Preserve the existing permissive behavior for dialects without
+                    // an explicit escape-follow policy.
+                    value.push('\\');
+                    value.push('x');
+                    for _ in 0..2 {
+                        if !self.is_at_end() && self.peek().is_ascii_hexdigit() {
+                            value.push(self.advance());
+                        }
+                    }
+                }
+            }
+            'u' if restricted && self.config.escape_follow_chars.contains(&'u') => {
+                if let Some(codepoint) = self.peek_radix_digits(4, 16).and_then(char::from_u32) {
+                    self.advance_count(4);
+                    value.push(codepoint);
+                } else {
+                    value.push('u');
+                }
+            }
+            '\\' => value.push('\\'),
+            '\'' => value.push('\''),
+            '"' => value.push('"'),
+            '%' => value.push('%'),
+            '_' => value.push('_'),
+            _ if restricted => value.push(escaped),
+            _ => {
+                value.push('\\');
+                value.push(escaped);
+            }
+        }
+    }
+
+    fn peek_radix_digits(&self, count: usize, radix: u32) -> Option<u32> {
+        if self.current + count > self.size {
+            return None;
+        }
+
+        let mut value = 0_u32;
+        for offset in 0..count {
+            value = value
+                .checked_mul(radix)?
+                .checked_add(self.char_at(self.current + offset).to_digit(radix)?)?;
+        }
+        Some(value)
+    }
+
+    fn advance_count(&mut self, count: usize) {
+        for _ in 0..count {
+            self.advance();
+        }
     }
 
     fn scan_triple_quoted_string(&mut self, quote_char: char) -> Result<()> {
@@ -4000,6 +3983,30 @@ mod tests {
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[1].token_type, TokenType::String);
         assert_eq!(tokens[1].text, "it's");
+    }
+
+    #[test]
+    fn test_escape_follow_chars_gate_builtin_decoding() {
+        let mut config = TokenizerConfig::default();
+        config.string_escapes.push('\\');
+        config.escape_follow_chars = vec!['n'];
+        let tokenizer = Tokenizer::new(config);
+        let tokens = tokenizer.tokenize(r"SELECT '\n\a\f\Z\x21'").unwrap();
+
+        assert_eq!(tokens[1].text, "\nafZx21");
+    }
+
+    #[test]
+    fn test_configured_numeric_escapes_require_complete_sequences() {
+        let mut config = TokenizerConfig::default();
+        config.string_escapes.push('\\');
+        config.escape_follow_chars = vec!['0', '1', '2', '3', '4', '5', '6', '7', 'x', 'u'];
+        let tokenizer = Tokenizer::new(config);
+        let tokens = tokenizer
+            .tokenize(r"SELECT '\041\x21\u26c4-\777\x2\u26c'")
+            .unwrap();
+
+        assert_eq!(tokens[1].text, "!!\u{26c4}-777x2u26c");
     }
 
     #[test]

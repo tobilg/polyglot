@@ -4,6 +4,61 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [0.6.2] - 2026-07-17
+
+### Added
+- TiDB parsing and generation now cover `AUTO_RANDOM` attributes, including
+  shard/range parameters and executable comments; distributed table options
+  such as `SHARD_ROW_ID_BITS`, `PRE_SPLIT_REGIONS`, and `AUTO_RANDOM_BASE`;
+  placement and TTL options; their `ALTER TABLE` forms; and `SPLIT TABLE` and
+  `FLASHBACK TABLE` statements. The structured AST is available consistently
+  through the Rust, Python, C FFI, Go, WASM, and TypeScript parse/generate APIs.
+
+### Changed
+- Strict PostgreSQL/CockroachDB-to-T-SQL/Fabric transpilation now keeps the
+  existing best-effort `VARCHAR(MAX)` conversion for column-to-text casts whose
+  source type is unavailable, rather than rejecting otherwise valid queries.
+
+### Fixed
+- PostgreSQL compound intervals now retain all fields and lower through
+  operand-aware `DATEADD` chains for T-SQL/Fabric, including fractional
+  seconds, subtraction, and `TIME` wraparound. Strict mode rejects unresolved
+  operand types and intervals that cannot be represented safely instead of
+  emitting malformed or lossy SQL.
+- PostgreSQL `MAKE_TIME` now lowers to `TIMEFROMPARTS` with fractional-second
+  precision for T-SQL/Fabric. Single-value `CONCAT`/`CONCAT_WS` calls meet the
+  target minimum arity, and mixed-type `||` operands are converted to strings
+  before using T-SQL concatenation.
+- PostgreSQL SQL/JSON constructors and aggregates now translate `RETURNING`
+  clauses to compatible T-SQL/Fabric output: native JSON return types are
+  omitted, supported character return types use an outer cast, and unsafe
+  types fail in strict mode. `json_agg`/`jsonb_agg` preserve PostgreSQL null and
+  ordering semantics while unsupported modifiers are rejected.
+- Nested PostgreSQL grouping sets are flattened without being mistaken for row
+  values, and inert `ORDER BY` clauses inside unbounded set-operation arms are
+  removed for T-SQL/Fabric.
+- PostgreSQL boolean predicates nested inside casts, aggregates, functions, or
+  arithmetic now materialize as nullable scalar values before T-SQL/Fabric
+  conversion, preserving three-valued logic.
+- PostgreSQL `date_part` results now retain their `double precision` contract
+  for T-SQL/Fabric, while `EXTRACT` keeps its field-specific type. Time-based
+  second, millisecond, microsecond, and epoch calculations preserve complete
+  values without overflow.
+- PostgreSQL string semantics now map more faithfully to T-SQL/Fabric,
+  including deparsed `LIKE_ESCAPE`, numeric-start `SUBSTRING`, text-cast trim
+  sets, literal `TRANSLATE`, unpadded `to_hex`, hexadecimal encode/decode, and
+  `SHA256`/`SHA512`. Strict mode rejects regular-expression functions,
+  unsupported digest widths, and other string operations without a faithful
+  target equivalent.
+- PostgreSQL float-to-integer rounding now also recognizes parenthesized cast
+  chains before applying the target-side rounding conversion.
+- Snowflake string parsing and generation now round-trip doubled quotes,
+  backslash escape sequences, control characters, dollar-quoted strings, and
+  function-body literals without losing or double-escaping content.
+- Shared AST transformations now recurse through `ALL`/`ANY` quantified
+  comparisons and null-safe comparison operands, preserving bottom-up
+  transformation order across all public transform entry points.
+
 ## [0.6.1] - 2026-07-15
 
 ### Fixed

@@ -2589,6 +2589,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_generate_tidb_ddl_roundtrip() {
+        let parsed = parse(
+            "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))",
+            "tidb",
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&parsed).expect("valid wrapper json");
+        assert_eq!(parsed["success"], true);
+        let ast_json = parsed["ast"].as_str().expect("ast json string");
+        let ast: serde_json::Value = serde_json::from_str(ast_json).expect("valid ast json");
+        assert!(ast[0].get("create_table").is_some(), "ast={ast}");
+
+        let generated = generate(ast_json, "tidb");
+        let generated: serde_json::Value =
+            serde_json::from_str(&generated).expect("valid generate wrapper json");
+        assert_eq!(generated["success"], true);
+        assert_eq!(
+            generated["sql"][0],
+            "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))"
+        );
+    }
+
+    #[test]
     fn test_parse_data_type() {
         let result = parse_data_type("DECIMAL(10, 2)", "duckdb");
         let parsed: serde_json::Value = serde_json::from_str(&result).expect("valid json");

@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "criterion",
  "once_cell",
@@ -623,7 +623,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-ast-derive"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-ffi"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "cbindgen",
  "polyglot-sql",
@@ -642,11 +642,11 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-function-catalogs"
-version = "0.6.1"
+version = "0.6.2"
 
 [[package]]
 name = "polyglot-sql-python"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "polyglot-sql",
  "pyo3",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "polyglot-sql-wasm"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

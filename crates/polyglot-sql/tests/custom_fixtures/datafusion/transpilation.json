@@ -314,7 +314,7 @@
       "sql": "SELECT x ILIKE '%foo%'",
       "write": {
         "mysql": "SELECT LOWER(x) LIKE LOWER('%foo%')",
-        "tsql": "SELECT CAST(CASE WHEN LOWER(x) LIKE LOWER('%foo%') THEN 1 ELSE 0 END AS BIT)",
+        "tsql": "SELECT CAST(CASE WHEN LOWER(x) LIKE LOWER('%foo%') THEN 1 WHEN NOT LOWER(x) LIKE LOWER('%foo%') THEN 0 ELSE NULL END AS BIT)",
         "duckdb": "SELECT x ILIKE '%foo%'",
         "postgresql": "SELECT x ILIKE '%foo%'",
         "snowflake": "SELECT x ILIKE '%foo%'",
@@ -491,7 +491,7 @@
         "duckdb": "SELECT STARTS_WITH(s, 'pre') FROM t",
         "mysql": "SELECT STARTS_WITH(s, 'pre') FROM t",
         "postgresql": "SELECT STARTS_WITH(s, 'pre') FROM t",
-        "tsql": "SELECT CAST(CASE WHEN LEFT(s, LEN('pre')) = 'pre' THEN 1 ELSE 0 END AS BIT) FROM t"
+        "tsql": "SELECT CAST(CASE WHEN LEFT(s, LEN('pre')) = 'pre' THEN 1 WHEN NOT LEFT(s, LEN('pre')) = 'pre' THEN 0 ELSE NULL END AS BIT) FROM t"
       },
       "description": "STARTS_WITH: Snowflake/Spark→STARTSWITH (no underscore)"
     },

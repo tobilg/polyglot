@@ -26,6 +26,7 @@ pub(super) enum Action {
     StrPositionExpand,
     CurrentUserSparkParens,
     ConcatCoalesceWrap,
+    PostgresSingleValueConcatToTsql,
     CbrtToPower,
     MinMaxToLeastGreatest,
     Nvl2Expand,
@@ -9292,7 +9293,7 @@ pub(super) fn rewrite(
                                         vec![end_date, start_date],
                                     );
                                     let e2 = Expression::Function(Box::new(f2));
-                                    normalize(e2, source, target)
+                                    normalize(e2, source, target, context.strict)
                                 }
                             }
                         }
@@ -11292,6 +11293,44 @@ pub(super) fn rewrite(
                     }
                 } else {
                     Ok(e)
+                }
+            }
+
+            Action::PostgresSingleValueConcatToTsql => {
+                let mut function = if let Expression::Function(f) = e {
+                    *f
+                } else {
+                    unreachable!("action only triggered for Function expressions")
+                };
+
+                if function.name.eq_ignore_ascii_case("CONCAT") {
+                    function.args.push(Expression::string(""));
+                    Ok(Expression::Function(Box::new(function)))
+                } else {
+                    let separator = function.args.remove(0);
+                    let value = function.args.remove(0);
+                    function.name = "CONCAT".to_string();
+                    function.args = vec![value, Expression::string("")];
+                    let concat = Expression::Function(Box::new(function));
+
+                    if matches!(separator, Expression::Literal(_)) {
+                        Ok(concat)
+                    } else {
+                        Ok(Expression::Case(Box::new(Case {
+                            operand: None,
+                            whens: vec![(
+                                Expression::IsNull(Box::new(IsNull {
+                                    this: separator,
+                                    not: false,
+                                    postfix_form: false,
+                                })),
+                                Expression::Null(Null),
+                            )],
+                            else_: Some(concat),
+                            comments: Vec::new(),
+                            inferred_type: None,
+                        })))
+                    }
                 }
             }
 

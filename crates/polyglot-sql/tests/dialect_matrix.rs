@@ -525,6 +525,8 @@ mod strict_unsupported_regressions {
         let unsupported = [
             "SELECT ROW(a, b) FROM t",
             "SELECT (a, b) FROM t",
+            "SELECT (a, b), SUM(c) FROM t GROUP BY GROUPING SETS ((a), (b))",
+            "SELECT SUM(c) FROM t GROUP BY GROUPING SETS ((ROW(a, b)))",
             "SELECT (ROW(a, b)).f1 FROM t",
             "SELECT ROW(a, b) IS NOT NULL FROM t",
             "SELECT ROW(a, ROW(b, c)) FROM t",
@@ -567,7 +569,65 @@ mod strict_unsupported_regressions {
                 UnsupportedLevel::Raise,
             )
             .expect("current TSQL/Fabric targets should support JSON_ARRAYAGG");
-            assert_eq!(json, ["SELECT JSON_ARRAYAGG(x), JSON_ARRAYAGG(x) FROM t"]);
+            assert_eq!(
+                json,
+                ["SELECT JSON_ARRAYAGG(x NULL ON NULL), JSON_ARRAYAGG(x NULL ON NULL) FROM t"]
+            );
+        }
+    }
+
+    #[test]
+    fn strict_transpile_rejects_unrepresentable_postgres_json_aggregates() {
+        let unsupported = [
+            ("SELECT json_agg(DISTINCT x) FROM t", "DISTINCT"),
+            ("SELECT jsonb_agg(x) FILTER (WHERE active) FROM t", "FILTER"),
+            ("SELECT json_agg(x, y) FROM t", "invalid argument count"),
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for (sql, expected_diagnostic) in unsupported {
+                Dialect::get(DialectType::PostgreSQL)
+                    .transpile(sql, write)
+                    .expect("default transpile should preserve best-effort JSON aggregation");
+
+                let err = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect_err("strict transpile should reject unsafe JSON aggregate modifiers");
+                let message = err.to_string();
+                assert!(
+                    message.contains("PostgreSQL")
+                        && (message.contains("JSON_AGG") || message.contains("JSONB_AGG"))
+                        && message.contains(expected_diagnostic),
+                    "unexpected error for PostgreSQL -> {write:?}: {err}"
+                );
+            }
+
+            let ordered = transpile_with_level(
+                "SELECT json_agg(x ORDER BY y) FROM t",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("ordered PostgreSQL JSON aggregation should be representable");
+            assert!(
+                ordered[0].contains("JSON_ARRAYAGG(")
+                    && ordered[0].contains("ORDER BY")
+                    && ordered[0].contains("NULL ON NULL"),
+                "unexpected ordered JSON aggregate for {write:?}: {ordered:?}"
+            );
+
+            let native = transpile_with_level(
+                "SELECT JSON_ARRAYAGG(x) FROM t",
+                write,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("native JSON_ARRAYAGG should remain supported");
+            assert_eq!(native, ["SELECT JSON_ARRAYAGG(x) FROM t"]);
         }
     }
 
@@ -710,6 +770,90 @@ mod strict_unsupported_regressions {
                 !window_only.contains("OFFSET"),
                 "unexpected offset: {window_only}"
             );
+        }
+    }
+
+    #[test]
+    fn transpile_drops_unbounded_nested_set_order_by_for_tsql_targets() {
+        let unbounded = [
+            "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1)))",
+            "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl UNION SELECT q1 FROM int8_tbl ORDER BY 1)))",
+            "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl INTERSECT SELECT q1 FROM int8_tbl ORDER BY 1)))",
+        ];
+
+        for write in [DialectType::Fabric, DialectType::TSQL] {
+            for level in [UnsupportedLevel::Warn, UnsupportedLevel::Raise] {
+                for sql in unbounded {
+                    let output = transpile_with_level(sql, DialectType::PostgreSQL, write, level)
+                        .unwrap_or_else(|err| {
+                            panic!("nested set operation should transpile for {write:?}: {err}")
+                        })
+                        .join("; ");
+                    assert!(
+                        !output.contains("ORDER BY"),
+                        "unbounded nested set ordering should be dropped for {write:?}: {output}"
+                    );
+                    assert!(
+                        !output.contains("AS _l_0"),
+                        "dropping the ordering should avoid a generated wrapper for {write:?}: {output}"
+                    );
+                }
+            }
+
+            let top_level = transpile_with_level(
+                "SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("top-level set ordering should remain valid")
+            .join("; ");
+            assert!(
+                top_level.contains("ORDER BY"),
+                "top-level set ordering should be preserved for {write:?}: {top_level}"
+            );
+
+            let parenthesized_top_level = transpile_with_level(
+                "((SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1))",
+                DialectType::PostgreSQL,
+                write,
+                UnsupportedLevel::Raise,
+            )
+            .expect("parenthesized top-level set ordering should remain valid")
+            .join("; ");
+            assert!(
+                parenthesized_top_level.contains("ORDER BY"),
+                "parenthesized top-level ordering should be preserved for {write:?}: {parenthesized_top_level}"
+            );
+
+            let bounded = [
+                (
+                    "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1 LIMIT 5)))",
+                    "TOP 5",
+                ),
+                (
+                    "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1 OFFSET 2)))",
+                    "OFFSET 2 ROWS",
+                ),
+                (
+                    "SELECT q1 FROM int8_tbl UNION ALL (((SELECT q2 FROM int8_tbl EXCEPT SELECT q1 FROM int8_tbl ORDER BY 1 LIMIT 5 OFFSET 2)))",
+                    "FETCH NEXT 5 ROWS ONLY",
+                ),
+            ];
+            for (sql, expected_bound) in bounded {
+                let output = transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    write,
+                    UnsupportedLevel::Raise,
+                )
+                .expect("row-bounded nested set ordering should remain valid")
+                .join("; ");
+                assert!(
+                    output.contains("ORDER BY") && output.contains(expected_bound),
+                    "row-bounded ordering should be preserved for {write:?}: {output}"
+                );
+            }
         }
     }
 
@@ -1098,6 +1242,94 @@ mod tsql_fabric_regressions {
     }
 
     #[test]
+    fn postgres_nested_grouping_sets_normalize_for_tsql_targets() {
+        let cases = [
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS ((), GROUPING SETS ((), GROUPING SETS (()))) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS ((), (), ())",
+            ),
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS ((), GROUPING SETS ((), GROUPING SETS (((a, b))))) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS ((), (), (a, b))",
+            ),
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS (a, GROUPING SETS (a, CUBE (b))) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS (a, a, CUBE (b))",
+            ),
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS ((a, (a, b)), GROUPING SETS ((a, (a, b)), a)) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS ((a, b), (a, b), a)",
+            ),
+            (
+                "SELECT a, b, SUM(v), COUNT(*) FROM imported_groupingsets.gstest_empty GROUP BY GROUPING SETS ((a, b), a)",
+                "GROUP BY GROUPING SETS ((a, b), a)",
+            ),
+            (
+                "SELECT a, b, c, d FROM imported_groupingsets.gstest2 GROUP BY ROLLUP (a, b), GROUPING SETS (c, d)",
+                "GROUP BY GROUPING SETS (c, d), ROLLUP (a, b)",
+            ),
+            (
+                "SELECT a, b, SUM(c), COUNT(*) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS (ROLLUP (a, b), a)",
+                "GROUP BY GROUPING SETS (ROLLUP (a, b), a)",
+            ),
+            (
+                "SELECT ten, GROUPING(ten) FROM imported_groupingsets.onek GROUP BY GROUPING SETS (ten, four) HAVING GROUPING(ten) > 0 ORDER BY 2, 1",
+                "GROUP BY GROUPING SETS (ten, four)",
+            ),
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS (GROUPING SETS (a, GROUPING SETS (a), a)) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS (a, a, a)",
+            ),
+            (
+                "SELECT SUM(c) FROM imported_groupingsets.gstest2 GROUP BY GROUPING SETS (GROUPING SETS (a, GROUPING SETS (a, GROUPING SETS (a), ((a)), a, GROUPING SETS (a), (a)), a)) ORDER BY 1 DESC",
+                "GROUP BY GROUPING SETS (a, a, a, (a), a, a, (a), a)",
+            ),
+            (
+                "SELECT four, x FROM (SELECT four, ten, 'foo'::text AS x FROM imported_groupingsets.tenk1) AS t GROUP BY GROUPING SETS (four, x) HAVING x = 'foo'",
+                "GROUP BY GROUPING SETS (four, x)",
+            ),
+            (
+                "SELECT four, x || 'x' FROM (SELECT four, ten, 'foo'::text AS x FROM imported_groupingsets.tenk1) AS t GROUP BY GROUPING SETS (four, x) ORDER BY four",
+                "GROUP BY GROUPING SETS (four, x)",
+            ),
+            (
+                "SELECT a, b, COUNT(*), MAX(a), MAX(b) FROM imported_groupingsets.gstest3 GROUP BY GROUPING SETS (a, b, ()) ORDER BY a, b",
+                "GROUP BY GROUPING SETS (a, b, ())",
+            ),
+            (
+                "SELECT (x + y) * 1, SUM(z) FROM imported_groupingsets.gs_xyz GROUP BY GROUPING SETS (x + y, x)",
+                "GROUP BY GROUPING SETS (x + y, x)",
+            ),
+        ];
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            for (sql, expected_group_by) in cases {
+                let strict = pg_to_target(sql, target);
+                let default = Dialect::get(DialectType::PostgreSQL)
+                    .transpile(sql, target)
+                    .expect("default transpile should normalize grouping sets")
+                    .into_iter()
+                    .next()
+                    .expect("expected one generated statement");
+
+                assert_eq!(
+                    strict, default,
+                    "strict/default mismatch for {target:?}: {sql}"
+                );
+                assert!(
+                    strict.contains(expected_group_by),
+                    "expected {expected_group_by:?} for {target:?}, got {strict:?}"
+                );
+                assert_eq!(
+                    strict.matches("GROUPING SETS").count(),
+                    1,
+                    "nested GROUPING SETS remained for {target:?}: {strict}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn simple_distinct_and_all_grouping_modifiers_remain_unchanged_for_tsql_targets() {
         let cases = [
             (
@@ -1439,6 +1671,11 @@ mod tsql_fabric_regressions {
             for (sql, expected) in cases {
                 let result = pg_to_target_with_options(sql, target, TranspileOptions::strict())
                     .unwrap_or_else(|err| panic!("strict {target:?} transpile failed: {err}"));
+                let expected = if target == DialectType::TSQL && expected.contains("ANY_VALUE") {
+                    expected.replace("ANY_VALUE", "MAX")
+                } else {
+                    expected.to_string()
+                };
                 assert_eq!(result, expected, "failed for {target:?}: {sql}");
             }
         }
@@ -1730,6 +1967,16 @@ mod tsql_fabric_regressions {
                 "SELECT CAST(ROUND(CAST('-1.6' AS FLOAT), 0) AS BIGINT) AS c",
             ),
             (
+                "SELECT (('32767.6'::real))::smallint AS c",
+                "SELECT CAST(ROUND(((CAST('32767.6' AS REAL))), 0) AS SMALLINT) AS c",
+                "SELECT CAST(ROUND(((CAST('32767.6' AS REAL))), 0) AS SMALLINT) AS c",
+            ),
+            (
+                "SELECT (((('-32768.6'::double precision))))::bigint AS c",
+                "SELECT CAST(ROUND(((((CAST('-32768.6' AS FLOAT))))), 0) AS BIGINT) AS c",
+                "SELECT CAST(ROUND(((((CAST('-32768.6' AS FLOAT))))), 0) AS BIGINT) AS c",
+            ),
+            (
                 "SELECT smallint(real('32767.6')) AS c",
                 "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
                 "SELECT CAST(ROUND(CAST('32767.6' AS REAL), 0) AS SMALLINT) AS c",
@@ -1738,6 +1985,11 @@ mod tsql_fabric_regressions {
                 "SELECT '1.6'::numeric::integer AS c",
                 "SELECT CAST(CAST('1.6' AS NUMERIC) AS INTEGER) AS c",
                 "SELECT CAST(CAST('1.6' AS DECIMAL(38, 10)) AS INT) AS c",
+            ),
+            (
+                "SELECT (('1.6'::numeric))::integer AS c",
+                "SELECT CAST(((CAST('1.6' AS NUMERIC))) AS INTEGER) AS c",
+                "SELECT CAST(((CAST('1.6' AS DECIMAL(38, 10)))) AS INT) AS c",
             ),
             (
                 "SELECT value::integer AS c FROM t",
@@ -1755,7 +2007,7 @@ mod tsql_fabric_regressions {
     }
 
     #[test]
-    fn postgres_time_date_parts_preserve_fractional_composition_for_tsql_targets() {
+    fn postgres_time_date_parts_preserve_values_and_result_types_for_tsql_targets() {
         for target in [DialectType::TSQL, DialectType::Fabric] {
             let time = match target {
                 DialectType::Fabric => "CAST('13:30:25.575401' AS TIME(6))",
@@ -1769,9 +2021,15 @@ mod tsql_fabric_regressions {
                     ),
                 ),
                 (
+                    "SELECT date_part('second', TIME '13:30:25.575401') AS value",
+                    format!(
+                        "SELECT CAST(DATEPART(SECOND, {time}) + DATEPART(MICROSECOND, {time}) / 1000000.0 AS FLOAT) AS value"
+                    ),
+                ),
+                (
                     "SELECT date_part('milliseconds', '13:30:25.575401'::time) AS value",
                     format!(
-                        "SELECT DATEPART(SECOND, {time}) * 1000 + DATEPART(MICROSECOND, {time}) / 1000.0 AS value"
+                        "SELECT CAST(DATEPART(SECOND, {time}) * 1000 + DATEPART(MICROSECOND, {time}) / 1000.0 AS FLOAT) AS value"
                     ),
                 ),
                 (
@@ -1781,7 +2039,19 @@ mod tsql_fabric_regressions {
                     ),
                 ),
                 (
+                    "SELECT date_part('microseconds', TIME '13:30:25.575401') AS value",
+                    format!(
+                        "SELECT CAST(DATEPART(SECOND, {time}) * 1000000 + DATEPART(MICROSECOND, {time}) AS FLOAT) AS value"
+                    ),
+                ),
+                (
                     "SELECT date_part('epoch', '13:30:25.575401'::time) AS value",
+                    format!(
+                        "SELECT CAST(DATEDIFF(SECOND, CAST('00:00:00' AS TIME(6)), {time}) + DATEPART(MICROSECOND, {time}) / 1000000.0 AS FLOAT) AS value"
+                    ),
+                ),
+                (
+                    "SELECT EXTRACT(epoch FROM TIME '13:30:25.575401') AS value",
                     format!(
                         "SELECT DATEDIFF(SECOND, CAST('00:00:00' AS TIME(6)), {time}) + DATEPART(MICROSECOND, {time}) / 1000000.0 AS value"
                     ),
@@ -1794,15 +2064,48 @@ mod tsql_fabric_regressions {
                     "SELECT EXTRACT(hour FROM '13:30:25.575401'::time) AS value",
                     format!("SELECT DATEPART(HOUR, {time}) AS value"),
                 ),
+                (
+                    "SELECT date_part('hour', TIME '13:30:25.575401') AS value",
+                    format!("SELECT CAST(DATEPART(hour, {time}) AS FLOAT) AS value"),
+                ),
             ];
 
             for (sql, expected) in &cases {
-                assert_eq!(
-                    pg_to_target(sql, target),
-                    *expected,
-                    "failed for {target:?}"
-                );
+                for options in [TranspileOptions::default(), TranspileOptions::strict()] {
+                    assert_eq!(
+                        pg_to_target_with_options(sql, target, options)
+                            .unwrap_or_else(|err| panic!("transpile failed for {sql:?}: {err}")),
+                        *expected,
+                        "failed for {target:?}"
+                    );
+                }
             }
+        }
+    }
+
+    #[test]
+    fn postgres_date_part_float_cast_is_source_scoped_for_tsql_targets() {
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            let native_sql = "SELECT DATEPART(HOUR, ts) AS value FROM t";
+            assert_eq!(
+                Dialect::get(target)
+                    .transpile_with(native_sql, target, TranspileOptions::strict())
+                    .expect("native DATEPART should transpile")
+                    .remove(0),
+                native_sql,
+            );
+
+            assert_eq!(
+                Dialect::get(DialectType::Generic)
+                    .transpile_with(
+                        "SELECT DATE_PART('hour', ts) AS value FROM t",
+                        target,
+                        TranspileOptions::strict(),
+                    )
+                    .expect("non-PostgreSQL DATE_PART should transpile")
+                    .remove(0),
+                "SELECT DATEPART(hour, ts) AS value FROM t",
+            );
         }
     }
 
@@ -1831,6 +2134,10 @@ mod tsql_fabric_regressions {
         let cases = [
             ("SELECT true::text", "SELECT 'true'"),
             (
+                "SELECT (b::boolean)::text FROM tb",
+                "SELECT CASE WHEN (CAST(b AS BIT) <> 0) THEN 'true' WHEN NOT (CAST(b AS BIT) <> 0) THEN 'false' ELSE NULL END FROM tb",
+            ),
+            (
                 "SELECT (a = 1)::text FROM t",
                 "SELECT CASE WHEN (a = 1) THEN 'true' WHEN NOT (a = 1) THEN 'false' ELSE NULL END FROM t",
             ),
@@ -1844,28 +2151,101 @@ mod tsql_fabric_regressions {
     }
 
     #[test]
-    fn strict_postgres_unknown_column_text_cast_is_rejected_for_tsql_targets() {
+    fn nested_boolean_casts_materialize_for_tsql_targets() {
+        let predicate_case = "CASE WHEN (l_discount > 0.05) THEN 1 WHEN NOT (l_discount > 0.05) THEN 0 ELSE NULL END";
         for target in [DialectType::TSQL, DialectType::Fabric] {
-            let error = pg_to_target_with_options(
-                "SELECT (b)::text FROM tb",
-                target,
-                TranspileOptions::strict(),
-            )
-            .expect_err("strict mode should reject a text cast with unknown source type");
-            assert!(
-                error.to_string().contains("unknown source type to text"),
-                "unexpected error for {target:?}: {error}"
-            );
+            let (integer, numeric) = match target {
+                DialectType::Fabric => ("INT", "DECIMAL(38, 10)"),
+                _ => ("INTEGER", "NUMERIC"),
+            };
+            let cases = [
+                (
+                    "SELECT (l_discount > 0.05)::int AS x FROM t",
+                    format!(
+                        "SELECT CAST(CAST({predicate_case} AS BIT) AS {integer}) AS x FROM t"
+                    ),
+                ),
+                (
+                    "SELECT SUM((l_discount > 0.05)::int) AS x FROM t",
+                    format!(
+                        "SELECT SUM(CAST(CAST({predicate_case} AS BIT) AS {integer})) AS x FROM t"
+                    ),
+                ),
+                (
+                    "SELECT abs((l_discount > 0.05)::int) AS x FROM t",
+                    format!(
+                        "SELECT ABS(CAST(CAST({predicate_case} AS BIT) AS {integer})) AS x FROM t"
+                    ),
+                ),
+                (
+                    "SELECT ((l_discount > 0.05)::int) + 0 AS x FROM t",
+                    format!(
+                        "SELECT (CAST(CAST({predicate_case} AS BIT) AS {integer})) + 0 AS x FROM t"
+                    ),
+                ),
+                (
+                    "SELECT ABS(((l_discount > 0.05)::int) + 1) AS x FROM t",
+                    format!(
+                        "SELECT ABS((CAST(CAST({predicate_case} AS BIT) AS {integer})) + 1) AS x FROM t"
+                    ),
+                ),
+                (
+                    "SELECT AVG((l_returnflag = 'R')::int::numeric) AS x FROM t",
+                    format!(
+                        "SELECT AVG(CAST(CAST(CAST(CASE WHEN (l_returnflag = 'R') THEN 1 WHEN NOT (l_returnflag = 'R') THEN 0 ELSE NULL END AS BIT) AS {integer}) AS {numeric})) AS x FROM t"
+                    ),
+                ),
+            ];
 
+            for (sql, expected) in &cases {
+                assert_eq!(
+                    pg_to_target(sql, target),
+                    *expected,
+                    "failed for {target:?}: {sql}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_boolean_values_preserve_unknown_for_tsql_targets() {
+        let expected = "SELECT CAST(CASE WHEN (nullable_value > 0) THEN 1 WHEN NOT (nullable_value > 0) THEN 0 ELSE NULL END AS BIT) AS flag FROM t";
+
+        for target in [DialectType::TSQL, DialectType::Fabric] {
             assert_eq!(
-                pg_to_target_with_options(
-                    "SELECT (b)::text FROM tb",
-                    target,
-                    TranspileOptions::default(),
-                )
-                .expect("default mode should retain best-effort behavior"),
-                "SELECT CAST((b) AS VARCHAR(MAX)) FROM tb"
+                pg_to_target("SELECT (nullable_value > 0) AS flag FROM t", target),
+                expected,
+                "failed for {target:?}"
             );
+        }
+    }
+
+    #[test]
+    fn strict_unknown_column_text_cast_uses_best_effort_for_tsql_targets() {
+        for source in [DialectType::PostgreSQL, DialectType::CockroachDB] {
+            for target in [DialectType::TSQL, DialectType::Fabric] {
+                let strict = Dialect::get(source)
+                    .transpile_with(
+                        "SELECT (b)::text FROM tb",
+                        target,
+                        TranspileOptions::strict(),
+                    )
+                    .expect("strict mode should use the best-effort cast for an untyped column");
+                let default = Dialect::get(source)
+                    .transpile_with(
+                        "SELECT (b)::text FROM tb",
+                        target,
+                        TranspileOptions::default(),
+                    )
+                    .expect("default mode should retain best-effort behavior");
+
+                assert_eq!(strict, default, "failed for {source:?} -> {target:?}");
+                assert_eq!(
+                    strict,
+                    vec!["SELECT CAST((b) AS VARCHAR(MAX)) FROM tb".to_string()],
+                    "failed for {source:?} -> {target:?}"
+                );
+            }
         }
     }
 
@@ -1931,15 +2311,15 @@ mod tsql_fabric_regressions {
         let cases = [
             (
                 "SELECT NOT x FROM (SELECT q1 = 1 AS x FROM t) AS s",
-                "SELECT CAST(CASE WHEN NOT x <> 0 THEN 1 ELSE 0 END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 ELSE 0 END AS BIT) AS x FROM t) AS s",
+                "SELECT CAST(CASE WHEN NOT x <> 0 THEN 1 WHEN NOT NOT x <> 0 THEN 0 ELSE NULL END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 WHEN NOT q1 = 1 THEN 0 ELSE NULL END AS BIT) AS x FROM t) AS s",
             ),
             (
                 "SELECT x AND y FROM (SELECT q1 = 1 AS x, q2 = 2 AS y FROM t) AS s",
-                "SELECT CAST(CASE WHEN x <> 0 AND y <> 0 THEN 1 ELSE 0 END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 ELSE 0 END AS BIT) AS x, CAST(CASE WHEN q2 = 2 THEN 1 ELSE 0 END AS BIT) AS y FROM t) AS s",
+                "SELECT CAST(CASE WHEN x <> 0 AND y <> 0 THEN 1 WHEN NOT (x <> 0 AND y <> 0) THEN 0 ELSE NULL END AS BIT) FROM (SELECT CAST(CASE WHEN q1 = 1 THEN 1 WHEN NOT q1 = 1 THEN 0 ELSE NULL END AS BIT) AS x, CAST(CASE WHEN q2 = 2 THEN 1 WHEN NOT q2 = 2 THEN 0 ELSE NULL END AS BIT) AS y FROM t) AS s",
             ),
             (
                 "SELECT NOT (q1 = 1) FROM t",
-                "SELECT CAST(CASE WHEN NOT (q1 = 1) THEN 1 ELSE 0 END AS BIT) FROM t",
+                "SELECT CAST(CASE WHEN NOT (q1 = 1) THEN 1 WHEN NOT NOT (q1 = 1) THEN 0 ELSE NULL END AS BIT) FROM t",
             ),
         ];
 

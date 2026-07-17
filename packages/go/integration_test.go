@@ -332,6 +332,22 @@ func TestIntegrationCoreAPIs(t *testing.T) {
 	}
 	assertValidJSON(t, "ParseOne", parsedOne)
 
+	tidbDDL, err := client.ParseOne(
+		"CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))",
+		"tidb",
+	)
+	if err != nil {
+		t.Fatalf("ParseOne TiDB DDL: %v", err)
+	}
+	assertValidJSON(t, "ParseOne TiDB DDL", tidbDDL)
+	tidbGenerated, err := client.Generate(json.RawMessage("["+string(tidbDDL)+"]"), "tidb")
+	if err != nil {
+		t.Fatalf("Generate TiDB DDL: %v", err)
+	}
+	if len(tidbGenerated) != 1 || tidbGenerated[0] != "CREATE TABLE posts (id BIGINT AUTO_RANDOM PRIMARY KEY, title VARCHAR(255))" {
+		t.Fatalf("unexpected TiDB DDL roundtrip: %#v", tidbGenerated)
+	}
+
 	dataType, err := client.ParseDataType("DECIMAL(10, 2)", "duckdb")
 	if err != nil {
 		t.Fatalf("ParseDataType: %v", err)

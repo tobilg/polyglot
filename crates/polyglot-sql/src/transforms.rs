@@ -38,6 +38,123 @@ where
 
 const MAX_TSQL_GROUPING_SETS: usize = 4096;
 
+/// Flatten nested GROUPING SETS and structural grouping tuples into syntax accepted by
+/// T-SQL and Fabric. Unlike GROUP BY DISTINCT expansion, this preserves duplicate sets
+/// and leaves ROLLUP/CUBE items unexpanded.
+pub(crate) fn normalize_grouping_sets_for_tsql(expr: Expression) -> Result<Expression> {
+    transform_recursive(expr, &|expr| {
+        let Expression::Select(mut select) = expr else {
+            return Ok(expr);
+        };
+
+        if let Some(group_by) = select.group_by.as_mut() {
+            group_by.expressions = std::mem::take(&mut group_by.expressions)
+                .into_iter()
+                .map(normalize_tsql_grouping_element)
+                .collect();
+        }
+
+        Ok(Expression::Select(select))
+    })
+}
+
+fn normalize_tsql_grouping_element(expression: Expression) -> Expression {
+    match expression {
+        Expression::Function(mut function)
+            if !function.quoted && function.name.eq_ignore_ascii_case("GROUPING SETS") =>
+        {
+            function.args = normalize_tsql_grouping_sets(std::mem::take(&mut function.args));
+            Expression::Function(function)
+        }
+        Expression::GroupingSets(mut grouping_sets) => {
+            grouping_sets.expressions =
+                normalize_tsql_grouping_sets(std::mem::take(&mut grouping_sets.expressions));
+            Expression::GroupingSets(grouping_sets)
+        }
+        Expression::Function(mut function)
+            if !function.quoted
+                && (function.name.eq_ignore_ascii_case("ROLLUP")
+                    || function.name.eq_ignore_ascii_case("CUBE")) =>
+        {
+            function.args = std::mem::take(&mut function.args)
+                .into_iter()
+                .map(normalize_tsql_grouping_unit)
+                .collect();
+            Expression::Function(function)
+        }
+        Expression::Rollup(mut rollup) => {
+            rollup.expressions = std::mem::take(&mut rollup.expressions)
+                .into_iter()
+                .map(normalize_tsql_grouping_unit)
+                .collect();
+            Expression::Rollup(rollup)
+        }
+        Expression::Cube(mut cube) => {
+            cube.expressions = std::mem::take(&mut cube.expressions)
+                .into_iter()
+                .map(normalize_tsql_grouping_unit)
+                .collect();
+            Expression::Cube(cube)
+        }
+        other => other,
+    }
+}
+
+fn normalize_tsql_grouping_sets(expressions: Vec<Expression>) -> Vec<Expression> {
+    let mut normalized = Vec::new();
+
+    for expression in expressions {
+        match expression {
+            Expression::Function(mut function)
+                if !function.quoted && function.name.eq_ignore_ascii_case("GROUPING SETS") =>
+            {
+                normalized.extend(normalize_tsql_grouping_sets(std::mem::take(
+                    &mut function.args,
+                )));
+            }
+            Expression::GroupingSets(mut grouping_sets) => {
+                normalized.extend(normalize_tsql_grouping_sets(std::mem::take(
+                    &mut grouping_sets.expressions,
+                )));
+            }
+            other => normalized.push(normalize_tsql_grouping_unit(
+                normalize_tsql_grouping_element(other),
+            )),
+        }
+    }
+
+    normalized
+}
+
+fn normalize_tsql_grouping_unit(expression: Expression) -> Expression {
+    let Expression::Tuple(tuple) = expression else {
+        return expression;
+    };
+
+    let mut expressions = Vec::new();
+    for expression in tuple.expressions {
+        append_tsql_grouping_unit(expression, &mut expressions);
+    }
+
+    Expression::Tuple(Box::new(Tuple { expressions }))
+}
+
+fn append_tsql_grouping_unit(expression: Expression, expressions: &mut Vec<Expression>) {
+    match expression {
+        Expression::Tuple(tuple) => {
+            for expression in tuple.expressions {
+                append_tsql_grouping_unit(expression, expressions);
+            }
+        }
+        Expression::Paren(paren) => append_tsql_grouping_unit(paren.this, expressions),
+        other => {
+            if !expressions.contains(&other) {
+                expressions.push(other);
+            }
+        }
+    }
+}
+
 /// Expand PostgreSQL-style GROUP BY DISTINCT over advanced grouping elements
 /// into a de-duplicated GROUPING SETS list accepted by T-SQL and Fabric.
 pub fn expand_distinct_grouping_sets_for_tsql(

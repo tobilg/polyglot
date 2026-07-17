@@ -553,6 +553,86 @@ struct SelectBodyHead {
     into: Option<SelectInto>,
 }
 
+#[derive(Clone, Copy)]
+enum TiDBExecutableCommentContext {
+    AutoRandom,
+    TableOption,
+    AlterOption,
+}
+
+fn tidb_payload_starts_with(payload: &str, keyword: &str) -> bool {
+    let payload = payload.trim_start();
+    payload
+        .get(..keyword.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(keyword))
+        && payload
+            .get(keyword.len()..)
+            .and_then(|rest| rest.chars().next())
+            .map_or(true, |next| {
+                next.is_ascii_whitespace() || next == '(' || next == '='
+            })
+}
+
+fn tidb_executable_payload(comment: &str, context: TiDBExecutableCommentContext) -> Option<String> {
+    let content = comment.strip_prefix("/*")?.strip_suffix("*/")?.trim();
+    let content = content.strip_prefix("T!")?.trim_start();
+    let (tag, payload) = if let Some(tagged) = content.strip_prefix('[') {
+        let end = tagged.find(']')?;
+        (Some(&tagged[..end]), tagged[end + 1..].trim_start())
+    } else {
+        (None, content)
+    };
+
+    let matches = match context {
+        TiDBExecutableCommentContext::AutoRandom => {
+            tag.is_some_and(|tag| tag.eq_ignore_ascii_case("auto_rand"))
+                && tidb_payload_starts_with(payload, "AUTO_RANDOM")
+        }
+        TiDBExecutableCommentContext::TableOption => match tag {
+            Some(tag) if tag.eq_ignore_ascii_case("ttl") => {
+                tidb_payload_starts_with(payload, "TTL")
+            }
+            Some(tag) if tag.eq_ignore_ascii_case("placement") => {
+                tidb_payload_starts_with(payload, "PLACEMENT")
+            }
+            None => ["SHARD_ROW_ID_BITS", "PRE_SPLIT_REGIONS", "AUTO_RANDOM_BASE"]
+                .iter()
+                .any(|keyword| tidb_payload_starts_with(payload, keyword)),
+            _ => false,
+        },
+        TiDBExecutableCommentContext::AlterOption => match tag {
+            Some(tag) if tag.eq_ignore_ascii_case("ttl") => {
+                tidb_payload_starts_with(payload, "TTL")
+                    || tidb_payload_starts_with(payload, "REMOVE")
+            }
+            Some(tag) if tag.eq_ignore_ascii_case("placement") => {
+                tidb_payload_starts_with(payload, "PLACEMENT")
+            }
+            None => ["SHARD_ROW_ID_BITS", "AUTO_RANDOM_BASE", "FORCE"]
+                .iter()
+                .any(|keyword| tidb_payload_starts_with(payload, keyword)),
+            _ => false,
+        },
+    };
+    matches.then(|| payload.to_string())
+}
+
+fn take_tidb_executable_payloads(
+    comments: &mut Vec<String>,
+    context: TiDBExecutableCommentContext,
+) -> Vec<String> {
+    let mut payloads = Vec::new();
+    comments.retain(|comment| {
+        if let Some(payload) = tidb_executable_payload(comment, context) {
+            payloads.push(payload);
+            false
+        } else {
+            true
+        }
+    });
+    payloads
+}
+
 impl Parser {
     /// Create a new parser from a pre-tokenized token stream with default configuration.
     ///
@@ -1054,6 +1134,20 @@ impl Parser {
                 self.fallback_to_command(statement_start)
             }
             TokenType::Alter => self.parse_alter(),
+            _ if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) && self.check_identifier("SPLIT") =>
+            {
+                self.parse_tidb_split_table()
+            }
+            _ if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) && self.check_identifier("FLASHBACK") =>
+            {
+                self.parse_tidb_flashback_table()
+            }
             TokenType::Apply
                 if matches!(
                     self.config.dialect,
@@ -12761,6 +12855,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants: false,
@@ -12869,6 +12964,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 // COPY GRANTS is a Snowflake feature, not applicable to BigQuery
@@ -12930,6 +13026,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13139,6 +13236,7 @@ impl Parser {
                     partition_of: None,
                     post_table_properties: redshift_ctas_properties,
                     mysql_table_options: Vec::new(),
+                    tidb_table_options: Vec::new(),
                     inherits: Vec::new(),
                     on_property: None,
                     copy_grants,
@@ -13247,6 +13345,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: redshift_ctas_properties,
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13310,6 +13409,7 @@ impl Parser {
                     partition_of: None,
                     post_table_properties: Vec::new(),
                     mysql_table_options: Vec::new(),
+                    tidb_table_options: Vec::new(),
                     inherits: Vec::new(),
                     on_property: None,
                     copy_grants,
@@ -13396,6 +13496,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13442,6 +13543,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13486,6 +13588,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13546,6 +13649,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13601,6 +13705,7 @@ impl Parser {
                     partition_of: None,
                     post_table_properties: Vec::new(),
                     mysql_table_options: Vec::new(),
+                    tidb_table_options: Vec::new(),
                     inherits: Vec::new(),
                     on_property: None,
                     copy_grants,
@@ -13742,6 +13847,7 @@ impl Parser {
                 partition_of: None,
                 post_table_properties: Vec::new(),
                 mysql_table_options: Vec::new(),
+                tidb_table_options: Vec::new(),
                 inherits: Vec::new(),
                 on_property: None,
                 copy_grants,
@@ -13961,10 +14067,10 @@ impl Parser {
         }
 
         // Parse MySQL table options: ENGINE=val, AUTO_INCREMENT=val, DEFAULT CHARSET=val, etc.
-        let mysql_table_options = if is_clickhouse {
-            Vec::new()
+        let (mysql_table_options, tidb_table_options) = if is_clickhouse {
+            (Vec::new(), Vec::new())
         } else {
-            self.parse_mysql_table_options()
+            self.parse_mysql_table_options()?
         };
 
         // Parse StarRocks ROLLUP property: ROLLUP (r1(col1, col2), r2(col1))
@@ -14796,6 +14902,7 @@ impl Parser {
             partition_of: None,
             post_table_properties,
             mysql_table_options,
+            tidb_table_options,
             inherits,
             on_property,
             copy_grants,
@@ -14947,6 +15054,7 @@ impl Parser {
             partition_of: Some(partition_of_expr),
             post_table_properties: Vec::new(),
             mysql_table_options: Vec::new(),
+            tidb_table_options: Vec::new(),
             inherits: Vec::new(),
             on_property: None,
             copy_grants: false,
@@ -15775,6 +15883,14 @@ impl Parser {
 
         // Parse column constraints
         loop {
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) && self.parse_tidb_auto_random_comments(&mut col_def)?
+            {
+                continue;
+            }
+
             if self.match_keywords(&[TokenType::Not, TokenType::Null]) {
                 col_def.nullable = Some(false);
                 col_def.constraint_order.push(ConstraintType::NotNull);
@@ -15866,6 +15982,13 @@ impl Parser {
                         .push(ColumnConstraint::Check(check_expr));
                     col_def.constraint_order.push(ConstraintType::Check);
                 }
+            } else if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) && self.match_identifier("AUTO_RANDOM")
+            {
+                col_def.auto_random = Some(self.parse_tidb_auto_random(false)?);
+                col_def.constraint_order.push(ConstraintType::AutoRandom);
             } else if self.match_token(TokenType::AutoIncrement) || self.match_keyword("IDENTITY") {
                 col_def.auto_increment = true;
                 col_def.constraint_order.push(ConstraintType::AutoIncrement);
@@ -16689,11 +16812,29 @@ impl Parser {
     /// Parse MySQL table options that appear after the closing paren of column definitions.
     /// Handles ENGINE=val, AUTO_INCREMENT=val, DEFAULT CHARSET=val, ROW_FORMAT=val,
     /// COMMENT='val', COLLATE=val, etc.
-    fn parse_mysql_table_options(&mut self) -> Vec<(String, String)> {
+    fn parse_mysql_table_options(
+        &mut self,
+    ) -> Result<(Vec<(String, String)>, Vec<TiDBTableOption>)> {
         let mut options = Vec::new();
+        let mut tidb_options = Vec::new();
         loop {
             // Skip optional commas between options
             self.match_token(TokenType::Comma);
+
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) {
+                let comment_options = self.parse_tidb_table_option_comments()?;
+                if !comment_options.is_empty() {
+                    tidb_options.extend(comment_options);
+                    continue;
+                }
+                if let Some(option) = self.parse_tidb_table_option(false)? {
+                    tidb_options.push(option);
+                    continue;
+                }
+            }
 
             // DEFAULT CHARSET=val or DEFAULT CHARACTER SET=val
             if self.check(TokenType::Default) {
@@ -16829,7 +16970,121 @@ impl Parser {
 
             break;
         }
-        options
+        Ok((options, tidb_options))
+    }
+
+    fn parse_tidb_table_option_comments(&mut self) -> Result<Vec<TiDBTableOption>> {
+        let payloads =
+            self.take_tidb_payloads_at_current(TiDBExecutableCommentContext::TableOption);
+        let mut options = Vec::new();
+        for payload in payloads {
+            let mut parser = self.tidb_fragment_parser(&payload)?;
+            while !parser.is_at_end() {
+                parser.match_token(TokenType::Comma);
+                let option = parser.parse_tidb_table_option(true)?.ok_or_else(|| {
+                    parser.parse_error("Unsupported TiDB table option in executable comment")
+                })?;
+                options.push(option);
+            }
+        }
+        Ok(options)
+    }
+
+    fn parse_tidb_table_option(
+        &mut self,
+        executable_comment: bool,
+    ) -> Result<Option<TiDBTableOption>> {
+        let saved = self.current;
+        let kind = if self.match_identifier("SHARD_ROW_ID_BITS") {
+            self.match_token(TokenType::Eq);
+            TiDBTableOptionKind::ShardRowIdBits {
+                bits: self.expect_nonnegative_u64("SHARD_ROW_ID_BITS")?,
+            }
+        } else if self.match_identifier("PRE_SPLIT_REGIONS") {
+            self.match_token(TokenType::Eq);
+            TiDBTableOptionKind::PreSplitRegions {
+                regions: self.expect_nonnegative_u64("PRE_SPLIT_REGIONS")?,
+            }
+        } else if self.match_identifier("AUTO_RANDOM_BASE") {
+            self.match_token(TokenType::Eq);
+            TiDBTableOptionKind::AutoRandomBase {
+                value: self.expect_nonnegative_u64("AUTO_RANDOM_BASE")?,
+            }
+        } else if self.match_identifier("PLACEMENT") {
+            if !self.match_identifier("POLICY") {
+                self.current = saved;
+                return Ok(None);
+            }
+            let set_default = self.match_token(TokenType::Set);
+            self.match_token(TokenType::Eq);
+            let policy = if set_default {
+                self.expect(TokenType::Default)?;
+                None
+            } else if self.match_token(TokenType::Default) {
+                None
+            } else {
+                Some(self.expect_identifier_or_keyword_with_quoted()?)
+            };
+            TiDBTableOptionKind::PlacementPolicy { policy }
+        } else if self.match_identifier("TTL_ENABLE") {
+            self.match_token(TokenType::Eq);
+            let value = if self.check(TokenType::String) {
+                self.advance_text()
+            } else {
+                self.expect_identifier_or_keyword()?
+            };
+            let enabled = match value.to_ascii_uppercase().as_str() {
+                "ON" => true,
+                "OFF" => false,
+                _ => return Err(self.parse_error("TTL_ENABLE must be ON or OFF")),
+            };
+            TiDBTableOptionKind::TtlEnable { enabled }
+        } else if self.match_identifier("TTL_JOB_INTERVAL") {
+            self.match_token(TokenType::Eq);
+            TiDBTableOptionKind::TtlJobInterval {
+                interval: self.expect_string()?,
+            }
+        } else if self.match_identifier("TTL") {
+            self.match_token(TokenType::Eq);
+            let column = self.expect_identifier_or_keyword_with_quoted()?;
+            self.expect(TokenType::Plus)?;
+            let interval = match self.parse_primary()? {
+                Expression::Interval(interval) => *interval,
+                _ => return Err(self.parse_error("Expected INTERVAL in TiDB TTL option")),
+            };
+            let enabled = if self.match_identifier("TTL_ENABLE") {
+                self.match_token(TokenType::Eq);
+                Some(self.parse_tidb_on_off("TTL_ENABLE")?)
+            } else {
+                None
+            };
+            TiDBTableOptionKind::Ttl {
+                column,
+                interval,
+                enabled,
+            }
+        } else {
+            self.current = saved;
+            return Ok(None);
+        };
+
+        Ok(Some(TiDBTableOption {
+            kind,
+            executable_comment,
+        }))
+    }
+
+    fn parse_tidb_on_off(&mut self, context: &str) -> Result<bool> {
+        let value = if self.check(TokenType::String) {
+            self.advance_text()
+        } else {
+            self.expect_identifier_or_keyword()?
+        };
+        match value.to_ascii_uppercase().as_str() {
+            "ON" => Ok(true),
+            "OFF" => Ok(false),
+            _ => Err(self.parse_error(format!("{context} must be ON or OFF"))),
+        }
     }
 
     /// Parse Hive-specific table properties that appear after column definitions.
@@ -19236,6 +19491,15 @@ impl Parser {
                 if has_only {
                     name.only = true;
                 }
+                if matches!(
+                    self.config.dialect,
+                    Some(crate::dialects::DialectType::TiDB)
+                ) {
+                    name.trailing_comments.retain(|comment| {
+                        tidb_executable_payload(comment, TiDBExecutableCommentContext::AlterOption)
+                            .is_none()
+                    });
+                }
 
                 // ClickHouse: ON CLUSTER clause
                 let on_cluster = self.parse_on_cluster_clause()?;
@@ -19499,8 +19763,137 @@ impl Parser {
         }
     }
 
+    fn parse_tidb_split_table(&mut self) -> Result<Expression> {
+        if !self.match_identifier("SPLIT") {
+            return Err(self.parse_error("Expected SPLIT"));
+        }
+        let partition_prefix = self.match_token(TokenType::Partition);
+        self.expect(TokenType::Table)?;
+        let table = self.parse_table_ref()?;
+
+        let partition_names = if self.match_token(TokenType::Partition) {
+            self.expect(TokenType::LParen)?;
+            let mut names = Vec::new();
+            loop {
+                names.push(self.expect_identifier_or_keyword_with_quoted()?);
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenType::RParen)?;
+            Some(names)
+        } else {
+            None
+        };
+        let partition_scope = match partition_names {
+            Some(names) => SplitTablePartitionScope::Partitions { names },
+            None if partition_prefix => SplitTablePartitionScope::AllPartitions,
+            None => SplitTablePartitionScope::Table,
+        };
+
+        let index = if self.match_token(TokenType::Index) {
+            Some(self.expect_identifier_or_keyword_with_quoted()?)
+        } else {
+            None
+        };
+
+        let mode = if self.match_token(TokenType::Between) {
+            let lower = self.parse_tidb_split_value_tuple()?;
+            self.expect(TokenType::And)?;
+            let upper = self.parse_tidb_split_value_tuple()?;
+            if !self.match_identifier("REGIONS") {
+                return Err(self.parse_error("Expected REGIONS in SPLIT TABLE"));
+            }
+            let regions = self.expect_nonnegative_u64("SPLIT TABLE region count")?;
+            SplitTableMode::Between {
+                lower,
+                upper,
+                regions,
+            }
+        } else if self.match_token(TokenType::By) {
+            let mut points = Vec::new();
+            loop {
+                points.push(self.parse_tidb_split_value_tuple()?);
+                if !self.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+            SplitTableMode::By { points }
+        } else {
+            return Err(self.parse_error("Expected BETWEEN or BY in SPLIT TABLE"));
+        };
+
+        Ok(Expression::SplitTable(Box::new(SplitTable {
+            table,
+            partition_scope,
+            index,
+            mode,
+        })))
+    }
+
+    fn parse_tidb_split_value_tuple(&mut self) -> Result<Vec<Expression>> {
+        self.expect(TokenType::LParen)?;
+        let values = self.parse_expression_list()?;
+        self.expect(TokenType::RParen)?;
+        Ok(values)
+    }
+
+    fn parse_tidb_flashback_table(&mut self) -> Result<Expression> {
+        if !self.match_identifier("FLASHBACK") {
+            return Err(self.parse_error("Expected FLASHBACK"));
+        }
+        self.expect(TokenType::Table)?;
+        let table = self.parse_table_ref()?;
+        let rename_to = if self.match_token(TokenType::To) {
+            Some(self.expect_identifier_or_keyword_with_quoted()?)
+        } else {
+            None
+        };
+        Ok(Expression::FlashbackTable(Box::new(FlashbackTable {
+            table,
+            rename_to,
+        })))
+    }
+
     /// Parse ALTER TABLE action
     fn parse_alter_action(&mut self) -> Result<AlterTableAction> {
+        if matches!(
+            self.config.dialect,
+            Some(crate::dialects::DialectType::TiDB)
+        ) {
+            if let Some(action) = self.parse_tidb_alter_option_comment()? {
+                return Ok(action);
+            }
+            if self.match_identifier("FORCE") {
+                let option = self
+                    .parse_tidb_table_option(false)?
+                    .ok_or_else(|| self.parse_error("Expected a TiDB table option after FORCE"))?;
+                if !matches!(option.kind, TiDBTableOptionKind::AutoRandomBase { .. }) {
+                    return Err(
+                        self.parse_error("FORCE is only supported with AUTO_RANDOM_BASE in TiDB")
+                    );
+                }
+                return Ok(AlterTableAction::SetTiDBTableOption {
+                    option,
+                    force: true,
+                });
+            }
+            if self.match_identifier("REMOVE") {
+                if self.match_identifier("TTL") {
+                    return Ok(AlterTableAction::RemoveTiDBTtl {
+                        executable_comment: false,
+                    });
+                }
+                self.current -= 1;
+            }
+            if let Some(option) = self.parse_tidb_table_option(false)? {
+                return Ok(AlterTableAction::SetTiDBTableOption {
+                    option,
+                    force: false,
+                });
+            }
+        }
+
         if self.match_token(TokenType::Add) {
             // ClickHouse: ADD INDEX idx expr TYPE minmax GRANULARITY 1
             // ClickHouse: ADD PROJECTION name (SELECT ...)
@@ -20260,6 +20653,29 @@ impl Parser {
                     sql: self.join_command_tokens(tokens),
                 });
             }
+            if matches!(
+                self.config.dialect,
+                Some(crate::dialects::DialectType::TiDB)
+            ) {
+                self.match_token(TokenType::Column);
+                let if_exists = self.match_keywords(&[TokenType::If, TokenType::Exists]);
+                let column = self.parse_column_def()?;
+                let position = if self.match_token(TokenType::First) {
+                    Some(ColumnPosition::First)
+                } else if self.match_token(TokenType::After) {
+                    Some(ColumnPosition::After(
+                        self.expect_identifier_or_keyword_with_quoted()?,
+                    ))
+                } else {
+                    None
+                };
+                return Ok(AlterTableAction::ModifyColumn {
+                    column,
+                    if_exists,
+                    position,
+                });
+            }
+
             // MODIFY COLUMN (MySQL/Snowflake syntax — routes through same action parser as ALTER COLUMN)
             let mut tokens: Vec<(String, TokenType)> = vec![("MODIFY".to_string(), TokenType::Var)];
             if !self.match_token(TokenType::Column) {
@@ -20787,6 +21203,44 @@ impl Parser {
                 self.peek().token_type
             )))
         }
+    }
+
+    fn parse_tidb_alter_option_comment(&mut self) -> Result<Option<AlterTableAction>> {
+        let payloads =
+            self.take_tidb_payloads_at_current(TiDBExecutableCommentContext::AlterOption);
+        if payloads.is_empty() {
+            return Ok(None);
+        }
+        if payloads.len() != 1 {
+            return Err(
+                self.parse_error("Only one TiDB executable ALTER option is allowed per action")
+            );
+        }
+
+        let mut parser = self.tidb_fragment_parser(&payloads[0])?;
+        let force = parser.match_identifier("FORCE");
+        let action = if parser.match_identifier("REMOVE") {
+            if !parser.match_identifier("TTL") {
+                return Err(parser.parse_error("Expected TTL after REMOVE"));
+            }
+            AlterTableAction::RemoveTiDBTtl {
+                executable_comment: true,
+            }
+        } else {
+            let option = parser.parse_tidb_table_option(true)?.ok_or_else(|| {
+                parser.parse_error("Unsupported TiDB ALTER option in executable comment")
+            })?;
+            if force && !matches!(option.kind, TiDBTableOptionKind::AutoRandomBase { .. }) {
+                return Err(
+                    parser.parse_error("FORCE is only supported with AUTO_RANDOM_BASE in TiDB")
+                );
+            }
+            AlterTableAction::SetTiDBTableOption { option, force }
+        };
+        if !parser.is_at_end() {
+            return Err(parser.parse_error("Unexpected tokens in TiDB executable ALTER option"));
+        }
+        Ok(Some(action))
     }
 
     /// Parse TSQL SYSTEM_VERSIONING option in ALTER TABLE SET (...)
@@ -39923,8 +40377,19 @@ impl Parser {
     fn try_parse_interval_unit(&mut self) -> Result<Option<IntervalUnitSpec>> {
         // First, check if there's a function (like CURRENT_DATE, CAST(...))
         if self.is_function_start() {
-            let func = self.parse_primary()?;
-            return Ok(Some(IntervalUnitSpec::Expr(Box::new(func))));
+            let start = self.parse_primary()?;
+            if self.check_keyword_text("TO") {
+                let saved = self.current;
+                self.skip();
+                if let Some(end) = self.try_parse_interval_unit_expression()? {
+                    return Ok(Some(IntervalUnitSpec::ExprSpan(IntervalSpanExpr {
+                        this: Box::new(start),
+                        expression: Box::new(end),
+                    })));
+                }
+                self.current = saved;
+            }
+            return Ok(Some(IntervalUnitSpec::Expr(Box::new(start))));
         }
 
         // Try to parse a simple unit or span
@@ -39934,6 +40399,13 @@ impl Parser {
             if self.check_keyword_text("TO") {
                 let saved = self.current;
                 self.skip(); // consume TO
+                if self.is_function_start() {
+                    let end = self.parse_primary()?;
+                    return Ok(Some(IntervalUnitSpec::ExprSpan(IntervalSpanExpr {
+                        this: Box::new(Self::interval_unit_expression(unit)),
+                        expression: Box::new(end),
+                    })));
+                }
                 if let Some((end_unit, _)) = self.try_parse_simple_interval_unit()? {
                     return Ok(Some(IntervalUnitSpec::Span(IntervalSpan {
                         this: unit,
@@ -39949,6 +40421,34 @@ impl Parser {
 
         // No unit found
         Ok(None)
+    }
+
+    fn try_parse_interval_unit_expression(&mut self) -> Result<Option<Expression>> {
+        if self.is_function_start() {
+            return self.parse_primary().map(Some);
+        }
+        Ok(self
+            .try_parse_simple_interval_unit()?
+            .map(|(unit, _)| Self::interval_unit_expression(unit)))
+    }
+
+    fn interval_unit_expression(unit: IntervalUnit) -> Expression {
+        let name = match unit {
+            IntervalUnit::Year => "YEAR",
+            IntervalUnit::Quarter => "QUARTER",
+            IntervalUnit::Month => "MONTH",
+            IntervalUnit::Week => "WEEK",
+            IntervalUnit::Day => "DAY",
+            IntervalUnit::Hour => "HOUR",
+            IntervalUnit::Minute => "MINUTE",
+            IntervalUnit::Second => "SECOND",
+            IntervalUnit::Millisecond => "MILLISECOND",
+            IntervalUnit::Microsecond => "MICROSECOND",
+            IntervalUnit::Nanosecond => "NANOSECOND",
+        };
+        Expression::Var(Box::new(Var {
+            this: name.to_string(),
+        }))
     }
 
     /// Return whether an interval unit token should regenerate in plural form.
@@ -44627,6 +45127,87 @@ impl Parser {
         } else {
             Err(self.parse_error("Expected number"))
         }
+    }
+
+    fn expect_nonnegative_u64(&mut self, context: &str) -> Result<u64> {
+        let value = self.expect_number()?;
+        u64::try_from(value)
+            .map_err(|_| self.parse_error(format!("{context} must be a non-negative integer")))
+    }
+
+    fn parse_tidb_auto_random(&mut self, executable_comment: bool) -> Result<TiDBAutoRandom> {
+        let mut shard_bits = None;
+        let mut range_bits = None;
+        if self.match_token(TokenType::LParen) {
+            shard_bits = Some(self.expect_nonnegative_u64("AUTO_RANDOM shard bits")?);
+            if self.match_token(TokenType::Comma) {
+                range_bits = Some(self.expect_nonnegative_u64("AUTO_RANDOM range bits")?);
+            }
+            self.expect(TokenType::RParen)?;
+        }
+        Ok(TiDBAutoRandom {
+            shard_bits,
+            range_bits,
+            executable_comment,
+        })
+    }
+
+    fn tidb_fragment_parser(&self, payload: &str) -> Result<Parser> {
+        let mut tokenizer_config = TokenizerConfig::default();
+        tokenizer_config.identifiers.insert('`', '`');
+        tokenizer_config.nested_comments = false;
+        let tokens = Tokenizer::new(tokenizer_config).tokenize(payload)?;
+        Ok(Parser::with_config(
+            tokens,
+            ParserConfig {
+                dialect: Some(crate::dialects::DialectType::TiDB),
+                complexity_guard: self.config.complexity_guard.clone(),
+                ..Default::default()
+            },
+        ))
+    }
+
+    fn take_tidb_payloads_at_current(
+        &mut self,
+        context: TiDBExecutableCommentContext,
+    ) -> Vec<String> {
+        let mut payloads = Vec::new();
+        if self.current > 0 {
+            payloads.extend(take_tidb_executable_payloads(
+                &mut self.tokens[self.current - 1].trailing_comments,
+                context,
+            ));
+        }
+        if self.current < self.tokens.len() {
+            payloads.extend(take_tidb_executable_payloads(
+                &mut self.tokens[self.current].comments,
+                context,
+            ));
+        }
+        payloads
+    }
+
+    fn parse_tidb_auto_random_comments(&mut self, column: &mut ColumnDef) -> Result<bool> {
+        let payloads = self.take_tidb_payloads_at_current(TiDBExecutableCommentContext::AutoRandom);
+        if payloads.is_empty() {
+            return Ok(false);
+        }
+        for payload in payloads {
+            if column.auto_random.is_some() {
+                return Err(self.parse_error("Duplicate AUTO_RANDOM column attribute"));
+            }
+            let mut parser = self.tidb_fragment_parser(&payload)?;
+            if !parser.match_identifier("AUTO_RANDOM") {
+                return Err(parser.parse_error("Expected AUTO_RANDOM in executable comment"));
+            }
+            let auto_random = parser.parse_tidb_auto_random(true)?;
+            if !parser.is_at_end() {
+                return Err(parser.parse_error("Unexpected tokens after AUTO_RANDOM"));
+            }
+            column.auto_random = Some(auto_random);
+            column.constraint_order.push(ConstraintType::AutoRandom);
+        }
+        Ok(true)
     }
 
     /// Parse a comma-separated list of expressions.
@@ -61383,6 +61964,29 @@ mod tests {
         let result2 = transpile(sql2, DialectType::PostgreSQL, DialectType::PostgreSQL).unwrap();
         eprintln!("VARIADIC test: {} -> {}", sql2, result2[0]);
         assert_eq!(result2[0], sql2);
+    }
+
+    #[test]
+    fn postgres_interval_precision_span_uses_existing_expr_span_ast() {
+        let sql = "SELECT INTERVAL '1 day 02:03:04.5678' DAY(3) TO SECOND(2)";
+        let parsed = crate::parse_one(sql, crate::DialectType::PostgreSQL).unwrap();
+        let interval = parsed
+            .dfs()
+            .find_map(|expression| match expression {
+                Expression::Interval(interval) => Some(interval),
+                _ => None,
+            })
+            .expect("expected interval expression");
+        assert!(matches!(interval.unit, Some(IntervalUnitSpec::ExprSpan(_))));
+
+        let output = crate::transpile(
+            sql,
+            crate::DialectType::PostgreSQL,
+            crate::DialectType::PostgreSQL,
+        )
+        .unwrap()
+        .remove(0);
+        assert_eq!(output, sql);
     }
 
     #[test]

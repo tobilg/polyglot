@@ -441,6 +441,8 @@ define_expression_subclasses!(
     DropTable,
     Undrop,
     AlterTable,
+    SplitTable,
+    FlashbackTable,
     CreateIndex,
     DropIndex,
     CreateView,

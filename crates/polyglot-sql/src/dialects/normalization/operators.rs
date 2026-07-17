@@ -1,4 +1,4 @@
-use super::{NormalizationContext, RewriteOutcome};
+use super::{types, NormalizationContext, RewriteOutcome};
 use crate::dialects::DialectType;
 use crate::error::Result;
 use crate::expressions::*;
@@ -20,6 +20,7 @@ pub(super) enum Action {
     MysqlNullsOrdering,
     BigQueryNullsOrdering,
     PipeConcatToConcat,
+    PostgresPipeConcatToTsql,
     DivFuncConvert,
     RegexpSubstrSnowflakeToDuckDB,
     RegexpSubstrSnowflakeIdentity,
@@ -736,6 +737,43 @@ pub(super) fn rewrite(
                         "CONCAT".to_string(),
                         vec![cast_left, cast_right],
                     ))))
+                } else {
+                    Ok(e)
+                }
+            }
+
+            Action::PostgresPipeConcatToTsql => {
+                fn text_operand(expression: Expression) -> Expression {
+                    let is_text = match &expression {
+                        Expression::Literal(literal) => literal.is_string(),
+                        Expression::Cast(cast)
+                        | Expression::TryCast(cast)
+                        | Expression::SafeCast(cast) => types::unit_cast_target_is_string(&cast.to),
+                        // Normalization is bottom-up, so nested concatenations already
+                        // have text-safe leaves when their parent is visited.
+                        Expression::Concat(_) => true,
+                        _ => false,
+                    };
+
+                    if is_text {
+                        expression
+                    } else {
+                        Expression::Cast(Box::new(Cast {
+                            this: expression,
+                            to: DataType::Text,
+                            trailing_comments: Vec::new(),
+                            double_colon_syntax: false,
+                            format: None,
+                            default: None,
+                            inferred_type: None,
+                        }))
+                    }
+                }
+
+                if let Expression::Concat(mut op) = e {
+                    op.left = text_operand(op.left);
+                    op.right = text_operand(op.right);
+                    Ok(Expression::Concat(op))
                 } else {
                     Ok(e)
                 }

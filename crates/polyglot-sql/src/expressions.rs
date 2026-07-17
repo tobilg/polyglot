@@ -547,6 +547,8 @@ pub enum Expression {
     DropTable(Box<DropTable>),
     Undrop(Box<Undrop>),
     AlterTable(Box<AlterTable>),
+    SplitTable(Box<SplitTable>),
+    FlashbackTable(Box<FlashbackTable>),
     CreateIndex(Box<CreateIndex>),
     DropIndex(Box<DropIndex>),
     CreateView(Box<CreateView>),
@@ -1156,6 +1158,8 @@ impl Expression {
             | Expression::DropTable(_)
             | Expression::Undrop(_)
             | Expression::AlterTable(_)
+            | Expression::SplitTable(_)
+            | Expression::FlashbackTable(_)
             | Expression::CreateIndex(_)
             | Expression::DropIndex(_)
             | Expression::CreateView(_)
@@ -2200,6 +2204,8 @@ impl Expression {
             Expression::DropTable(_) => "drop_table",
             Expression::Undrop(_) => "undrop",
             Expression::AlterTable(_) => "alter_table",
+            Expression::SplitTable(_) => "split_table",
+            Expression::FlashbackTable(_) => "flashback_table",
             Expression::CreateIndex(_) => "create_index",
             Expression::DropIndex(_) => "drop_index",
             Expression::CreateView(_) => "create_view",
@@ -7371,6 +7377,61 @@ pub enum OnCommit {
     DeleteRows,
 }
 
+/// TiDB `AUTO_RANDOM[(shard_bits[, range_bits])]` column attribute.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct TiDBAutoRandom {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_bits: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_bits: Option<u64>,
+    /// Whether the attribute was wrapped in a TiDB executable comment.
+    #[serde(default)]
+    pub executable_comment: bool,
+}
+
+/// A TiDB-specific table option and its source syntax.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct TiDBTableOption {
+    pub kind: TiDBTableOptionKind,
+    /// Whether the option was wrapped in a TiDB executable comment.
+    #[serde(default)]
+    pub executable_comment: bool,
+}
+
+/// TiDB table options supported by `CREATE TABLE` and applicable `ALTER TABLE` forms.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TiDBTableOptionKind {
+    ShardRowIdBits {
+        bits: u64,
+    },
+    PreSplitRegions {
+        regions: u64,
+    },
+    AutoRandomBase {
+        value: u64,
+    },
+    /// `None` represents `PLACEMENT POLICY = DEFAULT`.
+    PlacementPolicy {
+        policy: Option<Identifier>,
+    },
+    Ttl {
+        column: Identifier,
+        interval: Interval,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+    },
+    TtlEnable {
+        enabled: bool,
+    },
+    TtlJobInterval {
+        interval: String,
+    },
+}
+
 /// CREATE TABLE statement
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
@@ -7442,6 +7503,9 @@ pub struct CreateTable {
     /// MySQL table options after column definitions (ENGINE=val, AUTO_INCREMENT=val, etc.)
     #[serde(default)]
     pub mysql_table_options: Vec<(String, String)>,
+    /// TiDB-specific table options after column definitions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tidb_table_options: Vec<TiDBTableOption>,
     /// PostgreSQL INHERITS clause: INHERITS (parent1, parent2, ...)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inherits: Vec<TableRef>,
@@ -7531,6 +7595,7 @@ impl CreateTable {
             partition_of: None,
             post_table_properties: Vec::new(),
             mysql_table_options: Vec::new(),
+            tidb_table_options: Vec::new(),
             inherits: Vec::new(),
             on_property: None,
             copy_grants: false,
@@ -7563,6 +7628,7 @@ pub enum ConstraintType {
     Unique,
     Default,
     AutoIncrement,
+    AutoRandom,
     Collate,
     Comment,
     References,
@@ -7599,6 +7665,9 @@ pub struct ColumnDef {
     #[serde(default)]
     pub unique_nulls_not_distinct: bool,
     pub auto_increment: bool,
+    /// TiDB distributed primary-key allocation attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_random: Option<TiDBAutoRandom>,
     pub comment: Option<String>,
     pub constraints: Vec<ColumnConstraint>,
     /// Track original order of constraints for accurate regeneration
@@ -7699,6 +7768,7 @@ impl ColumnDef {
             unique: false,
             unique_nulls_not_distinct: false,
             auto_increment: false,
+            auto_random: None,
             comment: None,
             constraints: Vec::new(),
             constraint_order: Vec::new(),
@@ -8132,6 +8202,51 @@ pub struct Undrop {
     pub rename_to: Option<TableRef>,
 }
 
+/// Partition scope for a TiDB `SPLIT TABLE` statement.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SplitTablePartitionScope {
+    Table,
+    AllPartitions,
+    Partitions { names: Vec<Identifier> },
+}
+
+/// Split-point specification for a TiDB `SPLIT TABLE` statement.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SplitTableMode {
+    Between {
+        lower: Vec<Expression>,
+        upper: Vec<Expression>,
+        regions: u64,
+    },
+    By {
+        points: Vec<Vec<Expression>>,
+    },
+}
+
+/// TiDB `SPLIT [PARTITION] TABLE` statement.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct SplitTable {
+    pub table: TableRef,
+    pub partition_scope: SplitTablePartitionScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<Identifier>,
+    pub mode: SplitTableMode,
+}
+
+/// TiDB `FLASHBACK TABLE table [TO new_name]` statement.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct FlashbackTable {
+    pub table: TableRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_to: Option<Identifier>,
+}
+
 /// ALTER TABLE statement
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
@@ -8210,6 +8325,12 @@ pub enum AlterTableAction {
         /// Whether this was parsed from MODIFY COLUMN syntax (MySQL)
         #[serde(default)]
         use_modify_keyword: bool,
+    },
+    /// MySQL/TiDB `MODIFY [COLUMN]` with a complete replacement column definition.
+    ModifyColumn {
+        column: ColumnDef,
+        if_exists: bool,
+        position: Option<ColumnPosition>,
     },
     RenameTable(TableRef),
     AddConstraint(TableConstraint),
@@ -8336,6 +8457,17 @@ pub enum AlterTableAction {
     ReplacePartition {
         partition: Expression,
         source: Option<Box<Expression>>,
+    },
+    /// Set a TiDB-specific table option. `force` is valid for `AUTO_RANDOM_BASE`.
+    SetTiDBTableOption {
+        option: TiDBTableOption,
+        #[serde(default)]
+        force: bool,
+    },
+    /// TiDB `REMOVE TTL`.
+    RemoveTiDBTtl {
+        #[serde(default)]
+        executable_comment: bool,
     },
     /// Raw SQL for dialect-specific ALTER TABLE actions (e.g., ClickHouse UPDATE/DELETE/DETACH/etc.)
     Raw {
