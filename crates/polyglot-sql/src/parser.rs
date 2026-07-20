@@ -3742,8 +3742,11 @@ impl Parser {
                         }))
                     } else {
                         // Allow keywords as aliases (e.g., SELECT 1 AS filter)
-                        // Use _with_quoted to preserve quoted alias
-                        let alias = self.expect_identifier_or_keyword_with_quoted()?;
+                        // Use _with_quoted to preserve quoted alias.
+                        let alias = match self.try_parse_string_alias() {
+                            Some(ident) => ident,
+                            None => self.expect_identifier_or_keyword_with_quoted()?,
+                        };
                         let mut trailing_comments = self.previous_trailing_comments().to_vec();
                         // If parse_comparison stored pending leading comments (no comparison
                         // followed), use those. Otherwise use the leading_comments we captured
@@ -45137,7 +45140,27 @@ impl Parser {
         }
     }
 
+    /// SQLite/DuckDB allow `AS 'x'` string-literal aliases; normalize to a
+    /// quoted identifier.
+    fn try_parse_string_alias(&mut self) -> Option<Identifier> {
+        use crate::dialects::DialectType;
+
+        let supports_string_aliases = matches!(
+            self.config.dialect,
+            Some(DialectType::DuckDB | DialectType::SQLite)
+        );
+
+        if supports_string_aliases && self.check(TokenType::String) {
+            return Some(Identifier::quoted(self.advance().text));
+        }
+
+        None
+    }
+
     fn expect_identifier_or_alias_keyword_with_quoted(&mut self) -> Result<Identifier> {
+        if let Some(ident) = self.try_parse_string_alias() {
+            return Ok(ident);
+        }
         // ClickHouse: any keyword can be used as a table alias after explicit AS
         let ch_keyword = matches!(
             self.config.dialect,
@@ -45153,20 +45176,6 @@ impl Parser {
             Ok(Identifier {
                 name: token.text,
                 quoted,
-                trailing_comments: Vec::new(),
-                span: None,
-            })
-        } else if self.check(TokenType::String)
-            && matches!(
-                self.config.dialect,
-                Some(crate::dialects::DialectType::DuckDB)
-            )
-        {
-            // DuckDB allows string literals as identifiers (e.g., WITH 'x' AS (...))
-            let token = self.advance();
-            Ok(Identifier {
-                name: token.text,
-                quoted: true,
                 trailing_comments: Vec::new(),
                 span: None,
             })
