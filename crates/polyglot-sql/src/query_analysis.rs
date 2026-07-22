@@ -9,10 +9,10 @@ use crate::ast_transforms::get_output_column_names;
 use crate::dialects::{Dialect, DialectType};
 use crate::expressions::{DataType, Expression, JoinKind, TableRef, With};
 use crate::lineage::{lineage_by_index_from_expression, LineageNode};
-use crate::optimizer::annotate_types::annotate_types;
+use crate::optimizer::annotate_types::{annotate_types, TypeAnnotator};
 use crate::optimizer::qualify_columns::{qualify_columns, QualifyColumnsOptions};
 use crate::schema::{MappingSchema, Schema};
-use crate::scope::{build_scope, Scope, SourceInfo, SourceKind};
+use crate::scope::{build_scope, Scope, ScopeType, SourceInfo, SourceKind};
 use crate::traversal::{contains_aggregate, ExpressionWalk};
 use crate::validation::{mapping_schema_from_validation_schema, ValidationSchema};
 use crate::{parse_data_type, parse_one, Error, Result};
@@ -194,16 +194,9 @@ pub fn analyze_query(sql: &str, options: AnalyzeQueryOptions) -> Result<QueryAna
             .map_err(|e| Error::internal(format!("query analysis qualification failed: {e}")))?;
     }
 
-    let annotation_schema = mapping_schema.as_ref().map(|schema| {
-        let mut alias_schema = schema.clone();
-        add_scope_aliases_to_schema(
-            &build_scope(&expression),
-            schema,
-            &mut alias_schema,
-            options.dialect,
-        );
-        alias_schema
-    });
+    let annotation_schema = mapping_schema
+        .as_ref()
+        .map(|schema| schema_with_scope_aliases(&expression, schema, options.dialect));
 
     annotate_types(
         &mut expression,
@@ -309,6 +302,41 @@ fn parse_analysis_data_type(data_type: &str, dialect: DialectType) -> Option<Dat
     parse_data_type(trimmed, dialect).ok()
 }
 
+/// Build a precise schema for type annotation of a parsed expression.
+///
+/// Unlike the validation resolver schema, this preserves nested element types and adds
+/// relation aliases introduced by the SQL itself.
+#[doc(hidden)]
+pub fn mapping_schema_for_expression(
+    expression: &Expression,
+    schema: &ValidationSchema,
+    dialect: DialectType,
+) -> MappingSchema {
+    let source_schema = analysis_mapping_schema(schema, dialect);
+    schema_with_scope_aliases(expression, &source_schema, dialect)
+}
+
+/// Add SQL relation aliases, including typed virtual `UNNEST` outputs, to a schema.
+///
+/// This prepares a concrete schema for APIs that annotate an already-parsed expression.
+/// Physical relation aliases are installed before virtual relations so expressions such as
+/// `UNNEST(e.tags) AS u(tag)` can resolve the element type through `e`.
+#[doc(hidden)]
+pub fn schema_with_scope_aliases(
+    expression: &Expression,
+    source_schema: &MappingSchema,
+    dialect: DialectType,
+) -> MappingSchema {
+    let mut target_schema = source_schema.clone();
+    add_scope_aliases_to_schema(
+        &build_scope(expression),
+        source_schema,
+        &mut target_schema,
+        dialect,
+    );
+    target_schema
+}
+
 fn add_scope_aliases_to_schema(
     scope: &Scope,
     source_schema: &MappingSchema,
@@ -341,6 +369,198 @@ fn add_scope_aliases_to_schema(
             }
         }
     }
+
+    for child_scope in scope.traverse() {
+        for (source_name, source) in &child_scope.sources {
+            if source.kind != SourceKind::Virtual {
+                continue;
+            }
+            if let Some(columns) =
+                virtual_source_columns(&source.expression, target_schema, dialect)
+            {
+                let _ = target_schema.add_table(source_name, &columns, Some(dialect));
+                if let Some(lineage_name) = source
+                    .lineage_name
+                    .as_deref()
+                    .filter(|lineage_name| *lineage_name != source_name)
+                {
+                    let _ = target_schema.add_table(lineage_name, &columns, Some(dialect));
+                }
+            }
+        }
+    }
+
+    for child_scope in scope.traverse() {
+        if child_scope.scope_type != ScopeType::Cte {
+            continue;
+        }
+        let Expression::Cte(cte) = &child_scope.expression else {
+            continue;
+        };
+        if let Some(columns) = query_output_columns(&cte.this, target_schema, dialect) {
+            let columns = apply_output_aliases(columns, &cte.columns);
+            let _ = target_schema.add_table(&cte.alias.name, &columns, Some(dialect));
+        }
+    }
+
+    for child_scope in scope.traverse() {
+        for (source_name, source) in &child_scope.sources {
+            if !matches!(source.kind, SourceKind::Cte | SourceKind::DerivedTable) {
+                continue;
+            }
+            let columns = match &source.expression {
+                Expression::Cte(cte) => schema_table_columns(target_schema, &cte.alias.name),
+                expression => query_source_columns(expression, target_schema, dialect),
+            };
+            if let Some(columns) = columns {
+                let _ = target_schema.add_table(source_name, &columns, Some(dialect));
+            }
+        }
+    }
+}
+
+fn schema_table_columns(
+    schema: &MappingSchema,
+    table_name: &str,
+) -> Option<Vec<(String, DataType)>> {
+    Some(
+        schema
+            .column_names(table_name)
+            .ok()?
+            .into_iter()
+            .map(|column| {
+                let data_type = schema
+                    .get_column_type(table_name, &column)
+                    .unwrap_or(DataType::Unknown);
+                (column, data_type)
+            })
+            .collect(),
+    )
+}
+
+fn query_source_columns(
+    expression: &Expression,
+    schema: &MappingSchema,
+    dialect: DialectType,
+) -> Option<Vec<(String, DataType)>> {
+    match expression {
+        Expression::Subquery(subquery) => {
+            let columns = query_output_columns(&subquery.this, schema, dialect)?;
+            Some(apply_output_aliases(columns, &subquery.column_aliases))
+        }
+        Expression::Alias(alias) => {
+            let columns = query_output_columns(&alias.this, schema, dialect)?;
+            Some(apply_output_aliases(columns, &alias.column_aliases))
+        }
+        _ => None,
+    }
+}
+
+fn query_output_columns(
+    expression: &Expression,
+    schema: &MappingSchema,
+    dialect: DialectType,
+) -> Option<Vec<(String, DataType)>> {
+    let qualify_options = QualifyColumnsOptions::new()
+        .with_dialect(dialect)
+        .with_allow_partial(true);
+    let mut expression = qualify_columns(expression.clone(), schema, &qualify_options)
+        .unwrap_or_else(|_| expression.clone());
+    annotate_types(&mut expression, Some(schema), Some(dialect));
+    typed_query_outputs(&expression)
+}
+
+fn typed_query_outputs(expression: &Expression) -> Option<Vec<(String, DataType)>> {
+    match expression {
+        Expression::Select(select) => Some(
+            select
+                .expressions
+                .iter()
+                .filter_map(|projection| {
+                    let name = projection_name(projection)?;
+                    let data_type = projection
+                        .inferred_type()
+                        .or_else(|| unwrap_projection_alias(projection).inferred_type())
+                        .cloned()
+                        .unwrap_or(DataType::Unknown);
+                    Some((name, data_type))
+                })
+                .collect(),
+        ),
+        Expression::Union(set_operation) => typed_query_outputs(&set_operation.left),
+        Expression::Intersect(set_operation) => typed_query_outputs(&set_operation.left),
+        Expression::Except(set_operation) => typed_query_outputs(&set_operation.left),
+        Expression::Cte(cte) => typed_query_outputs(&cte.this),
+        Expression::Subquery(subquery) => typed_query_outputs(&subquery.this),
+        Expression::Paren(paren) => typed_query_outputs(&paren.this),
+        _ => None,
+    }
+}
+
+fn apply_output_aliases(
+    mut columns: Vec<(String, DataType)>,
+    aliases: &[crate::expressions::Identifier],
+) -> Vec<(String, DataType)> {
+    for (column, alias) in columns.iter_mut().zip(aliases) {
+        column.0 = alias.name.clone();
+    }
+    columns
+}
+
+fn virtual_source_columns(
+    expression: &Expression,
+    schema: &MappingSchema,
+    dialect: DialectType,
+) -> Option<Vec<(String, DataType)>> {
+    let (unnest, output_names) = match expression {
+        Expression::Alias(alias) => {
+            let Expression::Unnest(unnest) = &alias.this else {
+                return None;
+            };
+            let output_names = if alias.column_aliases.is_empty() {
+                vec![alias.alias.name.clone()]
+            } else {
+                alias
+                    .column_aliases
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect()
+            };
+            (unnest.as_ref(), output_names)
+        }
+        Expression::Unnest(unnest) => {
+            let output_names = unnest
+                .alias
+                .iter()
+                .map(|alias| alias.name.clone())
+                .chain(unnest.offset_alias.iter().map(|alias| alias.name.clone()))
+                .collect();
+            (unnest.as_ref(), output_names)
+        }
+        _ => return None,
+    };
+
+    if output_names.is_empty() {
+        return None;
+    }
+
+    let mut annotator = TypeAnnotator::new(Some(schema), Some(dialect));
+    let mut output_types = std::iter::once(&unnest.this)
+        .chain(unnest.expressions.iter())
+        .map(|argument| match annotator.annotate(argument) {
+            Some(DataType::Array { element_type, .. }) | Some(DataType::List { element_type }) => {
+                *element_type
+            }
+            _ => DataType::Unknown,
+        })
+        .collect::<Vec<_>>();
+
+    if unnest.with_ordinality || unnest.offset_alias.is_some() {
+        output_types.push(DataType::BigInt { length: None });
+    }
+    output_types.resize(output_names.len(), DataType::Unknown);
+
+    Some(output_names.into_iter().zip(output_types).collect())
 }
 
 #[derive(Debug, Clone)]
