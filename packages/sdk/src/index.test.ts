@@ -385,6 +385,31 @@ describe('Polyglot SDK', () => {
       expect(collectNames(result.lineage!)).toContain('t.amount');
     });
 
+    it('should infer the scalar type of an UNNEST output alias', () => {
+      const result = lineageWithSchema(
+        'tag',
+        `WITH unnested AS (
+          SELECT u.tag FROM events e, UNNEST(e.tags) AS u(tag)
+        ), grouped AS (
+          SELECT tag, COUNT(*) AS tag_count FROM unnested GROUP BY tag
+        ) SELECT g.tag FROM grouped g`,
+        {
+          tables: [
+            {
+              name: 'events',
+              columns: [{ name: 'tags', type: 'VARCHAR[]' }],
+            },
+          ],
+        },
+        Dialect.DuckDB,
+      );
+
+      expect(result.success).toBe(true);
+      expect(sdk.ast.getInferredType(result.lineage!.expression)).toEqual(
+        expect.objectContaining({ data_type: 'var_char' }),
+      );
+    });
+
     it('should trace unpivot value columns to input columns', () => {
       const result = lineage(
         'val',
@@ -564,17 +589,26 @@ describe('Polyglot SDK', () => {
     });
 
     it('should resolve UNNEST output alias with schema', () => {
-      const result = analyzeQuery('SELECT i FROM t, UNNEST(t.arr) AS i', {
-        dialect: Dialect.DuckDB,
-        schema: {
-          tables: [{ name: 't', columns: [{ name: 'arr', type: 'INT' }] }],
+      const result = analyzeQuery(
+        'SELECT u.tag FROM events e, UNNEST(e.tags) AS u(tag)',
+        {
+          dialect: Dialect.DuckDB,
+          schema: {
+            tables: [
+              {
+                name: 'events',
+                columns: [{ name: 'tags', type: 'VARCHAR[]' }],
+              },
+            ],
+          },
         },
-      });
+      );
 
       expect(result.success).toBe(true);
+      expect(result.analysis?.projections[0].typeHint).toBe('TEXT');
       expect(result.analysis?.projections[0].upstream).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ table: 't', column: 'arr' }),
+          expect.objectContaining({ table: 'events', column: 'tags' }),
         ]),
       );
     });

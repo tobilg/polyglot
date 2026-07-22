@@ -628,7 +628,7 @@ fn unnest_analysis_schema() -> ValidationSchema {
         "tables": [
             {
                 "name": "t",
-                "columns": [{"name": "arr", "type": "INT"}]
+                "columns": [{"name": "arr", "type": "VARCHAR[]"}]
             }
         ]
     }))
@@ -714,6 +714,8 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
         "SELECT i FROM t, UNNEST(t.arr) AS i",
         "SELECT i FROM t, UNNEST(t.arr) AS u(i)",
         "SELECT u.i FROM t, UNNEST(t.arr) AS u(i)",
+        "SELECT u.i FROM t AS e, UNNEST(e.arr) AS u(i)",
+        "SELECT UNNEST(t.arr) AS i FROM t",
     ] {
         let analysis = analyze_query(
             sql,
@@ -733,7 +735,31 @@ fn analyze_query_resolves_unnest_virtual_output_aliases_with_schema() {
             "expected t.arr upstream for {sql:?}, got {:?}",
             analysis.projections[0].upstream
         );
+        assert_eq!(
+            analysis.projections[0].type_hint.as_deref(),
+            Some("TEXT"),
+            "expected scalar element type for {sql:?}"
+        );
     }
+}
+
+#[test]
+fn analyze_query_propagates_unnest_element_type_through_cte() {
+    let analysis = analyze_query(
+        "WITH unnested AS (\
+            SELECT u.tag FROM t, UNNEST(t.arr) AS u(tag)\
+        ), grouped AS (\
+            SELECT tag, COUNT(*) AS tag_count FROM unnested GROUP BY tag\
+        ) SELECT g.tag, g.tag_count FROM grouped g",
+        AnalyzeQueryOptions {
+            dialect: DialectType::DuckDB,
+            schema: Some(unnest_analysis_schema()),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(analysis.projections[0].type_hint.as_deref(), Some("TEXT"));
+    assert_eq!(analysis.projections[1].type_hint.as_deref(), Some("BIGINT"));
 }
 
 #[test]

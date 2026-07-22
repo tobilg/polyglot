@@ -663,10 +663,10 @@ impl<'a> TypeAnnotator<'a> {
             }
             Expression::Unnest(unnest) => {
                 // UNNEST(array) - returns the element type of the array
-                if let Some(DataType::Array { element_type, .. }) = self.annotate(&unnest.this) {
-                    Some(*element_type)
-                } else {
-                    None
+                match self.annotate(&unnest.this) {
+                    Some(DataType::Array { element_type, .. })
+                    | Some(DataType::List { element_type }) => Some(*element_type),
+                    _ => None,
                 }
             }
             Expression::Explode(explode) => {
@@ -1245,6 +1245,11 @@ impl<'a> TypeAnnotator<'a> {
 
         // For functions with Unknown return type, infer from arguments
         match func_name.as_str() {
+            "UNNEST" => match func.args.first().and_then(|arg| self.annotate(arg)) {
+                Some(DataType::Array { element_type, .. })
+                | Some(DataType::List { element_type }) => Some(*element_type),
+                _ => None,
+            },
             "COALESCE" | "IFNULL" | "NVL" | "ISNULL" => {
                 // Return type of first non-null argument
                 for arg in &func.args {

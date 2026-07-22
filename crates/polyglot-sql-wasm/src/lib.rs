@@ -12,7 +12,6 @@ use polyglot_sql::{
     expressions::{BooleanLiteral, DataType, Expression},
     format as core_format, format_with_options as core_format_with_options, get_all_tables,
     lineage::{self, LineageNode},
-    mapping_schema_from_validation_schema,
     openlineage::{
         openlineage_column_lineage as core_openlineage_column_lineage,
         openlineage_job_event as core_openlineage_job_event,
@@ -1402,7 +1401,11 @@ fn lineage_with_schema_internal(
         }
     };
 
-    let mapping_schema = mapping_schema_from_validation_schema(&validation_schema);
+    let mapping_schema = polyglot_sql::query_analysis::mapping_schema_for_expression(
+        &expr,
+        &validation_schema,
+        dialect_type,
+    );
     let dialect_opt = if dialect_type == DialectType::Generic {
         None
     } else {
@@ -1726,17 +1729,17 @@ fn annotate_types_internal(sql: &str, dialect: &str, schema_json: &str) -> Parse
     };
 
     // Parse schema if provided
-    let schema = if !schema_json.is_empty() {
-        match serde_json::from_str::<CoreValidationSchema>(schema_json) {
-            Ok(vs) => Some(mapping_schema_from_validation_schema(&vs)),
-            Err(_) => None,
-        }
+    let validation_schema = if !schema_json.is_empty() {
+        serde_json::from_str::<CoreValidationSchema>(schema_json).ok()
     } else {
         None
     };
 
     // Annotate types on each expression
     for expr in &mut exprs {
+        let schema = validation_schema.as_ref().map(|schema| {
+            polyglot_sql::query_analysis::mapping_schema_for_expression(expr, schema, dialect_type)
+        });
         polyglot_sql::annotate_types(
             expr,
             schema.as_ref().map(|s| s as &dyn polyglot_sql::Schema),
@@ -3428,6 +3431,52 @@ mod tests {
             result.contains("\"name\":\"t.amount\""),
             "Expected qualified downstream lineage with partial schema: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_lineage_with_schema_infers_unnest_output_element_type() {
+        let schema = r#"{
+            "tables": [
+                {
+                    "name": "events",
+                    "columns": [{"name": "tags", "type": "VARCHAR[]"}]
+                }
+            ]
+        }"#;
+
+        let result = lineage_with_schema_internal(
+            "WITH unnested AS (\
+                SELECT u.tag FROM events e, UNNEST(e.tags) AS u(tag)\
+            ), grouped AS (\
+                SELECT tag, COUNT(*) AS tag_count FROM unnested GROUP BY tag\
+            ) SELECT g.tag FROM grouped g",
+            "tag",
+            schema,
+            "duckdb",
+            false,
+        );
+
+        assert!(result.success, "Result: {:?}", result.error);
+        let inferred_type = result
+            .lineage
+            .as_ref()
+            .and_then(|lineage| lineage.expression.inferred_type());
+        assert!(
+            matches!(inferred_type, Some(DataType::VarChar { .. })),
+            "Inferred type: {inferred_type:?}; lineage: {:?}",
+            result.lineage
+        );
+        let virtual_type = result.lineage.as_ref().and_then(|lineage| {
+            lineage
+                .walk()
+                .find(|node| node.source_kind == polyglot_sql::scope::SourceKind::Virtual)
+                .and_then(|node| node.expression.inferred_type())
+        });
+        assert!(
+            matches!(virtual_type, Some(DataType::VarChar { .. })),
+            "Virtual output type: {virtual_type:?}; lineage: {:?}",
+            result.lineage
         );
     }
 

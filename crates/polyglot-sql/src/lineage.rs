@@ -247,7 +247,21 @@ pub fn lineage_with_schema(
     // Pass schema so that stars from external tables can also be resolved.
     expand_cte_stars(&mut qualified_expression, schema);
 
-    lineage_from_expression(column, &qualified_expression, dialect, trim_selects)
+    let mut lineage =
+        lineage_from_expression(column, &qualified_expression, dialect, trim_selects)?;
+    annotate_lineage_node_expressions(&mut lineage, schema, dialect);
+    Ok(lineage)
+}
+
+fn annotate_lineage_node_expressions(
+    node: &mut LineageNode,
+    schema: Option<&dyn Schema>,
+    dialect: Option<DialectType>,
+) {
+    annotate_types(&mut node.expression, schema, dialect);
+    for child in &mut node.downstream {
+        annotate_lineage_node_expressions(child, schema, dialect);
+    }
 }
 
 fn lineage_from_expression(
