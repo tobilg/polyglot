@@ -613,7 +613,22 @@ fn analyze_query_classifies_typed_aggregates() {
     );
 
     let duckdb_analysis = analyze_query(
-        "SELECT COUNT_IF(numeric_value > 0), MEDIAN(numeric_value), FIRST(numeric_value) FROM source_table",
+        "SELECT \
+            COUNT_IF(numeric_value > 0), \
+            MEDIAN(numeric_value), \
+            FIRST(numeric_value), \
+            ARG_MAX_NULL(label, numeric_value), \
+            ARG_MIN_NULL(label, numeric_value), \
+            LIST(numeric_value), \
+            PRODUCT(numeric_value), \
+            APPROX_QUANTILE(numeric_value, 0.5), \
+            HISTOGRAM_EXACT(numeric_value, [1, 2]), \
+            MAD(numeric_value), \
+            QUANTILE(numeric_value, 0.5), \
+            QUANTILE_CONT(numeric_value, 0.5), \
+            QUANTILE_DISC(numeric_value, 0.5), \
+            RESERVOIR_QUANTILE(numeric_value, 0.5) \
+         FROM source_table",
         AnalyzeQueryOptions {
             dialect: DialectType::DuckDB,
             schema: None,
@@ -621,7 +636,7 @@ fn analyze_query_classifies_typed_aggregates() {
     )
     .unwrap();
 
-    assert_eq!(duckdb_analysis.projections.len(), 3);
+    assert_eq!(duckdb_analysis.projections.len(), 14);
     assert!(duckdb_analysis
         .projections
         .iter()

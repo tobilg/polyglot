@@ -888,13 +888,46 @@ mod tests {
     #[test]
     fn test_get_aggregate_functions() {
         let expr = crate::parse_one(
-            "SELECT COUNT_IF(numeric_value > 0), MEDIAN(numeric_value), FIRST(numeric_value) FROM source_table",
+            "SELECT \
+                COUNT_IF(numeric_value > 0), \
+                MEDIAN(numeric_value), \
+                FIRST(numeric_value), \
+                ARG_MAX_NULL(label, numeric_value), \
+                ARG_MIN_NULL(label, numeric_value), \
+                LIST(numeric_value), \
+                PRODUCT(numeric_value), \
+                APPROX_QUANTILE(numeric_value, 0.5), \
+                HISTOGRAM_EXACT(numeric_value, [1, 2]), \
+                MAD(numeric_value), \
+                QUANTILE(numeric_value, 0.5), \
+                QUANTILE_CONT(numeric_value, 0.5), \
+                QUANTILE_DISC(numeric_value, 0.5), \
+                RESERVOIR_QUANTILE(numeric_value, 0.5) \
+             FROM source_table",
             crate::dialects::DialectType::DuckDB,
         )
         .unwrap();
         let aggs = get_aggregate_functions(&expr);
         let aggregate_types: Vec<_> = aggs.iter().map(|agg| agg.variant_name()).collect();
 
-        assert_eq!(aggregate_types, vec!["count_if", "median", "first"]);
+        assert_eq!(
+            aggregate_types,
+            vec![
+                "count_if",
+                "median",
+                "first",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+                "aggregate_function",
+            ]
+        );
     }
 }

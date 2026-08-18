@@ -37155,7 +37155,12 @@ impl Parser {
                 self.expect(TokenType::RParen)?;
                 let filter = self.parse_filter_clause()?;
 
-                if distinct || !order_by.is_empty() || limit.is_some() || filter.is_some() {
+                if Self::is_aggregate_function(name)
+                    || distinct
+                    || !order_by.is_empty()
+                    || limit.is_some()
+                    || filter.is_some()
+                {
                     Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
                         name: name.to_string(),
                         args,
