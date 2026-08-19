@@ -16,13 +16,21 @@ import {
 } from '../helpers';
 
 /**
- * Generic type guard factory
+ * Narrow an Expression to any generated variant.
  */
+export function isExpressionType<T extends ExpressionType>(
+  expr: Expression,
+  type: T,
+): expr is ExpressionByKey<T> {
+  return type in (expr as Record<string, unknown>);
+}
+
+/** Generic type guard factory for the named guard exports below. */
 function isType<T extends ExpressionType>(
   type: T,
 ): (expr: Expression) => expr is ExpressionByKey<T> {
   return (expr: Expression): expr is ExpressionByKey<T> =>
-    type in (expr as Record<string, unknown>);
+    isExpressionType(expr, type);
 }
 
 // ============================================================================

@@ -50,10 +50,9 @@ const expressionVariantNameSet = new Set<string>(expressionVariantNames);
  * // => { "select": Select }
  * ```
  */
-export type ExpressionByKey<K extends ExpressionType> = Extract<
-  Expression,
-  Record<K, unknown>
->;
+export type ExpressionByKey<K extends ExpressionType> = K extends unknown
+  ? Extract<Expression, Record<K, unknown>>
+  : never;
 
 /**
  * Extract the inner data type of a specific Expression variant.
@@ -64,20 +63,45 @@ export type ExpressionByKey<K extends ExpressionType> = Extract<
  * // => Select
  * ```
  */
-export type ExpressionInner<K extends ExpressionType> =
-  ExpressionByKey<K> extends Record<K, infer V> ? V : never;
+export type ExpressionInner<K extends ExpressionType> = K extends unknown
+  ? ExpressionByKey<K> extends Record<K, infer V>
+    ? V
+    : never
+  : never;
+
+/**
+ * Extract the payload type from one or more Expression variants.
+ *
+ * A completely unnarrowed Expression returns unknown to avoid materializing
+ * the entire generated payload union. Narrowed expressions retain their exact
+ * generated payload type.
+ */
+export type ExpressionData<E extends Expression> = [Expression] extends [E]
+  ? unknown
+  : E extends unknown
+    ? E[keyof E]
+    : never;
+
+/** Extract the variant key from one or more Expression variants. */
+export type ExpressionTypeOf<E extends Expression> = E extends unknown
+  ? Extract<keyof E, string>
+  : never;
 
 /**
  * Get the type tag (variant key) of an Expression at runtime.
  *
  * @example
  * ```typescript
- * const expr = parse("SELECT 1")[0];
- * getExprType(expr) // => "select"
+ * const result = parse("SELECT 1");
+ * if (result.success) {
+ *   getExprType(result.ast[0]); // => "select"
+ * }
  * ```
  */
-export function getExprType(expr: Expression): ExpressionType {
-  return Object.keys(expr)[0] as ExpressionType;
+export function getExprType<E extends Expression>(
+  expr: E,
+): ExpressionTypeOf<E> {
+  return Object.keys(expr)[0] as ExpressionTypeOf<E>;
 }
 
 /**
@@ -85,14 +109,16 @@ export function getExprType(expr: Expression): ExpressionType {
  *
  * @example
  * ```typescript
- * const expr = parse("SELECT 1")[0];
- * const selectData = getExprData(expr);
- * // selectData.expressions, selectData.from, etc.
+ * const result = parse("SELECT 1");
+ * if (result.success && isExpressionType(result.ast[0], 'select')) {
+ *   const selectData = getExprData(result.ast[0]);
+ *   // selectData.expressions, selectData.from, etc.
+ * }
  * ```
  */
-export function getExprData(expr: Expression): Record<string, unknown> {
+export function getExprData<E extends Expression>(expr: E): ExpressionData<E> {
   const key = Object.keys(expr)[0];
-  return (expr as Record<string, unknown>)[key] as Record<string, unknown>;
+  return (expr as Record<string, unknown>)[key] as ExpressionData<E>;
 }
 
 /**

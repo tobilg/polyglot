@@ -10,8 +10,10 @@
 // Helpers for externally tagged Expression format
 export {
   type ExpressionByKey,
+  type ExpressionData,
   type ExpressionInner,
   type ExpressionType,
+  type ExpressionTypeOf,
   getExprData,
   getExprType,
   getInferredType,

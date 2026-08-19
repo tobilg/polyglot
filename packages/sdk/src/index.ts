@@ -99,13 +99,7 @@ export interface TranspileResult {
   errorEnd?: number;
 }
 
-/**
- * Result of a parse operation
- */
-export interface ParseResult {
-  success: boolean;
-  ast?: any;
-  error?: string;
+interface ParseResultMetadata {
   /** 1-based line number where the error occurred */
   errorLine?: number;
   /** 1-based column number where the error occurred */
@@ -115,6 +109,27 @@ export interface ParseResult {
   /** End Unicode character offset of the error range (exclusive) */
   errorEnd?: number;
 }
+
+/** Result of a successful parse operation. */
+export interface ParseSuccessResult extends ParseResultMetadata {
+  success: true;
+  ast: Expression[];
+  error?: null;
+}
+
+/** Result of a failed parse operation. */
+export interface ParseFailureResult extends ParseResultMetadata {
+  success: false;
+  ast?: null;
+  error: string;
+}
+
+/** Result of a parse operation. */
+export type ParseResult = ParseSuccessResult | ParseFailureResult;
+
+type SerializedParseResult =
+  | (Omit<ParseSuccessResult, 'ast'> & { ast: string })
+  | ParseFailureResult;
 
 /**
  * Result of a standalone data type parse operation
@@ -588,9 +603,14 @@ export function parse(
       return decodeWasmPayload<ParseResult>(wasm.parse_value(sql, dialect));
     }
 
-    const result = JSON.parse(wasm.parse(sql, dialect)) as ParseResult;
-    if (result.success && typeof result.ast === 'string') {
-      result.ast = JSON.parse(result.ast);
+    const result = JSON.parse(
+      wasm.parse(sql, dialect),
+    ) as SerializedParseResult;
+    if (result.success) {
+      return {
+        ...result,
+        ast: JSON.parse(result.ast) as Expression[],
+      };
     }
     return result;
   } catch (error) {

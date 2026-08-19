@@ -22,7 +22,13 @@ import {
   ast_set_order_by,
 } from '../../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../../generated/Expression';
-import { getExprData, getExprType, makeExpr } from '../helpers';
+import {
+  type ExpressionByKey,
+  getExprData,
+  getExprType,
+  makeExpr,
+} from '../helpers';
+import { isExpressionType } from '../types/guards';
 import { mapExpressionChildren } from './traversal';
 import type {
   NodePredicate,
@@ -57,16 +63,29 @@ function parseAstResult(json: string): Expression | null {
   return result.success ? JSON.parse(result.ast) : null;
 }
 
-function isQueryWithOuterClauses(node: Expression): boolean {
-  return ['select', 'union', 'intersect', 'except'].includes(getExprType(node));
+type QueryWithOuterClauses =
+  | ExpressionByKey<'select'>
+  | ExpressionByKey<'union'>
+  | ExpressionByKey<'intersect'>
+  | ExpressionByKey<'except'>;
+
+function isQueryWithOuterClauses(
+  node: Expression,
+): node is QueryWithOuterClauses {
+  return (
+    isExpressionType(node, 'select') ||
+    isExpressionType(node, 'union') ||
+    isExpressionType(node, 'intersect') ||
+    isExpressionType(node, 'except')
+  );
 }
 
 function applyLimitExpr(node: Expression, limit: Expression): Expression {
-  const type = getExprType(node);
   if (!isQueryWithOuterClauses(node)) {
     return node;
   }
 
+  const type = getExprType(node);
   const data = getExprData(node);
   if (type === 'select') {
     return makeExpr('select', {
@@ -82,11 +101,11 @@ function applyLimitExpr(node: Expression, limit: Expression): Expression {
 }
 
 function applyOffsetExpr(node: Expression, offset: Expression): Expression {
-  const type = getExprType(node);
   if (!isQueryWithOuterClauses(node)) {
     return node;
   }
 
+  const type = getExprType(node);
   const data = getExprData(node);
   if (type === 'select') {
     return makeExpr('select', {
@@ -108,7 +127,7 @@ function applyOrderBy(node: Expression, orderBy: Expression[]): Expression {
   }
 
   const expressions = orderBy.map((expression) => {
-    if (getExprType(expression) === 'ordered') {
+    if (isExpressionType(expression, 'ordered')) {
       return getExprData(expression);
     }
     return {
@@ -198,6 +217,7 @@ function transformNode(
  * // Rename all columns named 'old' to 'new'
  * const newAst = transform(ast, {
  *   column: (node) => {
+ *     if (!isExpressionType(node, 'column')) return;
  *     const data = getExprData(node);
  *     if (data.name.name === 'old') {
  *       return makeExpr('column', { ...data, name: { ...data.name, name: 'new' } });
@@ -397,11 +417,11 @@ export function addSelectColumns(
   node: Expression,
   ...columns: Expression[]
 ): Expression {
-  if (getExprType(node) !== 'select') {
+  if (!isExpressionType(node, 'select')) {
     return node;
   }
 
-  const selectData = getExprData(node) as { expressions: Expression[] };
+  const selectData = getExprData(node);
 
   return makeExpr('select', {
     ...selectData,
@@ -416,11 +436,11 @@ export function removeSelectColumns(
   node: Expression,
   predicate: (col: Expression) => boolean,
 ): Expression {
-  if (getExprType(node) !== 'select') {
+  if (!isExpressionType(node, 'select')) {
     return node;
   }
 
-  const selectData = getExprData(node) as { expressions: Expression[] };
+  const selectData = getExprData(node);
 
   return makeExpr('select', {
     ...selectData,
@@ -486,7 +506,7 @@ export function setOrderBy(
  * Remove LIMIT and OFFSET clauses
  */
 export function removeLimitOffset(node: Expression): Expression {
-  if (getExprType(node) !== 'select') {
+  if (!isExpressionType(node, 'select')) {
     return node;
   }
 

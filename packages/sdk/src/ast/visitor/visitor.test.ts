@@ -18,6 +18,7 @@ import {
   isExpressionValue,
   makeExpr,
 } from '../helpers';
+import { isExpressionType } from '../types/guards';
 import {
   addSelectColumns,
   addWhere,
@@ -88,6 +89,13 @@ function parseFirst(sql: string): Expression {
     throw new Error(`Parse failed: ${result.error}`);
   }
   return result.ast[0];
+}
+
+function genericAggregateData(node: Expression) {
+  if (!isExpressionType(node, 'aggregate_function')) {
+    throw new Error('expected a generic aggregate function');
+  }
+  return getExprData(node);
 }
 
 function parseFirstWithDialect(sql: string, dialect: Dialect): Expression {
@@ -524,12 +532,11 @@ describe('Convenience Finder Functions', () => {
         'aggregate_function',
         'aggregate_function',
       ]);
-      expect(aggregates.map((node) => getExprData(node).name)).toEqual([
-        'ARG_MAX_NULL',
-        'ARG_MIN_NULL',
-      ]);
+      expect(aggregates.map((node) => genericAggregateData(node).name)).toEqual(
+        ['ARG_MAX_NULL', 'ARG_MIN_NULL'],
+      );
       expect(
-        aggregates.map((node) => (getExprData(node).args as unknown[]).length),
+        aggregates.map((node) => genericAggregateData(node).args.length),
       ).toEqual([2, 2]);
     });
 
@@ -547,16 +554,18 @@ describe('Convenience Finder Functions', () => {
       expect(aggregates.map(getExprType)).toEqual(
         Array.from({ length: 8 }, () => 'aggregate_function'),
       );
-      expect(aggregates.map((node) => getExprData(node).name)).toEqual([
-        'PRODUCT',
-        'APPROX_QUANTILE',
-        'HISTOGRAM_EXACT',
-        'MAD',
-        'QUANTILE',
-        'QUANTILE_CONT',
-        'QUANTILE_DISC',
-        'RESERVOIR_QUANTILE',
-      ]);
+      expect(aggregates.map((node) => genericAggregateData(node).name)).toEqual(
+        [
+          'PRODUCT',
+          'APPROX_QUANTILE',
+          'HISTOGRAM_EXACT',
+          'MAD',
+          'QUANTILE',
+          'QUANTILE_CONT',
+          'QUANTILE_DISC',
+          'RESERVOIR_QUANTILE',
+        ],
+      );
     });
 
     it('should retain DuckDB aggregate-local modifiers', () => {
@@ -571,7 +580,7 @@ describe('Convenience Finder Functions', () => {
       const aggregates = getAggregateFunctions(result.ast[0]);
       expect(aggregates).toHaveLength(1);
 
-      const data = getExprData(aggregates[0]);
+      const data = genericAggregateData(aggregates[0]);
       expect(data.distinct).toBe(true);
       expect(data.filter).not.toBeNull();
       expect(data.order_by).toHaveLength(1);
