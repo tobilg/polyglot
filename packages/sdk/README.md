@@ -381,12 +381,7 @@ except(q1, q2).toSql();
 Walk, search, and transform parsed AST nodes.
 
 ```typescript
-import {
-  ast, parse, Dialect, col, walk, transform, findAll, findFirst, findByType,
-  getColumns, getColumnNames, getTableNames, renameColumns, renameTables,
-  addWhere, removeWhere, setLimit, setOffset, setOrderBy, setDistinct, qualifyColumns,
-  getAggregateFunctions, hasSubqueries, nodeCount,
-} from '@polyglot-sql/sdk';
+import { ast, Dialect, parse } from '@polyglot-sql/sdk';
 
 const result = parse('SELECT a, b FROM t WHERE x > 1', Dialect.Generic);
 if (!result.success) {
@@ -396,36 +391,36 @@ if (!result.success) {
 const statement = result.ast[0];
 
 // Walk all nodes with visitor callbacks
-walk(statement, {
+ast.walk(statement, {
   enter: (node) => console.log('Entering:', node),
   column: (node) => console.log('Found column:', node),
 });
 
 // Search for nodes
-const columns = getColumns(statement);
-const first = findFirst(statement, (node) => ast.getExprType(node) === 'column');
-const selects = findByType(statement, 'select');
+const columns = ast.getColumns(statement);
+const first = ast.findFirst(statement, (node) => ast.getExprType(node) === 'column');
+const selects = ast.findByType(statement, 'select');
 
 // Get names as strings
-const colNames = getColumnNames(statement);   // ['a', 'b']
-const tableNames = getTableNames(statement);  // ['t']
+const colNames = ast.getColumnNames(statement);   // ['a', 'b']
+const tableNames = ast.getTableNames(statement);  // ['t']
 
 // Check for specific constructs
-const hasAggs = hasAggregates(statement);
-const hasSubs = hasSubqueries(statement);
-const count = nodeCount(statement);
+const hasAggs = ast.hasAggregates(statement);
+const hasSubs = ast.hasSubqueries(statement);
+const count = ast.nodeCount(statement);
 
 // Transform AST nodes
-const renamed = renameColumns(statement, { a: 'alpha', b: 'beta' });
-const renamedTables = renameTables(statement, { t: 'users' });
-const qualified = qualifyColumns(statement, 'users');
+const renamed = ast.renameColumns(statement, { a: 'alpha', b: 'beta' });
+const renamedTables = ast.renameTables(statement, { t: 'users' });
+const qualified = ast.qualifyColumns(statement, 'users');
 
 // Modify query structure
-const withLimit = setLimit(statement, 100);
-const withOffset = setOffset(withLimit, 10);
-const ordered = setOrderBy(withOffset, col('a').toJSON());
-const distinct = setDistinct(statement, true);
-const noWhere = removeWhere(statement);
+const withLimit = ast.setLimit(statement, 100);
+const withOffset = ast.setOffset(withLimit, 10);
+const ordered = ast.setOrderBy(withOffset, columns[0]);
+const distinct = ast.setDistinct(statement, true);
+const noWhere = ast.removeWhere(statement);
 ```
 
 ## Validation
