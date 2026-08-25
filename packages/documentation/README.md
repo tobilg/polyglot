@@ -34,8 +34,12 @@ console.log(result.sql[0]); // SELECT COALESCE(a, b) FROM t
 ```typescript
 import { parse, generate, Dialect } from '@polyglot-sql/sdk';
 
-const { ast } = parse('SELECT 1 + 2', Dialect.Generic);
-const { sql } = generate(ast, Dialect.PostgreSQL);
+const result = parse('SELECT 1 + 2', Dialect.Generic);
+if (!result.success) {
+  throw new Error(result.error);
+}
+
+const { sql } = generate(result.ast, Dialect.PostgreSQL);
 ```
 
 ### Fluent query builder

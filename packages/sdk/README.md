@@ -51,8 +51,12 @@ if (!strict.success) {
 ```typescript
 import { parse, generate, Dialect } from '@polyglot-sql/sdk';
 
-const { ast } = parse('SELECT 1 + 2', Dialect.Generic);
-const { sql } = generate(ast, Dialect.PostgreSQL);
+const result = parse('SELECT 1 + 2', Dialect.Generic);
+if (!result.success) {
+  throw new Error(result.error);
+}
+
+const { sql } = generate(result.ast, Dialect.PostgreSQL);
 console.log(sql[0]); // SELECT 1 + 2
 ```
 
@@ -378,45 +382,50 @@ Walk, search, and transform parsed AST nodes.
 
 ```typescript
 import {
-  parse, Dialect, col, walk, transform, findAll, findFirst, findByType,
+  ast, parse, Dialect, col, walk, transform, findAll, findFirst, findByType,
   getColumns, getColumnNames, getTableNames, renameColumns, renameTables,
   addWhere, removeWhere, setLimit, setOffset, setOrderBy, setDistinct, qualifyColumns,
   getAggregateFunctions, hasSubqueries, nodeCount,
 } from '@polyglot-sql/sdk';
 
-const { ast } = parse('SELECT a, b FROM t WHERE x > 1', Dialect.Generic);
+const result = parse('SELECT a, b FROM t WHERE x > 1', Dialect.Generic);
+if (!result.success) {
+  throw new Error(result.error);
+}
+
+const statement = result.ast[0];
 
 // Walk all nodes with visitor callbacks
-walk(ast, {
+walk(statement, {
   enter: (node) => console.log('Entering:', node),
   column: (node) => console.log('Found column:', node),
 });
 
 // Search for nodes
-const columns = getColumns(ast);
-const first = findFirst(ast, (node) => getExprType(node) === 'column');
-const selects = findByType(ast, 'select');
+const columns = getColumns(statement);
+const first = findFirst(statement, (node) => ast.getExprType(node) === 'column');
+const selects = findByType(statement, 'select');
 
 // Get names as strings
-const colNames = getColumnNames(ast);   // ['a', 'b']
-const tableNames = getTableNames(ast);  // ['t']
+const colNames = getColumnNames(statement);   // ['a', 'b']
+const tableNames = getTableNames(statement);  // ['t']
 
 // Check for specific constructs
-const hasAggs = hasAggregates(ast);
-const hasSubs = hasSubqueries(ast);
-const count = nodeCount(ast);
+const hasAggs = hasAggregates(statement);
+const hasSubs = hasSubqueries(statement);
+const count = nodeCount(statement);
 
 // Transform AST nodes
-const renamed = renameColumns(ast, { a: 'alpha', b: 'beta' });
-const renamedTables = renameTables(ast, { t: 'users' });
-const qualified = qualifyColumns(ast, 'users');
+const renamed = renameColumns(statement, { a: 'alpha', b: 'beta' });
+const renamedTables = renameTables(statement, { t: 'users' });
+const qualified = qualifyColumns(statement, 'users');
 
 // Modify query structure
-const withLimit = setLimit(ast, 100);
+const withLimit = setLimit(statement, 100);
 const withOffset = setOffset(withLimit, 10);
 const ordered = setOrderBy(withOffset, col('a').toJSON());
-const distinct = setDistinct(ast, true);
-const noWhere = removeWhere(ast);
+const distinct = setDistinct(statement, true);
+const noWhere = removeWhere(statement);
 ```
 
 ## Validation
