@@ -190,12 +190,11 @@ export function getInferredType(expr: Expression): DataType | undefined {
     }
   }
 
-  const expressionType = getExprType(expr);
-  if (
-    (expressionType === 'paren' || expressionType === 'annotated') &&
-    isExpressionValue(data.this)
-  ) {
-    return getInferredType(data.this);
+  if ('paren' in expr || 'annotated' in expr) {
+    const nestedExpression = getExprData(expr).this;
+    if (isExpressionValue(nestedExpression)) {
+      return getInferredType(nestedExpression);
+    }
   }
 
   return undefined;

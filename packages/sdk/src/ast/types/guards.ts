@@ -15,19 +15,37 @@ import {
   getExprType,
 } from '../helpers';
 
+type IsUnion<T, Whole = T> = T extends unknown
+  ? [Whole] extends [T]
+    ? false
+    : true
+  : never;
+
+type SingleExpressionType<T extends ExpressionType> = T &
+  (IsUnion<T> extends true ? never : unknown);
+
 /**
- * Narrow an Expression to any generated variant.
+ * Narrow an Expression when the tag is statically known to be one variant.
+ * Union and broad tags return a boolean so their false branches remain sound.
  */
-export function isExpressionType<T extends ExpressionType>(
+export function isExpressionType<const T extends ExpressionType>(
   expr: Expression,
-  type: T,
-): expr is ExpressionByKey<T> {
+  type: SingleExpressionType<T>,
+): expr is ExpressionByKey<T>;
+export function isExpressionType(
+  expr: Expression,
+  type: ExpressionType,
+): boolean;
+export function isExpressionType(
+  expr: Expression,
+  type: ExpressionType,
+): boolean {
   return type in (expr as Record<string, unknown>);
 }
 
 /** Generic type guard factory for the named guard exports below. */
-function isType<T extends ExpressionType>(
-  type: T,
+function isType<const T extends ExpressionType>(
+  type: SingleExpressionType<T>,
 ): (expr: Expression) => expr is ExpressionByKey<T> {
   return (expr: Expression): expr is ExpressionByKey<T> =>
     isExpressionType(expr, type);

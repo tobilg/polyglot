@@ -5,6 +5,7 @@ import {
   clone,
   type ExpressionByKey,
   type ExpressionInner,
+  type ExpressionType,
   findByType,
   findFirst,
   getExprData,
@@ -69,31 +70,44 @@ describe('AST helper types', () => {
     // @ts-expect-error Unknown expression variants must be rejected.
     expect(isExpressionType(root, 'not_an_expression_variant')).toBe(false);
 
-    function verifyUnionGuard(
-      expression: Expression,
-      type: 'select' | 'lateral',
-    ): void {
-      if (isExpressionType(expression, type)) {
-        expectTypeOf(expression).toEqualTypeOf<
-          ExpressionByKey<'select'> | ExpressionByKey<'lateral'>
-        >();
-        expectTypeOf(getExprType(expression)).toEqualTypeOf<
-          'select' | 'lateral'
-        >();
-        expectTypeOf(getExprData(expression)).toEqualTypeOf<
-          ExpressionInner<'select'> | ExpressionInner<'lateral'>
-        >();
-      }
-    }
-
     expectTypeOf<ExpressionByKey<'select' | 'lateral'>>().toEqualTypeOf<
       ExpressionByKey<'select'> | ExpressionByKey<'lateral'>
     >();
     expectTypeOf<ExpressionInner<'select' | 'lateral'>>().toEqualTypeOf<
       ExpressionInner<'select'> | ExpressionInner<'lateral'>
     >();
+  });
 
-    verifyUnionGuard(root, 'select');
+  it('does not narrow either branch for union or broad type tags', () => {
+    type DateLikeExpression = ExpressionByKey<
+      'null' | 'current_date' | 'column_position'
+    >;
+
+    function verifyUnionTag(
+      expression: DateLikeExpression,
+      type: 'null' | 'current_date',
+    ): void {
+      if (isExpressionType(expression, type)) {
+        expectTypeOf(expression).toEqualTypeOf<DateLikeExpression>();
+      } else {
+        expectTypeOf(expression).toEqualTypeOf<DateLikeExpression>();
+      }
+    }
+
+    function verifyBroadTag(
+      expression: Expression,
+      type: ExpressionType,
+    ): void {
+      if (isExpressionType(expression, type)) {
+        expectTypeOf(expression).toEqualTypeOf<Expression>();
+      } else {
+        expectTypeOf(expression).toEqualTypeOf<Expression>();
+      }
+    }
+
+    const nullExpression: ExpressionByKey<'null'> = { null: null };
+    verifyUnionTag(nullExpression, 'current_date');
+    verifyBroadTag(nullExpression, 'current_date');
   });
 
   it('supports variants without dedicated named guards', () => {

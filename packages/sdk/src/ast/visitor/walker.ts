@@ -134,11 +134,15 @@ export function findAll(
  * const columns = findByType(ast, 'column');
  * ```
  */
-export function findByType<T extends ExpressionType>(
+export function findByType<const T extends ExpressionType>(
   node: Expression,
   type: T,
-): ExpressionByKey<T>[] {
-  const results: ExpressionByKey<T>[] = [];
+): ExpressionByKey<T>[];
+export function findByType(
+  node: Expression,
+  type: ExpressionType,
+): Expression[] {
+  const results: Expression[] = [];
 
   walk(node, {
     enter: (candidate) => {
