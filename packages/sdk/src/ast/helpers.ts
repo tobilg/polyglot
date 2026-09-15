@@ -41,6 +41,11 @@ const expressionVariantNames: ExactExpressionVariantRegistry =
   EXPRESSION_VARIANT_NAMES;
 const expressionVariantNameSet = new Set<string>(expressionVariantNames);
 
+export type ExpressionBySingleKey<K extends ExpressionType> = Extract<
+  Expression,
+  Record<K, unknown>
+>;
+
 /**
  * Extract a specific Expression variant by its key name.
  *
@@ -51,8 +56,17 @@ const expressionVariantNameSet = new Set<string>(expressionVariantNames);
  * ```
  */
 export type ExpressionByKey<K extends ExpressionType> = K extends unknown
-  ? Extract<Expression, Record<K, unknown>>
+  ? ExpressionBySingleKey<K>
   : never;
+
+type IsUnionExpressionType<T, Whole = T> = T extends unknown
+  ? [Whole] extends [T]
+    ? false
+    : true
+  : never;
+
+export type SingleExpressionType<T extends ExpressionType> = T &
+  (IsUnionExpressionType<T> extends true ? never : unknown);
 
 /**
  * Extract the inner data type of a specific Expression variant.

@@ -20,9 +20,10 @@ import {
 } from '../../../wasm/polyglot_sql_wasm.js';
 import type { Expression } from '../../generated/Expression';
 import {
-  type ExpressionByKey,
+  type ExpressionBySingleKey,
   type ExpressionType,
   getExprType,
+  type SingleExpressionType,
 } from '../helpers';
 import { isExpressionType } from '../types/guards';
 import {
@@ -136,8 +137,12 @@ export function findAll(
  */
 export function findByType<const T extends ExpressionType>(
   node: Expression,
-  type: T,
-): ExpressionByKey<T>[];
+  type: SingleExpressionType<T>,
+): ExpressionBySingleKey<T>[];
+export function findByType(
+  node: Expression,
+  type: ExpressionType,
+): Expression[];
 export function findByType(
   node: Expression,
   type: ExpressionType,

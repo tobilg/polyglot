@@ -11,6 +11,7 @@ import {
   getExprData,
   getExprType,
   isExpressionType,
+  isNullLiteral,
 } from './index';
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -105,9 +106,69 @@ describe('AST helper types', () => {
       }
     }
 
+    function verifyGenericTag<T extends ExpressionType>(
+      expression: Expression,
+      type: T,
+    ): void {
+      if (isExpressionType(expression, type)) {
+        expectTypeOf(expression).toEqualTypeOf<Expression>();
+      } else {
+        expectTypeOf(expression).toEqualTypeOf<Expression>();
+      }
+    }
+
+    function verifyUnionFind(
+      expression: Expression,
+      type: 'null' | 'current_date',
+    ): void {
+      expectTypeOf(findByType(expression, type)).toEqualTypeOf<Expression[]>();
+    }
+
+    function verifyGenericFind<T extends ExpressionType>(
+      expression: Expression,
+      type: T,
+    ): void {
+      expectTypeOf(findByType(expression, type)).toEqualTypeOf<Expression[]>();
+    }
+
     const nullExpression: ExpressionByKey<'null'> = { null: null };
     verifyUnionTag(nullExpression, 'current_date');
     verifyBroadTag(nullExpression, 'current_date');
+    verifyGenericTag(nullExpression, 'current_date');
+    verifyUnionFind(nullExpression, 'current_date');
+    verifyGenericFind(nullExpression, 'current_date');
+  });
+
+  it('narrows both branches for a singleton type tag', () => {
+    type DateLikeExpression = ExpressionByKey<
+      'null' | 'current_date' | 'column_position'
+    >;
+
+    function verifySingletonTag(expression: DateLikeExpression): void {
+      if (isExpressionType(expression, 'null')) {
+        expectTypeOf(expression).toEqualTypeOf<ExpressionByKey<'null'>>();
+      } else {
+        expectTypeOf(expression).toEqualTypeOf<
+          ExpressionByKey<'current_date' | 'column_position'>
+        >();
+      }
+    }
+
+    function verifyNamedGuard(expression: DateLikeExpression): void {
+      if (isNullLiteral(expression)) {
+        expectTypeOf(expression).toEqualTypeOf<ExpressionByKey<'null'>>();
+      } else {
+        expectTypeOf(expression).toEqualTypeOf<
+          ExpressionByKey<'current_date' | 'column_position'>
+        >();
+      }
+    }
+
+    const currentDate: ExpressionByKey<'current_date'> = {
+      current_date: null,
+    };
+    verifySingletonTag(currentDate);
+    verifyNamedGuard(currentDate);
   });
 
   it('supports variants without dedicated named guards', () => {
