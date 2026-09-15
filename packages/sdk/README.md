@@ -56,8 +56,12 @@ if (!result.success) {
   throw new Error(result.error);
 }
 
-const { sql } = generate(result.ast, Dialect.PostgreSQL);
-console.log(sql[0]); // SELECT 1 + 2
+const generated = generate(result.ast, Dialect.PostgreSQL);
+if (!generated.success || !generated.sql) {
+  throw new Error(generated.error);
+}
+
+console.log(generated.sql[0]); // SELECT 1 + 2
 ```
 
 ### Data Types
@@ -402,7 +406,7 @@ const first = ast.findFirst(statement, (node) => ast.getExprType(node) === 'colu
 const selects = ast.findByType(statement, 'select');
 
 // Get names as strings
-const colNames = ast.getColumnNames(statement);   // ['a', 'b']
+const colNames = ast.getColumnNames(statement);   // ['a', 'b', 'x']
 const tableNames = ast.getTableNames(statement);  // ['t']
 
 // Check for specific constructs
