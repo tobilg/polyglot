@@ -72,12 +72,7 @@ type QueryWithOuterClauses =
 function isQueryWithOuterClauses(
   node: Expression,
 ): node is QueryWithOuterClauses {
-  return (
-    isExpressionType(node, 'select') ||
-    isExpressionType(node, 'union') ||
-    isExpressionType(node, 'intersect') ||
-    isExpressionType(node, 'except')
-  );
+  return ['select', 'union', 'intersect', 'except'].includes(getExprType(node));
 }
 
 function applyLimitExpr(node: Expression, limit: Expression): Expression {

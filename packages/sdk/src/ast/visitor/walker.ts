@@ -25,7 +25,6 @@ import {
   getExprType,
   type SingleExpressionType,
 } from '../helpers';
-import { isExpressionType } from '../types/guards';
 import {
   collectExpressionChildren,
   visitExpressionChildren,
@@ -147,17 +146,7 @@ export function findByType(
   node: Expression,
   type: ExpressionType,
 ): Expression[] {
-  const results: Expression[] = [];
-
-  walk(node, {
-    enter: (candidate) => {
-      if (isExpressionType(candidate, type)) {
-        results.push(candidate);
-      }
-    },
-  });
-
-  return results;
+  return findAll(node, (n) => getExprType(n) === type);
 }
 
 /**
