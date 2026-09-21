@@ -37,7 +37,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 | MySQL | Oracle | PostgreSQL | Presto | Redshift |
 | RisingWave | SingleStore | Snowflake | Solr | Spark |
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
-| Trino | TSQL | DataFusion | Generic SQL | |
+| Trino | TSQL | Vertica | DataFusion | Generic SQL |
 
 ## Quick Start
 

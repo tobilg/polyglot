@@ -507,8 +507,11 @@ pub(super) fn rewrite(
                         is_asc
                     };
 
-                    // Only add explicit nulls ordering if source and target defaults differ
-                    if source_nulls_first != target_nulls_first {
+                    // Only add explicit nulls ordering if source and target defaults differ.
+                    // Vertica's default is data-type dependent, so always make it explicit.
+                    if source_nulls_first != target_nulls_first
+                        || matches!(target, DialectType::Vertica)
+                    {
                         o.nulls_first = Some(source_nulls_first);
                     }
                     // If they match, leave nulls_first as None so the generator won't output it

@@ -6811,6 +6811,9 @@ pub struct ListAggFunc {
     pub this: Expression,
     pub separator: Option<Expression>,
     pub on_overflow: Option<ListAggOverflow>,
+    /// Vertica `USING PARAMETERS max_length = n`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<Box<Expression>>,
     pub order_by: Option<Vec<Ordered>>,
     pub distinct: bool,
     pub filter: Option<Expression>,

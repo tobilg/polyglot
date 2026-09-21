@@ -3248,8 +3248,11 @@ impl Generator {
                     self.generate_expression(&f.expression)?;
                     self.write(")");
                     Ok(())
-                } else if matches!(self.config.dialect, Some(DialectType::DuckDB)) {
-                    // DuckDB uses // operator for integer division
+                } else if matches!(
+                    self.config.dialect,
+                    Some(DialectType::DuckDB) | Some(DialectType::Vertica)
+                ) {
+                    // DuckDB and Vertica use // operator for integer division
                     self.generate_expression(&f.this)?;
                     self.write(" // ");
                     self.generate_expression(&f.expression)?;
@@ -18583,6 +18586,32 @@ impl Generator {
     }
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
+        // Vertica spells factorial as the postfix `!` operator
+        if self.config.dialect == Some(DialectType::Vertica)
+            && func.name.eq_ignore_ascii_case("FACTORIAL")
+            && func.args.len() == 1
+            && !func.quoted
+        {
+            let operand = &func.args[0];
+            let atomic = matches!(
+                operand,
+                Expression::Literal(_)
+                    | Expression::Column(_)
+                    | Expression::Identifier(_)
+                    | Expression::Paren(_)
+                    | Expression::Function(_)
+            );
+            if !atomic {
+                self.write("(");
+            }
+            self.generate_expression(operand)?;
+            if !atomic {
+                self.write(")");
+            }
+            self.write("!");
+            return Ok(());
+        }
+
         // Normalize function name based on dialect settings
         let normalized_name = if func.name.eq_ignore_ascii_case("GROUPING")
             && func.args.len() > 1
@@ -20969,6 +20998,12 @@ impl Generator {
                     self.write("()");
                     return Ok(());
                 }
+                Some(DialectType::Vertica) => {
+                    // Vertica SYSDATE is a synonym for GETDATE()
+                    self.write_keyword("GETDATE");
+                    self.write("()");
+                    return Ok(());
+                }
                 _ => {
                     // Other dialects use CURRENT_TIMESTAMP for SYSDATE
                 }
@@ -21279,8 +21314,11 @@ impl Generator {
     fn generate_if_func(&mut self, f: &IfFunc) -> Result<()> {
         use crate::dialects::DialectType;
 
-        // Generic mode: normalize IF to CASE WHEN
-        if self.config.dialect.is_none() || self.config.dialect == Some(DialectType::Generic) {
+        // Generic mode and dialects without an IF function: normalize IF to CASE WHEN
+        if matches!(
+            self.config.dialect,
+            None | Some(DialectType::Generic) | Some(DialectType::Vertica)
+        ) {
             self.write_keyword("CASE WHEN");
             self.write_space();
             self.generate_expression(&f.condition)?;
@@ -21769,6 +21807,43 @@ impl Generator {
         )
     }
 
+    /// Vertica passes LISTAGG options as `USING PARAMETERS name = value, ...`.
+    fn generate_vertica_listagg_parameters(&mut self, f: &ListAggFunc) -> Result<()> {
+        let mut params: Vec<(&str, Option<&Expression>, Option<&str>)> = Vec::new();
+        if let Some(ref sep) = f.separator {
+            params.push(("separator", Some(sep), None));
+        }
+        if let Some(ref max_length) = f.max_length {
+            params.push(("max_length", Some(max_length), None));
+        }
+        match f.on_overflow {
+            Some(ListAggOverflow::Error) => params.push(("on_overflow", None, Some("'ERROR'"))),
+            Some(ListAggOverflow::Truncate { .. }) => {
+                params.push(("on_overflow", None, Some("'TRUNCATE'")))
+            }
+            None => {}
+        }
+        if params.is_empty() {
+            return Ok(());
+        }
+        self.write_space();
+        self.write_keyword("USING PARAMETERS");
+        self.write_space();
+        for (i, (name, value, literal)) in params.into_iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.write(name);
+            self.write(" = ");
+            match (value, literal) {
+                (Some(value), _) => self.generate_expression(value)?,
+                (None, Some(literal)) => self.write(literal),
+                (None, None) => {}
+            }
+        }
+        Ok(())
+    }
+
     fn generate_listagg(&mut self, f: &ListAggFunc) -> Result<()> {
         use crate::dialects::DialectType;
         let order_inside_args = matches!(self.config.dialect, Some(DialectType::DuckDB));
@@ -21779,7 +21854,12 @@ impl Generator {
             self.write_space();
         }
         self.generate_expression(&f.this)?;
-        if let Some(ref sep) = f.separator {
+        if f.max_length.is_some() && self.config.dialect != Some(DialectType::Vertica) {
+            self.unsupported("LISTAGG max_length is not supported in this dialect")?;
+        }
+        if self.config.dialect == Some(DialectType::Vertica) {
+            self.generate_vertica_listagg_parameters(f)?;
+        } else if let Some(ref sep) = f.separator {
             self.write(", ");
             self.generate_expression(sep)?;
         } else if matches!(
@@ -21789,7 +21869,11 @@ impl Generator {
             // Trino/Presto require explicit separator; default to ','
             self.write(", ','");
         }
-        if let Some(ref overflow) = f.on_overflow {
+        if let Some(ref overflow) = f
+            .on_overflow
+            .as_ref()
+            .filter(|_| self.config.dialect != Some(DialectType::Vertica))
+        {
             self.write_space();
             self.write_keyword("ON OVERFLOW");
             self.write_space();
@@ -25918,8 +26002,54 @@ impl Generator {
         Ok(())
     }
 
+    /// Vertica type spellings that differ from the shared defaults.
+    ///
+    /// Every Vertica integer is 64-bit and every float is an 8-byte double, so
+    /// narrower types widen instead of being silently truncated. Returns false
+    /// when the shared generator should handle the type.
+    fn generate_vertica_data_type(&mut self, dt: &DataType) -> bool {
+        match dt {
+            DataType::TinyInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::Int { .. }
+            | DataType::BigInt { .. } => self.write_keyword("BIGINT"),
+            DataType::Float { .. } | DataType::Double { .. } => {
+                self.write_keyword("DOUBLE PRECISION")
+            }
+            DataType::Text => self.write_keyword("LONG VARCHAR"),
+            DataType::String { length: None } => self.write_keyword("VARCHAR"),
+            DataType::TextWithLength { length } => {
+                self.write_keyword("LONG VARCHAR");
+                self.write(&format!("({})", length));
+            }
+            DataType::String {
+                length: Some(length),
+            } => {
+                self.write_keyword("VARCHAR");
+                self.write(&format!("({})", length));
+            }
+            DataType::Blob => self.write_keyword("LONG VARBINARY"),
+            DataType::Time {
+                precision,
+                timezone: true,
+            } => {
+                self.write_keyword("TIMETZ");
+                if let Some(p) = precision {
+                    self.write(&format!("({})", p));
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn generate_data_type(&mut self, dt: &DataType) -> Result<()> {
         use crate::dialects::DialectType;
+
+        if self.config.dialect == Some(DialectType::Vertica) && self.generate_vertica_data_type(dt)
+        {
+            return Ok(());
+        }
 
         match dt {
             DataType::Boolean => {
@@ -37685,6 +37815,7 @@ impl Generator {
                 | Some(DialectType::Oracle)
                 | Some(DialectType::BigQuery)
                 | Some(DialectType::Teradata)
+                | Some(DialectType::Vertica)
         ) {
             self.write_keyword("INSTR");
             self.write("(");

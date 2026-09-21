@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Vertica dialect (`vertica`) across the Rust crate, FFI, Python, WASM, and
+  TypeScript SDK. Semantics follow the
+  [vertica-sqlglot-dialect](https://github.com/luisdelatorre012/vertica-sqlglot-dialect)
+  reference: 64-bit integer and double-precision type aliasing, `LONG VARCHAR`
+  / `LONG VARBINARY`, `MINUS`, the `//`, `!`, `!!`, and `@` operators,
+  `LISTAGG ... USING PARAMETERS`, native `NVL2`/`DECODE`/`ZEROIFNULL`,
+  `TIMESTAMPADD`/`DATEDIFF`, and statement-start `GETDATE()`/`SYSDATE`, which
+  lower to `STATEMENT_TIMESTAMP()` for PostgreSQL. Vertica's type-dependent
+  NULL ordering is never assumed when it is the source and is made explicit
+  when it is the target. Vertica-only DDL (projections, segmentation),
+  `TIMESERIES`, `MATCH`, and partitioned `LIMIT ... OVER` are not yet modeled.
+
 ## [0.12.1] - 2026-09-21
 
 ### Added

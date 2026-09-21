@@ -1,0 +1,50 @@
+{
+  "dialect": "vertica",
+  "category": "types",
+  "identity": [
+    {
+      "sql": "CREATE TABLE t (a INT, b INTEGER, c SMALLINT, d TINYINT, e INT8, f BIGINT)",
+      "expected": "CREATE TABLE t (a BIGINT, b BIGINT, c BIGINT, d BIGINT, e BIGINT, f BIGINT)",
+      "description": "All integers are 64-bit BIGINT"
+    },
+    {
+      "sql": "CREATE TABLE t (a REAL, b FLOAT, c FLOAT8, d DOUBLE PRECISION)",
+      "expected": "CREATE TABLE t (a DOUBLE PRECISION, b DOUBLE PRECISION, c DOUBLE PRECISION, d DOUBLE PRECISION)",
+      "description": "All floats are DOUBLE PRECISION"
+    },
+    {
+      "sql": "CREATE TABLE t (a LONG VARCHAR, b LONG VARCHAR(100000), c LONG VARBINARY, d LONG VARBINARY(200))",
+      "description": "LONG types"
+    },
+    {
+      "sql": "CREATE TABLE t (a BINARY VARYING(32), b VARBINARY(10), c BINARY(4), d BYTEA)",
+      "expected": "CREATE TABLE t (a VARBINARY(32), b VARBINARY(10), c BINARY(4), d VARBINARY)",
+      "description": "Binary types"
+    },
+    {
+      "sql": "CREATE TABLE t (a VARCHAR(80), b CHAR(3), c TEXT)",
+      "expected": "CREATE TABLE t (a VARCHAR(80), b CHAR(3), c LONG VARCHAR)",
+      "description": "Character types; TEXT is LONG VARCHAR"
+    },
+    {
+      "sql": "CREATE TABLE t (a NUMERIC(10, 2), b DECIMAL(38, 0), c BOOLEAN, d UUID, e DATE)",
+      "expected": "CREATE TABLE t (a DECIMAL(10, 2), b DECIMAL(38, 0), c BOOLEAN, d UUID, e DATE)",
+      "description": "Numeric and misc types"
+    },
+    {
+      "sql": "CREATE TABLE t (a TIMESTAMP, b TIMESTAMPTZ, c TIME, d TIMETZ, e TIMESTAMP WITH TIME ZONE)",
+      "expected": "CREATE TABLE t (a TIMESTAMP, b TIMESTAMPTZ, c TIME, d TIMETZ, e TIMESTAMPTZ)",
+      "description": "Temporal types"
+    },
+    {
+      "sql": "CREATE TABLE t (a INTERVAL, b INTERVAL SECOND(3), c INTERVAL DAY TO SECOND(5), d INTERVAL YEAR TO MONTH)",
+      "description": "Interval column types"
+    },
+    {
+      "sql": "SELECT CAST(a AS INT), a::FLOAT, CAST(b AS INTERVAL DAY TO SECOND(3)) FROM t",
+      "expected": "SELECT CAST(a AS BIGINT), CAST(a AS DOUBLE PRECISION), CAST(b AS INTERVAL DAY TO SECOND(3)) FROM t",
+      "description": "Cast target types"
+    }
+  ],
+  "transpilation": []
+}

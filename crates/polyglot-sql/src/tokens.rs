@@ -1551,6 +1551,8 @@ pub struct TokenizerConfig {
     /// end-of-input as the close. This is only enabled for ClickHouse fixture
     /// coverage, where some extracted corpus rows contain partial string probes.
     pub recover_unterminated_string: bool,
+    /// Whether `//` is the integer-division operator (Vertica).
+    pub double_slash_int_div: bool,
 }
 
 impl Default for TokenizerConfig {
@@ -1584,6 +1586,7 @@ impl Default for TokenizerConfig {
             numbers_can_be_underscore_separated: false,
             recover_terminal_backslash_quote: false,
             recover_unterminated_string: false,
+            double_slash_int_div: false,
         }
     }
 }
@@ -2644,6 +2647,7 @@ impl<'a, C: TokenizerCursor, T: TokenOutput> TokenizerState<'a, C, T> {
             ('>', '>') => Some(TokenType::GtGt),
             ('|', '|') => Some(TokenType::DPipe),
             ('|', '/') => Some(TokenType::PipeSlash), // Square root - PostgreSQL
+            ('/', '/') if self.config.double_slash_int_div => Some(TokenType::Div), // Vertica
             (':', ':') => Some(TokenType::DColon),
             (':', '=') => Some(TokenType::ColonEq), // := (assignment, named args)
             (':', '>') => Some(TokenType::ColonGt), // ::> (TSQL)

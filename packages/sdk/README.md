@@ -1060,6 +1060,7 @@ This limit covers recursive parsing, not arbitrary programmatic AST construction
 | TiDB | `Dialect.TiDB` |
 | Trino | `Dialect.Trino` |
 | TSQL | `Dialect.TSQL` |
+| Vertica | `Dialect.Vertica` |
 
 ## CDN Usage
 

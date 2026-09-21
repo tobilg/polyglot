@@ -851,6 +851,8 @@ fn get_dialects_internal() -> Vec<&'static str> {
     dialects.push("exasol");
     #[cfg(feature = "dialect-datafusion")]
     dialects.push("datafusion");
+    #[cfg(feature = "dialect-vertica")]
+    dialects.push("vertica");
     dialects
 }
 
@@ -2927,7 +2929,7 @@ mod tests {
         let dialects: Vec<String> = serde_json::from_str(&result).unwrap();
         let unique: std::collections::BTreeSet<&str> =
             dialects.iter().map(String::as_str).collect();
-        assert_eq!(dialects.len(), 34);
+        assert_eq!(dialects.len(), 35);
         assert_eq!(unique.len(), dialects.len());
         assert!(unique.contains("generic"));
         assert!(unique.contains("postgresql"));
@@ -3570,6 +3572,7 @@ mod tests {
             "dremio",
             "exasol",
             "datafusion",
+            "vertica",
         ];
 
         for dialect in dialects {

@@ -203,6 +203,7 @@ impl DialectImpl for SnowflakeDialect {
                 this: f.this,
                 separator: f.separator,
                 on_overflow: None,
+                max_length: None,
                 order_by: f.order_by,
                 distinct: f.distinct,
                 filter: f.filter,

@@ -35,6 +35,7 @@ const DIALECT_NAMES: &[&str] = &[
     "tidb",
     "trino",
     "tsql",
+    "vertica",
 ];
 
 #[pyfunction]

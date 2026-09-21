@@ -30965,8 +30965,22 @@ impl Parser {
     /// Parse unary expressions
     fn parse_unary(&mut self) -> Result<Expression> {
         let mut prefixes = Vec::new();
+        let is_vertica = self.config.dialect == Some(crate::dialects::DialectType::Vertica);
         while !self.is_at_end() {
             let token = self.peek().token_type;
+            // Vertica: `@ x` is ABS(x) and `!! x` is the prefix factorial
+            if is_vertica
+                && (token == TokenType::DAt
+                    || (token == TokenType::Exclamation && self.check_next(TokenType::Exclamation)))
+            {
+                let _scope = self.enter_parser_depth(prefixes.len() + 1)?;
+                if token == TokenType::Exclamation {
+                    self.skip();
+                }
+                prefixes.push(token);
+                self.skip();
+                continue;
+            }
             if !matches!(
                 token,
                 TokenType::Plus
@@ -31002,6 +31016,8 @@ impl Parser {
                 TokenType::PipeSlash => {
                     Expression::Sqrt(Box::new(UnaryFunc::with_name(expr, "|/".to_string())))
                 }
+                TokenType::DAt => Expression::Abs(Box::new(UnaryFunc::new(expr))),
+                TokenType::Exclamation => factorial(expr),
                 _ => unreachable!("collected prefix operator"),
             };
         }
@@ -31168,6 +31184,14 @@ impl Parser {
                 }
             } else {
                 self.current = saved_pos;
+            }
+        }
+
+        // Vertica: postfix `x!` is factorial
+        if self.config.dialect == Some(crate::dialects::DialectType::Vertica) {
+            while self.check(TokenType::Exclamation) && !self.check_next(TokenType::Exclamation) {
+                self.skip();
+                expr = factorial(expr);
             }
         }
 
@@ -38076,13 +38100,63 @@ impl Parser {
                 // Check for optional DISTINCT
                 let distinct = self.match_token(TokenType::Distinct);
                 let this = self.parse_expression()?;
-                let separator = if self.match_token(TokenType::Comma) {
+                let mut separator = if self.match_token(TokenType::Comma) {
                     Some(self.parse_expression()?)
                 } else {
                     None
                 };
+                let mut max_length = None;
+                let mut vertica_overflow = None;
+                // Vertica: LISTAGG(expr USING PARAMETERS separator = ',', max_length = n,
+                //                   on_overflow = 'ERROR' | 'TRUNCATE')
+                if self.config.dialect == Some(crate::dialects::DialectType::Vertica)
+                    && self.check(TokenType::Using)
+                    && self.check_next_identifier("PARAMETERS")
+                {
+                    self.skip();
+                    self.skip();
+                    loop {
+                        let name = self.expect_identifier_or_keyword()?;
+                        self.expect(TokenType::Eq)?;
+                        let value = self.parse_primary()?;
+                        match name.to_ascii_lowercase().as_str() {
+                            "separator" => separator = Some(value),
+                            "max_length" => max_length = Some(Box::new(value)),
+                            "on_overflow" => {
+                                let mode = match &value {
+                                    Expression::Literal(lit) => match lit.as_ref() {
+                                        Literal::String(mode) => mode.to_ascii_uppercase(),
+                                        _ => String::new(),
+                                    },
+                                    _ => String::new(),
+                                };
+                                vertica_overflow = Some(match mode.as_str() {
+                                    "ERROR" => ListAggOverflow::Error,
+                                    "TRUNCATE" => ListAggOverflow::Truncate {
+                                        filler: None,
+                                        with_count: false,
+                                    },
+                                    _ => {
+                                        return Err(self.parse_error(
+                                            "LISTAGG on_overflow must be 'ERROR' or 'TRUNCATE'",
+                                        ))
+                                    }
+                                });
+                            }
+                            other => {
+                                return Err(self
+                                    .parse_error(format!("Unknown LISTAGG parameter: {}", other)))
+                            }
+                        }
+                        if !self.match_token(TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
                 // Parse optional ON OVERFLOW clause
-                let on_overflow = if self.match_token(TokenType::On) {
+                let on_overflow = if vertica_overflow.is_some() {
+                    vertica_overflow
+                } else if self.match_token(TokenType::On) {
                     if self.match_identifier("OVERFLOW") {
                         if self.match_identifier("ERROR") {
                             Some(ListAggOverflow::Error)
@@ -38119,6 +38193,7 @@ impl Parser {
                     this,
                     separator,
                     on_overflow,
+                    max_length,
                     order_by: None,
                     distinct,
                     filter: None,
@@ -42312,9 +42387,56 @@ impl Parser {
                 && name.eq_ignore_ascii_case("LARGEINT"))
     }
 
+    /// Vertica interval qualifiers may carry a seconds precision: `SECOND(3)`.
+    fn parse_interval_field_precision(&mut self, unit: String) -> Result<String> {
+        if self.config.dialect == Some(crate::dialects::DialectType::Vertica)
+            && self.check(TokenType::LParen)
+            && self.check_next(TokenType::Number)
+        {
+            self.skip();
+            let precision = self.expect_number()?;
+            self.expect(TokenType::RParen)?;
+            return Ok(format!("{}({})", unit, precision));
+        }
+        Ok(unit)
+    }
+
     /// Parse a data type.
     fn parse_data_type(&mut self) -> Result<DataType> {
-        self.with_parser_depth(|parser| parser.parse_data_type_inner())
+        let data_type = self.with_parser_depth(|parser| parser.parse_data_type_inner())?;
+        Ok(self.normalize_dialect_data_type(data_type))
+    }
+
+    /// Apply dialect-specific type aliasing after a data type has been parsed.
+    ///
+    /// Vertica stores every integer type as a signed 64-bit integer and every
+    /// floating-point type as an 8-byte double, so the narrower spellings are
+    /// aliases rather than distinct types.
+    fn normalize_dialect_data_type(&self, data_type: DataType) -> DataType {
+        if self.config.dialect != Some(crate::dialects::DialectType::Vertica) {
+            return data_type;
+        }
+        match data_type {
+            DataType::Int { .. } | DataType::SmallInt { .. } | DataType::TinyInt { .. } => {
+                DataType::BigInt { length: None }
+            }
+            DataType::Float { .. } => DataType::Double {
+                precision: None,
+                scale: None,
+            },
+            DataType::Custom { ref name }
+                if name.eq_ignore_ascii_case("INT8") || name.eq_ignore_ascii_case("INT4") =>
+            {
+                DataType::BigInt { length: None }
+            }
+            DataType::Custom { ref name } if name.eq_ignore_ascii_case("FLOAT8") => {
+                DataType::Double {
+                    precision: None,
+                    scale: None,
+                }
+            }
+            other => other,
+        }
     }
 
     #[inline(never)]
@@ -42875,7 +42997,10 @@ impl Parser {
                     && !self.check(TokenType::RParen)
                     && !self.check(TokenType::Comma)
                 {
-                    Some(self.advance_text()?.to_ascii_uppercase())
+                    {
+                        let unit = self.advance_text()?.to_ascii_uppercase();
+                        Some(self.parse_interval_field_precision(unit)?)
+                    }
                 } else {
                     None
                 };
@@ -42885,7 +43010,10 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance_text()?.to_ascii_uppercase())
+                        {
+                            let unit = self.advance_text()?.to_ascii_uppercase();
+                            Some(self.parse_interval_field_precision(unit)?)
+                        }
                     } else {
                         None
                     }
@@ -43225,10 +43353,27 @@ impl Parser {
                     })
                 }
             }
-            // LONG VARCHAR (Exasol) - same as TEXT
+            // LONG VARCHAR (Exasol, Vertica) - same as TEXT
+            // LONG VARBINARY (Vertica) - same as BLOB
             "LONG" => {
                 if self.match_identifier("VARCHAR") {
-                    Ok(DataType::Text)
+                    if self.match_token(TokenType::LParen) {
+                        let length = self.expect_number()? as u32;
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::TextWithLength { length })
+                    } else {
+                        Ok(DataType::Text)
+                    }
+                } else if self.match_identifier("VARBINARY") {
+                    if self.match_token(TokenType::LParen) {
+                        let length = self.expect_number()?;
+                        self.expect(TokenType::RParen)?;
+                        Ok(DataType::Custom {
+                            name: format!("LONG VARBINARY({})", length),
+                        })
+                    } else {
+                        Ok(DataType::Blob)
+                    }
                 } else {
                     Ok(DataType::Custom {
                         name: "LONG".to_string(),
@@ -43535,7 +43680,8 @@ impl Parser {
     /// For other dialects (like Snowflake), brackets are subscript operations
     /// (e.g., x::VARIANT[0] means cast to VARIANT, then subscript with [0]).
     fn parse_data_type_for_cast(&mut self) -> Result<DataType> {
-        self.with_parser_depth(|parser| parser.parse_data_type_for_cast_inner())
+        let data_type = self.with_parser_depth(|parser| parser.parse_data_type_for_cast_inner())?;
+        Ok(self.normalize_dialect_data_type(data_type))
     }
 
     #[inline(never)]
@@ -43881,7 +44027,10 @@ impl Parser {
                     && !self.check(TokenType::Not)
                     && !self.check(TokenType::Null)
                 {
-                    Some(self.advance_text()?.to_ascii_uppercase())
+                    {
+                        let unit = self.advance_text()?.to_ascii_uppercase();
+                        Some(self.parse_interval_field_precision(unit)?)
+                    }
                 } else {
                     None
                 };
@@ -43891,7 +44040,10 @@ impl Parser {
                         || self.check(TokenType::Var)
                         || self.check_keyword()
                     {
-                        Some(self.advance_text()?.to_ascii_uppercase())
+                        {
+                            let unit = self.advance_text()?.to_ascii_uppercase();
+                            Some(self.parse_interval_field_precision(unit)?)
+                        }
                     } else {
                         None
                     }
@@ -67652,4 +67804,9 @@ mod explicit_eof_token_tests {
             }]
         );
     }
+}
+
+/// FACTORIAL(x), produced by Vertica's `x!` and `!! x` operators.
+fn factorial(expr: Expression) -> Expression {
+    Expression::Function(Box::new(Function::new("FACTORIAL".to_string(), vec![expr])))
 }

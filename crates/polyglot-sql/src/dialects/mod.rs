@@ -89,6 +89,8 @@ mod tidb;
 mod trino;
 #[cfg(any(feature = "dialect-tsql", feature = "dialect-fabric"))]
 mod tsql;
+#[cfg(feature = "dialect-vertica")]
+mod vertica;
 
 pub use generic::GenericDialect; // Always available
 
@@ -158,6 +160,8 @@ pub use tidb::TiDBDialect;
 pub use trino::TrinoDialect;
 #[cfg(feature = "dialect-tsql")]
 pub use tsql::TSQLDialect;
+#[cfg(feature = "dialect-vertica")]
+pub use vertica::VerticaDialect;
 
 use crate::error::Result;
 #[cfg(feature = "transpile")]
@@ -274,6 +278,8 @@ pub enum DialectType {
     Exasol,
     /// Apache DataFusion -- Arrow-based query engine with modern SQL extensions.
     DataFusion,
+    /// Vertica (OpenText Analytics Database) -- columnar MPP analytic database.
+    Vertica,
 }
 
 impl DialectType {
@@ -330,6 +336,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Dremio => write!(f, "dremio"),
             DialectType::Exasol => write!(f, "exasol"),
             DialectType::DataFusion => write!(f, "datafusion"),
+            DialectType::Vertica => write!(f, "vertica"),
         }
     }
 }
@@ -373,6 +380,7 @@ impl std::str::FromStr for DialectType {
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
+            "vertica" => Ok(DialectType::Vertica),
             _ => Err(crate::error::Error::parse(
                 format!("Unknown dialect: {}", s),
                 0,
@@ -2387,6 +2395,7 @@ cached_dialect!(CACHED_DRILL, DrillDialect, "dialect-drill");
 cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
+cached_dialect!(CACHED_VERTICA, VerticaDialect, "dialect-vertica");
 
 fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -2469,6 +2478,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::Exasol => from_cache!(CACHED_EXASOL, ExasolDialect),
         #[cfg(feature = "dialect-datafusion")]
         DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
+        #[cfg(feature = "dialect-vertica")]
+        DialectType::Vertica => from_cache!(CACHED_VERTICA, VerticaDialect),
         _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
@@ -3211,6 +3222,7 @@ impl Dialect {
             feature = "dialect-oracle",
             feature = "dialect-clickhouse",
             feature = "dialect-fabric",
+            feature = "dialect-vertica",
         ))]
         use crate::transforms;
 
@@ -3380,6 +3392,13 @@ impl Dialect {
             // DataFusion supports QUALIFY and semi/anti joins natively
             #[cfg(feature = "dialect-datafusion")]
             DialectType::DataFusion => Ok(expr),
+            // Vertica doesn't support QUALIFY or semi/anti join syntax
+            #[cfg(feature = "dialect-vertica")]
+            DialectType::Vertica => {
+                let expr = transforms::eliminate_qualify(expr)?;
+                let expr = transforms::eliminate_semi_and_anti_joins(expr)?;
+                Ok(expr)
+            }
             // Oracle doesn't support QUALIFY
             #[cfg(feature = "dialect-oracle")]
             DialectType::Oracle => {

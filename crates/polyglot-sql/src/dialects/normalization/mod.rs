@@ -15,6 +15,7 @@ mod scalar;
 mod statements;
 pub(in crate::dialects) mod temporal;
 mod types;
+mod vertica;
 
 #[derive(Debug, Clone, Copy)]
 struct NormalizationContext {
@@ -86,6 +87,13 @@ pub(super) fn normalize(
     let expr = statements::normalize_root(expr, &context);
 
     transform_recursive(expr, &|e| {
+        let e = if matches!(source, DialectType::Vertica) && !matches!(target, DialectType::Vertica)
+        {
+            vertica::normalize_from_vertica(e, target)?
+        } else {
+            e
+        };
+
         if matches!(source, DialectType::DataFusion) && matches!(target, DialectType::DuckDB) {
             if let Expression::Function(ref function) = e {
                 if function.name.eq_ignore_ascii_case("NOW") && function.args.is_empty() {
@@ -2363,15 +2371,18 @@ pub(super) fn normalize(
                         | DialectType::Teradata
                         | DialectType::Spark
                         | DialectType::Databricks
-                        | DialectType::Redshift => Action::None,
+                        | DialectType::Redshift
+                        | DialectType::Vertica => Action::None,
                         _ => Action::Scalar(scalar::Action::Nvl2Expand),
                     }
                 }
                 Expression::Decode(_) | Expression::DecodeCase(_) => {
                     // DECODE(a, b, c[, d, e[, ...]]) -> CASE WHEN with null-safe comparisons
-                    // Keep as DECODE for Oracle/Snowflake
+                    // Keep as DECODE for Oracle/Snowflake/Vertica
                     match target {
-                        DialectType::Oracle | DialectType::Snowflake => Action::None,
+                        DialectType::Oracle | DialectType::Snowflake | DialectType::Vertica => {
+                            Action::None
+                        }
                         _ => Action::Scalar(scalar::Action::DecodeSimplify),
                     }
                 }
@@ -2728,8 +2739,11 @@ pub(super) fn normalize(
                                 | DialectType::StarRocks
                                 | DialectType::Doris
                         );
+                        // Vertica's implicit NULL placement depends on the sort key's data
+                        // type (NULLS AUTO), so there is no source default to make explicit.
                         if o.nulls_first.is_none()
                             && source != target
+                            && source != DialectType::Vertica
                             && (target_supports_nulls || target_rewrites_nulls)
                         {
                             Action::Operators(operators::Action::NullsOrdering)
