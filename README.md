@@ -39,8 +39,6 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
 | Trino | TSQL | DataFusion | Generic SQL | SAP HANA |
 
-SAP HANA coverage and translation limits are documented in [the HANA support guide](docs/hana/README.md).
-
 ## Quick Start
 
 ### Rust
