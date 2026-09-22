@@ -39,6 +39,8 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
 | Trino | TSQL | Vertica | DataFusion | Generic SQL |
 
+See the [Vertica coverage matrix](docs/vertica.md) for native syntax and translation limits.
+
 ## Quick Start
 
 ### Rust

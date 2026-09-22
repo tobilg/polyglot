@@ -8,17 +8,18 @@ The format is based on Keep a Changelog, and this project adheres to Semantic Ve
 
 ### Added
 
-- Vertica dialect (`vertica`) across the Rust crate, FFI, Python, WASM, and
-  TypeScript SDK. Semantics follow the
-  [vertica-sqlglot-dialect](https://github.com/luisdelatorre012/vertica-sqlglot-dialect)
-  reference: 64-bit integer and double-precision type aliasing, `LONG VARCHAR`
-  / `LONG VARBINARY`, `MINUS`, the `//`, `!`, `!!`, and `@` operators,
-  `LISTAGG ... USING PARAMETERS`, native `NVL2`/`DECODE`/`ZEROIFNULL`,
-  `TIMESTAMPADD`/`DATEDIFF`, and statement-start `GETDATE()`/`SYSDATE`, which
-  lower to `STATEMENT_TIMESTAMP()` for PostgreSQL. Vertica's type-dependent
-  NULL ordering is never assumed when it is the source and is made explicit
-  when it is the target. Vertica-only DDL (projections, segmentation),
-  `TIMESERIES`, `MATCH`, and partitioned `LIMIT ... OVER` are not yet modeled.
+- Vertica dialect (`vertica`) across Rust, FFI, Python, Go, WASM, and the
+  TypeScript SDK, including structured collection types and casts, function
+  parameters, historical queries, `TIMESERIES`, `MATCH`, `INTERPOLATE`,
+  partitioned `LIMIT`, projections, physical table clauses, FLEX TABLE,
+  COPY LOCAL/parser calls, and EXPORT TO PARQUET.
+  ([#467](https://github.com/tobilg/polyglot/pull/467))
+- Vertica translation preserves approximate-count filters, binary values,
+  zero-based array access, supported date-boundary differences, and analytic
+  null ordering. Unsafe conversions return errors at every diagnostic level.
+  Native locks, hints, interval precision, collection bounds, and nested
+  factorials are retained. See the [Vertica coverage matrix](docs/vertica.md)
+  for supported conversions and limits.
 
 ## [0.12.1] - 2026-09-21
 
