@@ -488,7 +488,7 @@ assert_eq!(err.line(), None);
 
 ## Supported Dialects
 
-Athena, BigQuery, ClickHouse, CockroachDB, DataFusion, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Generic SQL, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
+Athena, BigQuery, ClickHouse, CockroachDB, DataFusion, Databricks, Doris, Dremio, Drill, Druid, DuckDB, Dune, Exasol, Fabric, Generic SQL, SAP HANA, Hive, Materialize, MySQL, Oracle, PostgreSQL, Presto, Redshift, RisingWave, SingleStore, Snowflake, Solr, Spark, SQLite, StarRocks, Tableau, Teradata, TiDB, Trino, TSQL
 
 ## Feature Flags
 

@@ -165,3 +165,54 @@ mod tests {
         assert_eq!(convert_format_tokens("", TEST_MAPPING), None);
     }
 }
+
+/// Verified HANA datetime tokens shared by the percent-format function families.
+/// Unknown alphabetic tokens, precision masks, and unterminated quoted literals
+/// are rejected rather than copied into a different format language.
+#[cfg(feature = "generate")]
+pub(crate) fn hana_datetime_format(input: &str, mysql_style: bool) -> Option<String> {
+    let mut cursor = FormatTokenCursor::new(input);
+    let mut result = String::new();
+    while let Some(ch) = cursor.peek() {
+        if ch == '"' {
+            cursor.next_char();
+            loop {
+                let ch = cursor.next_char()?;
+                if ch == '"' {
+                    break;
+                }
+                if ch == '%' {
+                    result.push('%');
+                }
+                result.push(ch);
+            }
+            continue;
+        }
+        let mut matched = false;
+        for (source, target) in [
+            ("HH24", "%H"),
+            ("YYYY", "%Y"),
+            ("MM", "%m"),
+            ("DD", "%d"),
+            ("MI", if mysql_style { "%i" } else { "%M" }),
+            ("SS", if mysql_style { "%s" } else { "%S" }),
+        ] {
+            if cursor.consume_prefix(source, true) {
+                result.push_str(target);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            if ch.is_ascii_alphabetic() || ch.is_ascii_digit() {
+                return None;
+            }
+            cursor.next_char();
+            if ch == '%' {
+                result.push('%');
+            }
+            result.push(ch);
+        }
+    }
+    Some(result)
+}

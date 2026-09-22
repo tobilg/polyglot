@@ -177,6 +177,22 @@ pub enum Expression {
 
     // Functions
     Function(Box<Function>),
+    /// A SAP HANA built-in retaining source semantics for independent generation.
+    HanaFunction(Box<Function>),
+    HanaAggregateFunction(Box<AggregateFunction>),
+    HanaRegex(Box<HanaRegex>),
+    HanaJson(Box<HanaJson>),
+    HanaJsonColumn(Box<HanaJsonColumn>),
+    HanaUpsert(Box<HanaUpsert>),
+    HanaPartition(Box<HanaPartition>),
+    HanaStorageProperty(Box<HanaStorageProperty>),
+    HanaHierarchy(Box<HanaHierarchy>),
+    HanaPlaceholder(Box<HanaPlaceholder>),
+    HanaTableFunction(Box<HanaTableFunction>),
+    HanaCall(Box<HanaCall>),
+    HanaHint(Box<HanaHint>),
+    HanaGrouping(Box<HanaGrouping>),
+    HanaTimezone(Box<HanaTimezone>),
     AggregateFunction(Box<AggregateFunction>),
     WindowFunction(Box<WindowFunction>),
 
@@ -1145,6 +1161,8 @@ impl Expression {
             | Expression::PipeOperator(_)
 
             // DML
+            | Expression::HanaUpsert(_)
+            | Expression::HanaCall(_)
             | Expression::Insert(_)
             | Expression::Update(_)
             | Expression::Delete(_)
@@ -1319,8 +1337,10 @@ impl Expression {
 
             Expression::Column(c) => c.inferred_type.as_ref(),
             Expression::Dot(dot) => dot.inferred_type.as_ref(),
-            Expression::Function(f) => f.inferred_type.as_ref(),
-            Expression::AggregateFunction(f) => f.inferred_type.as_ref(),
+            Expression::Function(f) | Expression::HanaFunction(f) => f.inferred_type.as_ref(),
+            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => {
+                f.inferred_type.as_ref()
+            }
             Expression::WindowFunction(f) => f.inferred_type.as_ref(),
             Expression::Case(c) => c.inferred_type.as_ref(),
             Expression::Array(a) => a.inferred_type.as_ref(),
@@ -1553,8 +1573,10 @@ impl Expression {
 
             Expression::Column(c) => c.inferred_type = Some(dt),
             Expression::Dot(dot) => dot.inferred_type = Some(dt),
-            Expression::Function(f) => f.inferred_type = Some(dt),
-            Expression::AggregateFunction(f) => f.inferred_type = Some(dt),
+            Expression::Function(f) | Expression::HanaFunction(f) => f.inferred_type = Some(dt),
+            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => {
+                f.inferred_type = Some(dt)
+            }
             Expression::WindowFunction(f) => f.inferred_type = Some(dt),
             Expression::Case(c) => c.inferred_type = Some(dt),
             Expression::Array(a) => a.inferred_type = Some(dt),
@@ -1917,6 +1939,21 @@ impl Expression {
             Expression::Exists(_) => "exists",
             Expression::MemberOf(_) => "member_of",
             Expression::Function(_) => "function",
+            Expression::HanaFunction(_) => "hana_function",
+            Expression::HanaAggregateFunction(_) => "hana_aggregate_function",
+            Expression::HanaRegex(_) => "hana_regex",
+            Expression::HanaJson(_) => "hana_json",
+            Expression::HanaJsonColumn(_) => "hana_json_column",
+            Expression::HanaUpsert(_) => "hana_upsert",
+            Expression::HanaPartition(_) => "hana_partition",
+            Expression::HanaStorageProperty(_) => "hana_storage_property",
+            Expression::HanaHierarchy(_) => "hana_hierarchy",
+            Expression::HanaGrouping(_) => "hana_grouping",
+            Expression::HanaTimezone(_) => "hana_timezone",
+            Expression::HanaPlaceholder(_) => "hana_placeholder",
+            Expression::HanaTableFunction(_) => "hana_table_function",
+            Expression::HanaCall(_) => "hana_call",
+            Expression::HanaHint(_) => "hana_hint",
             Expression::AggregateFunction(_) => "aggregate_function",
             Expression::WindowFunction(_) => "window_function",
             Expression::From(_) => "from",
@@ -2777,6 +2814,10 @@ impl Expression {
     /// Returns the primary child expression (".this" in sqlglot).
     pub fn get_this(&self) -> Option<&Expression> {
         match self {
+            Expression::HanaJson(json) => Some(&json.input),
+            Expression::HanaRegex(regex) => Some(&regex.subject),
+            Expression::HanaHierarchy(hierarchy) => Some(&hierarchy.source),
+            Expression::HanaUpsert(upsert) => Some(&upsert.source),
             // Unary ops
             Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => Some(&u.this),
             // UnaryFunc variants
@@ -3068,8 +3109,14 @@ impl Expression {
     pub fn get_expressions(&self) -> &[Expression] {
         match self {
             Expression::Select(s) => &s.expressions,
-            Expression::Function(f) => &f.args,
-            Expression::AggregateFunction(f) => &f.args,
+            Expression::Function(f) | Expression::HanaFunction(f) => &f.args,
+            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => &f.args,
+            Expression::HanaTimezone(f) => &f.arguments,
+            Expression::HanaTableFunction(f) => &f.arguments,
+            Expression::HanaCall(f) => &f.arguments,
+            Expression::HanaGrouping(g) => &g.expressions,
+            Expression::HanaJson(j) => &j.columns,
+            Expression::HanaJsonColumn(c) => &c.columns,
             Expression::From(f) => &f.expressions,
             Expression::GroupBy(g) => &g.expressions,
             Expression::In(i) => &i.expressions,
@@ -3096,8 +3143,12 @@ impl Expression {
             Expression::Table(t) => &t.name.name,
             Expression::Literal(lit) => lit.value_str(),
             Expression::Star(_) => "*",
-            Expression::Function(f) => &f.name,
-            Expression::AggregateFunction(f) => &f.name,
+            Expression::Function(f) | Expression::HanaFunction(f) => &f.name,
+            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => &f.name,
+            Expression::HanaTimezone(f) => &f.name,
+            Expression::HanaJson(j) => &j.name,
+            Expression::HanaHierarchy(h) => &h.name,
+            Expression::HanaRegex(r) => &r.operation,
             Expression::Alias(a) => a.this.get_name(),
             Expression::Boolean(b) => {
                 if b.value {
@@ -3165,7 +3216,9 @@ impl Expression {
             | Expression::BitwiseXor(op) => {
                 op.trailing_comments.iter().map(|s| s.as_str()).collect()
             }
-            Expression::Function(f) => f.trailing_comments.iter().map(|s| s.as_str()).collect(),
+            Expression::Function(f) | Expression::HanaFunction(f) => {
+                f.trailing_comments.iter().map(|s| s.as_str()).collect()
+            }
             Expression::Subquery(s) => s.trailing_comments.iter().map(|s| s.as_str()).collect(),
             _ => Vec::new(),
         }
@@ -3693,6 +3746,9 @@ pub struct Select {
     /// T-SQL FOR JSON clause options (PATH, AUTO, ROOT, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub for_json: Vec<Expression>,
+    /// HANA result serialization and trailing query hints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hana_options: Option<HanaSelectOptions>,
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
@@ -3752,6 +3808,7 @@ impl Select {
             locks: Vec::new(),
             for_xml: Vec::new(),
             for_json: Vec::new(),
+            hana_options: None,
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -4885,6 +4942,205 @@ pub struct Exists {
     pub not: bool,
 }
 
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaUpsert {
+    pub table: TableRef,
+    pub partition: Option<Expression>,
+    pub columns: Vec<Identifier>,
+    pub source: Expression,
+    pub condition: Option<Expression>,
+    pub primary_key: bool,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaPartition {
+    pub method: String,
+    pub columns: Vec<Expression>,
+    pub partitions: Option<Expression>,
+    pub ranges: Vec<HanaPartitionRange>,
+    pub primary_key_check: Option<bool>,
+    pub properties: Vec<Expression>,
+    pub subpartition: Option<Box<HanaPartition>>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaPartitionRange {
+    pub name: Option<Identifier>,
+    pub kind: String,
+    pub values: Vec<Expression>,
+    pub dynamic: bool,
+    pub direction: Option<String>,
+    pub threshold: Option<Expression>,
+    pub interval: Option<(Expression, Option<String>)>,
+    pub properties: Vec<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaStorageProperty {
+    pub name: String,
+    pub values: Vec<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaHierarchy {
+    pub name: String,
+    pub source: Expression,
+    pub start: Option<Expression>,
+    pub siblings: Vec<Ordered>,
+    pub depth: Option<Expression>,
+    pub multiparent: Option<String>,
+    pub orphan: Option<String>,
+    pub cycle: Option<String>,
+    pub cache: Option<String>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaPlaceholder {
+    pub name: Identifier,
+    pub value: Expression,
+}
+
+/// Qualified HANA table/calculation-view call; identifier quoting is structural.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaTableFunction {
+    pub name: Vec<Identifier>,
+    pub arguments: Vec<Expression>,
+}
+
+/// HANA JSON path operations retain default and error behavior across AST serialization.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaJson {
+    pub name: String,
+    pub input: Expression,
+    pub path: Expression,
+    pub columns: Vec<Expression>,
+    pub options: HanaJsonOptions,
+}
+
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
+)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaJsonOptions {
+    pub returning: Option<DataType>,
+    pub wrapper: Option<String>,
+    pub on_empty: Option<HanaBehavior>,
+    pub on_error: Option<HanaBehavior>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaBehavior {
+    /// ERROR, NULL, DEFAULT, EMPTY ARRAY, or EMPTY OBJECT.
+    pub kind: String,
+    pub value: Option<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaJsonColumn {
+    pub name: Option<Identifier>,
+    pub data_type: Option<DataType>,
+    pub path: Option<Expression>,
+    pub ordinality: bool,
+    pub format_json: bool,
+    pub encoding: Option<String>,
+    pub columns: Vec<Expression>,
+    pub options: HanaJsonOptions,
+}
+
+/// Procedure invocation, including library member calls and asynchronous execution.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaCall {
+    pub name: Vec<Identifier>,
+    pub member: Option<Identifier>,
+    pub arguments: Vec<Expression>,
+    pub asynchronous: bool,
+    pub hints: Vec<Expression>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaHint {
+    pub name: Identifier,
+    pub arguments: Option<Vec<Expression>>,
+    pub remote: bool,
+    pub cascade: bool,
+}
+
+/// HANA PCRE predicate/function grammar. Arguments remain traversable.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaRegex {
+    pub operation: String,
+    pub negated: bool,
+    pub pattern: Expression,
+    pub subject: Expression,
+    pub flag: Option<Expression>,
+    pub start: Option<Expression>,
+    pub occurrence: Option<Expression>,
+    pub group: Option<Expression>,
+    pub replacement: Option<Expression>,
+    pub position_after: Option<bool>,
+}
+
+/// Native HANA SELECT clauses, including serialization with no options.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaSelectOptions {
+    #[serde(default)]
+    pub total_rowcount: bool,
+    pub serialization: Option<HanaSerialization>,
+    pub collation: Option<Identifier>,
+    pub hints: Vec<Expression>,
+}
+
+/// HANA grouping-set selection and result delivery options.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaGrouping {
+    pub kind: String,
+    pub expressions: Vec<Expression>,
+    pub best: Option<Expression>,
+    pub limit: Option<Expression>,
+    pub offset: Option<Expression>,
+    pub subtotal: bool,
+    pub balance: bool,
+    pub total: bool,
+    pub structured: bool,
+    pub overview: bool,
+    pub prefix: Option<Expression>,
+    pub multiple_resultsets: bool,
+}
+
+/// Time-zone conversion using a HANA time-zone dataset and error policy.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaTimezone {
+    pub name: String,
+    pub arguments: Vec<Expression>,
+    pub on_error: Option<HanaBehavior>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaSerialization {
+    /// JSON or XML, validated by the HANA parser.
+    pub format: String,
+    pub options: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returning: Option<DataType>,
+}
+
 /// Represent a scalar function call (e.g. `UPPER(name)`, `COALESCE(a, b)`).
 ///
 /// This is the generic function node. Well-known aggregates, window functions,
@@ -5953,6 +6209,11 @@ pub enum DataType {
         oracle_type: OracleDataType,
     },
 
+    /// A HANA type whose domain or syntax is not represented by a common type.
+    Hana {
+        hana_type: HanaDataType,
+    },
+
     // String
     Char {
         length: Option<u32>,
@@ -6101,6 +6362,14 @@ pub enum DataType {
 
     // Unknown
     Unknown,
+}
+
+/// Source-specific HANA type, retained until a target is selected.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct HanaDataType {
+    pub name: String,
+    pub parameters: Vec<u32>,
 }
 
 impl DataType {
@@ -7635,6 +7904,10 @@ pub struct CreateTable {
     /// Table modifier: DYNAMIC, ICEBERG, EXTERNAL, HYBRID (Snowflake)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_modifier: Option<String>,
+    /// The storage modifier was parsed from HANA rather than another dialect.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hana_storage: bool,
+
     pub as_select: Option<Expression>,
     /// Whether the AS SELECT was wrapped in parentheses
     #[serde(default)]
@@ -7763,6 +8036,7 @@ impl CreateTable {
             temporary: false,
             or_replace: false,
             table_modifier: None,
+            hana_storage: false,
             as_select: None,
             as_select_parenthesized: false,
             on_commit: None,
@@ -12384,6 +12658,8 @@ pub struct Schema {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Lock {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ignore_locked: bool,
     #[serde(default)]
     pub update: Option<Box<Expression>>,
     #[serde(default)]

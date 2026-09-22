@@ -410,6 +410,7 @@ pub(crate) fn append_window(
 
 pub(crate) fn append_lock(expression: &mut Expression, kind: LockKind) -> Result<()> {
     as_select_mut(expression, "lock")?.locks.push(Lock {
+        ignore_locked: false,
         update: match kind {
             LockKind::Update => Some(Box::new(Expression::Boolean(BooleanLiteral {
                 value: true,
@@ -453,6 +454,7 @@ pub(crate) fn create_table_as(
         temporary,
         or_replace: replace,
         table_modifier: None,
+        hana_storage: false,
         as_select: Some(query),
         as_select_parenthesized: false,
         on_commit: None,

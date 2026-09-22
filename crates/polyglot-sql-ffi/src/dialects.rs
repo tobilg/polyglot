@@ -3,7 +3,7 @@ use polyglot_sql::dialects::DialectType;
 use std::os::raw::c_char;
 use std::ptr;
 
-const DIALECTS: [DialectType; 34] = [
+const DIALECTS: [DialectType; 35] = [
     DialectType::Generic,
     DialectType::PostgreSQL,
     DialectType::MySQL,
@@ -38,6 +38,7 @@ const DIALECTS: [DialectType; 34] = [
     DialectType::Dremio,
     DialectType::Exasol,
     DialectType::DataFusion,
+    DialectType::HANA,
 ];
 
 /// Return supported dialect names as JSON.

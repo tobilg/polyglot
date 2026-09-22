@@ -307,6 +307,7 @@ pub fn parse_dialect(name: &str) -> Option<DialectType> {
         "druid" => Some(DialectType::Druid),
         "dune" => Some(DialectType::Dune),
         "exasol" => Some(DialectType::Exasol),
+        "hana" | "saphana" | "sap_hana" => Some(DialectType::HANA),
         "fabric" => Some(DialectType::Fabric),
         "solr" => Some(DialectType::Solr),
         "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Some(DialectType::DataFusion),

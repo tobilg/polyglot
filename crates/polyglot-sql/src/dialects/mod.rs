@@ -51,6 +51,8 @@ mod dune;
 mod exasol;
 #[cfg(feature = "dialect-fabric")]
 mod fabric;
+#[cfg(feature = "dialect-hana")]
+mod hana;
 #[cfg(feature = "dialect-hive")]
 mod hive;
 #[cfg(feature = "dialect-materialize")]
@@ -120,6 +122,8 @@ pub use dune::DuneDialect;
 pub use exasol::ExasolDialect;
 #[cfg(feature = "dialect-fabric")]
 pub use fabric::FabricDialect;
+#[cfg(feature = "dialect-hana")]
+pub use hana::HanaDialect;
 #[cfg(feature = "dialect-hive")]
 pub use hive::HiveDialect;
 #[cfg(feature = "dialect-materialize")]
@@ -274,6 +278,8 @@ pub enum DialectType {
     Exasol,
     /// Apache DataFusion -- Arrow-based query engine with modern SQL extensions.
     DataFusion,
+    /// SAP HANA Cloud and SAP HANA Platform SQL.
+    HANA,
 }
 
 impl DialectType {
@@ -330,6 +336,7 @@ impl std::fmt::Display for DialectType {
             DialectType::Dremio => write!(f, "dremio"),
             DialectType::Exasol => write!(f, "exasol"),
             DialectType::DataFusion => write!(f, "datafusion"),
+            DialectType::HANA => write!(f, "hana"),
         }
     }
 }
@@ -373,6 +380,7 @@ impl std::str::FromStr for DialectType {
             "dremio" => Ok(DialectType::Dremio),
             "exasol" => Ok(DialectType::Exasol),
             "datafusion" | "arrow-datafusion" | "arrow_datafusion" => Ok(DialectType::DataFusion),
+            "hana" | "saphana" | "sap_hana" => Ok(DialectType::HANA),
             _ => Err(crate::error::Error::parse(
                 format!("Unknown dialect: {}", s),
                 0,
@@ -688,6 +696,7 @@ where
     // semantics even though all physical children are visible to traversal APIs.
     fn uses_generated_dispatch(expression: &Expression) -> bool {
         match expression {
+            Expression::CreateTable(create) if create.hana_storage => true,
             Expression::Select(select) => {
                 select.joins.is_empty()
                     && select.with.is_none()
@@ -747,6 +756,20 @@ where
             | Expression::Like(_)
             | Expression::ILike(_)
             | Expression::Function(_)
+            | Expression::HanaFunction(_)
+            | Expression::HanaAggregateFunction(_)
+            | Expression::HanaRegex(_)
+            | Expression::HanaJson(_)
+            | Expression::HanaJsonColumn(_)
+            | Expression::HanaPartition(_)
+            | Expression::HanaStorageProperty(_)
+            | Expression::HanaHierarchy(_)
+            | Expression::HanaPlaceholder(_)
+            | Expression::HanaTableFunction(_)
+            | Expression::HanaCall(_)
+            | Expression::HanaHint(_)
+            | Expression::HanaGrouping(_)
+            | Expression::HanaTimezone(_)
             | Expression::Lead(_)
             | Expression::Lag(_)
             | Expression::Array(_)
@@ -1048,6 +1071,12 @@ where
     // First recursively transform children, then apply the transform function
     let expr = match expr {
         Expression::Select(mut select) => {
+            if let Some(options) = &mut select.hana_options {
+                options.hints = std::mem::take(&mut options.hints)
+                    .into_iter()
+                    .map(|hint| transform_recursive(hint, transform_fn))
+                    .collect::<Result<Vec<_>>>()?;
+            }
             select.expressions = select
                 .expressions
                 .into_iter()
@@ -1998,6 +2027,18 @@ where
             Expression::UnixToTime(e)
         }
 
+        Expression::HanaUpsert(mut upsert) => {
+            upsert.table = transform_table_ref_recursive(upsert.table, transform_fn)?;
+            upsert.source = transform_recursive(upsert.source, transform_fn)?;
+            if let Some(partition) = upsert.partition.take() {
+                upsert.partition = Some(transform_recursive(partition, transform_fn)?);
+            }
+            if let Some(condition) = upsert.condition.take() {
+                upsert.condition = Some(transform_recursive(condition, transform_fn)?);
+            }
+            Expression::HanaUpsert(upsert)
+        }
+
         // CreateTable: recurse into column defaults, on_update expressions, and data types
         Expression::CreateTable(mut ct) => {
             for col in &mut ct.columns {
@@ -2387,6 +2428,7 @@ cached_dialect!(CACHED_DRILL, DrillDialect, "dialect-drill");
 cached_dialect!(CACHED_DREMIO, DremioDialect, "dialect-dremio");
 cached_dialect!(CACHED_EXASOL, ExasolDialect, "dialect-exasol");
 cached_dialect!(CACHED_DATAFUSION, DataFusionDialect, "dialect-datafusion");
+cached_dialect!(CACHED_HANA, HanaDialect, "dialect-hana");
 
 fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
     /// Clone configs from a cached static and pair with a fresh transform closure.
@@ -2469,6 +2511,8 @@ fn configs_for_dialect_type(dt: DialectType) -> DialectConfigs {
         DialectType::Exasol => from_cache!(CACHED_EXASOL, ExasolDialect),
         #[cfg(feature = "dialect-datafusion")]
         DialectType::DataFusion => from_cache!(CACHED_DATAFUSION, DataFusionDialect),
+        #[cfg(feature = "dialect-hana")]
+        DialectType::HANA => from_cache!(CACHED_HANA, HanaDialect),
         _ => from_cache!(CACHED_GENERIC, GenericDialect),
     }
 }
@@ -3465,6 +3509,46 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
+                // Validate source-specific HANA semantics before target transforms
+                // can erase a cast or rebuild a SELECT without its native clauses.
+                // The same generator checks protect standalone AST generation.
+                if self.dialect_type == DialectType::HANA && target != DialectType::HANA {
+                    for node in expr.dfs() {
+                        let protected = match node {
+                            Expression::HanaFunction(_)
+                            | Expression::HanaAggregateFunction(_)
+                            | Expression::HanaRegex(_)
+                            | Expression::HanaJson(_)
+                            | Expression::HanaJsonColumn(_)
+                            | Expression::HanaUpsert(_)
+                            | Expression::HanaPartition(_)
+                            | Expression::HanaHierarchy(_)
+                            | Expression::HanaGrouping(_)
+                            | Expression::HanaTimezone(_)
+                            | Expression::HanaPlaceholder(_)
+                            | Expression::HanaTableFunction(_)
+                            | Expression::HanaCall(_)
+                            | Expression::HanaHint(_)
+                            | Expression::HanaStorageProperty(_)
+                            | Expression::CreateTable(_)
+                            | Expression::AlterTable(_) => true,
+                            Expression::Cast(c) => matches!(c.to, DataType::Hana { .. }),
+                            Expression::Select(s) => {
+                                s.hana_options.is_some() || s.locks.iter().any(|l| l.ignore_locked)
+                            }
+                            Expression::DataType(DataType::Hana { .. }) => true,
+                            _ => false,
+                        };
+                        if protected {
+                            target_dialect.generate_with_transpile_options(
+                                node,
+                                self.dialect_type,
+                                opts,
+                            )?;
+                        }
+                    }
+                }
+
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.

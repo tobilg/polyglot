@@ -766,6 +766,17 @@ fn data_type_family(data_type: &DataType) -> TypeFamily {
         DataType::Float { .. } | DataType::Double { .. } | DataType::Decimal { .. } => {
             TypeFamily::Numeric
         }
+        DataType::Hana { hana_type } => match hana_type.name.as_str() {
+            "TINYINT" => TypeFamily::Integer,
+            "TIMESTAMP" | "SECONDDATE" => TypeFamily::Timestamp,
+            "TIME" => TypeFamily::Time,
+            "FLOAT" | "DECIMAL" | "SMALLDECIMAL" => TypeFamily::Numeric,
+            "BINTEXT" => TypeFamily::Binary,
+            "ALPHANUM" | "VARCHAR" | "NVARCHAR" | "CLOB" | "NCLOB" | "TEXT" | "SHORTTEXT" => {
+                TypeFamily::String
+            }
+            _ => TypeFamily::Unknown,
+        },
         DataType::Oracle { oracle_type } => match oracle_type {
             OracleDataType::Number { .. }
             | OracleDataType::BinaryFloat
@@ -2571,7 +2582,7 @@ fn check_types(
                     ));
                 }
             }
-            Expression::Function(function) => {
+            Expression::Function(function) | Expression::HanaFunction(function) => {
                 check_function_catalog(function, dialect, function_catalog, strict, &mut errors);
                 check_generic_function(function, schema_map, &context, strict, &mut errors);
             }

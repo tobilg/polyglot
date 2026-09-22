@@ -851,6 +851,8 @@ fn get_dialects_internal() -> Vec<&'static str> {
     dialects.push("exasol");
     #[cfg(feature = "dialect-datafusion")]
     dialects.push("datafusion");
+    #[cfg(feature = "dialect-hana")]
+    dialects.push("hana");
     dialects
 }
 
@@ -2927,11 +2929,24 @@ mod tests {
         let dialects: Vec<String> = serde_json::from_str(&result).unwrap();
         let unique: std::collections::BTreeSet<&str> =
             dialects.iter().map(String::as_str).collect();
-        assert_eq!(dialects.len(), 34);
+        assert_eq!(dialects.len(), 35);
         assert_eq!(unique.len(), dialects.len());
         assert!(unique.contains("generic"));
         assert!(unique.contains("postgresql"));
         assert!(unique.contains("datafusion"));
+        assert!(unique.contains("hana"));
+    }
+
+    #[test]
+    #[cfg(feature = "dialect-hana")]
+    fn test_hana_discovery_and_native_parse() {
+        let dialects: Vec<String> = serde_json::from_str(&get_dialects()).unwrap();
+        assert!(dialects.iter().any(|dialect| dialect == "hana"));
+        let dialect =
+            polyglot_sql::dialects::Dialect::get(polyglot_sql::dialects::DialectType::HANA);
+        let sql = "SELECT * FROM t FOR JSON ('arraywrap' = 'NO')";
+        let ast = dialect.parse(sql).unwrap();
+        assert_eq!(dialect.generate(&ast[0]).unwrap(), sql);
     }
 
     #[test]

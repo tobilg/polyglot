@@ -1458,3 +1458,32 @@ describe('Integration Tests', () => {
     expect(regenerated.toUpperCase()).toContain('FROM');
   });
 });
+
+describe('HANA AST traversal', () => {
+  it('visits and replaces arguments retained in HANA source nodes', () => {
+    const sql =
+      "SELECT LOCATE(value, 'a', 1, 2), JSON_VALUE(payload, '$.n' DEFAULT 0 ON EMPTY) FROM records";
+    const ast = parseFirstWithDialect(sql, Dialect.HANA);
+    expect(
+      findAll(ast, (node) => isExpressionType(node, 'hana_function')),
+    ).toHaveLength(1);
+    expect(
+      findAll(ast, (node) => isExpressionType(node, 'hana_json')),
+    ).toHaveLength(1);
+    expect(getColumns(ast).map(columnReference)).toEqual(['value', 'payload']);
+    const copied = clone(ast);
+    expect(generate([copied], Dialect.HANA)).toEqual(
+      generate([ast], Dialect.HANA),
+    );
+    const renamed = renameColumns(copied, {
+      value: 'needle_source',
+      payload: 'document',
+    });
+    expect(getColumns(renamed).map(columnReference)).toEqual([
+      'needle_source',
+      'document',
+    ]);
+    expect(getColumns(ast).map(columnReference)).toEqual(['value', 'payload']);
+    expect(generate([copied], Dialect.DuckDB).success).toBe(false);
+  });
+});

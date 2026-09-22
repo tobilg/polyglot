@@ -908,6 +908,7 @@ pub(super) fn transform_select_into(
                         temporary: is_temp,
                         or_replace: false,
                         table_modifier: None,
+                        hana_storage: false,
                         as_select: Some(Expression::Select(new_select)),
                         as_select_parenthesized: false,
                         on_commit: None,

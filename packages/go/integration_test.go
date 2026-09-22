@@ -1547,3 +1547,19 @@ func TestIntegrationPackageLevelAPI(t *testing.T) {
 	}
 	assertValidJSON(t, "OpenLineageRunEvent wrapper", runEvent.Event)
 }
+
+func TestIntegrationHana(t *testing.T) {
+	client := integrationClient(t)
+	sql := "SELECT * FROM t FOR JSON ('arraywrap' = 'NO')"
+	output, err := client.Transpile(sql, "hana", "hana")
+	if err != nil || len(output) != 1 || output[0] != sql {
+		t.Fatalf("HANA native round trip: %v, %v", output, err)
+	}
+	if _, err := client.Transpile(sql, "hana", "duckdb"); err == nil {
+		t.Fatal("expected unsupported HANA serialization error")
+	}
+	output, err = client.Transpile("SELECT LOCATE('abcabc', 'bc')", "hana", "duckdb")
+	if err != nil || len(output) != 1 || output[0] != "SELECT STRPOS('abcabc', 'bc')" {
+		t.Fatalf("HANA LOCATE: %v, %v", output, err)
+	}
+}

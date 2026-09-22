@@ -2547,6 +2547,35 @@ impl Generator {
     }
 
     fn generate_expression_inner(&mut self, expr: &Expression) -> Result<()> {
+        if self.config.dialect == Some(DialectType::HANA)
+            && matches!(
+                expr,
+                Expression::Raw(_)
+                    | Expression::Command(_)
+                    | Expression::ILike(_)
+                    | Expression::DateAdd(_)
+                    | Expression::DateSub(_)
+                    | Expression::DateDiff(_)
+                    | Expression::TimestampAdd(_)
+                    | Expression::TimestampSub(_)
+                    | Expression::TimestampDiff(_)
+                    | Expression::StrToDate(_)
+                    | Expression::StrToTime(_)
+                    | Expression::TimeToStr(_)
+                    | Expression::ToNumber(_)
+                    | Expression::Substring(_)
+                    | Expression::StrPosition(_)
+                    | Expression::CurrentDate(_)
+                    | Expression::CurrentTime(_)
+                    | Expression::CurrentTimestamp(_)
+            )
+        {
+            return Err(self.hana_unsupported(format!(
+                "{} requires a verified conversion to HANA semantics",
+                expr.variant_name()
+            )));
+        }
+
         match expr {
             Expression::Select(select) => self.generate_select(select),
             Expression::Union(union) => self.generate_union(union),
@@ -2579,6 +2608,90 @@ impl Generator {
             Expression::Collation(coll) => self.generate_collation(coll),
             Expression::Case(case) => self.generate_case(case),
             Expression::Function(func) => self.generate_function(func),
+            Expression::HanaFunction(func) => self.generate_hana_function(func),
+            Expression::HanaGrouping(grouping) => self.generate_hana_grouping(grouping),
+            Expression::HanaTimezone(timezone) => self.generate_hana_timezone(timezone),
+            Expression::HanaRegex(regex) => self.generate_hana_regex(regex),
+            Expression::HanaJson(json) => self.generate_hana_json(json),
+            Expression::HanaJsonColumn(column) => self.generate_hana_json_column(column),
+            Expression::HanaUpsert(upsert) => self.generate_hana_upsert(upsert),
+            Expression::HanaHierarchy(hierarchy) => self.generate_hana_hierarchy(hierarchy),
+            Expression::HanaCall(call) => self.generate_hana_call(call),
+            Expression::HanaHint(hint) => {
+                if self.config.dialect != Some(DialectType::HANA) {
+                    return Err(
+                        self.hana_unsupported("HANA optimizer hint has no verified target mapping")
+                    );
+                }
+                self.generate_identifier(&hint.name)?;
+                if let Some(arguments) = &hint.arguments {
+                    self.write("(");
+                    for (i, arg) in arguments.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.generate_expression(arg)?;
+                    }
+                    self.write(")");
+                }
+                if hint.remote {
+                    self.write(" REMOTE");
+                }
+                if hint.cascade {
+                    self.write(" CASCADE");
+                }
+                Ok(())
+            }
+            Expression::HanaTableFunction(function) => {
+                for (i, name) in function.name.iter().enumerate() {
+                    if i > 0 {
+                        self.write(".");
+                    }
+                    self.generate_identifier(name)?;
+                }
+                self.write("(");
+                for (i, argument) in function.arguments.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(argument)?;
+                }
+                self.write(")");
+                Ok(())
+            }
+            Expression::HanaPlaceholder(placeholder) => {
+                if self.config.dialect != Some(DialectType::HANA) {
+                    return Err(self.hana_unsupported(
+                        "HANA calculation-view PLACEHOLDER has no verified target mapping",
+                    ));
+                }
+                self.write("PLACEHOLDER.");
+                self.generate_identifier(&placeholder.name)?;
+                self.write(" => ");
+                self.generate_expression(&placeholder.value)
+            }
+            Expression::HanaPartition(partition) => self.generate_hana_partition(partition, false),
+            Expression::HanaStorageProperty(property) => {
+                if self.config.dialect != Some(DialectType::HANA) {
+                    return Err(self
+                        .hana_unsupported("HANA storage property has no verified target mapping"));
+                }
+                self.write(&property.name);
+                for value in &property.values {
+                    self.write(" ");
+                    self.generate_expression(value)?;
+                }
+                Ok(())
+            }
+            Expression::HanaAggregateFunction(func) => {
+                if self.config.dialect != Some(DialectType::HANA) {
+                    return Err(self.hana_unsupported(format!(
+                        "HANA aggregate {} has no verified target mapping",
+                        func.name
+                    )));
+                }
+                self.generate_aggregate_function(func)
+            }
             Expression::FunctionEmits(fe) => self.generate_function_emits(fe),
             Expression::AggregateFunction(func) => self.generate_aggregate_function(func),
             Expression::WindowFunction(wf) => self.generate_window_function(wf),
@@ -4665,6 +4778,15 @@ impl Generator {
     }
 
     fn generate_select(&mut self, select: &Select) -> Result<()> {
+        if (select.hana_options.is_some() || select.locks.iter().any(|lock| lock.ignore_locked))
+            && self.config.dialect != Some(DialectType::HANA)
+        {
+            return Err(crate::error::Error::unsupported(
+                "HANA SELECT serialization or hints have no verified target mapping",
+                self.config.dialect.unwrap_or_default().to_string(),
+            ));
+        }
+
         use crate::dialects::DialectType;
 
         if let Some(resolved_select) = self.resolve_tsql_null_ordering_for_select(select) {
@@ -5043,6 +5165,8 @@ impl Generator {
                     self.write_formatted_comment(comment);
                 }
             }
+        } else if self.config.dialect == Some(DialectType::HANA) {
+            self.write(" FROM DUMMY");
         }
 
         // JOINs - handle nested join structure for pretty printing
@@ -5748,6 +5872,14 @@ impl Generator {
             }
         }
 
+        if select
+            .hana_options
+            .as_ref()
+            .is_some_and(|o| o.total_rowcount)
+        {
+            self.write(" TOTAL ROWCOUNT");
+        }
+
         // FOR UPDATE/SHARE locks
         // Skip locking clauses for dialects that don't support them
         if self.config.locking_reads_supported {
@@ -5759,6 +5891,47 @@ impl Generator {
                     self.write_space();
                 }
                 self.generate_lock(lock)?;
+            }
+        }
+
+        if let Some(options) = &select.hana_options {
+            if let Some(serialization) = &options.serialization {
+                self.write(" FOR ");
+                self.write(&serialization.format);
+                if !serialization.options.is_empty() {
+                    self.write(" (");
+                    for (i, (key, value)) in serialization.options.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.generate_string_literal(key)?;
+                        self.write(" = ");
+                        self.generate_string_literal(value)?;
+                    }
+                    self.write(")");
+                }
+            }
+            if let Some(returning) = options
+                .serialization
+                .as_ref()
+                .and_then(|s| s.returning.as_ref())
+            {
+                self.write(" RETURNS ");
+                self.generate_data_type(returning)?;
+            }
+            if let Some(collation) = &options.collation {
+                self.write(" WITH COLLATION ");
+                self.generate_identifier(collation)?;
+            }
+            if !options.hints.is_empty() {
+                self.write(" WITH HINT (");
+                for (i, hint) in options.hints.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(hint)?;
+                }
+                self.write(")");
             }
         }
 
@@ -8477,6 +8650,18 @@ impl Generator {
     // ==================== DDL Generation ====================
 
     fn generate_create_table(&mut self, ct: &CreateTable) -> Result<()> {
+        if ct.hana_storage
+            && self.config.dialect != Some(DialectType::HANA)
+            && ct.table_modifier.as_ref().is_some_and(|m| {
+                m.split_whitespace()
+                    .any(|part| matches!(part, "COLUMN" | "ROW" | "LOCAL" | "GLOBAL"))
+            })
+        {
+            return Err(
+                self.hana_unsupported("HANA table storage/scope has no verified target mapping")
+            );
+        }
+
         // Athena: Determine if this is Hive-style DDL or Trino-style DML
         // CREATE TABLE AS SELECT uses Trino (double quotes)
         // CREATE TABLE (without AS SELECT) and CREATE EXTERNAL TABLE use Hive (backticks)
@@ -8553,7 +8738,13 @@ impl Generator {
             self.write_keyword("OR REPLACE");
         }
 
-        if ct.temporary {
+        if ct.temporary
+            && !(self.config.dialect == Some(DialectType::HANA)
+                && ct
+                    .table_modifier
+                    .as_ref()
+                    .is_some_and(|m| m.contains("TEMPORARY")))
+        {
             self.write_space();
             // Oracle uses GLOBAL TEMPORARY TABLE syntax
             if matches!(self.config.dialect, Some(DialectType::Oracle)) {
@@ -11745,7 +11936,10 @@ impl Generator {
             AlterTableAction::AddColumns { columns, cascade } => {
                 // Oracle uses ADD (...) without COLUMNS keyword
                 // Hive/Spark uses ADD COLUMNS (...)
-                let is_oracle = matches!(self.config.dialect, Some(DialectType::Oracle));
+                let is_oracle = matches!(
+                    self.config.dialect,
+                    Some(DialectType::Oracle | DialectType::HANA)
+                );
                 if is_oracle {
                     self.write_keyword("ADD");
                 } else {
@@ -18050,6 +18244,37 @@ impl Generator {
     }
 
     fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            if let DataType::Hana { hana_type } = &cast.to {
+                if hana_type.name == "DECIMAL" {
+                    let mut args = vec![cast.this.clone()];
+                    args.extend(
+                        hana_type
+                            .parameters
+                            .iter()
+                            .map(|n| Expression::number(i64::from(*n))),
+                    );
+                    if hana_type.parameters.len() == 1 {
+                        args.push(Expression::number(0));
+                    }
+                    return self.generate_hana_function(&Function::new("TO_DECIMAL", args));
+                }
+                if hana_type.name == "TINYINT"
+                    && matches!(
+                        self.config.dialect,
+                        Some(DialectType::Trino | DialectType::Presto | DialectType::PostgreSQL)
+                    )
+                {
+                    if Self::hana_integer(&cast.this).is_some_and(|n| (0..=255).contains(&n)) {
+                        self.write("CAST(");
+                        self.generate_expression(&cast.this)?;
+                        self.write(" AS SMALLINT)");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         use crate::dialects::DialectType;
 
         // SingleStore uses :> syntax
@@ -18582,7 +18807,762 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_hana_partition(
+        &mut self,
+        partition: &HanaPartition,
+        subpartition: bool,
+    ) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported("HANA partitioning has no verified target mapping"));
+        }
+        self.write(if subpartition {
+            "SUBPARTITION BY "
+        } else {
+            "PARTITION BY "
+        });
+        self.write(&partition.method);
+        if !partition.columns.is_empty() {
+            self.write(" (");
+            for (i, column) in partition.columns.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_expression(column)?;
+            }
+            self.write(")");
+        }
+        if let Some(check) = partition.primary_key_check {
+            self.write(if check {
+                " PRIMARY KEY CHECK"
+            } else {
+                " NO PRIMARY KEY CHECK"
+            });
+        }
+        if let Some(count) = &partition.partitions {
+            self.write(" PARTITIONS ");
+            self.generate_expression(count)?;
+        }
+        if !partition.ranges.is_empty() {
+            self.write(" (");
+            for (i, range) in partition.ranges.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write("PARTITION ");
+                if let Some(name) = &range.name {
+                    self.generate_identifier(name)?;
+                    self.write(" ");
+                }
+                match range.kind.as_str() {
+                    "OTHERS" => self.write("OTHERS"),
+                    "RANGE" if range.values.len() == 2 => {
+                        self.generate_expression(&range.values[0])?;
+                        self.write(" <= VALUES < ");
+                        self.generate_expression(&range.values[1])?;
+                    }
+                    "LESS" | "AT_LEAST" | "VALUE" if range.values.len() == 1 => {
+                        self.write(match range.kind.as_str() {
+                            "LESS" => "VALUES < ",
+                            "AT_LEAST" => "VALUES >= ",
+                            _ => "VALUES = ",
+                        });
+                        self.generate_expression(&range.values[0])?;
+                    }
+                    _ => return Err(self.hana_unsupported("Invalid HANA partition range AST")),
+                }
+                if range.dynamic {
+                    self.write(" DYNAMIC");
+                }
+                if let Some(direction) = &range.direction {
+                    self.write(" ");
+                    self.write(direction);
+                }
+                if let Some(threshold) = &range.threshold {
+                    self.write(" THRESHOLD ");
+                    self.generate_expression(threshold)?;
+                }
+                if let Some((value, unit)) = &range.interval {
+                    self.write(" INTERVAL ");
+                    self.generate_expression(value)?;
+                    if let Some(unit) = unit {
+                        self.write(" ");
+                        self.write(unit);
+                    }
+                }
+                for property in &range.properties {
+                    self.write(" ");
+                    self.generate_expression(property)?;
+                }
+            }
+            self.write(")");
+        }
+        for property in &partition.properties {
+            self.write(" ");
+            self.generate_expression(property)?;
+        }
+        if let Some(sub) = &partition.subpartition {
+            self.write(" ");
+            self.generate_hana_partition(sub, true)?;
+        }
+        Ok(())
+    }
+
+    fn generate_hana_call(&mut self, call: &HanaCall) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(
+                self.hana_unsupported("HANA CALL requires a verified target procedure signature")
+            );
+        }
+        self.write("CALL ");
+        for (i, name) in call.name.iter().enumerate() {
+            if i > 0 {
+                self.write(".");
+            }
+            self.generate_identifier(name)?;
+        }
+        if let Some(member) = &call.member {
+            self.write(":");
+            self.generate_identifier(member)?;
+        }
+        self.write("(");
+        for (i, argument) in call.arguments.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(argument)?;
+        }
+        self.write(")");
+        if call.asynchronous {
+            self.write(" ASYNC");
+        }
+        if !call.hints.is_empty() {
+            self.write(" WITH HINT (");
+            for (i, hint) in call.hints.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_expression(hint)?;
+            }
+            self.write(")");
+        }
+        Ok(())
+    }
+
+    fn generate_hana_json(&mut self, json: &HanaJson) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported(
+                "HANA JSON path and error semantics have no verified target mapping",
+            ));
+        }
+        self.write(&json.name);
+        self.write("(");
+        self.generate_expression(&json.input)?;
+        self.write(", ");
+        self.generate_expression(&json.path)?;
+        if !json.columns.is_empty() {
+            self.generate_hana_json_columns(&json.columns)?;
+        }
+        self.generate_hana_json_options(&json.options)?;
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_hana_json_columns(&mut self, columns: &[Expression]) -> Result<()> {
+        self.write(" COLUMNS (");
+        for (i, column) in columns.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(column)?;
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_hana_json_column(&mut self, column: &HanaJsonColumn) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(
+                self.hana_unsupported("HANA JSON_TABLE column has no verified target mapping")
+            );
+        }
+        if let Some(name) = &column.name {
+            self.generate_identifier(name)?;
+        } else {
+            self.write("NESTED");
+        }
+        if column.ordinality {
+            self.write(" FOR ORDINALITY");
+        }
+        if let Some(data_type) = &column.data_type {
+            self.write(" ");
+            self.generate_data_type(data_type)?;
+        }
+        if column.format_json {
+            self.write(" FORMAT JSON");
+        }
+        if let Some(encoding) = &column.encoding {
+            self.write(" ENCODING ");
+            self.write(encoding);
+        }
+        if let Some(path) = &column.path {
+            self.write(" PATH ");
+            self.generate_expression(path)?;
+        }
+        if !column.columns.is_empty() {
+            self.generate_hana_json_columns(&column.columns)?;
+        }
+        self.generate_hana_json_options(&column.options)
+    }
+
+    fn generate_hana_json_options(&mut self, options: &HanaJsonOptions) -> Result<()> {
+        if let Some(returning) = &options.returning {
+            self.write(" RETURNING ");
+            self.generate_data_type(returning)?;
+        }
+        if let Some(wrapper) = &options.wrapper {
+            self.write(" ");
+            self.write(wrapper);
+            self.write(" WRAPPER");
+        }
+        for (behavior, suffix) in [
+            (&options.on_empty, " ON EMPTY"),
+            (&options.on_error, " ON ERROR"),
+        ] {
+            if let Some(behavior) = behavior {
+                self.write(" ");
+                self.write(&behavior.kind);
+                if let Some(value) = &behavior.value {
+                    self.write(" ");
+                    self.generate_expression(value)?;
+                }
+                self.write(suffix);
+            }
+        }
+        Ok(())
+    }
+
+    fn generate_hana_hierarchy(&mut self, hierarchy: &HanaHierarchy) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported("HANA hierarchy has no verified target mapping"));
+        }
+        self.write(&hierarchy.name);
+        self.write("(SOURCE ");
+        self.generate_expression(&hierarchy.source)?;
+        if let Some(start) = &hierarchy.start {
+            self.write(" START WHERE ");
+            self.generate_expression(start)?;
+        }
+        if !hierarchy.siblings.is_empty() {
+            self.write(" SIBLING ORDER BY ");
+            for (i, order) in hierarchy.siblings.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_ordered(order)?;
+            }
+        }
+        if let Some(depth) = &hierarchy.depth {
+            self.write(" DEPTH ");
+            self.generate_expression(depth)?;
+        }
+        for (keyword, option) in [
+            ("MULTIPARENT", &hierarchy.multiparent),
+            ("ORPHAN", &hierarchy.orphan),
+            ("CYCLE", &hierarchy.cycle),
+        ] {
+            if let Some(option) = option {
+                self.write(" ");
+                self.write(keyword);
+                if !option.is_empty() {
+                    self.write(" ");
+                    self.write(option);
+                }
+            }
+        }
+        if let Some(cache) = &hierarchy.cache {
+            self.write(" ");
+            self.write(cache);
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_hana_upsert(&mut self, upsert: &HanaUpsert) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported(
+                "HANA UPSERT requires target-specific key and update semantics",
+            ));
+        }
+        self.write("UPSERT ");
+        self.generate_table(&upsert.table)?;
+        if let Some(partition) = &upsert.partition {
+            self.write(" PARTITION (");
+            self.generate_expression(partition)?;
+            self.write(")");
+        }
+        if !upsert.columns.is_empty() {
+            self.write(" (");
+            for (i, column) in upsert.columns.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_identifier(column)?;
+            }
+            self.write(")");
+        }
+        self.write(" ");
+        self.generate_expression(&upsert.source)?;
+        if let Some(condition) = &upsert.condition {
+            self.write(" WHERE ");
+            self.generate_expression(condition)?;
+        }
+        if upsert.primary_key {
+            self.write(" WITH PRIMARY KEY");
+        }
+        Ok(())
+    }
+
+    fn generate_hana_regex(&mut self, regex: &HanaRegex) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported("HANA PCRE operation has no verified target mapping"));
+        }
+        let predicate = regex.operation == "LIKE_REGEXPR";
+        if predicate {
+            self.generate_expression(&regex.subject)?;
+            self.write(if regex.negated {
+                " NOT LIKE_REGEXPR "
+            } else {
+                " LIKE_REGEXPR "
+            });
+        } else {
+            self.write(&regex.operation);
+            self.write("(");
+            if let Some(after) = regex.position_after {
+                self.write(if after { "AFTER " } else { "START " });
+            }
+        }
+        self.generate_expression(&regex.pattern)?;
+        if let Some(flag) = &regex.flag {
+            self.write(" FLAG ");
+            self.generate_expression(flag)?;
+        }
+        if !predicate {
+            self.write(" IN ");
+            self.generate_expression(&regex.subject)?;
+        }
+        for (keyword, argument) in [
+            (" WITH ", &regex.replacement),
+            (" FROM ", &regex.start),
+            (" OCCURRENCE ", &regex.occurrence),
+            (" GROUP ", &regex.group),
+        ] {
+            if let Some(argument) = argument {
+                self.write(keyword);
+                self.generate_expression(argument)?;
+            }
+        }
+        if !predicate {
+            self.write(")");
+        }
+        Ok(())
+    }
+
+    fn hana_integer(expr: &Expression) -> Option<i64> {
+        match expr {
+            Expression::Literal(l) => match l.as_ref() {
+                Literal::Number(n) => n.parse().ok(),
+                _ => None,
+            },
+            Expression::Neg(n) => Self::hana_integer(&n.this)?.checked_neg(),
+            _ => None,
+        }
+    }
+
+    fn hana_exact_numeric(expr: &Expression) -> bool {
+        match expr {
+            Expression::Literal(l) => {
+                matches!(l.as_ref(), Literal::Number(n) if !n.contains(['e', 'E']))
+            }
+            Expression::Neg(n) => Self::hana_exact_numeric(&n.this),
+            Expression::Cast(c) => {
+                matches!(
+                    &c.to,
+                    DataType::Decimal {
+                        precision: Some(_),
+                        ..
+                    }
+                ) || matches!(&c.to, DataType::Hana { hana_type } if hana_type.name == "DECIMAL" && !hana_type.parameters.is_empty())
+            }
+            _ => false,
+        }
+    }
+
+    fn hana_portable_string(expr: &Expression) -> bool {
+        // HANA indexes CESU-8/UTF-16 units; these targets index Unicode code
+        // points. Unknown/binary/supplementary-character inputs need another mapping.
+        matches!(expr, Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) | Literal::NationalString(s) if s.chars().all(|c| (c as u32) <= 0xffff)))
+    }
+
+    fn hana_unsupported(&self, feature: impl Into<String>) -> crate::error::Error {
+        crate::error::Error::unsupported(
+            feature,
+            self.config.dialect.unwrap_or_default().to_string(),
+        )
+    }
+
+    fn generate_hana_grouping(&mut self, grouping: &HanaGrouping) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(
+                self.hana_unsupported("HANA grouping-set selection and result delivery options")
+            );
+        }
+        self.write(&grouping.kind);
+        for (keyword, value) in [
+            (" BEST ", &grouping.best),
+            (" LIMIT ", &grouping.limit),
+            (" OFFSET ", &grouping.offset),
+        ] {
+            if let Some(value) = value {
+                self.write(keyword);
+                self.generate_expression(value)?;
+            }
+        }
+        for (enabled, keyword) in [
+            (grouping.subtotal, " WITH SUBTOTAL"),
+            (grouping.balance, " WITH BALANCE"),
+            (grouping.total, " WITH TOTAL"),
+            (grouping.structured, " STRUCTURED RESULT"),
+            (grouping.overview, " WITH OVERVIEW"),
+        ] {
+            if enabled {
+                self.write(keyword);
+            }
+        }
+        if let Some(prefix) = &grouping.prefix {
+            self.write(" PREFIX ");
+            self.generate_expression(prefix)?;
+        }
+        if grouping.multiple_resultsets {
+            self.write(" MULTIPLE RESULTSETS");
+        }
+        self.write(" (");
+        for (i, expression) in grouping.expressions.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(expression)?;
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_hana_timezone(&mut self, timezone: &HanaTimezone) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported("HANA timezone datasets and conversion error policy"));
+        }
+        self.write(&timezone.name);
+        self.write("(");
+        for (i, argument) in timezone.arguments.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.generate_expression(argument)?;
+        }
+        if let Some(behavior) = &timezone.on_error {
+            self.write(" ");
+            self.write(&behavior.kind);
+            if let Some(value) = &behavior.value {
+                self.write(" ");
+                self.generate_expression(value)?;
+            }
+            self.write(" ON ERROR");
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_hana_function(&mut self, function: &Function) -> Result<()> {
+        if function.quoted {
+            let mut identifier = Identifier::new(&function.name);
+            identifier.quoted = true;
+            self.generate_identifier(&identifier)?;
+            self.write("(");
+            for (i, arg) in function.args.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.generate_expression(arg)?;
+            }
+            self.write(")");
+            return Ok(());
+        }
+        if self.config.dialect == Some(DialectType::HANA) {
+            return self.generate_function(function);
+        }
+        let name = function.name.to_ascii_uppercase();
+        let args = &function.args;
+        let target = self.config.dialect.unwrap_or_default();
+        let trino = matches!(
+            target,
+            DialectType::Trino | DialectType::Presto | DialectType::Athena | DialectType::Dune
+        );
+        let postgres = matches!(
+            target,
+            DialectType::PostgreSQL
+                | DialectType::CockroachDB
+                | DialectType::Materialize
+                | DialectType::RisingWave
+        );
+        let duckdb = target == DialectType::DuckDB;
+
+        // These calls are retained as source nodes until generation so parsing,
+        // JSON serialization, and native transpilation cannot lose HANA semantics.
+        if matches!(name.as_str(), "COALESCE" | "IFNULL") && args.len() >= 2 {
+            return self.generate_vararg_func("COALESCE", args);
+        }
+        if name == "LOCATE" && (2..=4).contains(&args.len()) && (trino || postgres || duckdb) {
+            let start = if args.len() >= 3 {
+                Self::hana_integer(&args[2])
+            } else {
+                Some(1)
+            };
+            let occurrence = if args.len() == 4 {
+                Self::hana_integer(&args[3])
+            } else {
+                Some(1)
+            };
+            if let (Some(start), Some(occurrence)) = (start, occurrence) {
+                if start >= 0
+                    && occurrence > 0
+                    && (trino || occurrence == 1)
+                    && args[..2].iter().all(Self::hana_portable_string)
+                    && (!matches!(&args[1], Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) | Literal::NationalString(s) if s.is_empty()))
+                        || (start <= 1 && occurrence == 1))
+                {
+                    let haystack = self.generate_to_string(&args[0])?;
+                    let needle = self.generate_to_string(&args[1])?;
+                    let start = start.max(1);
+                    let searched = if start == 1 {
+                        haystack
+                    } else {
+                        format!("SUBSTR({haystack}, {start})")
+                    };
+                    let found = if trino && occurrence != 1 {
+                        format!("STRPOS({searched}, {needle}, {occurrence})")
+                    } else {
+                        format!("STRPOS({searched}, {needle})")
+                    };
+                    if start == 1 {
+                        self.write(&found);
+                    } else {
+                        self.write(&format!(
+                            "CASE WHEN {found} = 0 THEN 0 ELSE {found} + {} END",
+                            start - 1
+                        ));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        if matches!(name.as_str(), "SUBSTRING" | "SUBSTR")
+            && (2..=3).contains(&args.len())
+            && (trino || postgres || duckdb)
+            && Self::hana_portable_string(&args[0])
+        {
+            // Constant bounds avoid changing NULL propagation or evaluating a
+            // volatile bound more than once. Dynamic/binary cases need a typed mapping.
+            if let Some(start) = Self::hana_integer(&args[1]) {
+                let length = args.get(2).map(Self::hana_integer);
+                if !matches!(length, Some(None)) {
+                    let mut lowered = vec![args[0].clone(), Expression::number(start.max(1))];
+                    if let Some(Some(length)) = length {
+                        lowered.push(Expression::number(length.max(0)));
+                    }
+                    return self.generate_vararg_func("SUBSTRING", &lowered);
+                }
+            }
+        }
+        if name == "TO_DECIMAL" && args.len() == 3 && (trino || postgres || duckdb) {
+            if let (Some(precision), Some(scale)) =
+                (Self::hana_integer(&args[1]), Self::hana_integer(&args[2]))
+            {
+                if (1..=38).contains(&precision) && (0..=precision).contains(&scale) {
+                    // Require numeric input evidence. Casting an unknown string
+                    // before truncation can round away digits or change format rules.
+                    let numeric = Self::hana_exact_numeric(&args[0]);
+                    if numeric {
+                        let value = self.generate_to_string(&args[0])?;
+                        let truncate = if trino { "TRUNCATE" } else { "TRUNC" };
+                        self.write(&format!(
+                            "CAST({truncate}({value}, {scale}) AS DECIMAL({precision}, {scale}))"
+                        ));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        if matches!(
+            name.as_str(),
+            "TO_DATE" | "TO_TIMESTAMP" | "TO_VARCHAR" | "TO_NVARCHAR"
+        ) && args.len() == 2
+            && (trino || duckdb)
+            && (name != "TO_TIMESTAMP" || target == DialectType::Trino)
+        {
+            if let Expression::Literal(literal) = &args[1] {
+                if let Literal::String(mask) = literal.as_ref() {
+                    if let Some(mask) = crate::format_tokens::hana_datetime_format(mask, trino) {
+                        let formatting = matches!(name.as_str(), "TO_VARCHAR" | "TO_NVARCHAR");
+                        let known_datetime = matches!(&args[0], Expression::Cast(c) if matches!(c.to, DataType::Date | DataType::Timestamp { .. } | DataType::Time { .. }))
+                            || matches!(&args[0], Expression::Cast(c) if matches!(&c.to, DataType::Hana { hana_type } if matches!(hana_type.name.as_str(), "TIMESTAMP" | "TIME" | "SECONDDATE")))
+                            || matches!(&args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::Date(_) | Literal::Timestamp(_)));
+                        if !formatting || known_datetime {
+                            let value = self.generate_to_string(&args[0])?;
+                            let mask = self.generate_to_string(&Expression::string(mask))?;
+                            if formatting {
+                                let function = if trino { "DATE_FORMAT" } else { "STRFTIME" };
+                                self.write(&format!("{function}({value}, {mask})"));
+                            } else {
+                                let function = if trino { "DATE_PARSE" } else { "STRPTIME" };
+                                let result_type = if name == "TO_DATE" {
+                                    "DATE"
+                                } else if trino {
+                                    "TIMESTAMP(7)"
+                                } else {
+                                    "TIMESTAMP"
+                                };
+                                self.write(&format!(
+                                    "CAST({function}({value}, {mask}) AS {result_type})"
+                                ));
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+        if matches!(
+            name.as_str(),
+            "CURRENT_UTCDATE" | "CURRENT_UTCTIME" | "CURRENT_UTCTIMESTAMP"
+        ) && (trino || postgres || duckdb)
+        {
+            let precision = if args.is_empty() {
+                Some(3)
+            } else if args.len() == 1 {
+                Self::hana_integer(&args[0])
+            } else {
+                None
+            };
+            if let Some(precision) = precision {
+                if (0..=7).contains(&precision)
+                    && (target == DialectType::Trino || name == "CURRENT_UTCDATE")
+                {
+                    let utc = if trino && name == "CURRENT_UTCTIMESTAMP" {
+                        format!("CURRENT_TIMESTAMP({precision}) AT TIME ZONE 'UTC'")
+                    } else {
+                        "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'".to_owned()
+                    };
+                    let data_type = match name.as_str() {
+                        "CURRENT_UTCDATE" => "DATE".to_owned(),
+                        "CURRENT_UTCTIME" => "TIME(0)".to_owned(),
+                        _ => format!("TIMESTAMP({precision})"),
+                    };
+                    self.write(&format!("CAST({utc} AS {data_type})"));
+                    return Ok(());
+                }
+            }
+        }
+        Err(self.hana_unsupported(format!(
+            "HANA {name}: no verified mapping for these arguments"
+        )))
+    }
+
+    fn generate_hana_data_type(&mut self, data_type: &HanaDataType) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            let target = self.config.dialect.unwrap_or_default();
+            match (data_type.name.as_str(), data_type.parameters.as_slice()) {
+                ("TIMESTAMP", []) if target == DialectType::Trino => {
+                    self.write("TIMESTAMP(7)");
+                    return Ok(());
+                }
+                ("TIME", []) if target == DialectType::Trino => {
+                    self.write("TIME(0)");
+                    return Ok(());
+                }
+                ("FLOAT", [] | [1..=53])
+                    if matches!(
+                        target,
+                        DialectType::Trino
+                            | DialectType::Presto
+                            | DialectType::DuckDB
+                            | DialectType::PostgreSQL
+                    ) =>
+                {
+                    let real = data_type.parameters.first().is_some_and(|p| *p <= 24);
+                    self.write(if real {
+                        "REAL"
+                    } else if target == DialectType::PostgreSQL {
+                        "DOUBLE PRECISION"
+                    } else {
+                        "DOUBLE"
+                    });
+                    return Ok(());
+                }
+                ("TINYINT", [])
+                    if matches!(target, DialectType::DuckDB | DialectType::ClickHouse) =>
+                {
+                    return self.generate_data_type(&DataType::UInt8);
+                }
+                ("DECIMAL", [p, s]) if (1..=38).contains(p) && s <= p => {
+                    return self.generate_data_type(&DataType::Decimal {
+                        precision: Some(*p),
+                        scale: Some(*s),
+                    });
+                }
+                _ => {}
+            }
+            return Err(crate::error::Error::unsupported(
+                format!(
+                    "HANA {} has no lossless type mapping for this target",
+                    data_type.name
+                ),
+                self.config.dialect.unwrap_or_default().to_string(),
+            ));
+        }
+        self.write(&data_type.name);
+        if !data_type.parameters.is_empty() {
+            self.write("(");
+            for (i, parameter) in data_type.parameters.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(&parameter.to_string());
+            }
+            self.write(")");
+        }
+        Ok(())
+    }
+
     fn generate_function(&mut self, func: &Function) -> Result<()> {
+        if self.config.dialect == Some(DialectType::HANA)
+            && !func.quoted
+            && matches!(
+                func.name.to_ascii_uppercase().as_str(),
+                "DATE_ADD"
+                    | "DATE_SUB"
+                    | "DATE_DIFF"
+                    | "DATEADD"
+                    | "DATEDIFF"
+                    | "STRFTIME"
+                    | "STRPTIME"
+                    | "DATE_PARSE"
+                    | "DATE_FORMAT"
+            )
+        {
+            return Err(self.hana_unsupported(format!(
+                "{} requires a verified conversion to HANA semantics",
+                func.name
+            )));
+        }
         // Normalize function name based on dialect settings
         let normalized_name = if func.name.eq_ignore_ascii_case("GROUPING")
             && func.args.len() > 1
@@ -26192,6 +27172,7 @@ impl Generator {
                     }
                 }
             }
+            DataType::Hana { hana_type } => self.generate_hana_data_type(hana_type)?,
             DataType::Oracle { oracle_type } => {
                 self.write_oracle_data_type(oracle_type)?;
             }
@@ -26779,6 +27760,10 @@ impl Generator {
             } => {
                 // Dialect-specific array syntax
                 match self.config.dialect {
+                    Some(DialectType::HANA) => {
+                        self.generate_data_type(element_type)?;
+                        self.write(" ARRAY");
+                    }
                     Some(DialectType::PostgreSQL)
                     | Some(DialectType::Redshift)
                     | Some(DialectType::DuckDB) => {
@@ -29821,6 +30806,12 @@ impl Generator {
     /// Handles MySQL/PostgreSQL: GENERATED ALWAYS AS (expr) STORED|VIRTUAL
     /// Handles TSQL: AS (expr) [PERSISTED] [NOT NULL]
     fn generate_computed_column_inline(&mut self, cc: &ComputedColumn) -> Result<()> {
+        if self.config.dialect == Some(DialectType::HANA) {
+            self.write("GENERATED ALWAYS AS ");
+            self.generate_expression(&cc.expression)?;
+            return Ok(());
+        }
+
         let computed_expr = if matches!(
             self.config.dialect,
             Some(DialectType::TSQL) | Some(DialectType::Fabric)
@@ -33993,6 +34984,9 @@ impl Generator {
     }
 
     fn generate_lock(&mut self, e: &Lock) -> Result<()> {
+        if e.ignore_locked && self.config.dialect != Some(DialectType::HANA) {
+            return Err(self.hana_unsupported("HANA IGNORE LOCKED has no verified target mapping"));
+        }
         // Python: FOR UPDATE|FOR SHARE [OF tables] [NOWAIT|WAIT n]
         if e.update.is_some() {
             if e.key.is_some() {
@@ -34005,6 +34999,9 @@ impl Generator {
                 self.write_keyword("FOR KEY SHARE");
             } else {
                 self.write_keyword("FOR SHARE");
+                if self.config.dialect == Some(DialectType::HANA) {
+                    self.write(" LOCK");
+                }
             }
         }
         if !e.expressions.is_empty() {
@@ -34015,6 +35012,9 @@ impl Generator {
                 }
                 self.generate_expression(expr)?;
             }
+        }
+        if e.ignore_locked {
+            self.write(" IGNORE LOCKED");
         }
         // Handle wait option following Python sqlglot convention:
         // - Boolean(true) -> NOWAIT

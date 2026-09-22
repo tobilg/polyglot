@@ -33,9 +33,10 @@ impl Default for NormalizationStrategy {
 pub fn get_normalization_strategy(dialect: Option<DialectType>) -> NormalizationStrategy {
     match dialect {
         // Uppercase dialects
-        Some(DialectType::Oracle) | Some(DialectType::Snowflake) | Some(DialectType::Exasol) => {
-            NormalizationStrategy::Uppercase
-        }
+        Some(DialectType::Oracle)
+        | Some(DialectType::Snowflake)
+        | Some(DialectType::Exasol)
+        | Some(DialectType::HANA) => NormalizationStrategy::Uppercase,
         // Case-sensitive dialects
         Some(DialectType::MySQL) | Some(DialectType::ClickHouse) => {
             NormalizationStrategy::CaseSensitive
