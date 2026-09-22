@@ -15623,7 +15623,15 @@ pub enum VerticaPattern {
 pub struct VerticaPhysical {
     pub order_by: Vec<Ordered>,
     pub segmentation: Option<VerticaSegmentation>,
-    pub ksafe: Option<Option<u32>>,
+    pub ksafe: Option<VerticaKsafe>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum VerticaKsafe {
+    Default,
+    Level(u32),
 }
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]

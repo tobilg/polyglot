@@ -628,7 +628,7 @@ fn vertica_partitioned_limit_preserves_outputs_and_scopes() {
 
 #[test]
 fn vertica_structured_fields_and_invalid_native_syntax() {
-    use polyglot_sql::expressions::{Expression, VerticaExpression};
+    use polyglot_sql::expressions::{Expression, VerticaExpression, VerticaKsafe};
     use polyglot_sql::traversal::{is_aggregate, ExpressionWalk};
     use polyglot_sql::{Dialect, DialectType};
     let dialect = Dialect::get(DialectType::Vertica);
@@ -643,7 +643,7 @@ fn vertica_structured_fields_and_invalid_native_syntax() {
         panic!("expected projection")
     };
     assert_eq!(physical.order_by.len(), 1);
-    assert_eq!(physical.ksafe, Some(Some(1)));
+    assert_eq!(physical.ksafe, Some(VerticaKsafe::Level(1)));
     assert_eq!(columns[0].encoding.as_ref().unwrap().name, "RLE");
     assert!(parsed[0]
         .dfs()
@@ -657,9 +657,13 @@ fn vertica_structured_fields_and_invalid_native_syntax() {
     assert!(aggregate[0].dfs().any(is_aggregate));
     for sql in [
         "CREATE TABLE t(r ROW(\"odd name\" INT, \"a\"\"b\" VARCHAR))",
+        "CREATE PROJECTION p AS SELECT id FROM t UNSEGMENTED ALL NODES KSAFE",
         "SELECT k, v FROM t LIMIT 1 OVER(PARTITION BY k ORDER BY v) OFFSET 2",
     ] {
         let ast = dialect.parse(sql).unwrap();
+        let restored: Vec<Expression> =
+            serde_json::from_str(&serde_json::to_string(&ast).unwrap()).unwrap();
+        assert_eq!(ast, restored, "{sql}");
         let output = dialect.generate(&ast[0]).unwrap();
         let again = dialect.parse(&output).unwrap();
         assert_eq!(output, dialect.generate(&again[0]).unwrap());

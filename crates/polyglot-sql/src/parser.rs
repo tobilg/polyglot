@@ -64219,9 +64219,9 @@ impl Parser {
         }
         if self.match_text_seq(&["KSAFE"]) {
             physical.ksafe = Some(if self.check(TokenType::Number) {
-                Some(self.vertica_nonnegative_integer()?)
+                VerticaKsafe::Level(self.vertica_nonnegative_integer()?)
             } else {
-                None
+                VerticaKsafe::Default
             });
         }
         Ok(physical)

@@ -42195,9 +42195,9 @@ impl Generator {
                 }
             }
         }
-        if let Some(ksafe) = physical.ksafe {
+        if let Some(ksafe) = &physical.ksafe {
             self.write(" KSAFE");
-            if let Some(value) = ksafe {
+            if let VerticaKsafe::Level(value) = ksafe {
                 self.write(&format!(" {value}"));
             }
         }
