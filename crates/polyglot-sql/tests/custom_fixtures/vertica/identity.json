@@ -134,7 +134,8 @@
     },
     {
       "sql": "SELECT a FROM t ORDER BY a NULLS FIRST, b DESC NULLS LAST",
-      "description": "Explicit NULL placement"
+      "description": "Explicit top-level NULL placement uses CASE sort keys",
+      "expected": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 0 ELSE 1 END, a, CASE WHEN b IS NULL THEN 1 ELSE 0 END, b DESC"
     },
     {
       "sql": "SELECT 1 MINUS SELECT 2",

@@ -1126,6 +1126,7 @@ pub(super) fn rewrite(
                                         crate::expressions::WithinGroup {
                                             this: inner,
                                             order_by: vec![crate::expressions::Ordered {
+                                                nulls_auto: false,
                                                 this: column,
                                                 desc: false,
                                                 nulls_first: None,
@@ -1169,6 +1170,7 @@ pub(super) fn rewrite(
                                         crate::expressions::WithinGroup {
                                             this: inner,
                                             order_by: vec![crate::expressions::Ordered {
+                                                nulls_auto: false,
                                                 this: column,
                                                 desc: false,
                                                 nulls_first: None,
@@ -11238,6 +11240,7 @@ pub(super) fn rewrite(
                                 inferred_type: None,
                             }));
                             new_order_by.push(crate::expressions::Ordered {
+                                nulls_auto: false,
                                 this: case_expr,
                                 desc: false,
                                 nulls_first: None,

@@ -46,6 +46,96 @@ fn load_dialect_fixtures(dir: &Path) -> Vec<CustomDialectFixtureFile> {
 /// Dialects with separate test runners (excluded from this auto-discovery).
 const EXCLUDED_DIALECTS: &[&str] = &["clickhouse"];
 
+#[test]
+fn vertica_semantic_errors_are_independent_of_diagnostic_level() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions, UnsupportedLevel};
+    let cases = [
+        (
+            "SELECT LISTAGG(x) FROM t",
+            "vertica",
+            "postgresql",
+            "byte limit",
+        ),
+        (
+            "SELECT LISTAGG(x USING PARAMETERS max_length=3, on_overflow='TRUNCATE') FROM t",
+            "vertica",
+            "mysql",
+            "byte limit",
+        ),
+        (
+            "SELECT STRING_AGG(x, ',') FROM t",
+            "postgresql",
+            "vertica",
+            "byte limit",
+        ),
+        (
+            "SELECT TRY_CAST(x AS INT) FROM t",
+            "snowflake",
+            "vertica",
+            "constant cast",
+        ),
+        (
+            "SELECT SAFE_CAST(x AS INT64) FROM t",
+            "bigquery",
+            "vertica",
+            "constant cast",
+        ),
+    ];
+    for level in [
+        UnsupportedLevel::Ignore,
+        UnsupportedLevel::Warn,
+        UnsupportedLevel::Raise,
+        UnsupportedLevel::Immediate,
+    ] {
+        let mut options = TranspileOptions::default();
+        options.unsupported_level = level;
+        for (sql, source, target, message) in cases {
+            let error = transpile_with_by_name(sql, source, target, &options).expect_err(sql);
+            assert!(error.to_string().contains(message), "{sql}: {error}");
+        }
+    }
+}
+
+#[test]
+fn vertica_filtered_approximate_count_preserves_selected_rows() {
+    let output = polyglot_sql::transpile_with_by_name(
+        "SELECT APPROX_COUNT_DISTINCT(x) FILTER (WHERE keep) FROM t",
+        "duckdb",
+        "vertica",
+        &polyglot_sql::TranspileOptions::strict(),
+    )
+    .unwrap();
+    assert_eq!(
+        output,
+        ["SELECT APPROXIMATE_COUNT_DISTINCT(CASE WHEN keep THEN x END) FROM t"]
+    );
+}
+
+#[test]
+fn vertica_parameter_expressions_and_nested_factorials_roundtrip() {
+    for sql in [
+        "SELECT LISTAGG(x USING PARAMETERS max_length=1024*2) FROM t",
+        "SELECT !! !! 3",
+        "SELECT !! (1 + 2)",
+    ] {
+        let once = polyglot_sql::transpile_with_by_name(
+            sql,
+            "vertica",
+            "vertica",
+            &polyglot_sql::TranspileOptions::strict(),
+        )
+        .unwrap();
+        let twice = polyglot_sql::transpile_with_by_name(
+            &once[0],
+            "vertica",
+            "vertica",
+            &polyglot_sql::TranspileOptions::strict(),
+        )
+        .unwrap();
+        assert_eq!(once, twice, "{sql}");
+    }
+}
+
 /// Auto-discover all dialect subdirectories and load their fixtures.
 static ALL_CUSTOM_FIXTURES: Lazy<AllCustomFixtures> = Lazy::new(|| {
     let mut dialects = Vec::new();
@@ -271,4 +361,359 @@ fn test_custom_dialect_transpilation_all() {
     } else {
         println!("\nNo custom dialect transpilation tests found.");
     }
+}
+
+#[test]
+fn vertica_structured_native_roundtrips() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions};
+    for sql in [
+        "SELECT value::!INT FROM t",
+        "SELECT (value + 1)::!INT FROM t",
+        "SELECT INTERVAL(3) '1.2345 SECOND', INTERVALYM '2 YEARS'",
+        "CREATE TABLE t (a ARRAY[INT, 10], b ARRAY[VARCHAR(50)](32000), s SET[INT], r ROW(name VARCHAR, age INT), binary_value LONG VARBINARY(1000))",
+        "SELECT ARRAY['1', '2']::ARRAY[INT], ARRAY[2, 1, 2]::SET[INT]",
+        "SELECT SET[1, 2, 2]",
+        "SELECT EXPLODE(a) OVER() FROM t",
+        "SELECT EXPLODE(a) OVER(PARTITION BEST) FROM t",
+        "SELECT EXPLODE(a USING PARAMETERS skip_partitioning=true) FROM t",
+        "SELECT APPROXIMATE_PERCENTILE(x USING PARAMETERS percentiles='0.5,0.9') FROM t",
+        "SELECT ROW_NUMBER() OVER(ORDER BY x NULLS AUTO) FROM t",
+        "SELECT LISTAGG(x) WITHIN GROUP(ORDER BY y NULLS AUTO) FROM t",
+        "AT EPOCH LATEST SELECT * FROM t",
+        "AT EPOCH 42 WITH q AS (SELECT id FROM t) SELECT * FROM q",
+        "AT TIME '2026-01-01 00:00:00' SELECT * FROM t",
+        "SELECT id FROM t FOR UPDATE OF t",
+        "SELECT /*+LABEL('review')*/ id FROM t",
+    ] {
+        let first = transpile_with_by_name(sql, "vertica", "vertica", &TranspileOptions::strict()).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        let second = transpile_with_by_name(&first[0], "vertica", "vertica", &TranspileOptions::strict()).unwrap_or_else(|e| panic!("{}: {e}", first[0]));
+        assert_eq!(first, second, "{sql}");
+    }
+}
+
+#[test]
+fn vertica_reviewed_native_surface() {
+    use polyglot_sql::traversal::ExpressionWalk;
+    use polyglot_sql::{transpile_with_by_name, Dialect, DialectType, TranspileOptions};
+    let mut errors = Vec::new();
+    for (label, sql) in [
+        ("plain_string", "SELECT 'a\\nb'"),
+        ("escape_string", "SELECT E'a\\nb'"),
+        ("dollar_string", "SELECT $tag$a'b$tag$"),
+        ("unicode_string", "SELECT U&'m\\00fcde'"),
+        ("unicode_escape", "SELECT U&'m!00fcde' UESCAPE '!'"),
+        ("hex_string", "SELECT X'abcd'"),
+        ("binary_string", "SELECT B'101100'"),
+        ("safe_cast_native", "SELECT value::!INT FROM t"),
+        ("array_literal", "SELECT ARRAY[10, 20]"),
+        ("array_index", "SELECT (ARRAY[10, 20])[0]"),
+        ("array_column_type", "CREATE TABLE t (a ARRAY[INT])"),
+        ("array_bound", "CREATE TABLE t (a ARRAY[INT, 10])"),
+        ("array_size", "CREATE TABLE t (a ARRAY[VARCHAR(50)](32000))"),
+        ("set_literal", "SELECT SET[1, 2, 2]"),
+        ("set_column_type", "CREATE TABLE t (id INT, s SET[INT])"),
+        ("set_cast", "SELECT ARRAY[2, 1, 2]::SET[INT]"),
+        ("row_named", "SELECT ROW('Amy' AS name, 2 AS id)"),
+        ("row_alias_names", "SELECT ROW('Amy', 2) AS student(name, id)"),
+        ("row_column_type", "CREATE TABLE t (id INT, r ROW(name VARCHAR, age INT))"),
+        ("percentile_params", "SELECT APPROXIMATE_PERCENTILE(x USING PARAMETERS percentiles='0.5,0.9') FROM t"),
+        ("explode_window", "SELECT EXPLODE(a) OVER() FROM t"),
+        ("explode_params", "SELECT EXPLODE(a USING PARAMETERS skip_partitioning=true) FROM t"),
+        ("explode_partition_best", "SELECT EXPLODE(a) OVER(PARTITION BEST) FROM t"),
+        ("nulls_auto_window", "SELECT ROW_NUMBER() OVER(ORDER BY x NULLS AUTO) FROM t"),
+        ("nulls_auto_aggregate", "SELECT LISTAGG(x) WITHIN GROUP(ORDER BY y NULLS AUTO) FROM t"),
+        ("epoch_latest", "AT EPOCH LATEST SELECT * FROM t"),
+        ("epoch_number", "AT EPOCH 42 SELECT * FROM t"),
+        ("epoch_time", "AT TIME '2026-01-01 00:00:00' SELECT * FROM t"),
+        ("for_update", "SELECT id FROM t FOR UPDATE"),
+        ("for_update_of", "SELECT id FROM t FOR UPDATE OF t"),
+        ("limit_partition", "SELECT k, v FROM t LIMIT 2 OVER(PARTITION BY k ORDER BY v DESC)"),
+        ("timeseries", "SELECT slice_time, TS_FIRST_VALUE(v) FROM t TIMESERIES slice_time AS '5 seconds' OVER(ORDER BY ts)"),
+        ("match_events", "SELECT * FROM t MATCH (PARTITION BY k ORDER BY ts DEFINE A AS v > 0 PATTERN P AS (A+))"),
+        ("interpolate", "SELECT t.ts FROM t LEFT JOIN u ON t.ts INTERPOLATE PREVIOUS VALUE u.ts"),
+        ("select_label_hint", "SELECT /*+LABEL('coverage_review')*/ id FROM t"),
+        ("recursive_cte", "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r"),
+        ("grouping_sets", "SELECT a, b, COUNT(*) FROM t GROUP BY GROUPING SETS ((a), (b), ())"),
+        ("match_columns", "SELECT MATCH_COLUMNS('^a') FROM t"),
+        ("projection", "CREATE PROJECTION p AS SELECT id FROM t ORDER BY id UNSEGMENTED ALL NODES"),
+        ("table_segmentation", "CREATE TABLE t (id INT) ORDER BY id SEGMENTED BY HASH(id) ALL NODES"),
+        ("table_encoding", "CREATE TABLE t (id INT ENCODING RLE)"),
+        ("flex_table", "CREATE FLEX TABLE t()"),
+        ("copy_local", "COPY t FROM LOCAL '/tmp/data.csv' DELIMITER ','"),
+        ("copy_parser", "COPY t FROM '/tmp/data.json' PARSER FJSONPARSER()"),
+        ("export_parquet", "EXPORT TO PARQUET(directory='/tmp/out') AS SELECT * FROM t"),
+        ("conditional_event", "SELECT CONDITIONAL_TRUE_EVENT(x > 0) OVER(ORDER BY ts) FROM t"),
+        ("nullifzero", "SELECT NULLIFZERO(x) FROM t"),
+        ("regexp_extract", "SELECT REGEXP_SUBSTR(x, '(a)', 1, 1, '', 1) FROM t"),
+        ("time_slice", "SELECT TIME_SLICE(ts, 5, 'MINUTE', 'START') FROM t"),
+        ("array_column_index", "SELECT a[0] FROM t"),
+        ("array_slice", "SELECT (ARRAY[10, 20, 30])[0:2]"),
+        ("copy_parser_parameter", "COPY t FROM '/tmp/data.json' PARSER FJSONPARSER(flatten_maps=true)"),
+        ("array_cast", "SELECT ARRAY['1', '2']::ARRAY[INT]")
+    ] {
+        let check = || -> Result<(), String> {
+            let ast = Dialect::get(DialectType::Vertica).parse(sql).map_err(|e| e.to_string())?;
+            for root in &ast {
+                if root.dfs().any(|e| matches!(e, polyglot_sql::expressions::Expression::Raw(_) | polyglot_sql::expressions::Expression::Command(_))) { return Err("unstructured AST".into()); }
+                let json = serde_json::to_string(root).unwrap();
+                let restored: polyglot_sql::expressions::Expression = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+                assert_eq!(root, &restored);
+            }
+            let output = transpile_with_by_name(sql, "vertica", "vertica", &TranspileOptions::strict()).map_err(|e| e.to_string())?;
+            let again = transpile_with_by_name(&output[0], "vertica", "vertica", &TranspileOptions::strict()).map_err(|e| format!("{}: {e}", output[0]))?;
+            if output != again { return Err(format!("unstable: {output:?} -> {again:?}")); }
+            Ok(())
+        };
+        if let Err(error) = check() { errors.push(format!("{label}: {error}")); }
+    }
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+#[test]
+fn vertica_unsafe_foreign_conversions_fail_in_every_mode() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions, UnsupportedLevel};
+    for sql in [
+        "SELECT x::!INT FROM t",
+        "SELECT SET[1, 2]",
+        "SELECT ROW(1, 2)",
+        "SELECT INTERVAL(3) '1.2345 SECOND'",
+        "SELECT EXPLODE(a) OVER() FROM t",
+        "SELECT ROW_NUMBER() OVER(ORDER BY x NULLS AUTO) FROM t",
+        "SELECT APPROXIMATE_PERCENTILE(x USING PARAMETERS percentiles='0.5') FROM t",
+        "SELECT x FROM t ORDER BY x",
+        "SELECT DATEDIFF(day, a, b) FROM t",
+        "SELECT DATEDIFF(day, a::TIMESTAMPTZ, b::TIMESTAMPTZ) FROM t",
+        "SELECT a[lo:hi] FROM t",
+        "SELECT id FROM t FOR UPDATE",
+        "SELECT /*+LABEL('review')*/ id FROM t",
+        "AT EPOCH LATEST SELECT * FROM t",
+        "SELECT slice_time FROM t TIMESERIES slice_time AS '5 seconds' OVER(ORDER BY ts)",
+        "SELECT * FROM t MATCH(ORDER BY ts DEFINE A AS v > 0 PATTERN P AS(A+))",
+        "SELECT t.ts FROM t LEFT JOIN u ON t.ts INTERPOLATE NEXT VALUE u.ts",
+        "CREATE PROJECTION p AS SELECT id FROM t UNSEGMENTED ALL NODES",
+        "CREATE TABLE t(id INT ENCODING RLE)",
+        "CREATE TABLE t(a ARRAY[INT, 10])",
+        "CREATE TABLE t(b LONG VARBINARY(1000))",
+        "CREATE FLEX TABLE t()",
+        "COPY t FROM LOCAL '/tmp/file'",
+        "EXPORT TO PARQUET(directory='/tmp/out') AS SELECT * FROM t",
+        "SELECT * FROM t LIMIT 1 OVER(PARTITION BY k ORDER BY v)",
+        "SELECT TIME_SLICE(ts, 5, 'MINUTE', 'START') FROM t",
+        "SELECT MATCH_COLUMNS('^a') FROM t",
+        "SELECT REGEXP_SUBSTR(x, '(a)', 1, 1, '', 1) FROM t",
+    ] {
+        for target in ["postgresql", "duckdb"] {
+            for level in [
+                UnsupportedLevel::Ignore,
+                UnsupportedLevel::Warn,
+                UnsupportedLevel::Raise,
+                UnsupportedLevel::Immediate,
+            ] {
+                let mut options = TranspileOptions::default();
+                options.unsupported_level = level;
+                assert!(
+                    transpile_with_by_name(sql, "vertica", target, &options).is_err(),
+                    "{sql} -> {target}, {level:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertica_foreign_values_and_types() {
+    use polyglot_sql::{transpile_with_by_name, Dialect, DialectType, TranspileOptions};
+    // Set POLYGLOT_DUCKDB to a DuckDB CLI to execute the generated expressions too.
+    let engine = std::env::var("POLYGLOT_DUCKDB").ok();
+    for (sql, expected) in [
+        ("SELECT (ARRAY[10, 20])[0] AS result", "10"),
+        ("SELECT (ARRAY[10, 20])[-1] AS result", "NULL"),
+        ("SELECT (ARRAY[10, 20])[99] AS result", "NULL"),
+        ("SELECT (ARRAY[10, 20])[NULL] AS result", "NULL"),
+        ("SELECT (ARRAY[10, 20])[i] AS result FROM (SELECT 1 AS i) t", "20"),
+        ("SELECT (ARRAY[ARRAY[1, 2], ARRAY[3, 4]])[1][0] AS result", "3"),
+        ("SELECT (ARRAY[10, 20, 30])[0:2] AS result", "[10, 20]"),
+        ("SELECT (ARRAY[10, 20, 30])[2:1] AS result", "[]"),
+        ("SELECT (ARRAY[10, 20, 30])[:2] AS result", "[10, 20]"),
+        ("SELECT (ARRAY[10, 20, 30])[1:] AS result", "[20, 30]"),
+        ("SELECT NULLIFZERO(0) AS result", "NULL"),
+        ("SELECT NULLIFZERO(2) AS result", "2"),
+        ("SELECT DATEDIFF(day, TIMESTAMP '2026-01-01 23:59:00', TIMESTAMP '2026-01-02 00:01:00') AS result", "1"),
+        ("SELECT DATEDIFF(day, TIMESTAMP '2026-01-02 00:01:00', TIMESTAMP '2026-01-01 23:59:00') AS result", "-1"),
+        ("SELECT DATEDIFF(year, DATE '2025-12-31', DATE '2026-01-01') AS result", "1"),
+        ("SELECT DATEDIFF(quarter, DATE '2026-03-31', DATE '2026-04-01') AS result", "1"),
+        ("SELECT DATEDIFF(month, DATE '2026-01-31', DATE '2026-02-01') AS result", "1"),
+        ("SELECT DATEDIFF(hour, TIMESTAMP '2026-01-01 00:59:59', TIMESTAMP '2026-01-01 01:00:00') AS result", "1"),
+        ("SELECT DATEDIFF(minute, TIMESTAMP '2026-01-01 00:00:59', TIMESTAMP '2026-01-01 00:01:00') AS result", "1"),
+        ("SELECT DATEDIFF(second, TIMESTAMP '2026-01-01 00:00:00.999999', TIMESTAMP '2026-01-01 00:00:01') AS result", "1"),
+        ("SELECT DATEDIFF(millisecond, TIMESTAMP '2026-01-01 00:00:00.000999', TIMESTAMP '2026-01-01 00:00:00.001') AS result", "1"),
+        ("SELECT DATEDIFF(microsecond, TIMESTAMP '2026-01-01 00:00:00.000001', TIMESTAMP '2026-01-01 00:00:00.000002') AS result", "1"),
+    ] {
+        let output = transpile_with_by_name(sql, "vertica", "duckdb", &TranspileOptions::strict()).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        Dialect::get(DialectType::DuckDB).parse(&output[0]).unwrap_or_else(|e| panic!("{}: {e}", output[0]));
+        let postgres = transpile_with_by_name(sql, "vertica", "postgresql", &TranspileOptions::strict()).unwrap_or_else(|e| panic!("{sql}: {e}"));
+        Dialect::get(DialectType::PostgreSQL).parse(&postgres[0]).unwrap_or_else(|e| panic!("{}: {e}", postgres[0]));
+        if let Some(engine) = &engine {
+            let query = format!("SELECT COALESCE(CAST(result AS VARCHAR), 'NULL') FROM ({}) q", output[0]);
+            let result = std::process::Command::new(engine).args(["-init", "/dev/null", "-noheader", "-list", ":memory:", &query]).output().unwrap();
+            assert!(result.status.success(), "{}: {}", output[0], String::from_utf8_lossy(&result.stderr));
+            assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), expected, "{sql}\n{}", output[0]);
+        }
+    }
+    for (source, hex) in [
+        ("B'101100'", "2c"),
+        ("B'000000001'", "0001"),
+        ("X'abc'", "0abc"),
+        ("B''", ""),
+    ] {
+        let sql = format!("SELECT {source}");
+        let pg = transpile_with_by_name(&sql, "vertica", "postgresql", &TranspileOptions::strict())
+            .unwrap();
+        assert_eq!(pg[0], format!("SELECT DECODE('{hex}', 'hex')"));
+        let duck =
+            transpile_with_by_name(&sql, "vertica", "duckdb", &TranspileOptions::strict()).unwrap();
+        assert_eq!(duck[0], format!("SELECT UNHEX('{hex}')"));
+    }
+}
+
+#[test]
+fn vertica_partitioned_limit_preserves_outputs_and_scopes() {
+    use polyglot_sql::expressions::Expression;
+    use polyglot_sql::{transpile_with_by_name, Dialect, DialectType, TranspileOptions};
+    let sql = "SELECT k, v AS value FROM t LIMIT 2 OVER(PARTITION BY k ORDER BY v DESC)";
+    let ast = Dialect::get(DialectType::Vertica).parse(sql).unwrap();
+    let Expression::Select(select) = &ast[0] else {
+        panic!("expected SELECT")
+    };
+    assert!(select.vertica.as_ref().unwrap().limit_over.is_some());
+    for target in ["postgresql", "duckdb"] {
+        let result =
+            transpile_with_by_name(sql, "vertica", target, &TranspileOptions::strict()).unwrap();
+        assert!(result[0].contains("ROW_NUMBER() OVER"), "{}", result[0]);
+        if target == "duckdb" {
+            assert!(result[0].contains("NULLS FIRST"), "{}", result[0]);
+        }
+        let ast = Dialect::get(if target == "duckdb" {
+            DialectType::DuckDB
+        } else {
+            DialectType::PostgreSQL
+        })
+        .parse(&result[0])
+        .unwrap();
+        let Expression::Select(select) = &ast[0] else {
+            panic!("expected SELECT")
+        };
+        assert_eq!(select.expressions.len(), 2);
+        assert!(matches!(&select.expressions[1], Expression::Alias(a) if a.alias.name == "value"));
+        if target == "duckdb" {
+            if let Ok(engine) = std::env::var("POLYGLOT_DUCKDB") {
+                let sql = format!("CREATE TABLE t(k INT, v INT); INSERT INTO t VALUES (1,1),(1,2),(1,3),(2,NULL),(2,4),(2,5); SELECT k, COALESCE(CAST(value AS VARCHAR), 'NULL') FROM ({}) q ORDER BY k, value NULLS FIRST", result[0]);
+                let output = std::process::Command::new(engine)
+                    .args(["-init", "/dev/null", "-noheader", "-list", ":memory:", &sql])
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stdout).trim(),
+                    "1|2\n1|3\n2|NULL\n2|5"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vertica_structured_fields_and_invalid_native_syntax() {
+    use polyglot_sql::expressions::{Expression, VerticaExpression};
+    use polyglot_sql::traversal::{is_aggregate, ExpressionWalk};
+    use polyglot_sql::{Dialect, DialectType};
+    let dialect = Dialect::get(DialectType::Vertica);
+    let parsed = dialect.parse("CREATE PROJECTION p(id ENCODING RLE) AS SELECT id FROM t ORDER BY id SEGMENTED BY HASH(id) ALL NODES KSAFE 1").unwrap();
+    let Expression::Vertica(node) = &parsed[0] else {
+        panic!("expected native projection")
+    };
+    let VerticaExpression::Projection {
+        physical, columns, ..
+    } = node.as_ref()
+    else {
+        panic!("expected projection")
+    };
+    assert_eq!(physical.order_by.len(), 1);
+    assert_eq!(physical.ksafe, Some(Some(1)));
+    assert_eq!(columns[0].encoding.as_ref().unwrap().name, "RLE");
+    assert!(parsed[0]
+        .dfs()
+        .any(|e| matches!(e, Expression::Column(c) if c.name.name == "id")));
+    assert!(Dialect::get(DialectType::PostgreSQL)
+        .generate(&parsed[0])
+        .is_err());
+    let aggregate = dialect
+        .parse("SELECT APPROXIMATE_PERCENTILE(x USING PARAMETERS percentiles='0.5') FROM t")
+        .unwrap();
+    assert!(aggregate[0].dfs().any(is_aggregate));
+    for sql in [
+        "CREATE TABLE t(r ROW(\"odd name\" INT, \"a\"\"b\" VARCHAR))",
+        "SELECT k, v FROM t LIMIT 1 OVER(PARTITION BY k ORDER BY v) OFFSET 2",
+    ] {
+        let ast = dialect.parse(sql).unwrap();
+        let output = dialect.generate(&ast[0]).unwrap();
+        let again = dialect.parse(&output).unwrap();
+        assert_eq!(output, dialect.generate(&again[0]).unwrap());
+    }
+    for sql in [
+        "CREATE TABLE t(a ARRAY[INT, 0])",
+        "CREATE TABLE t(a ARRAY[INT, 2](100))",
+        "SELECT INTERVAL(7) '1 SECOND'",
+        "SELECT EXPLODE(a USING PARAMETERS x=1, X=2) FROM t",
+        "SELECT * FROM t MATCH(ORDER BY ts DEFINE A AS SUM(v) > 0 PATTERN P AS(A+))",
+        "SELECT DISTINCT v FROM t MATCH(ORDER BY ts DEFINE A AS v > 0 PATTERN P AS(A+))",
+        "SELECT * FROM t MATCH(ORDER BY ts DEFINE A AS v > 0 PATTERN P AS(B+))",
+    ] {
+        assert!(dialect.parse(sql).is_err(), "{sql}");
+    }
+}
+
+#[test]
+fn vertica_ordering_contexts_preserve_null_placement() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions};
+    for (sql, expected) in [
+        (
+            "SELECT ROW_NUMBER() OVER(ORDER BY x DESC) FROM t",
+            "x DESC NULLS FIRST",
+        ),
+        ("SELECT x::INT AS i FROM t ORDER BY i", "i NULLS FIRST"),
+        ("SELECT 1 AS i ORDER BY i", "i NULLS FIRST"),
+    ] {
+        let output =
+            transpile_with_by_name(sql, "vertica", "duckdb", &TranspileOptions::strict()).unwrap();
+        assert!(output[0].contains(expected), "{}", output[0]);
+    }
+    assert!(transpile_with_by_name(
+        "SELECT RANDOM() AS x ORDER BY x NULLS FIRST",
+        "postgresql",
+        "vertica",
+        &TranspileOptions::default()
+    )
+    .is_err());
+}
+
+#[test]
+fn vertica_direct_generation_preserves_filters_and_safe_cast_failures() {
+    use polyglot_sql::{Dialect, DialectType};
+    let source = Dialect::get(DialectType::DuckDB);
+    let target = Dialect::get(DialectType::Vertica);
+    let ast = source
+        .parse("SELECT APPROX_COUNT_DISTINCT(x) FILTER(WHERE keep) FROM t")
+        .unwrap();
+    let sql = target.generate(&ast[0]).unwrap();
+    assert!(
+        sql.contains("APPROXIMATE_COUNT_DISTINCT(CASE WHEN keep THEN x END)"),
+        "{sql}"
+    );
+    let ast = source.parse("SELECT TRY_CAST(x AS INT) FROM t").unwrap();
+    assert!(target.generate(&ast[0]).is_err());
 }

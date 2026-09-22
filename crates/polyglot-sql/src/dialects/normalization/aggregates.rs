@@ -1231,6 +1231,7 @@ pub(super) fn rewrite(
                             this: column.clone(),
                             percentile,
                             order_by: Some(vec![Ordered {
+                                nulls_auto: false,
                                 this: column,
                                 desc: false,
                                 nulls_first: None,

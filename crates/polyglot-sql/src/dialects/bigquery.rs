@@ -764,6 +764,7 @@ impl DialectImpl for BigQueryDialect {
                     })),
                 };
                 let inner_select = Expression::Select(Box::new(Select {
+                    vertica: None,
                     expressions: vec![Expression::Literal(Box::new(Literal::Number(
                         "1".to_string(),
                     )))],

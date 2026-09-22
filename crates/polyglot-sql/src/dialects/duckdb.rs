@@ -5789,6 +5789,7 @@ impl DuckDBDialect {
                                 window_name: None,
                                 partition_by: vec![],
                                 order_by: vec![crate::expressions::Ordered {
+                                    nulls_auto: false,
                                     this: Expression::number(1),
                                     desc: false,
                                     nulls_first: Some(true),

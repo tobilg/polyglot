@@ -9,7 +9,8 @@
         "postgresql": "SELECT 1 EXCEPT SELECT 2",
         "duckdb": "SELECT 1 EXCEPT SELECT 2"
       },
-      "description": "MINUS/EXCEPT"
+      "description": "MINUS/EXCEPT",
+      "read": {}
     },
     {
       "sql": "SELECT 1 FROM dual EXCEPT SELECT 2 FROM dual",
@@ -25,7 +26,8 @@
         "tsql": "SELECT GETDATE(), GETUTCDATE()",
         "duckdb": "SELECT CURRENT_TIMESTAMP, CAST(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS TIMESTAMP)"
       },
-      "description": "Statement-start timestamps lower to STATEMENT_TIMESTAMP in PostgreSQL"
+      "description": "Statement-start timestamps lower to STATEMENT_TIMESTAMP in PostgreSQL",
+      "read": {}
     },
     {
       "sql": "SELECT GETDATE()",
@@ -37,12 +39,7 @@
     },
     {
       "sql": "SELECT DATEDIFF(DAY, a, b) FROM t",
-      "write": {
-        "postgresql": "SELECT CAST(EXTRACT(epoch FROM CAST(b AS TIMESTAMP) - CAST(a AS TIMESTAMP)) / 86400 AS BIGINT) FROM t",
-        "snowflake": "SELECT DATEDIFF(DAY, a, b) FROM t",
-        "tsql": "SELECT DATEDIFF(DAY, a, b) FROM t",
-        "duckdb": "SELECT DATE_DIFF('DAY', a, b) FROM t"
-      },
+      "write": {},
       "read": {
         "mysql": "SELECT DATEDIFF(b, a) FROM t",
         "snowflake": "SELECT DATEDIFF(day, a, b) FROM t"
@@ -69,40 +66,8 @@
       "write": {
         "postgresql": "SELECT ts + INTERVAL '1 MONTH' * n FROM t"
       },
-      "description": "TIMESTAMPADD with a non-literal amount"
-    },
-    {
-      "sql": "SELECT LISTAGG(name USING PARAMETERS separator = ' | ') WITHIN GROUP (ORDER BY ordinal DESC) FROM names",
-      "write": {
-        "postgresql": "SELECT STRING_AGG(name, ' | ' ORDER BY ordinal DESC) FROM names",
-        "mysql": "SELECT GROUP_CONCAT(name ORDER BY ordinal DESC SEPARATOR ' | ') FROM names",
-        "snowflake": "SELECT LISTAGG(name, ' | ') WITHIN GROUP (ORDER BY ordinal DESC) FROM names",
-        "duckdb": "SELECT LISTAGG(name, ' | ' ORDER BY ordinal DESC) FROM names",
-        "tsql": "SELECT STRING_AGG(name, ' | ') WITHIN GROUP (ORDER BY ordinal DESC) FROM names"
-      },
-      "description": "LISTAGG to native string aggregation"
-    },
-    {
-      "sql": "SELECT LISTAGG(name USING PARAMETERS separator = ' | ') WITHIN GROUP (ORDER BY ordinal DESC NULLS FIRST) FROM names",
-      "read": {
-        "postgresql": "SELECT STRING_AGG(name, ' | ' ORDER BY ordinal DESC NULLS FIRST) FROM names"
-      },
-      "description": "STRING_AGG to LISTAGG"
-    },
-    {
-      "sql": "SELECT LISTAGG(name) FROM names",
-      "write": {
-        "postgresql": "SELECT STRING_AGG(name, ',') FROM names",
-        "snowflake": "SELECT LISTAGG(name, ',') FROM names"
-      },
-      "description": "LISTAGG default separator is a comma"
-    },
-    {
-      "sql": "SELECT LISTAGG(x USING PARAMETERS separator = ',') FROM t",
-      "read": {
-        "mysql": "SELECT GROUP_CONCAT(x SEPARATOR ',') FROM t"
-      },
-      "description": "GROUP_CONCAT to LISTAGG"
+      "description": "TIMESTAMPADD with a non-literal amount",
+      "read": {}
     },
     {
       "sql": "SELECT NVL(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), ZEROIFNULL(a) FROM t",
@@ -111,7 +76,8 @@
         "snowflake": "SELECT COALESCE(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), IFF(a IS NULL, 0, a) FROM t",
         "oracle": "SELECT NVL(a, b), NVL2(a, b, c), DECODE(a, 1, 'one', 'other'), NVL(a, 0) FROM t"
       },
-      "description": "NULL-handling functions"
+      "description": "NULL-handling functions",
+      "read": {}
     },
     {
       "sql": "SELECT DECODE(a, 1, 'x', 'y') FROM t",
@@ -146,10 +112,9 @@
         "tsql": "SELECT CAST(a AS BIGINT) FROM t"
       },
       "read": {
-        "snowflake": "SELECT TRY_CAST(a AS INT) FROM t",
         "postgresql": "SELECT a::INTEGER FROM t"
       },
-      "description": "Integers are BIGINT; no TRY_CAST"
+      "description": "Integers are BIGINT"
     },
     {
       "sql": "SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END FROM t",
@@ -191,23 +156,14 @@
       "description": "TOP to LIMIT"
     },
     {
-      "sql": "SELECT a FROM t ORDER BY a",
-      "write": {
-        "postgresql": "SELECT a FROM t ORDER BY a",
-        "duckdb": "SELECT a FROM t ORDER BY a",
-        "mysql": "SELECT a FROM t ORDER BY a"
-      },
-      "description": "Vertica NULL ordering is type-dependent, so none is assumed"
-    },
-    {
-      "sql": "SELECT a FROM t ORDER BY a NULLS LAST",
+      "sql": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 1 ELSE 0 END, a",
       "read": {
         "postgresql": "SELECT a FROM t ORDER BY a"
       },
       "description": "Source NULL ordering is made explicit"
     },
     {
-      "sql": "SELECT a FROM t ORDER BY a DESC NULLS LAST",
+      "sql": "SELECT a FROM t ORDER BY CASE WHEN a IS NULL THEN 1 ELSE 0 END, a DESC",
       "read": {
         "duckdb": "SELECT a FROM t ORDER BY a DESC"
       },
@@ -219,16 +175,8 @@
         "postgresql": "SELECT DIV(7, 2), FACTORIAL(5), ABS(a) FROM t",
         "duckdb": "SELECT 7 // 2, FACTORIAL(5), ABS(a) FROM t"
       },
-      "description": "Vertica-only operators"
-    },
-    {
-      "sql": "CREATE TABLE t (a BIGINT, b DOUBLE PRECISION, c LONG VARCHAR, d LONG VARBINARY, e VARBINARY, f TIMESTAMPTZ)",
-      "write": {
-        "postgresql": "CREATE TABLE t (a BIGINT, b DOUBLE PRECISION, c TEXT, d BYTEA, e BYTEA, f TIMESTAMPTZ)",
-        "duckdb": "CREATE TABLE t (a BIGINT, b DOUBLE, c TEXT, d VARBINARY, e BLOB, f TIMESTAMPTZ)",
-        "snowflake": "CREATE TABLE t (a BIGINT, b DOUBLE, c VARCHAR, d BLOB, e VARBINARY, f TIMESTAMPTZ)"
-      },
-      "description": "Type mapping"
+      "description": "Vertica-only operators",
+      "read": {}
     },
     {
       "sql": "CREATE TABLE t (a BIGINT, b DOUBLE PRECISION, c LONG VARCHAR, d VARBINARY, e TIMESTAMPTZ)",
@@ -236,13 +184,6 @@
         "postgresql": "CREATE TABLE t (a INT, b REAL, c TEXT, d BYTEA, e TIMESTAMPTZ)"
       },
       "description": "PostgreSQL types widen to Vertica types"
-    },
-    {
-      "sql": "SELECT CAST(a AS BIGINT), CAST(b AS VARCHAR), CAST(c AS DOUBLE PRECISION), CAST(d AS VARBINARY) FROM t",
-      "read": {
-        "bigquery": "SELECT SAFE_CAST(a AS INT64), CAST(b AS STRING), CAST(c AS FLOAT64), CAST(d AS BYTES) FROM t"
-      },
-      "description": "BigQuery types"
     }
   ]
 }

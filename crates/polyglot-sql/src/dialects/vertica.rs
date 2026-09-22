@@ -60,7 +60,7 @@ impl DialectImpl for VerticaDialect {
             identifier_quote_style: IdentifierQuoteStyle::DOUBLE_QUOTE,
             dialect: Some(DialectType::Vertica),
             single_string_interval: true,
-            locking_reads_supported: false,
+            locking_reads_supported: true,
             limit_fetch_style: LimitFetchStyle::Limit,
             nvl2_supported: true,
             supports_median: true,
@@ -84,9 +84,12 @@ impl DialectImpl for VerticaDialect {
                 Ok(Expression::Coalesce(f))
             }
 
-            // Vertica has no TRY_CAST; fall back to CAST
-            Expression::TryCast(c) => Ok(Expression::Cast(c)),
-            Expression::SafeCast(c) => Ok(Expression::Cast(c)),
+            Expression::TryCast(_) | Expression::SafeCast(_) => {
+                Err(crate::error::Error::unsupported(
+                    "safe casts: Vertica ::! does not suppress constant cast failures",
+                    "vertica",
+                ))
+            }
 
             // CountIf -> SUM(CASE WHEN condition THEN 1 ELSE 0 END)
             Expression::CountIf(f) => {
@@ -130,11 +133,30 @@ impl DialectImpl for VerticaDialect {
             )),
 
             // APPROX_COUNT_DISTINCT -> APPROXIMATE_COUNT_DISTINCT
-            Expression::ApproxDistinct(f) | Expression::ApproxCountDistinct(f) => {
-                Ok(Expression::Function(Box::new(Function::new(
-                    "APPROXIMATE_COUNT_DISTINCT".to_string(),
-                    vec![f.this],
-                ))))
+            Expression::ApproxDistinct(mut f) | Expression::ApproxCountDistinct(mut f) => {
+                if !f.order_by.is_empty()
+                    || f.limit.is_some()
+                    || f.having_max.is_some()
+                    || f.ignore_nulls.is_some()
+                {
+                    return Err(crate::error::Error::unsupported(
+                        "approximate distinct aggregate modifiers",
+                        "vertica",
+                    ));
+                }
+                if let Some(filter) = f.filter.take() {
+                    f.this = Expression::Case(Box::new(Case {
+                        operand: None,
+                        whens: vec![(filter, f.this)],
+                        else_: None,
+                        comments: Vec::new(),
+                        inferred_type: None,
+                    }));
+                }
+                // DISTINCT is redundant for an approximate distinct count.
+                f.distinct = false;
+                f.name = None;
+                Ok(Expression::ApproxDistinct(f))
             }
 
             // GROUP_CONCAT / STRING_AGG -> LISTAGG

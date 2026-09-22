@@ -78,6 +78,8 @@ fn is_true(v: &bool) -> bool {
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum Expression {
+    /// Structured Vertica syntax whose semantics are not shared by other dialects.
+    Vertica(Box<VerticaExpression>),
     // Literals
     Literal(Box<Literal>),
     Boolean(BooleanLiteral),
@@ -1841,6 +1843,7 @@ impl Expression {
     /// This is much faster than serializing to JSON and extracting the key.
     pub fn variant_name(&self) -> &'static str {
         match self {
+            Expression::Vertica(_) => "vertica",
             Expression::Literal(_) => "literal",
             Expression::Boolean(_) => "boolean",
             Expression::Null(_) => "null",
@@ -3643,6 +3646,8 @@ pub struct Star {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Select {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertica: Option<Box<VerticaSelectExtensions>>,
     /// The select-list: columns, expressions, aliases, and wildcards.
     pub expressions: Vec<Expression>,
     /// The FROM clause, containing one or more table sources.
@@ -3721,6 +3726,7 @@ pub struct Select {
 impl Select {
     pub fn new() -> Self {
         Self {
+            vertica: None,
             expressions: Vec::new(),
             from: None,
             joins: Vec::new(),
@@ -5218,6 +5224,9 @@ pub struct OrderBy {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Ordered {
+    /// Vertica lets the engine select null placement for aggregate/window ordering.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nulls_auto: bool,
     /// The expression to sort by.
     pub this: Expression,
     /// Whether the sort direction is descending (true) or ascending (false).
@@ -5235,6 +5244,7 @@ pub struct Ordered {
 impl Ordered {
     pub fn asc(expr: Expression) -> Self {
         Self {
+            nulls_auto: false,
             this: expr,
             desc: false,
             nulls_first: None,
@@ -5245,6 +5255,7 @@ impl Ordered {
 
     pub fn desc(expr: Expression) -> Self {
         Self {
+            nulls_auto: false,
             this: expr,
             desc: true,
             nulls_first: None,
@@ -5895,6 +5906,9 @@ pub enum OracleTimestampTimeZone {
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[serde(tag = "data_type", rename_all = "snake_case")]
 pub enum DataType {
+    Vertica {
+        vertica_type: Box<VerticaDataType>,
+    },
     // Numeric
     Boolean,
     TinyInt {
@@ -15424,6 +15438,219 @@ pub struct NextValueFor {
     pub this: Box<Expression>,
     #[serde(default)]
     pub order: Option<Box<Expression>>,
+}
+
+// Vertica dialect support.
+/// Native Vertica syntax, retaining semantics through serialization and traversal.
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VerticaExpression {
+    PhysicalTable {
+        this: Expression,
+        physical: VerticaPhysical,
+    },
+    FlexTable {
+        this: Expression,
+        physical: VerticaPhysical,
+    },
+    Projection {
+        name: TableRef,
+        columns: Vec<VerticaProjectionColumn>,
+        query: Expression,
+        physical: VerticaPhysical,
+    },
+    Copy {
+        table: TableRef,
+        columns: Vec<Identifier>,
+        local: bool,
+        sources: Vec<Expression>,
+        parser: Option<VerticaParserCall>,
+        options: Vec<VerticaParameter>,
+    },
+    ExportParquet {
+        options: Vec<VerticaParameter>,
+        over: Option<Over>,
+        query: Expression,
+    },
+    Interpolate {
+        left: Expression,
+        right: Expression,
+        previous: bool,
+    },
+    /// Lowered array access retains source bounds semantics until generation.
+    ArrayAccess {
+        this: Expression,
+        indices: Vec<Expression>,
+    },
+    ArraySlice {
+        this: Expression,
+        start: Option<Expression>,
+        end: Option<Expression>,
+    },
+    BoundaryDateDiff {
+        start: Expression,
+        end: Expression,
+        unit: IntervalUnit,
+    },
+    UsingParameters {
+        this: Expression,
+        parameters: Vec<VerticaParameter>,
+    },
+    SafeCast {
+        this: Expression,
+        to: DataType,
+    },
+    Set {
+        values: Vec<Expression>,
+    },
+    Interval {
+        value: Expression,
+        precision: Option<u32>,
+        year_month: bool,
+        unit: Option<String>,
+        end_unit: Option<String>,
+    },
+    /// Hexadecimal byte value, distinct from PostgreSQL's bit strings.
+    Binary {
+        hex: String,
+    },
+    Historical {
+        query: Expression,
+        point: VerticaHistoricalPoint,
+    },
+    PartitionBest,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaParameter {
+    pub name: Identifier,
+    pub value: Expression,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum VerticaHistoricalPoint {
+    Latest,
+    Epoch(Expression),
+    Time(Expression),
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VerticaDataType {
+    Array {
+        element_type: DataType,
+        bound: Option<VerticaCollectionBound>,
+    },
+    Set {
+        element_type: DataType,
+        bound: Option<VerticaCollectionBound>,
+    },
+    Row {
+        fields: Vec<StructField>,
+    },
+    LongVarBinary {
+        length: Option<u32>,
+    },
+    Interval {
+        precision: Option<u32>,
+        year_month: bool,
+        unit: Option<String>,
+        end_unit: Option<String>,
+    },
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum VerticaCollectionBound {
+    Elements(u32),
+    Bytes(u32),
+}
+
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
+)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaSelectExtensions {
+    pub timeseries: Option<VerticaTimeseries>,
+    pub match_clause: Option<VerticaMatch>,
+    pub limit_over: Option<Over>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaTimeseries {
+    pub alias: Identifier,
+    pub interval: Expression,
+    pub over: Over,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaMatch {
+    pub partition_by: Vec<Expression>,
+    pub order_by: Vec<Ordered>,
+    pub definitions: Vec<VerticaParameter>,
+    pub name: Identifier,
+    pub pattern: VerticaPattern,
+    /// None = default; true = FIRST EVENT; false = ALL EVENTS.
+    pub first_event: Option<bool>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum VerticaPattern {
+    Event(Identifier),
+    Sequence(Vec<VerticaPattern>),
+    Alternative(Vec<VerticaPattern>),
+    Group(Box<VerticaPattern>),
+    Repeat {
+        pattern: Box<VerticaPattern>,
+        quantifier: String,
+    },
+}
+
+#[derive(
+    polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
+)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaPhysical {
+    pub order_by: Vec<Ordered>,
+    pub segmentation: Option<VerticaSegmentation>,
+    pub ksafe: Option<Option<u32>>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VerticaSegmentation {
+    Segmented {
+        expression: Expression,
+        offset: Option<u32>,
+    },
+    Unsegmented {
+        node: Option<Identifier>,
+    },
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaProjectionColumn {
+    pub name: Identifier,
+    pub encoding: Option<Identifier>,
+}
+
+#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(TS))]
+pub struct VerticaParserCall {
+    pub name: TableRef,
+    pub parameters: Vec<VerticaParameter>,
 }
 
 #[cfg(test)]

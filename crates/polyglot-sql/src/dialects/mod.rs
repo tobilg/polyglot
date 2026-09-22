@@ -706,7 +706,8 @@ where
             Expression::Union(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Intersect(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
             Expression::Except(set_op) => set_op.with.is_none() && set_op.order_by.is_none(),
-            Expression::Literal(_)
+            Expression::Vertica(_)
+            | Expression::Literal(_)
             | Expression::Boolean(_)
             | Expression::Null(_)
             | Expression::Identifier(_)
@@ -1056,6 +1057,23 @@ where
     // First recursively transform children, then apply the transform function
     let expr = match expr {
         Expression::Select(mut select) => {
+            if let Some(extension) = &mut select.vertica {
+                use crate::ast_children::AstNode;
+                let mut failure = None;
+                extension.visit_expressions_mut(&mut |child| {
+                    if failure.is_none() {
+                        let old =
+                            std::mem::replace(child, Expression::Null(crate::expressions::Null));
+                        match transform_recursive(old, transform_fn) {
+                            Ok(new) => *child = new,
+                            Err(error) => failure = Some(error),
+                        }
+                    }
+                });
+                if let Some(error) = failure {
+                    return Err(error);
+                }
+            }
             select.expressions = select
                 .expressions
                 .into_iter()
@@ -3484,6 +3502,9 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
+                let expr =
+                    normalization::vertica::prepare_conversion(expr, self.dialect_type, target)?;
+                normalization::vertica::validate_conversion(&expr, self.dialect_type, target)?;
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
                 // where VARCHAR_LENGTH = None and VARCHAR maps to TEXT.
@@ -4633,7 +4654,10 @@ impl Dialect {
                 Self::push_unsupported_diagnostic(&mut diagnostics, "UNNEST");
             }
 
-            if !Self::target_supports_remaining_explode(target) && Self::node_is_explode(node) {
+            if !Self::target_supports_remaining_explode(target)
+                && Self::node_is_explode(node)
+                && !(source == DialectType::Vertica && target == DialectType::Vertica)
+            {
                 Self::push_unsupported_diagnostic(&mut diagnostics, "EXPLODE");
             }
 

@@ -15,7 +15,7 @@ mod scalar;
 mod statements;
 pub(in crate::dialects) mod temporal;
 mod types;
-mod vertica;
+pub(in crate::dialects) mod vertica;
 
 #[derive(Debug, Clone, Copy)]
 struct NormalizationContext {

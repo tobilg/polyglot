@@ -2555,6 +2555,7 @@ impl Generator {
             Expression::Insert(insert) => self.generate_insert(insert),
             Expression::Update(update) => self.generate_update(update),
             Expression::Delete(delete) => self.generate_delete(delete),
+            Expression::Vertica(node) => self.generate_vertica(node),
             Expression::Literal(lit) => self.generate_literal(lit),
             Expression::Boolean(b) => self.generate_boolean(b),
             Expression::Null(_) => {
@@ -2712,6 +2713,7 @@ impl Generator {
             Expression::AnyValue(f) => self.generate_agg_func("ANY_VALUE", f),
             Expression::ApproxDistinct(f) => {
                 match self.config.dialect {
+                    Some(DialectType::Vertica) => self.generate_vertica_approximate_count(f),
                     Some(DialectType::Hive)
                     | Some(DialectType::Spark)
                     | Some(DialectType::Databricks)
@@ -2733,7 +2735,11 @@ impl Generator {
                 }
             }
             Expression::ApproxCountDistinct(f) => {
-                self.generate_agg_func("APPROX_COUNT_DISTINCT", f)
+                if self.config.dialect == Some(DialectType::Vertica) {
+                    self.generate_vertica_approximate_count(f)
+                } else {
+                    self.generate_agg_func("APPROX_COUNT_DISTINCT", f)
+                }
             }
             Expression::ApproxPercentile(f) => self.generate_approx_percentile(f),
             Expression::Percentile(f) => self.generate_percentile("PERCENTILE", f),
@@ -4607,6 +4613,7 @@ impl Generator {
                         .alias(null_alias.clone()),
                 );
                 outer_order_expressions.push(Ordered {
+                    nulls_auto: false,
                     this: Expression::column(null_alias),
                     desc: ordered.nulls_first == Some(true),
                     nulls_first: None,
@@ -4621,6 +4628,7 @@ impl Generator {
                 .expressions
                 .push(sort_expression.alias(key_alias.clone()));
             outer_order_expressions.push(Ordered {
+                nulls_auto: false,
                 this: Expression::column(key_alias),
                 desc: ordered.desc,
                 nulls_first: None,
@@ -4668,6 +4676,12 @@ impl Generator {
     }
 
     fn generate_select(&mut self, select: &Select) -> Result<()> {
+        if select.vertica.is_some() && self.config.dialect != Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "Vertica query extension",
+                format!("{:?}", self.config.dialect),
+            ));
+        }
         use crate::dialects::DialectType;
 
         if let Some(resolved_select) = self.resolve_tsql_null_ordering_for_select(select) {
@@ -4734,6 +4748,7 @@ impl Generator {
                 });
 
                 let outer_select = Select {
+                    vertica: None,
                     expressions: vec![star],
                     from: Some(crate::expressions::From {
                         expressions: vec![Expression::Subquery(Box::new(subquery))],
@@ -5085,6 +5100,10 @@ impl Generator {
             self.generate_connect(connect)?;
         }
 
+        if let Some(clause) = select.vertica.as_ref().and_then(|v| v.timeseries.as_ref()) {
+            self.generate_vertica_timeseries(clause)?;
+        }
+
         // GROUP BY
         if let Some(group_by) = &select.group_by {
             if self.config.pretty {
@@ -5270,6 +5289,14 @@ impl Generator {
             }
         }
 
+        if let Some(clause) = select
+            .vertica
+            .as_ref()
+            .and_then(|v| v.match_clause.as_ref())
+        {
+            self.generate_vertica_match(clause)?;
+        }
+
         // DISTRIBUTE BY (Hive/Spark)
         if let Some(distribute_by) = &select.distribute_by {
             self.write_clause_expressions("DISTRIBUTE BY", &distribute_by.expressions)?;
@@ -5305,7 +5332,11 @@ impl Generator {
             } else {
                 "ORDER BY"
             };
-            self.write_order_clause(keyword, &order_by.expressions)?;
+            if self.config.dialect == Some(DialectType::Vertica) {
+                self.vertica_top_order(&order_by.expressions, &select.expressions)?;
+            } else {
+                self.write_order_clause(keyword, &order_by.expressions)?;
+            }
         }
 
         // TSQL: FETCH requires ORDER BY. If there's a FETCH but no ORDER BY, add ORDER BY (SELECT NULL) OFFSET 0 ROWS
@@ -5420,6 +5451,12 @@ impl Generator {
                         self.write_formatted_comment(comment);
                     }
                 }
+            }
+
+            if let Some(over) = select.vertica.as_ref().and_then(|v| v.limit_over.as_ref()) {
+                self.write(" OVER (");
+                self.generate_over(over)?;
+                self.write(")");
             }
 
             // Convert TOP to LIMIT for non-TOP dialects
@@ -7112,6 +7149,7 @@ impl Generator {
         };
 
         let mut outer_select = Select {
+            vertica: None,
             expressions: vec![Expression::Star(Star {
                 table: None,
                 except: None,
@@ -7146,12 +7184,14 @@ impl Generator {
 
     pub(crate) fn dummy_tsql_order_by() -> OrderBy {
         let null_select = Expression::Select(Box::new(Select {
+            vertica: None,
             expressions: vec![Expression::Null(Null)],
             ..Select::new()
         }));
 
         OrderBy {
             expressions: vec![Ordered {
+                nulls_auto: false,
                 this: Expression::Subquery(Box::new(Subquery {
                     this: null_select,
                     alias: None,
@@ -9914,7 +9954,13 @@ impl Generator {
                     ConstraintType::Encode => {
                         if let Some(ref encoding) = col.encoding {
                             self.write_space();
-                            self.write_keyword("ENCODE");
+                            self.write_keyword(
+                                if self.config.dialect == Some(DialectType::Vertica) {
+                                    "ENCODING"
+                                } else {
+                                    "ENCODE"
+                                },
+                            );
                             self.write_space();
                             self.write(encoding);
                         }
@@ -10140,7 +10186,11 @@ impl Generator {
             // Redshift: ENCODE encoding_type (legacy path)
             if let Some(ref encoding) = col.encoding {
                 self.write_space();
-                self.write_keyword("ENCODE");
+                self.write_keyword(if self.config.dialect == Some(DialectType::Vertica) {
+                    "ENCODING"
+                } else {
+                    "ENCODE"
+                });
                 self.write_space();
                 self.write(encoding);
             }
@@ -17341,7 +17391,7 @@ impl Generator {
             None |  // No dialect = preserve everything
             Some(DialectType::Oracle) | Some(DialectType::MySQL) |
             Some(DialectType::Spark) | Some(DialectType::Hive) |
-            Some(DialectType::Databricks) | Some(DialectType::PostgreSQL)
+            Some(DialectType::Databricks) | Some(DialectType::PostgreSQL) | Some(DialectType::Vertica)
         );
 
         if !supports_hints || hint.expressions.is_empty() {
@@ -18599,7 +18649,6 @@ impl Generator {
                     | Expression::Column(_)
                     | Expression::Identifier(_)
                     | Expression::Paren(_)
-                    | Expression::Function(_)
             );
             if !atomic {
                 self.write("(");
@@ -19586,7 +19635,7 @@ impl Generator {
             if has_content {
                 self.write_space();
             }
-            self.write_keyword("PARTITION BY");
+            self.write_keyword(if over.partition_by.len() == 1 && matches!(&over.partition_by[0], Expression::Vertica(v) if matches!(v.as_ref(), VerticaExpression::PartitionBest)) { "PARTITION" } else { "PARTITION BY" });
             self.write_space();
             for (i, expr) in over.partition_by.iter().enumerate() {
                 if i > 0 {
@@ -21855,7 +21904,10 @@ impl Generator {
         }
         self.generate_expression(&f.this)?;
         if f.max_length.is_some() && self.config.dialect != Some(DialectType::Vertica) {
-            self.unsupported("LISTAGG max_length is not supported in this dialect")?;
+            return Err(crate::error::Error::unsupported(
+                "Vertica LISTAGG byte limit",
+                format!("{:?}", self.config.dialect),
+            ));
         }
         if self.config.dialect == Some(DialectType::Vertica) {
             self.generate_vertica_listagg_parameters(f)?;
@@ -23753,6 +23805,12 @@ impl Generator {
     // Type conversion generators
 
     fn generate_try_cast(&mut self, cast: &Cast) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "safe casts: Vertica ::! does not suppress constant cast failures",
+                "vertica",
+            ));
+        }
         use crate::dialects::DialectType;
 
         // SingleStore uses !:> syntax for try cast
@@ -23815,6 +23873,12 @@ impl Generator {
     }
 
     fn generate_safe_cast(&mut self, cast: &Cast) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "safe casts: Vertica ::! does not suppress constant cast failures",
+                "vertica",
+            ));
+        }
         self.write_keyword("SAFE_CAST");
         self.write("(");
         self.generate_expression(&cast.this)?;
@@ -25451,6 +25515,15 @@ impl Generator {
             self.write_space();
             self.generate_with_fill(with_fill)?;
         }
+        if ordered.nulls_auto {
+            if self.config.dialect != Some(DialectType::Vertica) || ordered.nulls_first.is_some() {
+                return Err(crate::error::Error::unsupported(
+                    "Vertica NULLS AUTO",
+                    format!("{:?}", self.config.dialect),
+                ));
+            }
+            self.write(" NULLS AUTO");
+        }
         Ok(())
     }
 
@@ -26322,6 +26395,7 @@ impl Generator {
                     }
                 }
             }
+            DataType::Vertica { vertica_type } => self.generate_vertica_type(vertica_type)?,
             DataType::Oracle { oracle_type } => {
                 self.write_oracle_data_type(oracle_type)?;
             }
@@ -31465,7 +31539,11 @@ impl Generator {
 
     fn generate_encode(&mut self, e: &Encode) -> Result<()> {
         // ENCODE(string, charset)
-        self.write_keyword("ENCODE");
+        self.write_keyword(if self.config.dialect == Some(DialectType::Vertica) {
+            "ENCODING"
+        } else {
+            "ENCODE"
+        });
         self.write("(");
         self.generate_expression(&e.this)?;
         if let Some(charset) = &e.charset {
@@ -31481,7 +31559,11 @@ impl Generator {
         if e.key.is_some() {
             self.write_keyword("KEY ");
         }
-        self.write_keyword("ENCODE");
+        self.write_keyword(if self.config.dialect == Some(DialectType::Vertica) {
+            "ENCODING"
+        } else {
+            "ENCODE"
+        });
         self.write_space();
         self.generate_expression(&e.this)?;
         if !e.properties.is_empty() {
@@ -41965,6 +42047,733 @@ impl Generator {
 impl Default for Generator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Vertica dialect support.
+impl Generator {
+    fn generate_vertica_approximate_count(&mut self, aggregate: &AggFunc) -> Result<()> {
+        if !aggregate.order_by.is_empty()
+            || aggregate.limit.is_some()
+            || aggregate.having_max.is_some()
+            || aggregate.ignore_nulls.is_some()
+        {
+            return Err(crate::error::Error::unsupported(
+                "approximate distinct aggregate modifiers",
+                "vertica",
+            ));
+        }
+        let mut aggregate = aggregate.clone();
+        if let Some(filter) = aggregate.filter.take() {
+            aggregate.this = Expression::Case(Box::new(Case {
+                operand: None,
+                whens: vec![(filter, aggregate.this)],
+                else_: None,
+                comments: Vec::new(),
+                inferred_type: None,
+            }));
+        }
+        aggregate.distinct = false;
+        aggregate.name = None;
+        self.generate_agg_func("APPROXIMATE_COUNT_DISTINCT", &aggregate)
+    }
+
+    fn vertica_top_order(
+        &mut self,
+        expressions: &[Ordered],
+        projections: &[Expression],
+    ) -> Result<()> {
+        let mut order = Vec::new();
+        for expression in expressions {
+            if expression.nulls_auto {
+                return Err(crate::error::Error::unsupported(
+                    "top-level NULLS AUTO",
+                    "vertica",
+                ));
+            }
+            if let Some(first) = expression.nulls_first {
+                let mut key = &expression.this;
+                if let Expression::Literal(lit) = key {
+                    if let Literal::Number(n) = lit.as_ref() {
+                        key = n
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|n| n.checked_sub(1))
+                            .and_then(|n| projections.get(n))
+                            .ok_or_else(|| {
+                                crate::error::Error::unsupported(
+                                    "unresolved ORDER BY ordinal",
+                                    "vertica",
+                                )
+                            })?;
+                    }
+                }
+                if let Expression::Column(column) = key {
+                    if column.table.is_none() {
+                        if let Some(Expression::Alias(alias)) = projections.iter().find(|e| matches!(e, Expression::Alias(a) if a.alias.name.eq_ignore_ascii_case(&column.name.name))) { key = &alias.this; }
+                    }
+                }
+                if let Expression::Alias(alias) = key {
+                    key = &alias.this;
+                }
+                fn repeatable(key: &Expression) -> bool {
+                    match key {
+                        Expression::Column(_)
+                        | Expression::Literal(_)
+                        | Expression::Null(_)
+                        | Expression::Boolean(_) => true,
+                        Expression::Cast(c) => repeatable(&c.this),
+                        _ => false,
+                    }
+                }
+                if !repeatable(key) {
+                    return Err(crate::error::Error::unsupported(
+                        "explicit top-level null ordering of a potentially volatile expression",
+                        "vertica",
+                    ));
+                }
+                let null_test = Expression::IsNull(Box::new(IsNull {
+                    this: key.clone(),
+                    not: false,
+                    postfix_form: false,
+                }));
+                let case = Expression::Case(Box::new(Case {
+                    operand: None,
+                    whens: vec![(null_test, Expression::number(if first { 0 } else { 1 }))],
+                    else_: Some(Expression::number(if first { 1 } else { 0 })),
+                    comments: Vec::new(),
+                    inferred_type: None,
+                }));
+                order.push(Ordered::asc(case));
+            }
+            let mut expression = expression.clone();
+            expression.nulls_first = None;
+            order.push(expression);
+        }
+        self.write_order_clause("ORDER BY", &order)
+    }
+
+    fn generate_vertica_parameters(&mut self, parameters: &[VerticaParameter]) -> Result<()> {
+        for (i, parameter) in parameters.iter().enumerate() {
+            if i != 0 {
+                self.write(", ");
+            }
+            self.generate_identifier(&parameter.name)?;
+            self.write(" = ");
+            self.generate_expression(&parameter.value)?;
+        }
+        Ok(())
+    }
+
+    fn generate_vertica_physical(&mut self, physical: &VerticaPhysical) -> Result<()> {
+        if !physical.order_by.is_empty() {
+            self.write(" ORDER BY ");
+            for (i, ordered) in physical.order_by.iter().enumerate() {
+                if i != 0 {
+                    self.write(", ");
+                }
+                self.generate_ordered(ordered)?;
+            }
+        }
+        if let Some(segmentation) = &physical.segmentation {
+            match segmentation {
+                VerticaSegmentation::Segmented { expression, offset } => {
+                    self.write(" SEGMENTED BY ");
+                    self.generate_expression(expression)?;
+                    self.write(" ALL NODES");
+                    if let Some(offset) = offset {
+                        self.write(&format!(" OFFSET {offset}"));
+                    }
+                }
+                VerticaSegmentation::Unsegmented { node } => {
+                    if let Some(node) = node {
+                        self.write(" UNSEGMENTED NODE ");
+                        self.generate_identifier(node)?;
+                    } else {
+                        self.write(" UNSEGMENTED ALL NODES");
+                    }
+                }
+            }
+        }
+        if let Some(ksafe) = physical.ksafe {
+            self.write(" KSAFE");
+            if let Some(value) = ksafe {
+                self.write(&format!(" {value}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn generate_vertica_timeseries(&mut self, clause: &VerticaTimeseries) -> Result<()> {
+        self.write(" TIMESERIES ");
+        self.generate_identifier(&clause.alias)?;
+        self.write(" AS ");
+        self.generate_expression(&clause.interval)?;
+        self.write(" OVER (");
+        self.generate_over(&clause.over)?;
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_vertica_match(&mut self, clause: &VerticaMatch) -> Result<()> {
+        self.write(" MATCH (");
+        if !clause.partition_by.is_empty() {
+            self.write("PARTITION BY ");
+            for (i, value) in clause.partition_by.iter().enumerate() {
+                if i != 0 {
+                    self.write(", ");
+                }
+                self.generate_expression(value)?;
+            }
+            self.write(" ");
+        }
+        self.write("ORDER BY ");
+        for (i, value) in clause.order_by.iter().enumerate() {
+            if i != 0 {
+                self.write(", ");
+            }
+            self.generate_ordered(value)?;
+        }
+        self.write(" DEFINE ");
+        for (i, event) in clause.definitions.iter().enumerate() {
+            if i != 0 {
+                self.write(", ");
+            }
+            self.generate_identifier(&event.name)?;
+            self.write(" AS ");
+            self.generate_expression(&event.value)?;
+        }
+        self.write(" PATTERN ");
+        self.generate_identifier(&clause.name)?;
+        self.write(" AS (");
+        self.generate_vertica_pattern(&clause.pattern)?;
+        self.write(")");
+        if let Some(first) = clause.first_event {
+            self.write(if first {
+                " ROWS MATCH FIRST EVENT"
+            } else {
+                " ROWS MATCH ALL EVENTS"
+            });
+        }
+        self.write(")");
+        Ok(())
+    }
+
+    fn generate_vertica_pattern(&mut self, pattern: &VerticaPattern) -> Result<()> {
+        match pattern {
+            VerticaPattern::Event(name) => self.generate_identifier(name)?,
+            VerticaPattern::Sequence(items) | VerticaPattern::Alternative(items) => {
+                let separator = if matches!(pattern, VerticaPattern::Sequence(_)) {
+                    " "
+                } else {
+                    " | "
+                };
+                for (i, item) in items.iter().enumerate() {
+                    if i != 0 {
+                        self.write(separator);
+                    }
+                    self.generate_vertica_pattern(item)?;
+                }
+            }
+            VerticaPattern::Group(value) => {
+                self.write("(");
+                self.generate_vertica_pattern(value)?;
+                self.write(")");
+            }
+            VerticaPattern::Repeat {
+                pattern,
+                quantifier,
+            } => {
+                if !matches!(
+                    quantifier.as_str(),
+                    "*" | "+" | "?" | "*?" | "+?" | "??" | "*+" | "++" | "?+"
+                ) {
+                    return Err(crate::error::Error::generate("Invalid MATCH quantifier"));
+                }
+                self.generate_vertica_pattern(pattern)?;
+                self.write(quantifier);
+            }
+        }
+        Ok(())
+    }
+
+    fn generate_vertica(&mut self, node: &VerticaExpression) -> Result<()> {
+        use VerticaExpression as V;
+        if matches!(
+            self.config.dialect,
+            Some(DialectType::PostgreSQL | DialectType::DuckDB)
+        ) {
+            match node {
+                V::ArrayAccess { this, indices } => {
+                    self.write("(SELECT _polyglot_v.a");
+                    for i in 0..indices.len() {
+                        self.write(&format!("[CASE WHEN _polyglot_v.i{i} < 0 OR _polyglot_v.i{i} >= 2147483647 THEN NULL ELSE _polyglot_v.i{i} + 1 END]"));
+                    }
+                    self.write(" FROM (SELECT ");
+                    self.generate_expression(this)?;
+                    self.write(" AS a");
+                    for (i, index) in indices.iter().enumerate() {
+                        self.write(", ");
+                        self.generate_expression(index)?;
+                        self.write(&format!(" AS i{i}"));
+                    }
+                    self.write(") AS _polyglot_v)");
+                    return Ok(());
+                }
+                V::ArraySlice { this, start, end } => {
+                    let bound = |e: &Expression| match e {
+                        Expression::Literal(l) => match l.as_ref() {
+                            Literal::Number(n) => n.parse::<u64>().ok(),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if start.as_ref().is_some_and(|s| bound(s).is_none())
+                        || end.as_ref().is_some_and(|e| bound(e).is_none())
+                    {
+                        return Err(crate::error::Error::unsupported(
+                            "Vertica array slices with dynamic or negative bounds",
+                            format!("{:?}", self.config.dialect),
+                        ));
+                    }
+                    self.write("(");
+                    self.generate_expression(this)?;
+                    self.write(")[");
+                    let first = start
+                        .as_ref()
+                        .and_then(bound)
+                        .unwrap_or(0)
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            crate::error::Error::generate("Array slice bound overflow")
+                        })?;
+                    self.write(&first.to_string());
+                    self.write(":");
+                    if let Some(end) = end {
+                        self.generate_expression(end)?;
+                    }
+                    self.write("]");
+                    return Ok(());
+                }
+                V::BoundaryDateDiff { start, end, unit } => {
+                    self.generate_vertica_boundary_diff(start, end, unit)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        if let V::Binary { hex } = node {
+            match self.config.dialect {
+                Some(DialectType::PostgreSQL) => {
+                    self.write("DECODE('");
+                    self.write(hex);
+                    self.write("', 'hex')");
+                    return Ok(());
+                }
+                Some(DialectType::DuckDB) => {
+                    self.write("UNHEX('");
+                    self.write(hex);
+                    self.write("')");
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        if self.config.dialect != Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "native Vertica expression",
+                format!("{:?}", self.config.dialect),
+            ));
+        }
+        match node {
+            V::PhysicalTable { this, physical } => {
+                self.generate_expression(this)?;
+                self.generate_vertica_physical(physical)?;
+            }
+            V::FlexTable { this, physical } => {
+                let sql = self.generate_to_string(this)?;
+                let Some(rest) = sql.strip_prefix("CREATE TABLE ") else {
+                    return Err(crate::error::Error::generate(
+                        "Invalid FLEX TABLE definition",
+                    ));
+                };
+                self.write("CREATE FLEX TABLE ");
+                self.write(rest);
+                if matches!(this, Expression::CreateTable(table) if table.columns.is_empty() && table.as_select.is_none())
+                {
+                    self.write("()");
+                }
+                self.generate_vertica_physical(physical)?;
+            }
+            V::Projection {
+                name,
+                columns,
+                query,
+                physical,
+            } => {
+                self.write("CREATE PROJECTION ");
+                self.generate_table(name)?;
+                if !columns.is_empty() {
+                    self.write(" (");
+                    for (i, column) in columns.iter().enumerate() {
+                        if i != 0 {
+                            self.write(", ");
+                        }
+                        self.generate_identifier(&column.name)?;
+                        if let Some(encoding) = &column.encoding {
+                            self.write(" ENCODING ");
+                            self.generate_identifier(encoding)?;
+                        }
+                    }
+                    self.write(")");
+                }
+                self.write(" AS ");
+                self.generate_expression(query)?;
+                self.generate_vertica_physical(physical)?;
+            }
+            V::Copy {
+                table,
+                columns,
+                local,
+                sources,
+                parser,
+                options,
+            } => {
+                self.write("COPY ");
+                self.generate_table(table)?;
+                if !columns.is_empty() {
+                    self.write(" (");
+                    for (i, column) in columns.iter().enumerate() {
+                        if i != 0 {
+                            self.write(", ");
+                        }
+                        self.generate_identifier(column)?;
+                    }
+                    self.write(")");
+                }
+                self.write(if *local { " FROM LOCAL " } else { " FROM " });
+                for (i, source) in sources.iter().enumerate() {
+                    if i != 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(source)?;
+                }
+                if let Some(parser) = parser {
+                    self.write(" PARSER ");
+                    self.generate_table(&parser.name)?;
+                    self.write("(");
+                    self.generate_vertica_parameters(&parser.parameters)?;
+                    self.write(")");
+                }
+                for option in options {
+                    if !matches!(
+                        option.name.name.as_str(),
+                        "DELIMITER" | "NULL" | "ESCAPE" | "SKIP" | "REJECTMAX"
+                    ) {
+                        return Err(crate::error::Error::generate("Invalid COPY option"));
+                    }
+                    self.write(" ");
+                    self.write(&option.name.name);
+                    self.write(" ");
+                    self.generate_expression(&option.value)?;
+                }
+            }
+            V::ExportParquet {
+                options,
+                over,
+                query,
+            } => {
+                self.write("EXPORT TO PARQUET (");
+                self.generate_vertica_parameters(options)?;
+                self.write(")");
+                if let Some(over) = over {
+                    self.write(" OVER (");
+                    self.generate_over(over)?;
+                    self.write(")");
+                }
+                self.write(" AS ");
+                self.generate_expression(query)?;
+            }
+            V::Interpolate {
+                left,
+                right,
+                previous,
+            } => {
+                self.generate_expression(left)?;
+                self.write(if *previous {
+                    " INTERPOLATE PREVIOUS VALUE "
+                } else {
+                    " INTERPOLATE NEXT VALUE "
+                });
+                self.generate_expression(right)?;
+            }
+            V::ArrayAccess { .. } | V::ArraySlice { .. } | V::BoundaryDateDiff { .. } => {
+                return Err(crate::error::Error::unsupported(
+                    "lowered Vertica semantics",
+                    "vertica",
+                ))
+            }
+            V::UsingParameters { this, parameters } => {
+                let sql = self.generate_to_string(this)?;
+                let Some(call) = sql.strip_suffix(')') else {
+                    return Err(crate::error::Error::generate(
+                        "USING PARAMETERS requires a function call",
+                    ));
+                };
+                self.write(call);
+                if !parameters.is_empty() {
+                    self.write(" USING PARAMETERS ");
+                }
+                for (i, param) in parameters.iter().enumerate() {
+                    if i != 0 {
+                        self.write(", ");
+                    }
+                    self.generate_identifier(&param.name)?;
+                    self.write(" = ");
+                    self.generate_expression(&param.value)?;
+                }
+                self.write(")");
+            }
+            V::SafeCast { this, to } => {
+                let parens = !matches!(
+                    this,
+                    Expression::Column(_)
+                        | Expression::Identifier(_)
+                        | Expression::Literal(_)
+                        | Expression::Paren(_)
+                );
+                if parens {
+                    self.write("(");
+                }
+                self.generate_expression(this)?;
+                if parens {
+                    self.write(")");
+                }
+                self.write("::!");
+                self.generate_data_type(to)?;
+            }
+            V::Set { values } => {
+                self.write("SET[");
+                for (i, value) in values.iter().enumerate() {
+                    if i != 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(value)?;
+                }
+                self.write("]");
+            }
+            V::Interval {
+                value,
+                precision,
+                year_month,
+                unit,
+                end_unit,
+            } => {
+                self.write(if *year_month {
+                    "INTERVALYM"
+                } else {
+                    "INTERVAL"
+                });
+                if let Some(p) = precision {
+                    self.write(&format!("({p})"));
+                }
+                self.write(" ");
+                self.generate_expression(value)?;
+                self.generate_vertica_interval_qualifiers(unit, end_unit);
+            }
+            V::Binary { hex } => {
+                self.write("X'");
+                self.write(hex);
+                self.write("'");
+            }
+            V::Historical { query, point } => {
+                match point {
+                    VerticaHistoricalPoint::Latest => self.write("AT EPOCH LATEST "),
+                    VerticaHistoricalPoint::Epoch(value) => {
+                        self.write("AT EPOCH ");
+                        self.generate_expression(value)?;
+                        self.write(" ");
+                    }
+                    VerticaHistoricalPoint::Time(value) => {
+                        self.write("AT TIME ");
+                        self.generate_expression(value)?;
+                        self.write(" ");
+                    }
+                }
+                self.generate_expression(query)?;
+            }
+            V::PartitionBest => self.write("BEST"),
+        }
+        Ok(())
+    }
+
+    fn generate_vertica_boundary_diff(
+        &mut self,
+        start: &Expression,
+        end: &Expression,
+        unit: &IntervalUnit,
+    ) -> Result<()> {
+        if self.config.dialect == Some(DialectType::DuckDB) && *unit != IntervalUnit::Week {
+            let unit = match unit {
+                IntervalUnit::Year => "year",
+                IntervalUnit::Quarter => "quarter",
+                IntervalUnit::Month => "month",
+                IntervalUnit::Day => "day",
+                IntervalUnit::Hour => "hour",
+                IntervalUnit::Minute => "minute",
+                IntervalUnit::Second => "second",
+                IntervalUnit::Millisecond => "millisecond",
+                IntervalUnit::Microsecond => "microsecond",
+                _ => {
+                    return Err(crate::error::Error::unsupported(
+                        "Vertica DATEDIFF unit",
+                        "duckdb",
+                    ))
+                }
+            };
+            self.write("DATE_DIFF('");
+            self.write(unit);
+            self.write("', ");
+            self.generate_expression(start)?;
+            self.write(", ");
+            self.generate_expression(end)?;
+            self.write(")");
+            return Ok(());
+        }
+        // Bind operands once: calendar formulas can refer to both month and year.
+        let ordinal = |value: &str| -> Result<String> {
+            Ok(match unit {
+                IntervalUnit::Year => format!("EXTRACT(YEAR FROM {value})"),
+                IntervalUnit::Quarter => format!(
+                    "EXTRACT(YEAR FROM {value}) * 4 + FLOOR((EXTRACT(MONTH FROM {value}) - 1) / 3)"
+                ),
+                IntervalUnit::Month => {
+                    format!("EXTRACT(YEAR FROM {value}) * 12 + EXTRACT(MONTH FROM {value})")
+                }
+                IntervalUnit::Week => {
+                    return Err(crate::error::Error::unsupported(
+                        "Vertica DATEDIFF week cutoff requires engine verification",
+                        "target",
+                    ))
+                }
+                IntervalUnit::Day => {
+                    format!("EXTRACT(EPOCH FROM DATE_TRUNC('day', {value})) / 86400")
+                }
+                IntervalUnit::Hour => {
+                    format!("EXTRACT(EPOCH FROM DATE_TRUNC('hour', {value})) / 3600")
+                }
+                IntervalUnit::Minute => {
+                    format!("EXTRACT(EPOCH FROM DATE_TRUNC('minute', {value})) / 60")
+                }
+                IntervalUnit::Second => {
+                    format!("EXTRACT(EPOCH FROM DATE_TRUNC('second', {value}))")
+                }
+                IntervalUnit::Millisecond => {
+                    format!("EXTRACT(EPOCH FROM DATE_TRUNC('milliseconds', {value})) * 1000")
+                }
+                IntervalUnit::Microsecond => format!("EXTRACT(EPOCH FROM {value}) * 1000000"),
+                _ => {
+                    return Err(crate::error::Error::unsupported(
+                        "Vertica DATEDIFF unit",
+                        "target",
+                    ))
+                }
+            })
+        };
+        let first = ordinal("_polyglot_d.start_value")?;
+        let last = ordinal("_polyglot_d.end_value")?;
+        self.write(&format!(
+            "(SELECT CAST(({last}) - ({first}) AS BIGINT) FROM (SELECT "
+        ));
+        self.generate_expression(start)?;
+        self.write(" AS start_value, ");
+        self.generate_expression(end)?;
+        self.write(" AS end_value) AS _polyglot_d)");
+        Ok(())
+    }
+
+    fn generate_vertica_interval_qualifiers(
+        &mut self,
+        unit: &Option<String>,
+        end: &Option<String>,
+    ) {
+        if let Some(unit) = unit {
+            self.write(" ");
+            self.write(unit);
+        }
+        if let Some(end) = end {
+            self.write(" TO ");
+            self.write(end);
+        }
+    }
+
+    fn generate_vertica_type(&mut self, data_type: &VerticaDataType) -> Result<()> {
+        use VerticaDataType as V;
+        if self.config.dialect != Some(DialectType::Vertica) {
+            return Err(crate::error::Error::unsupported(
+                "Vertica datatype constraints",
+                format!("{:?}", self.config.dialect),
+            ));
+        }
+        match data_type {
+            V::Array {
+                element_type,
+                bound,
+            }
+            | V::Set {
+                element_type,
+                bound,
+            } => {
+                self.write(if matches!(data_type, V::Array { .. }) {
+                    "ARRAY["
+                } else {
+                    "SET["
+                });
+                self.generate_data_type(element_type)?;
+                if let Some(VerticaCollectionBound::Elements(n)) = bound {
+                    self.write(&format!(", {n}"));
+                }
+                self.write("]");
+                if let Some(VerticaCollectionBound::Bytes(n)) = bound {
+                    self.write(&format!("({n})"));
+                }
+            }
+            V::Row { fields } => {
+                self.write("ROW(");
+                for (i, field) in fields.iter().enumerate() {
+                    if i != 0 {
+                        self.write(", ");
+                    }
+                    self.generate_type_field_name(&field.name);
+                    self.write(" ");
+                    self.generate_data_type(&field.data_type)?;
+                }
+                self.write(")");
+            }
+            V::LongVarBinary { length } => {
+                self.write("LONG VARBINARY");
+                if let Some(n) = length {
+                    self.write(&format!("({n})"));
+                }
+            }
+            V::Interval {
+                precision,
+                year_month,
+                unit,
+                end_unit,
+            } => {
+                self.write(if *year_month {
+                    "INTERVALYM"
+                } else {
+                    "INTERVAL"
+                });
+                if let Some(p) = precision {
+                    self.write(&format!("({p})"));
+                }
+                self.generate_vertica_interval_qualifiers(unit, end_unit);
+            }
+        }
+        Ok(())
     }
 }
 

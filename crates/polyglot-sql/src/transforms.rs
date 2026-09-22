@@ -1295,6 +1295,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
 
                     // Create the outer SELECT with alias-resolved expressions and WHERE _w <op> value
                     let outer_select = Select {
+                        vertica: None,
                         expressions: outer_exprs,
                         from: Some(From {
                             expressions: vec![Expression::Subquery(Box::new(subquery))],
@@ -1340,6 +1341,7 @@ pub fn eliminate_qualify(expr: Expression) -> Result<Expression> {
                     };
 
                     let outer_select = Select {
+                        vertica: None,
                         expressions: original_exprs,
                         from: Some(From {
                             expressions: vec![Expression::Subquery(Box::new(subquery))],
@@ -1728,6 +1730,7 @@ fn eliminate_distinct_on_select(
                                             inferred_type: None,
                                         }));
                                         new_exprs.push(crate::expressions::Ordered {
+                                            nulls_auto: false,
                                             this: null_check,
                                             desc: true,
                                             nulls_first: None,
@@ -1746,6 +1749,7 @@ fn eliminate_distinct_on_select(
                         distinct_cols
                             .iter()
                             .map(|e| crate::expressions::Ordered {
+                                nulls_auto: false,
                                 this: e.clone(),
                                 desc: false,
                                 nulls_first: None,
@@ -1870,6 +1874,7 @@ fn eliminate_distinct_on_select(
                     // Create outer SELECT with WHERE _row_number = 1
                     // No ORDER BY on outer query
                     let outer_select = Select {
+                        vertica: None,
                         expressions: outer_select_exprs,
                         from: Some(From {
                             expressions: vec![Expression::Subquery(Box::new(subquery))],
@@ -1924,6 +1929,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                         if let Some(on_condition) = join.on {
                             // Create: EXISTS (SELECT 1 FROM join_table WHERE on_condition)
                             let subquery_select = Select {
+                                vertica: None,
                                 expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                     "1".to_string(),
                                 )))],
@@ -1962,6 +1968,7 @@ pub fn eliminate_semi_and_anti_joins(expr: Expression) -> Result<Expression> {
                         if let Some(on_condition) = join.on {
                             // Create: NOT EXISTS (SELECT 1 FROM join_table WHERE on_condition)
                             let subquery_select = Select {
+                                vertica: None,
                                 expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                     "1".to_string(),
                                 )))],
@@ -2094,6 +2101,7 @@ pub fn eliminate_full_outer_join(expr: Expression) -> Result<Expression> {
                 if let (Some(ref from), Some(ref join_cond)) = (&select.from, &join_condition) {
                     if !from.expressions.is_empty() {
                         let anti_subquery = Expression::Select(Box::new(Select {
+                            vertica: None,
                             expressions: vec![Expression::Literal(Box::new(Literal::Number(
                                 "1".to_string(),
                             )))],
@@ -3165,6 +3173,7 @@ fn unqualify_columns_recursive(expr: Expression) -> Expression {
                     .expressions
                     .iter()
                     .map(|o| crate::expressions::Ordered {
+                        nulls_auto: o.nulls_auto,
                         this: unqualify_columns_recursive(o.this.clone()),
                         desc: o.desc,
                         nulls_first: o.nulls_first,
@@ -3460,6 +3469,7 @@ fn try_convert_generate_date_array_with_name(
 
             // Build base case: SELECT CAST(start AS DATE) AS date_value
             let base_select = Select {
+                vertica: None,
                 expressions: vec![Expression::Alias(Box::new(crate::expressions::Alias {
                     this: cast_to_date(start),
                     alias: column_name.clone(),
@@ -3533,6 +3543,7 @@ fn try_convert_generate_date_array_with_name(
             }));
 
             let recursive_select = Select {
+                vertica: None,
                 expressions: vec![cast_date_add.clone()],
                 from: Some(From {
                     expressions: vec![Expression::Table(Box::new(
@@ -3586,6 +3597,7 @@ fn try_convert_generate_date_array_with_name(
 
             // Create replacement: SELECT date_value FROM cte_name
             let replacement_select = Select {
+                vertica: None,
                 expressions: vec![Expression::Column(Box::new(crate::expressions::Column {
                     name: column_name,
                     table: None,
@@ -6739,6 +6751,7 @@ mod tests {
 
         // Test that semi joins are converted to EXISTS
         let select = Expression::Select(Box::new(Select {
+            vertica: None,
             expressions: vec![Expression::boxed_column(Column {
                 name: Identifier::new("a".to_string()),
                 table: None,
