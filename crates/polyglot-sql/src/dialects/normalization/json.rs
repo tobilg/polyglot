@@ -197,6 +197,9 @@ pub(super) fn rewrite(
                         // json -> path arrow syntax
                         Ok(Expression::JsonExtract(Box::new(
                             crate::expressions::JsonExtractFunc {
+                                options: None,
+                                source_dialect: None,
+
                                 this: f.this,
                                 path: f.path,
                                 returning: f.returning,
@@ -733,6 +736,9 @@ pub(super) fn rewrite(
                             // JSON_EXTRACT_SCALAR(x, '$.path') -> x ->> '$.path'
                             Ok(Expression::JsonExtractScalar(Box::new(
                                 crate::expressions::JsonExtractFunc {
+                                    options: None,
+                                    source_dialect: None,
+
                                     this: f.this,
                                     path: f.path,
                                     returning: f.returning,

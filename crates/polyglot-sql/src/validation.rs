@@ -2582,7 +2582,7 @@ fn check_types(
                     ));
                 }
             }
-            Expression::Function(function) | Expression::HanaFunction(function) => {
+            Expression::Function(function) => {
                 check_function_catalog(function, dialect, function_catalog, strict, &mut errors);
                 check_generic_function(function, schema_map, &context, strict, &mut errors);
             }

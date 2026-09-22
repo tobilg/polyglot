@@ -4920,6 +4920,151 @@ mod hana_regressions {
     use polyglot_sql::ExpressionWalk;
 
     #[test]
+    fn shared_function_nodes_participate_in_generic_analysis() {
+        use polyglot_sql::optimizer::{normalize_identifiers, TypeAnnotator};
+        let hana = Dialect::get(DialectType::HANA);
+        let ast = hana
+            .parse("SELECT COALESCE(mixed, 1), mixed FROM tab")
+            .unwrap()
+            .remove(0);
+        assert!(ast.dfs().any(|e| matches!(e, Expression::Function(_))));
+        let normalized = normalize_identifiers(ast, Some(DialectType::HANA));
+        assert_eq!(
+            hana.generate(&normalized).unwrap(),
+            "SELECT COALESCE(MIXED, 1), MIXED FROM TAB"
+        );
+        let ast = hana
+            .parse("SELECT COALESCE(1, 2) FROM DUMMY")
+            .unwrap()
+            .remove(0);
+        let call = ast
+            .dfs()
+            .find(|e| matches!(e, Expression::Function(_)))
+            .unwrap();
+        assert_eq!(call.source_dialect(), Some(DialectType::HANA));
+        assert!(matches!(
+            TypeAnnotator::new(None, Some(DialectType::HANA)).annotate(call),
+            Some(polyglot_sql::expressions::DataType::Int { .. })
+        ));
+        for dialect in [DialectType::HANA, DialectType::PostgreSQL] {
+            let ast = Dialect::get(dialect)
+                .parse(r#"SELECT "f"(x) FROM t"#)
+                .unwrap()
+                .remove(0);
+            let call = ast
+                .dfs()
+                .find(|e| matches!(e, Expression::Function(_)))
+                .unwrap();
+            assert_eq!(
+                call.source_dialect(),
+                None,
+                "quoted UDFs are not native built-ins"
+            );
+        }
+    }
+
+    #[test]
+    fn source_metadata_survives_optimizers_and_standalone_generation() {
+        use polyglot_sql::optimizer::{canonicalize, normalize_identifiers};
+        let hana = Dialect::get(DialectType::HANA);
+        let trino = Dialect::get(DialectType::Trino);
+        let ast = hana
+            .parse("SELECT LOCATE('abcabc', 'bc', 1, 2) FROM DUMMY")
+            .unwrap()
+            .remove(0);
+        let ast = canonicalize(
+            normalize_identifiers(ast, Some(DialectType::HANA)),
+            Some(DialectType::HANA),
+        );
+        let call = ast
+            .dfs()
+            .find(|e| matches!(e, Expression::Function(_)))
+            .unwrap();
+        let json = serde_json::to_string(call).unwrap();
+        assert!(json.contains("\"source_dialect\":\"hana\""));
+        assert!(!json.contains("hana_function"));
+        let call: Expression = serde_json::from_str(&json).unwrap();
+        assert_eq!(trino.generate(&call).unwrap(), "STRPOS('abcabc', 'bc', 2)");
+        assert_eq!(
+            hana.generate(&call).unwrap(),
+            "LOCATE('abcabc', 'bc', 1, 2)"
+        );
+        for sql in [
+            "SELECT SUBSTR_REGEXPR('a' IN value OCCURRENCE 2) FROM t",
+            "SELECT JSON_VALUE(payload, '$.n' DEFAULT 0 ON EMPTY) FROM t",
+            "SELECT STRING_AGG(value, ',' ORDER BY id) FROM t",
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            let json = serde_json::to_string(&ast).unwrap();
+            let decoded: Expression = serde_json::from_str(&json).unwrap();
+            assert_eq!(hana.generate(&decoded).unwrap(), sql);
+            assert!(trino.generate(&decoded).is_err(), "{sql}");
+            assert!(!decoded.dfs().any(|e| e.variant_name().starts_with("hana_")));
+        }
+    }
+
+    #[test]
+    fn create_table_traversal_is_independent_of_source_metadata() {
+        use polyglot_sql::ast_transforms::rename_columns;
+        let hana = Dialect::get(DialectType::HANA);
+        let ast = hana
+            .parse("CREATE TABLE t (value INT CHECK (value > 0))")
+            .unwrap()
+            .remove(0);
+        let mut outputs = Vec::new();
+        for source in [None, Some(DialectType::HANA)] {
+            let mut ast = ast.clone();
+            if let Expression::CreateTable(table) = &mut ast {
+                table.source_dialect = source;
+            }
+            let renamed =
+                rename_columns(ast, &[("value".to_owned(), "new_value".to_owned())].into());
+            outputs.push(hana.generate(&renamed).unwrap());
+        }
+        assert_eq!(outputs[0], outputs[1]);
+        assert!(outputs[0].contains("CHECK (new_value > 0)"));
+    }
+
+    #[test]
+    fn native_syntax_uses_shared_expression_categories() {
+        let hana = Dialect::get(DialectType::HANA);
+        for (sql, expected) in [
+            ("SELECT JSON_VALUE(j, '$.a') FROM t", "j_s_o_n_value"),
+            ("SELECT JSON_QUERY(j, '$.a') FROM t", "json_query"),
+            (
+                "SELECT * FROM JSON_TABLE(j, '$' COLUMNS (v INT PATH '$.v'))",
+                "j_s_o_n_table",
+            ),
+            (
+                "SELECT * FROM t WHERE value LIKE_REGEXPR 'a'",
+                "regexp_like",
+            ),
+            (
+                "SELECT SUBSTR_REGEXPR('a' IN value) FROM t",
+                "regexp_extract",
+            ),
+            (
+                "SELECT a FROM t GROUP BY ROLLUP STRUCTURED RESULT (a)",
+                "rollup",
+            ),
+            ("SELECT * FROM t WITH HINT (NO_INLINE)", "hint"),
+            (
+                "CREATE TABLE t (id INT) PARTITION BY HASH (id) PARTITIONS 4",
+                "partition_by_property",
+            ),
+            ("CALL demo.proc(1)", "call"),
+            ("UPSERT t VALUES (1) WITH PRIMARY KEY", "upsert"),
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            assert!(
+                ast.dfs().any(|e| e.variant_name() == expected),
+                "{sql}: expected {expected}"
+            );
+            assert_eq!(hana.generate(&ast).unwrap(), sql);
+        }
+    }
+
+    #[test]
     fn native_semantics_survive_transpile_and_json() {
         let hana = Dialect::get(DialectType::HANA);
         for sql in [
@@ -5035,11 +5180,15 @@ mod hana_regressions {
 
     #[test]
     fn quoted_reserved_names_and_qualified_calls_are_not_builtins() {
-        for sql in [
-            r#"SELECT "CURRENT_USER", t.CURRENT_SCHEMA, demo."ADD_DAYS"(d, 1) FROM t"#,
-            r#"SELECT "COUNT"(x) FROM t"#,
+        for (sql, trino) in [
+            (
+                r#"SELECT "CURRENT_USER", t.CURRENT_SCHEMA, demo."ADD_DAYS"(d, 1) FROM t"#,
+                r#"SELECT "CURRENT_USER", t."CURRENT_SCHEMA", demo."ADD_DAYS"(d, 1) FROM t"#,
+            ),
+            (r#"SELECT "COUNT"(x) FROM t"#, r#"SELECT "COUNT"(x) FROM t"#),
         ] {
             assert_eq!(transpile(sql, DialectType::HANA, DialectType::HANA), sql);
+            assert_eq!(transpile(sql, DialectType::HANA, DialectType::Trino), trino);
         }
     }
 

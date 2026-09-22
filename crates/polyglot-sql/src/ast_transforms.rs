@@ -473,7 +473,7 @@ pub fn get_table_names(expr: &Expression) -> Vec<String> {
                     names.push(name);
                 }
             }
-            Expression::HanaUpsert(upsert) => {
+            Expression::Upsert(upsert) => {
                 push_table_ref_name(&upsert.table, &cte_aliases, &mut names);
             }
             Expression::Insert(insert) => {

@@ -177,22 +177,13 @@ pub enum Expression {
 
     // Functions
     Function(Box<Function>),
-    /// A SAP HANA built-in retaining source semantics for independent generation.
-    HanaFunction(Box<Function>),
-    HanaAggregateFunction(Box<AggregateFunction>),
-    HanaRegex(Box<HanaRegex>),
-    HanaJson(Box<HanaJson>),
-    HanaJsonColumn(Box<HanaJsonColumn>),
-    HanaUpsert(Box<HanaUpsert>),
-    HanaPartition(Box<HanaPartition>),
-    HanaStorageProperty(Box<HanaStorageProperty>),
-    HanaHierarchy(Box<HanaHierarchy>),
-    HanaPlaceholder(Box<HanaPlaceholder>),
-    HanaTableFunction(Box<HanaTableFunction>),
-    HanaCall(Box<HanaCall>),
-    HanaHint(Box<HanaHint>),
-    HanaGrouping(Box<HanaGrouping>),
-    HanaTimezone(Box<HanaTimezone>),
+
+    Upsert(Box<Upsert>),
+    StorageProperty(Box<StorageProperty>),
+    Hierarchy(Box<Hierarchy>),
+    ViewParameter(Box<ViewParameter>),
+    Call(Box<Call>),
+
     AggregateFunction(Box<AggregateFunction>),
     WindowFunction(Box<WindowFunction>),
 
@@ -1131,6 +1122,42 @@ pub enum Expression {
 }
 
 impl Expression {
+    /// Source semantics that still require dialect-aware lowering. This metadata
+    /// survives JSON serialization and never changes generic traversal behavior.
+    pub fn source_dialect(&self) -> Option<crate::dialects::DialectType> {
+        use crate::dialects::DialectType;
+        match self {
+            Self::Function(f) => f.source_dialect,
+            Self::AggregateFunction(f) => f.source_dialect,
+            Self::Select(s) => s.source_dialect,
+            Self::CreateTable(t) => t.source_dialect,
+            Self::Upsert(u) => u.source_dialect,
+            Self::Call(c) => c.source_dialect,
+            Self::Hierarchy(h) => h.source_dialect,
+            Self::ViewParameter(p) => p.source_dialect,
+            Self::StorageProperty(p) => p.source_dialect,
+            Self::Hint(h) => h.source_dialect,
+            Self::JSONValue(j) => j.source_dialect,
+            Self::JSONTable(j) => j.source_dialect,
+            Self::JSONColumnDef(j) => j.source_dialect,
+            Self::JsonQuery(j) | Self::JsonExtract(j) | Self::JsonExtractScalar(j) => {
+                j.source_dialect
+            }
+            Self::RegexpLike(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpReplace(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpExtract(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpInstr(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::RegexpCount(r) => r.options.as_ref().and_then(|o| o.source_dialect),
+            Self::Cube(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::Rollup(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::GroupingSets(g) => g.options.as_ref().and_then(|o| o.source_dialect),
+            Self::PartitionByProperty(p) => p.specification.as_ref().and_then(|s| s.source_dialect),
+            Self::DataType(DataType::Hana { .. }) => Some(DialectType::HANA),
+            Self::Cast(c) if matches!(c.to, DataType::Hana { .. }) => Some(DialectType::HANA),
+            _ => None,
+        }
+    }
+
     /// Create a `Column` variant, boxing the value automatically.
     #[inline]
     pub fn boxed_column(col: Column) -> Self {
@@ -1161,8 +1188,8 @@ impl Expression {
             | Expression::PipeOperator(_)
 
             // DML
-            | Expression::HanaUpsert(_)
-            | Expression::HanaCall(_)
+            | Expression::Upsert(_)
+            | Expression::Call(_)
             | Expression::Insert(_)
             | Expression::Update(_)
             | Expression::Delete(_)
@@ -1337,10 +1364,8 @@ impl Expression {
 
             Expression::Column(c) => c.inferred_type.as_ref(),
             Expression::Dot(dot) => dot.inferred_type.as_ref(),
-            Expression::Function(f) | Expression::HanaFunction(f) => f.inferred_type.as_ref(),
-            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => {
-                f.inferred_type.as_ref()
-            }
+            Expression::Function(f) => f.inferred_type.as_ref(),
+            Expression::AggregateFunction(f) => f.inferred_type.as_ref(),
             Expression::WindowFunction(f) => f.inferred_type.as_ref(),
             Expression::Case(c) => c.inferred_type.as_ref(),
             Expression::Array(a) => a.inferred_type.as_ref(),
@@ -1573,10 +1598,8 @@ impl Expression {
 
             Expression::Column(c) => c.inferred_type = Some(dt),
             Expression::Dot(dot) => dot.inferred_type = Some(dt),
-            Expression::Function(f) | Expression::HanaFunction(f) => f.inferred_type = Some(dt),
-            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => {
-                f.inferred_type = Some(dt)
-            }
+            Expression::Function(f) => f.inferred_type = Some(dt),
+            Expression::AggregateFunction(f) => f.inferred_type = Some(dt),
             Expression::WindowFunction(f) => f.inferred_type = Some(dt),
             Expression::Case(c) => c.inferred_type = Some(dt),
             Expression::Array(a) => a.inferred_type = Some(dt),
@@ -1939,21 +1962,11 @@ impl Expression {
             Expression::Exists(_) => "exists",
             Expression::MemberOf(_) => "member_of",
             Expression::Function(_) => "function",
-            Expression::HanaFunction(_) => "hana_function",
-            Expression::HanaAggregateFunction(_) => "hana_aggregate_function",
-            Expression::HanaRegex(_) => "hana_regex",
-            Expression::HanaJson(_) => "hana_json",
-            Expression::HanaJsonColumn(_) => "hana_json_column",
-            Expression::HanaUpsert(_) => "hana_upsert",
-            Expression::HanaPartition(_) => "hana_partition",
-            Expression::HanaStorageProperty(_) => "hana_storage_property",
-            Expression::HanaHierarchy(_) => "hana_hierarchy",
-            Expression::HanaGrouping(_) => "hana_grouping",
-            Expression::HanaTimezone(_) => "hana_timezone",
-            Expression::HanaPlaceholder(_) => "hana_placeholder",
-            Expression::HanaTableFunction(_) => "hana_table_function",
-            Expression::HanaCall(_) => "hana_call",
-            Expression::HanaHint(_) => "hana_hint",
+            Expression::Upsert(_) => "upsert",
+            Expression::StorageProperty(_) => "storage_property",
+            Expression::Hierarchy(_) => "hierarchy",
+            Expression::ViewParameter(_) => "view_parameter",
+            Expression::Call(_) => "call",
             Expression::AggregateFunction(_) => "aggregate_function",
             Expression::WindowFunction(_) => "window_function",
             Expression::From(_) => "from",
@@ -2814,10 +2827,11 @@ impl Expression {
     /// Returns the primary child expression (".this" in sqlglot).
     pub fn get_this(&self) -> Option<&Expression> {
         match self {
-            Expression::HanaJson(json) => Some(&json.input),
-            Expression::HanaRegex(regex) => Some(&regex.subject),
-            Expression::HanaHierarchy(hierarchy) => Some(&hierarchy.source),
-            Expression::HanaUpsert(upsert) => Some(&upsert.source),
+            Expression::JSONValue(j) => Some(&j.this),
+            Expression::JSONTable(j) => Some(&j.this),
+            Expression::JSONColumnDef(j) => j.this.as_deref(),
+            Expression::Hierarchy(hierarchy) => Some(&hierarchy.source),
+            Expression::Upsert(upsert) => Some(&upsert.source),
             // Unary ops
             Expression::Not(u) | Expression::Neg(u) | Expression::BitwiseNot(u) => Some(&u.this),
             // UnaryFunc variants
@@ -3109,14 +3123,9 @@ impl Expression {
     pub fn get_expressions(&self) -> &[Expression] {
         match self {
             Expression::Select(s) => &s.expressions,
-            Expression::Function(f) | Expression::HanaFunction(f) => &f.args,
-            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => &f.args,
-            Expression::HanaTimezone(f) => &f.arguments,
-            Expression::HanaTableFunction(f) => &f.arguments,
-            Expression::HanaCall(f) => &f.arguments,
-            Expression::HanaGrouping(g) => &g.expressions,
-            Expression::HanaJson(j) => &j.columns,
-            Expression::HanaJsonColumn(c) => &c.columns,
+            Expression::Function(f) => &f.args,
+            Expression::AggregateFunction(f) => &f.args,
+            Expression::Call(f) => &f.arguments,
             Expression::From(f) => &f.expressions,
             Expression::GroupBy(g) => &g.expressions,
             Expression::In(i) => &i.expressions,
@@ -3138,17 +3147,17 @@ impl Expression {
     /// Returns the name of this expression as a string slice.
     pub fn get_name(&self) -> &str {
         match self {
+            Expression::JSONValue(_) => "JSON_VALUE",
+            Expression::JSONTable(_) => "JSON_TABLE",
+            Expression::JsonQuery(_) => "JSON_QUERY",
             Expression::Identifier(id) => &id.name,
             Expression::Column(col) => &col.name.name,
             Expression::Table(t) => &t.name.name,
             Expression::Literal(lit) => lit.value_str(),
             Expression::Star(_) => "*",
-            Expression::Function(f) | Expression::HanaFunction(f) => &f.name,
-            Expression::AggregateFunction(f) | Expression::HanaAggregateFunction(f) => &f.name,
-            Expression::HanaTimezone(f) => &f.name,
-            Expression::HanaJson(j) => &j.name,
-            Expression::HanaHierarchy(h) => &h.name,
-            Expression::HanaRegex(r) => &r.operation,
+            Expression::Function(f) => &f.name,
+            Expression::AggregateFunction(f) => &f.name,
+            Expression::Hierarchy(h) => &h.name,
             Expression::Alias(a) => a.this.get_name(),
             Expression::Boolean(b) => {
                 if b.value {
@@ -3216,9 +3225,7 @@ impl Expression {
             | Expression::BitwiseXor(op) => {
                 op.trailing_comments.iter().map(|s| s.as_str()).collect()
             }
-            Expression::Function(f) | Expression::HanaFunction(f) => {
-                f.trailing_comments.iter().map(|s| s.as_str()).collect()
-            }
+            Expression::Function(f) => f.trailing_comments.iter().map(|s| s.as_str()).collect(),
             Expression::Subquery(s) => s.trailing_comments.iter().map(|s| s.as_str()).collect(),
             _ => Vec::new(),
         }
@@ -3746,9 +3753,18 @@ pub struct Select {
     /// T-SQL FOR JSON clause options (PATH, AUTO, ROOT, INCLUDE_NULL_VALUES, WITHOUT_ARRAY_WRAPPER)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub for_json: Vec<Expression>,
-    /// HANA result serialization and trailing query hints.
+    /// Structured result serialization, including a bare FOR JSON/XML clause.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hana_options: Option<HanaSelectOptions>,
+    pub result_serialization: Option<ResultSerialization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_collation: Option<Identifier>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query_hints: Vec<Expression>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub total_rowcount: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     /// Leading comments before the statement
     #[serde(default)]
     pub leading_comments: Vec<String>,
@@ -3808,7 +3824,11 @@ impl Select {
             locks: Vec::new(),
             for_xml: Vec::new(),
             for_json: Vec::new(),
-            hana_options: None,
+            result_serialization: None,
+            query_collation: None,
+            query_hints: Vec::new(),
+            total_rowcount: false,
+            source_dialect: None,
             leading_comments: Vec::new(),
             post_select_comments: Vec::new(),
             kind: None,
@@ -4944,7 +4964,12 @@ pub struct Exists {
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaUpsert {
+pub struct Upsert {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub table: TableRef,
     pub partition: Option<Expression>,
     pub columns: Vec<Identifier>,
@@ -4955,19 +4980,24 @@ pub struct HanaUpsert {
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaPartition {
+pub struct PartitionSpec {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub method: String,
     pub columns: Vec<Expression>,
     pub partitions: Option<Expression>,
-    pub ranges: Vec<HanaPartitionRange>,
+    pub ranges: Vec<PartitionRangeSpec>,
     pub primary_key_check: Option<bool>,
     pub properties: Vec<Expression>,
-    pub subpartition: Option<Box<HanaPartition>>,
+    pub subpartition: Option<Box<PartitionSpec>>,
 }
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaPartitionRange {
+pub struct PartitionRangeSpec {
     pub name: Option<Identifier>,
     pub kind: String,
     pub values: Vec<Expression>,
@@ -4980,14 +5010,24 @@ pub struct HanaPartitionRange {
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaStorageProperty {
+pub struct StorageProperty {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub name: String,
     pub values: Vec<Expression>,
 }
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaHierarchy {
+pub struct Hierarchy {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub name: String,
     pub source: Expression,
     pub start: Option<Expression>,
@@ -5001,66 +5041,43 @@ pub struct HanaHierarchy {
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaPlaceholder {
+pub struct ViewParameter {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub name: Identifier,
     pub value: Expression,
-}
-
-/// Qualified HANA table/calculation-view call; identifier quoting is structural.
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaTableFunction {
-    pub name: Vec<Identifier>,
-    pub arguments: Vec<Expression>,
-}
-
-/// HANA JSON path operations retain default and error behavior across AST serialization.
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaJson {
-    pub name: String,
-    pub input: Expression,
-    pub path: Expression,
-    pub columns: Vec<Expression>,
-    pub options: HanaJsonOptions,
 }
 
 #[derive(
     polyglot_sql_ast_derive::AstNode, Debug, Clone, Default, PartialEq, Serialize, Deserialize,
 )]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaJsonOptions {
-    pub returning: Option<DataType>,
+pub struct JsonOptions {
     pub wrapper: Option<String>,
-    pub on_empty: Option<HanaBehavior>,
-    pub on_error: Option<HanaBehavior>,
+    pub on_empty: Option<SqlBehavior>,
+    pub on_error: Option<SqlBehavior>,
 }
 
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaBehavior {
+pub struct SqlBehavior {
     /// ERROR, NULL, DEFAULT, EMPTY ARRAY, or EMPTY OBJECT.
     pub kind: String,
     pub value: Option<Expression>,
 }
 
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaJsonColumn {
-    pub name: Option<Identifier>,
-    pub data_type: Option<DataType>,
-    pub path: Option<Expression>,
-    pub ordinality: bool,
-    pub format_json: bool,
-    pub encoding: Option<String>,
-    pub columns: Vec<Expression>,
-    pub options: HanaJsonOptions,
-}
-
 /// Procedure invocation, including library member calls and asynchronous execution.
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaCall {
+pub struct Call {
+    /// Retained source semantics; serialized independently of generator configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     pub name: Vec<Identifier>,
     pub member: Option<Identifier>,
     pub arguments: Vec<Expression>,
@@ -5068,48 +5085,30 @@ pub struct HanaCall {
     pub hints: Vec<Expression>,
 }
 
+/// Regex search options shared by predicates, extraction, replacement, and position calls.
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaHint {
-    pub name: Identifier,
-    pub arguments: Option<Vec<Expression>>,
-    pub remote: bool,
-    pub cascade: bool,
-}
-
-/// HANA PCRE predicate/function grammar. Arguments remain traversable.
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaRegex {
-    pub operation: String,
+pub struct RegexOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Original spelling when a dialect has more than one native alias.
+    pub source_name: String,
+    #[serde(default)]
     pub negated: bool,
-    pub pattern: Expression,
-    pub subject: Expression,
-    pub flag: Option<Expression>,
     pub start: Option<Expression>,
     pub occurrence: Option<Expression>,
-    pub group: Option<Expression>,
-    pub replacement: Option<Expression>,
+    pub flags: Option<Expression>,
     pub position_after: Option<bool>,
 }
 
-/// Native HANA SELECT clauses, including serialization with no options.
+/// Grouping-set selection and result-delivery options.
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaSelectOptions {
-    #[serde(default)]
-    pub total_rowcount: bool,
-    pub serialization: Option<HanaSerialization>,
-    pub collation: Option<Identifier>,
-    pub hints: Vec<Expression>,
-}
-
-/// HANA grouping-set selection and result delivery options.
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaGrouping {
-    pub kind: String,
-    pub expressions: Vec<Expression>,
+pub struct GroupingOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     pub best: Option<Expression>,
     pub limit: Option<Expression>,
     pub offset: Option<Expression>,
@@ -5122,18 +5121,9 @@ pub struct HanaGrouping {
     pub multiple_resultsets: bool,
 }
 
-/// Time-zone conversion using a HANA time-zone dataset and error policy.
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaTimezone {
-    pub name: String,
-    pub arguments: Vec<Expression>,
-    pub on_error: Option<HanaBehavior>,
-}
-
-#[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "bindings", derive(TS))]
-pub struct HanaSerialization {
+pub struct ResultSerialization {
     /// JSON or XML, validated by the HANA parser.
     pub format: String,
     pub options: Vec<(String, String)>,
@@ -5150,6 +5140,17 @@ pub struct HanaSerialization {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Function {
+    /// Qualified name components preserve quoting without changing the node kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub qualified_name: Vec<Identifier>,
+    /// Optional DEFAULT/NULL/ERROR behavior after the arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<SqlBehavior>,
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     /// The function name, as originally written (may be schema-qualified).
     pub name: String,
     /// Positional arguments to the function.
@@ -5179,6 +5180,9 @@ pub struct Function {
 impl Default for Function {
     fn default() -> Self {
         Self {
+            source_dialect: None,
+            qualified_name: Vec::new(),
+            on_error: None,
             name: String::new(),
             args: Vec::new(),
             distinct: false,
@@ -5193,8 +5197,24 @@ impl Default for Function {
 }
 
 impl Function {
+    /// Construct a call with individually quoted qualified name components.
+    pub fn qualified(name: Vec<Identifier>, args: Vec<Expression>) -> Self {
+        Self {
+            name: name
+                .iter()
+                .map(|part| part.name.as_str())
+                .collect::<Vec<_>>()
+                .join("."),
+            qualified_name: name,
+            args,
+            ..Default::default()
+        }
+    }
     pub fn new(name: impl Into<String>, args: Vec<Expression>) -> Self {
         Self {
+            source_dialect: None,
+            qualified_name: Vec::new(),
+            on_error: None,
             name: name.into(),
             args,
             distinct: false,
@@ -5219,6 +5239,11 @@ impl Function {
 )]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct AggregateFunction {
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+
     /// The aggregate function name (e.g. "JSON_AGG", "XMLAGG").
     pub name: String,
     /// Positional arguments.
@@ -5558,6 +5583,9 @@ pub struct LateralView {
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub struct Hint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
     pub expressions: Vec<HintExpression>,
 }
 
@@ -5566,6 +5594,13 @@ pub struct Hint {
 #[cfg_attr(feature = "bindings", derive(TS))]
 #[cfg_attr(feature = "bindings", ts(export))]
 pub enum HintExpression {
+    /// A structured hint directive with optional execution scope modifiers.
+    Directive {
+        name: Identifier,
+        arguments: Option<Vec<Expression>>,
+        remote: bool,
+        cascade: bool,
+    },
     /// Function-style hint: USE_HASH(table)
     Function { name: String, args: Vec<Expression> },
     /// Simple identifier hint: PARALLEL
@@ -6774,6 +6809,9 @@ pub struct SplitFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub flags: Option<Expression>,
@@ -6783,6 +6821,9 @@ pub struct RegexpFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpReplaceFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub replacement: Expression,
@@ -6793,6 +6834,9 @@ pub struct RegexpReplaceFunc {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpExtractFunc {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Expression,
     pub pattern: Expression,
     pub group: Option<Expression>,
@@ -7512,6 +7556,13 @@ pub struct FunctionEmits {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JsonExtractFunc {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Expression,
     pub path: Expression,
     pub returning: Option<DataType>,
@@ -7904,9 +7955,10 @@ pub struct CreateTable {
     /// Table modifier: DYNAMIC, ICEBERG, EXTERNAL, HYBRID (Snowflake)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_modifier: Option<String>,
-    /// The storage modifier was parsed from HANA rather than another dialect.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub hana_storage: bool,
+    /// Dialect whose call semantics must be retained through independent generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
 
     pub as_select: Option<Expression>,
     /// Whether the AS SELECT was wrapped in parentheses
@@ -8036,7 +8088,7 @@ impl CreateTable {
             temporary: false,
             or_replace: false,
             table_modifier: None,
-            hana_storage: false,
+            source_dialect: None,
             as_select: None,
             as_select_parenthesized: false,
             on_commit: None,
@@ -11508,6 +11560,9 @@ pub struct Group {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Cube {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -11516,6 +11571,9 @@ pub struct Cube {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct Rollup {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -11524,6 +11582,9 @@ pub struct Rollup {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct GroupingSets {
+    /// Selection, subtotal, and result-delivery options for this grouping operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<GroupingOptions>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -12052,6 +12113,9 @@ pub struct PartitionedByProperty {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct PartitionByProperty {
+    /// Structured partition scheme when the dialect supports methods and ranges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub specification: Option<PartitionSpec>,
     #[serde(default)]
     pub expressions: Vec<Expression>,
 }
@@ -14385,6 +14449,18 @@ pub struct JSONExists {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONColumnDef {
+    /// Typed column definition; legacy dialects may use the textual kind field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<DataType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     #[serde(default)]
     pub this: Option<Box<Expression>>,
     #[serde(default)]
@@ -14433,6 +14509,13 @@ pub struct JSONStripNulls {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONValue {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Box<Expression>,
     #[serde(default)]
     pub path: Option<Box<Expression>>,
@@ -14464,6 +14547,13 @@ pub struct JSONRemove {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct JSONTable {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ast(skip)]
+    pub source_dialect: Option<crate::dialects::DialectType>,
+    /// Structured SQL/JSON wrapper and error/empty behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<JsonOptions>,
+
     pub this: Box<Expression>,
     #[serde(default)]
     pub schema: Option<Box<Expression>>,
@@ -15066,6 +15156,9 @@ pub struct RegexpFullMatch {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpInstr {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Box<Expression>,
     pub expression: Box<Expression>,
     #[serde(default)]
@@ -15094,6 +15187,9 @@ pub struct RegexpSplit {
 #[derive(polyglot_sql_ast_derive::AstNode, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(TS))]
 pub struct RegexpCount {
+    /// Additional search boundaries and retained source semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<RegexOptions>,
     pub this: Box<Expression>,
     pub expression: Box<Expression>,
     #[serde(default)]

@@ -1066,6 +1066,10 @@ impl BigQueryDialect {
                 Ok(Expression::CurrentDate(crate::expressions::CurrentDate))
             }
             "CURRENT_DATE" => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_DATE".to_string(),
                 args: f.args,
                 distinct: false,
@@ -1391,6 +1395,10 @@ impl BigQueryDialect {
             | "SAFE.PARSE_TIMESTAMP" => {
                 let args = self.normalize_time_format_args(f.args);
                 Ok(Expression::Function(Box::new(Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: f.name,
                     args,
                     distinct: f.distinct,
@@ -1425,6 +1433,9 @@ impl BigQueryDialect {
                     _ => path,
                 };
                 Ok(Expression::JsonExtract(Box::new(JsonExtractFunc {
+                    options: None,
+                    source_dialect: None,
+
                     this,
                     path: json_path,
                     returning: None,

@@ -2576,6 +2576,18 @@ impl Generator {
             )));
         }
 
+        let regex_options = match expr {
+            Expression::RegexpLike(r) => r.options.as_ref(),
+            Expression::RegexpReplace(r) => r.options.as_ref(),
+            Expression::RegexpExtract(r) => r.options.as_ref(),
+            Expression::RegexpInstr(r) => r.options.as_ref(),
+            Expression::RegexpCount(r) => r.options.as_ref(),
+            _ => None,
+        };
+        if let Some(options) = regex_options {
+            return self.generate_source_regex(expr, options);
+        }
+
         match expr {
             Expression::Select(select) => self.generate_select(select),
             Expression::Union(union) => self.generate_union(union),
@@ -2608,58 +2620,11 @@ impl Generator {
             Expression::Collation(coll) => self.generate_collation(coll),
             Expression::Case(case) => self.generate_case(case),
             Expression::Function(func) => self.generate_function(func),
-            Expression::HanaFunction(func) => self.generate_hana_function(func),
-            Expression::HanaGrouping(grouping) => self.generate_hana_grouping(grouping),
-            Expression::HanaTimezone(timezone) => self.generate_hana_timezone(timezone),
-            Expression::HanaRegex(regex) => self.generate_hana_regex(regex),
-            Expression::HanaJson(json) => self.generate_hana_json(json),
-            Expression::HanaJsonColumn(column) => self.generate_hana_json_column(column),
-            Expression::HanaUpsert(upsert) => self.generate_hana_upsert(upsert),
-            Expression::HanaHierarchy(hierarchy) => self.generate_hana_hierarchy(hierarchy),
-            Expression::HanaCall(call) => self.generate_hana_call(call),
-            Expression::HanaHint(hint) => {
-                if self.config.dialect != Some(DialectType::HANA) {
-                    return Err(
-                        self.hana_unsupported("HANA optimizer hint has no verified target mapping")
-                    );
-                }
-                self.generate_identifier(&hint.name)?;
-                if let Some(arguments) = &hint.arguments {
-                    self.write("(");
-                    for (i, arg) in arguments.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        self.generate_expression(arg)?;
-                    }
-                    self.write(")");
-                }
-                if hint.remote {
-                    self.write(" REMOTE");
-                }
-                if hint.cascade {
-                    self.write(" CASCADE");
-                }
-                Ok(())
-            }
-            Expression::HanaTableFunction(function) => {
-                for (i, name) in function.name.iter().enumerate() {
-                    if i > 0 {
-                        self.write(".");
-                    }
-                    self.generate_identifier(name)?;
-                }
-                self.write("(");
-                for (i, argument) in function.arguments.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.generate_expression(argument)?;
-                }
-                self.write(")");
-                Ok(())
-            }
-            Expression::HanaPlaceholder(placeholder) => {
+            Expression::Hint(hint) => self.generate_hint(hint),
+            Expression::Upsert(upsert) => self.generate_hana_upsert(upsert),
+            Expression::Hierarchy(hierarchy) => self.generate_hana_hierarchy(hierarchy),
+            Expression::Call(call) => self.generate_hana_call(call),
+            Expression::ViewParameter(placeholder) => {
                 if self.config.dialect != Some(DialectType::HANA) {
                     return Err(self.hana_unsupported(
                         "HANA calculation-view PLACEHOLDER has no verified target mapping",
@@ -2670,8 +2635,7 @@ impl Generator {
                 self.write(" => ");
                 self.generate_expression(&placeholder.value)
             }
-            Expression::HanaPartition(partition) => self.generate_hana_partition(partition, false),
-            Expression::HanaStorageProperty(property) => {
+            Expression::StorageProperty(property) => {
                 if self.config.dialect != Some(DialectType::HANA) {
                     return Err(self
                         .hana_unsupported("HANA storage property has no verified target mapping"));
@@ -2682,15 +2646,6 @@ impl Generator {
                     self.generate_expression(value)?;
                 }
                 Ok(())
-            }
-            Expression::HanaAggregateFunction(func) => {
-                if self.config.dialect != Some(DialectType::HANA) {
-                    return Err(self.hana_unsupported(format!(
-                        "HANA aggregate {} has no verified target mapping",
-                        func.name
-                    )));
-                }
-                self.generate_aggregate_function(func)
             }
             Expression::FunctionEmits(fe) => self.generate_function_emits(fe),
             Expression::AggregateFunction(func) => self.generate_aggregate_function(func),
@@ -4778,7 +4733,11 @@ impl Generator {
     }
 
     fn generate_select(&mut self, select: &Select) -> Result<()> {
-        if (select.hana_options.is_some() || select.locks.iter().any(|lock| lock.ignore_locked))
+        if (select.result_serialization.is_some()
+            || select.query_collation.is_some()
+            || !select.query_hints.is_empty()
+            || select.total_rowcount
+            || select.locks.iter().any(|lock| lock.ignore_locked))
             && self.config.dialect != Some(DialectType::HANA)
         {
             return Err(crate::error::Error::unsupported(
@@ -5872,11 +5831,7 @@ impl Generator {
             }
         }
 
-        if select
-            .hana_options
-            .as_ref()
-            .is_some_and(|o| o.total_rowcount)
-        {
+        if select.total_rowcount {
             self.write(" TOTAL ROWCOUNT");
         }
 
@@ -5894,8 +5849,8 @@ impl Generator {
             }
         }
 
-        if let Some(options) = &select.hana_options {
-            if let Some(serialization) = &options.serialization {
+        {
+            if let Some(serialization) = &select.result_serialization {
                 self.write(" FOR ");
                 self.write(&serialization.format);
                 if !serialization.options.is_empty() {
@@ -5911,21 +5866,21 @@ impl Generator {
                     self.write(")");
                 }
             }
-            if let Some(returning) = options
-                .serialization
+            if let Some(returning) = select
+                .result_serialization
                 .as_ref()
                 .and_then(|s| s.returning.as_ref())
             {
                 self.write(" RETURNS ");
                 self.generate_data_type(returning)?;
             }
-            if let Some(collation) = &options.collation {
+            if let Some(collation) = &select.query_collation {
                 self.write(" WITH COLLATION ");
                 self.generate_identifier(collation)?;
             }
-            if !options.hints.is_empty() {
+            if !select.query_hints.is_empty() {
                 self.write(" WITH HINT (");
-                for (i, hint) in options.hints.iter().enumerate() {
+                for (i, hint) in select.query_hints.iter().enumerate() {
                     if i > 0 {
                         self.write(", ");
                     }
@@ -8650,7 +8605,7 @@ impl Generator {
     // ==================== DDL Generation ====================
 
     fn generate_create_table(&mut self, ct: &CreateTable) -> Result<()> {
-        if ct.hana_storage
+        if ct.source_dialect == Some(DialectType::HANA)
             && self.config.dialect != Some(DialectType::HANA)
             && ct.table_modifier.as_ref().is_some_and(|m| {
                 m.split_whitespace()
@@ -17524,6 +17479,20 @@ impl Generator {
 
     /// Generate a query hint /*+ ... */
     fn generate_hint(&mut self, hint: &Hint) -> Result<()> {
+        if hint.source_dialect.is_some() {
+            if hint.source_dialect != self.config.dialect {
+                return Err(self.hana_unsupported("Optimizer hint has no verified target mapping"));
+            }
+            for (i, expression) in hint.expressions.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                let text = self.hint_expression_to_string(expression)?;
+                self.write(&text);
+            }
+            return Ok(());
+        }
+
         use crate::dialects::DialectType;
 
         // Output hints for dialects that support them, or when no dialect is specified (identity tests)
@@ -17707,6 +17676,33 @@ impl Generator {
     /// Convert a hint expression to a string, handling multiline formatting for long arguments
     fn hint_expression_to_string(&mut self, expr: &HintExpression) -> Result<String> {
         match expr {
+            HintExpression::Directive {
+                name,
+                arguments,
+                remote,
+                cascade,
+            } => {
+                let mut generator = self.child_generator();
+                generator.generate_identifier(name)?;
+                if let Some(arguments) = arguments {
+                    generator.write("(");
+                    for (i, argument) in arguments.iter().enumerate() {
+                        if i > 0 {
+                            generator.write(", ");
+                        }
+                        generator.generate_expression(argument)?;
+                    }
+                    generator.write(")");
+                }
+                if *remote {
+                    generator.write(" REMOTE");
+                }
+                if *cascade {
+                    generator.write(" CASCADE");
+                }
+                Ok(generator.output)
+            }
+
             HintExpression::Function { name, args } => {
                 // Generate each argument to a string
                 let arg_strings: Vec<String> = args
@@ -18809,7 +18805,7 @@ impl Generator {
 
     fn generate_hana_partition(
         &mut self,
-        partition: &HanaPartition,
+        partition: &PartitionSpec,
         subpartition: bool,
     ) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
@@ -18907,7 +18903,7 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_call(&mut self, call: &HanaCall) -> Result<()> {
+    fn generate_hana_call(&mut self, call: &Call) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
             return Err(
                 self.hana_unsupported("HANA CALL requires a verified target procedure signature")
@@ -18948,77 +18944,25 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_json(&mut self, json: &HanaJson) -> Result<()> {
-        if self.config.dialect != Some(DialectType::HANA) {
+    fn check_json_source(
+        &self,
+        source: Option<DialectType>,
+        options: Option<&JsonOptions>,
+    ) -> Result<()> {
+        if source == Some(DialectType::HANA) && self.config.dialect != source {
             return Err(self.hana_unsupported(
-                "HANA JSON path and error semantics have no verified target mapping",
+                "SQL/JSON path and error semantics have no verified target mapping",
             ));
         }
-        self.write(&json.name);
-        self.write("(");
-        self.generate_expression(&json.input)?;
-        self.write(", ");
-        self.generate_expression(&json.path)?;
-        if !json.columns.is_empty() {
-            self.generate_hana_json_columns(&json.columns)?;
-        }
-        self.generate_hana_json_options(&json.options)?;
-        self.write(")");
-        Ok(())
-    }
-
-    fn generate_hana_json_columns(&mut self, columns: &[Expression]) -> Result<()> {
-        self.write(" COLUMNS (");
-        for (i, column) in columns.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-            self.generate_expression(column)?;
-        }
-        self.write(")");
-        Ok(())
-    }
-
-    fn generate_hana_json_column(&mut self, column: &HanaJsonColumn) -> Result<()> {
-        if self.config.dialect != Some(DialectType::HANA) {
+        if options.is_some() && self.config.dialect != Some(DialectType::HANA) {
             return Err(
-                self.hana_unsupported("HANA JSON_TABLE column has no verified target mapping")
+                self.hana_unsupported("SQL/JSON behavior options have no verified target mapping")
             );
         }
-        if let Some(name) = &column.name {
-            self.generate_identifier(name)?;
-        } else {
-            self.write("NESTED");
-        }
-        if column.ordinality {
-            self.write(" FOR ORDINALITY");
-        }
-        if let Some(data_type) = &column.data_type {
-            self.write(" ");
-            self.generate_data_type(data_type)?;
-        }
-        if column.format_json {
-            self.write(" FORMAT JSON");
-        }
-        if let Some(encoding) = &column.encoding {
-            self.write(" ENCODING ");
-            self.write(encoding);
-        }
-        if let Some(path) = &column.path {
-            self.write(" PATH ");
-            self.generate_expression(path)?;
-        }
-        if !column.columns.is_empty() {
-            self.generate_hana_json_columns(&column.columns)?;
-        }
-        self.generate_hana_json_options(&column.options)
+        Ok(())
     }
 
-    fn generate_hana_json_options(&mut self, options: &HanaJsonOptions) -> Result<()> {
-        if let Some(returning) = &options.returning {
-            self.write(" RETURNING ");
-            self.generate_data_type(returning)?;
-        }
+    fn generate_json_options(&mut self, options: &JsonOptions) -> Result<()> {
         if let Some(wrapper) = &options.wrapper {
             self.write(" ");
             self.write(wrapper);
@@ -19041,7 +18985,7 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_hierarchy(&mut self, hierarchy: &HanaHierarchy) -> Result<()> {
+    fn generate_hana_hierarchy(&mut self, hierarchy: &Hierarchy) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
             return Err(self.hana_unsupported("HANA hierarchy has no verified target mapping"));
         }
@@ -19087,7 +19031,7 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_upsert(&mut self, upsert: &HanaUpsert) -> Result<()> {
+    fn generate_hana_upsert(&mut self, upsert: &Upsert) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
             return Err(self.hana_unsupported(
                 "HANA UPSERT requires target-specific key and update semantics",
@@ -19122,39 +19066,89 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_regex(&mut self, regex: &HanaRegex) -> Result<()> {
+    fn generate_source_regex(&mut self, expr: &Expression, options: &RegexOptions) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
-            return Err(self.hana_unsupported("HANA PCRE operation has no verified target mapping"));
+            return Err(self.hana_unsupported(
+                "Regular-expression source semantics have no verified target mapping",
+            ));
         }
-        let predicate = regex.operation == "LIKE_REGEXPR";
+        let (subject, pattern, flag, start, occurrence, group, replacement) = match expr {
+            Expression::RegexpLike(r) => (
+                &r.this,
+                &r.pattern,
+                r.flags.as_ref(),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Expression::RegexpExtract(r) => (
+                &r.this,
+                &r.pattern,
+                options.flags.as_ref(),
+                options.start.as_ref(),
+                options.occurrence.as_ref(),
+                r.group.as_ref(),
+                None,
+            ),
+            Expression::RegexpReplace(r) => (
+                &r.this,
+                &r.pattern,
+                r.flags.as_ref(),
+                options.start.as_ref(),
+                options.occurrence.as_ref(),
+                None,
+                Some(&r.replacement),
+            ),
+            Expression::RegexpInstr(r) => (
+                r.this.as_ref(),
+                r.expression.as_ref(),
+                r.parameters.as_deref(),
+                r.position.as_deref(),
+                r.occurrence.as_deref(),
+                r.group.as_deref(),
+                None,
+            ),
+            Expression::RegexpCount(r) => (
+                r.this.as_ref(),
+                r.expression.as_ref(),
+                r.parameters.as_deref(),
+                r.position.as_deref(),
+                None,
+                None,
+                None,
+            ),
+            _ => unreachable!("regex options belong to regex expressions"),
+        };
+        let predicate = options.source_name == "LIKE_REGEXPR";
         if predicate {
-            self.generate_expression(&regex.subject)?;
-            self.write(if regex.negated {
+            self.generate_expression(subject)?;
+            self.write(if options.negated {
                 " NOT LIKE_REGEXPR "
             } else {
                 " LIKE_REGEXPR "
             });
         } else {
-            self.write(&regex.operation);
+            self.write(&options.source_name);
             self.write("(");
-            if let Some(after) = regex.position_after {
+            if let Some(after) = options.position_after {
                 self.write(if after { "AFTER " } else { "START " });
             }
         }
-        self.generate_expression(&regex.pattern)?;
-        if let Some(flag) = &regex.flag {
+        self.generate_expression(pattern)?;
+        if let Some(flag) = flag {
             self.write(" FLAG ");
             self.generate_expression(flag)?;
         }
         if !predicate {
             self.write(" IN ");
-            self.generate_expression(&regex.subject)?;
+            self.generate_expression(subject)?;
         }
         for (keyword, argument) in [
-            (" WITH ", &regex.replacement),
-            (" FROM ", &regex.start),
-            (" OCCURRENCE ", &regex.occurrence),
-            (" GROUP ", &regex.group),
+            (" WITH ", replacement),
+            (" FROM ", start),
+            (" OCCURRENCE ", occurrence),
+            (" GROUP ", group),
         ] {
             if let Some(argument) = argument {
                 self.write(keyword);
@@ -19210,13 +19204,18 @@ impl Generator {
         )
     }
 
-    fn generate_hana_grouping(&mut self, grouping: &HanaGrouping) -> Result<()> {
+    fn generate_grouping_options(
+        &mut self,
+        kind: &str,
+        expressions: &[Expression],
+        grouping: &GroupingOptions,
+    ) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
             return Err(
                 self.hana_unsupported("HANA grouping-set selection and result delivery options")
             );
         }
-        self.write(&grouping.kind);
+        self.write(kind);
         for (keyword, value) in [
             (" BEST ", &grouping.best),
             (" LIMIT ", &grouping.limit),
@@ -19246,7 +19245,7 @@ impl Generator {
             self.write(" MULTIPLE RESULTSETS");
         }
         self.write(" (");
-        for (i, expression) in grouping.expressions.iter().enumerate() {
+        for (i, expression) in expressions.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
@@ -19256,28 +19255,12 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_timezone(&mut self, timezone: &HanaTimezone) -> Result<()> {
-        if self.config.dialect != Some(DialectType::HANA) {
-            return Err(self.hana_unsupported("HANA timezone datasets and conversion error policy"));
-        }
-        self.write(&timezone.name);
-        self.write("(");
-        for (i, argument) in timezone.arguments.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-            self.generate_expression(argument)?;
-        }
-        if let Some(behavior) = &timezone.on_error {
+    fn generate_sql_behavior(&mut self, behavior: &SqlBehavior) -> Result<()> {
+        self.write(&behavior.kind);
+        if let Some(value) = &behavior.value {
             self.write(" ");
-            self.write(&behavior.kind);
-            if let Some(value) = &behavior.value {
-                self.write(" ");
-                self.generate_expression(value)?;
-            }
-            self.write(" ON ERROR");
+            self.generate_expression(value)?;
         }
-        self.write(")");
         Ok(())
     }
 
@@ -19543,6 +19526,53 @@ impl Generator {
     }
 
     fn generate_function(&mut self, func: &Function) -> Result<()> {
+        if func.source_dialect == Some(DialectType::HANA)
+            && self.config.dialect != Some(DialectType::HANA)
+        {
+            return self.generate_hana_function(func);
+        }
+        if !func.qualified_name.is_empty() {
+            for (i, component) in func.qualified_name.iter().enumerate() {
+                if i > 0 {
+                    self.write(".");
+                }
+                self.generate_identifier(component)?;
+            }
+            if !func.no_parens {
+                self.write("(");
+                if func.distinct {
+                    self.write("DISTINCT ");
+                }
+                for (i, argument) in func.args.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(argument)?;
+                }
+                if let Some(behavior) = &func.on_error {
+                    if self.config.dialect != Some(DialectType::HANA) {
+                        return Err(self.hana_unsupported(
+                            "Function error behavior has no verified target mapping",
+                        ));
+                    }
+                    self.write(" ");
+                    self.generate_sql_behavior(behavior)?;
+                    self.write(" ON ERROR");
+                }
+                self.write(")");
+            }
+            for comment in &func.trailing_comments {
+                self.write_space();
+                self.write_formatted_comment(comment);
+            }
+            return Ok(());
+        }
+        if func.on_error.is_some() && self.config.dialect != Some(DialectType::HANA) {
+            return Err(
+                self.hana_unsupported("Function error behavior has no verified target mapping")
+            );
+        }
+
         if self.config.dialect == Some(DialectType::HANA)
             && !func.quoted
             && matches!(
@@ -20265,6 +20295,11 @@ impl Generator {
             }
         }
 
+        if let Some(behavior) = &func.on_error {
+            self.write(" ");
+            self.generate_sql_behavior(behavior)?;
+            self.write(" ON ERROR");
+        }
         if use_brackets {
             self.write("]");
         } else {
@@ -20291,6 +20326,15 @@ impl Generator {
     }
 
     fn generate_aggregate_function(&mut self, func: &AggregateFunction) -> Result<()> {
+        if func.source_dialect == Some(DialectType::HANA)
+            && self.config.dialect != Some(DialectType::HANA)
+        {
+            return Err(self.hana_unsupported(format!(
+                "HANA aggregate {} has no verified target mapping",
+                func.name
+            )));
+        }
+
         // Normalize function name based on dialect settings
         let mut normalized_name = self.normalize_func_name(&func.name);
 
@@ -23372,6 +23416,10 @@ impl Generator {
                     }
                 }
                 Expression::Function(Box::new(crate::expressions::Function {
+                    on_error: None,
+                    qualified_name: Vec::new(),
+                    source_dialect: None,
+
                     name: f.name.clone(),
                     args: new_args,
                     distinct: f.distinct,
@@ -24008,6 +24056,23 @@ impl Generator {
     // JSON function generators
 
     fn generate_json_extract(&mut self, name: &str, f: &JsonExtractFunc) -> Result<()> {
+        self.check_json_source(f.source_dialect, f.options.as_ref())?;
+        if f.source_dialect == Some(DialectType::HANA) {
+            self.write(name);
+            self.write("(");
+            self.generate_expression(&f.this)?;
+            self.write(", ");
+            self.generate_expression(&f.path)?;
+            if let Some(returning) = &f.returning {
+                self.write(" RETURNING ");
+                self.generate_data_type(returning)?;
+            }
+            if let Some(options) = &f.options {
+                self.generate_json_options(options)?;
+            }
+            self.write(")");
+            return Ok(());
+        }
         use crate::dialects::DialectType;
 
         // Check if we should use arrow syntax (-> or ->>)
@@ -30633,6 +30698,9 @@ impl Generator {
             }
         }
         self.write_keyword("COLUMNS");
+        if self.config.dialect == Some(DialectType::HANA) {
+            self.write(" ");
+        }
         self.write("(");
         self.generate_expression(&e.this)?;
         self.write(")");
@@ -31600,6 +31668,9 @@ impl Generator {
     }
 
     fn generate_cube(&mut self, e: &Cube) -> Result<()> {
+        if let Some(options) = &e.options {
+            return self.generate_grouping_options("CUBE", &e.expressions, options);
+        }
         // Python: return f"CUBE {self.wrap(expressions)}" if expressions else "WITH CUBE"
         if e.expressions.is_empty() {
             self.write_keyword("WITH CUBE");
@@ -33470,6 +33541,9 @@ impl Generator {
     }
 
     fn generate_grouping_sets(&mut self, e: &GroupingSets) -> Result<()> {
+        if let Some(options) = &e.options {
+            return self.generate_grouping_options("GROUPING SETS", &e.expressions, options);
+        }
         // Python: return f"GROUPING SETS {self.wrap(grouping_sets)}"
         self.write_keyword("GROUPING SETS");
         self.write(" (");
@@ -34151,6 +34225,7 @@ impl Generator {
     }
 
     fn generate_json_column_def(&mut self, e: &JSONColumnDef) -> Result<()> {
+        self.check_json_source(e.source_dialect, e.options.as_ref())?;
         // Python: NESTED PATH path schema | this kind PATH path [FOR ORDINALITY]
         if let Some(nested_schema) = &e.nested_schema {
             self.write_keyword("NESTED");
@@ -34166,6 +34241,10 @@ impl Generator {
             if let Some(this) = &e.this {
                 self.generate_expression(this)?;
             }
+            if let Some(data_type) = &e.data_type {
+                self.write_space();
+                self.generate_data_type(data_type)?;
+            }
             if let Some(kind) = &e.kind {
                 self.write_space();
                 self.write(kind);
@@ -34173,6 +34252,10 @@ impl Generator {
             if e.format_json {
                 self.write_space();
                 self.write_keyword("FORMAT JSON");
+            }
+            if let Some(encoding) = &e.encoding {
+                self.write(" ENCODING ");
+                self.write(encoding);
             }
             if let Some(path) = &e.path {
                 self.write_space();
@@ -34183,6 +34266,9 @@ impl Generator {
             if e.ordinality.is_some() {
                 self.write_keyword(" FOR ORDINALITY");
             }
+        }
+        if let Some(options) = &e.options {
+            self.generate_json_options(options)?;
         }
         Ok(())
     }
@@ -34583,6 +34669,9 @@ impl Generator {
         // COLUMNS(col1 type, col2 type, ...)
         // When pretty printing and content is too wide, format with each column on a separate line
         self.write_keyword("COLUMNS");
+        if self.config.dialect == Some(DialectType::HANA) {
+            self.write(" ");
+        }
         self.write("(");
 
         if self.config.pretty && !e.expressions.is_empty() {
@@ -34659,6 +34748,7 @@ impl Generator {
     }
 
     fn generate_json_table(&mut self, e: &JSONTable) -> Result<()> {
+        self.check_json_source(e.source_dialect, e.options.as_ref())?;
         // JSON_TABLE(this, path [error_handling] [empty_handling] schema)
         self.write_keyword("JSON_TABLE");
         self.write("(");
@@ -34679,6 +34769,9 @@ impl Generator {
             self.write_space();
             self.generate_expression(schema)?;
         }
+        if let Some(options) = &e.options {
+            self.generate_json_options(options)?;
+        }
         self.write(")");
         Ok(())
     }
@@ -34693,6 +34786,7 @@ impl Generator {
     }
 
     fn generate_json_value(&mut self, e: &JSONValue) -> Result<()> {
+        self.check_json_source(e.source_dialect, e.options.as_ref())?;
         // JSON_VALUE(this, path RETURNING type ON condition)
         self.write_keyword("JSON_VALUE");
         self.write("(");
@@ -34710,6 +34804,9 @@ impl Generator {
         if let Some(on_condition) = &e.on_condition {
             self.write_space();
             self.generate_expression(on_condition)?;
+        }
+        if let Some(options) = &e.options {
+            self.generate_json_options(options)?;
         }
         self.write(")");
         Ok(())
@@ -36628,6 +36725,9 @@ impl Generator {
     }
 
     fn generate_partition_by_property(&mut self, e: &PartitionByProperty) -> Result<()> {
+        if let Some(specification) = &e.specification {
+            return self.generate_hana_partition(specification, false);
+        }
         // BigQuery table property: PARTITION BY expression [, expression ...]
         self.write_keyword("PARTITION BY");
         self.write_space();
@@ -37771,6 +37871,9 @@ impl Generator {
     }
 
     fn generate_rollup(&mut self, e: &Rollup) -> Result<()> {
+        if let Some(options) = &e.options {
+            return self.generate_grouping_options("ROLLUP", &e.expressions, options);
+        }
         // Python: return f"ROLLUP {self.wrap(expressions)}" if expressions else "WITH ROLLUP"
         if e.expressions.is_empty() {
             self.write_keyword("WITH ROLLUP");

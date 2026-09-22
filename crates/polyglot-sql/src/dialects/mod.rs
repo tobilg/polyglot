@@ -208,6 +208,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 /// Dialect names are case-insensitive when parsed from strings via [`FromStr`].
 /// Some dialects accept aliases (e.g., "mssql" and "sqlserver" both resolve to [`TSQL`](DialectType::TSQL)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum DialectType {
     /// Standard SQL with no dialect-specific behavior (default).
@@ -696,7 +697,7 @@ where
     // semantics even though all physical children are visible to traversal APIs.
     fn uses_generated_dispatch(expression: &Expression) -> bool {
         match expression {
-            Expression::CreateTable(create) if create.hana_storage => true,
+            Expression::CreateTable(_) => true,
             Expression::Select(select) => {
                 select.joins.is_empty()
                     && select.with.is_none()
@@ -756,20 +757,25 @@ where
             | Expression::Like(_)
             | Expression::ILike(_)
             | Expression::Function(_)
-            | Expression::HanaFunction(_)
-            | Expression::HanaAggregateFunction(_)
-            | Expression::HanaRegex(_)
-            | Expression::HanaJson(_)
-            | Expression::HanaJsonColumn(_)
-            | Expression::HanaPartition(_)
-            | Expression::HanaStorageProperty(_)
-            | Expression::HanaHierarchy(_)
-            | Expression::HanaPlaceholder(_)
-            | Expression::HanaTableFunction(_)
-            | Expression::HanaCall(_)
-            | Expression::HanaHint(_)
-            | Expression::HanaGrouping(_)
-            | Expression::HanaTimezone(_)
+            | Expression::AggregateFunction(_)
+            | Expression::JSONValue(_)
+            | Expression::JSONTable(_)
+            | Expression::JSONColumnDef(_)
+            | Expression::JsonQuery(_)
+            | Expression::RegexpLike(_)
+            | Expression::RegexpReplace(_)
+            | Expression::RegexpExtract(_)
+            | Expression::RegexpInstr(_)
+            | Expression::RegexpCount(_)
+            | Expression::Cube(_)
+            | Expression::Rollup(_)
+            | Expression::GroupingSets(_)
+            | Expression::Hint(_)
+            | Expression::PartitionByProperty(_)
+            | Expression::StorageProperty(_)
+            | Expression::Hierarchy(_)
+            | Expression::ViewParameter(_)
+            | Expression::Call(_)
             | Expression::Lead(_)
             | Expression::Lag(_)
             | Expression::Array(_)
@@ -1071,12 +1077,10 @@ where
     // First recursively transform children, then apply the transform function
     let expr = match expr {
         Expression::Select(mut select) => {
-            if let Some(options) = &mut select.hana_options {
-                options.hints = std::mem::take(&mut options.hints)
-                    .into_iter()
-                    .map(|hint| transform_recursive(hint, transform_fn))
-                    .collect::<Result<Vec<_>>>()?;
-            }
+            select.query_hints = std::mem::take(&mut select.query_hints)
+                .into_iter()
+                .map(|hint| transform_recursive(hint, transform_fn))
+                .collect::<Result<Vec<_>>>()?;
             select.expressions = select
                 .expressions
                 .into_iter()
@@ -2027,7 +2031,7 @@ where
             Expression::UnixToTime(e)
         }
 
-        Expression::HanaUpsert(mut upsert) => {
+        Expression::Upsert(mut upsert) => {
             upsert.table = transform_table_ref_recursive(upsert.table, transform_fn)?;
             upsert.source = transform_recursive(upsert.source, transform_fn)?;
             if let Some(partition) = upsert.partition.take() {
@@ -2036,7 +2040,7 @@ where
             if let Some(condition) = upsert.condition.take() {
                 upsert.condition = Some(transform_recursive(condition, transform_fn)?);
             }
-            Expression::HanaUpsert(upsert)
+            Expression::Upsert(upsert)
         }
 
         // CreateTable: recurse into column defaults, on_update expressions, and data types
@@ -3226,7 +3230,17 @@ impl Dialect {
         // Apply preprocessing transforms based on dialect
         let preprocessed = self.preprocess(expr)?;
         // Then apply recursive transformation
-        transform_recursive(preprocessed, &self.transformer)
+        transform_recursive(preprocessed, &|node| {
+            // Calls with retained source semantics are lowered by the generator;
+            // ordinary AST visitors and optimizer passes still see their shared node kind.
+            if node.source_dialect().is_some()
+                || matches!(&node, Expression::Function(f) if !f.qualified_name.is_empty())
+            {
+                Ok(node)
+            } else {
+                (self.transformer)(node)
+            }
+        })
     }
 
     /// Apply dialect-specific preprocessing transforms
@@ -3509,44 +3523,17 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
-                // Validate source-specific HANA semantics before target transforms
-                // can erase a cast or rebuild a SELECT without its native clauses.
-                // The same generator checks protect standalone AST generation.
-                if self.dialect_type == DialectType::HANA && target != DialectType::HANA {
-                    for node in expr.dfs() {
-                        let protected = match node {
-                            Expression::HanaFunction(_)
-                            | Expression::HanaAggregateFunction(_)
-                            | Expression::HanaRegex(_)
-                            | Expression::HanaJson(_)
-                            | Expression::HanaJsonColumn(_)
-                            | Expression::HanaUpsert(_)
-                            | Expression::HanaPartition(_)
-                            | Expression::HanaHierarchy(_)
-                            | Expression::HanaGrouping(_)
-                            | Expression::HanaTimezone(_)
-                            | Expression::HanaPlaceholder(_)
-                            | Expression::HanaTableFunction(_)
-                            | Expression::HanaCall(_)
-                            | Expression::HanaHint(_)
-                            | Expression::HanaStorageProperty(_)
-                            | Expression::CreateTable(_)
-                            | Expression::AlterTable(_) => true,
-                            Expression::Cast(c) => matches!(c.to, DataType::Hana { .. }),
-                            Expression::Select(s) => {
-                                s.hana_options.is_some() || s.locks.iter().any(|l| l.ignore_locked)
-                            }
-                            Expression::DataType(DataType::Hana { .. }) => true,
-                            _ => false,
-                        };
-                        if protected {
-                            target_dialect.generate_with_transpile_options(
-                                node,
-                                self.dialect_type,
-                                opts,
-                            )?;
+                // Validate source-bound semantics before normalization can erase them.
+                // Generating each outermost protected subtree checks its descendants too.
+                let mut pending = vec![&expr];
+                while let Some(node) = pending.pop() {
+                    if let Some(source) = node.source_dialect() {
+                        if source != target {
+                            target_dialect.generate_with_transpile_options(node, source, opts)?;
+                            continue;
                         }
                     }
+                    crate::ast_children::for_each_child(node, |_, child| pending.push(child));
                 }
 
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
@@ -3692,6 +3679,10 @@ impl Dialect {
                                                 ));
                                                 return Ok(Expression::Function(Box::new(
                                                     crate::expressions::Function {
+                                                        on_error: None,
+                                                        qualified_name: Vec::new(),
+                                                        source_dialect: None,
+
                                                         name: f.name.clone(),
                                                         args: new_args,
                                                         distinct: f.distinct,
@@ -4063,6 +4054,8 @@ impl Dialect {
                             };
                             Ok(Expression::AggregateFunction(Box::new(
                                 crate::expressions::AggregateFunction {
+                                    source_dialect: None,
+
                                     name: "COUNT_BIG".to_string(),
                                     args,
                                     distinct: c.distinct,

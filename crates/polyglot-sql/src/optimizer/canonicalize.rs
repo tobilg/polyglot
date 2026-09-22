@@ -170,42 +170,32 @@ fn canonicalize_recursive(expression: Expression, dialect: Option<DialectType>) 
             remove_redundant_casts(result)
         }
 
-        // Function expressions
-        Expression::Function(func) => {
-            let args = func
+        // Preserve source metadata while canonicalizing shared function children.
+        Expression::Function(mut func) => {
+            func.args = func
                 .args
                 .into_iter()
                 .map(|e| canonicalize_recursive(e, dialect))
                 .collect();
-            Expression::Function(Box::new(crate::expressions::Function {
-                name: func.name,
-                args,
-                distinct: func.distinct,
-                trailing_comments: func.trailing_comments,
-                use_bracket_syntax: func.use_bracket_syntax,
-                no_parens: func.no_parens,
-                quoted: func.quoted,
-                span: None,
-                inferred_type: None,
-            }))
+            if let Some(behavior) = &mut func.on_error {
+                behavior.value = behavior
+                    .value
+                    .take()
+                    .map(|e| canonicalize_recursive(e, dialect));
+            }
+            func.span = None;
+            func.inferred_type = None;
+            Expression::Function(func)
         }
-
-        Expression::AggregateFunction(agg) => {
-            let args = agg
+        Expression::AggregateFunction(mut agg) => {
+            agg.args = agg
                 .args
                 .into_iter()
                 .map(|e| canonicalize_recursive(e, dialect))
                 .collect();
-            Expression::AggregateFunction(Box::new(crate::expressions::AggregateFunction {
-                name: agg.name,
-                args,
-                distinct: agg.distinct,
-                filter: agg.filter.map(|f| canonicalize_recursive(f, dialect)),
-                order_by: agg.order_by,
-                limit: agg.limit,
-                ignore_nulls: agg.ignore_nulls,
-                inferred_type: None,
-            }))
+            agg.filter = agg.filter.map(|e| canonicalize_recursive(e, dialect));
+            agg.inferred_type = None;
+            Expression::AggregateFunction(agg)
         }
 
         // Alias

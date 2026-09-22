@@ -63,8 +63,16 @@ rendered with `FROM DUMMY` for a HANA target.
 
 ## Translation policy
 
-HANA-specific AST nodes retain source semantics through JSON serialization and
-independent target generation. A known HANA function is not automatically treated
+Shared AST nodes retain source semantics through serialized `source_dialect`
+metadata and typed options, including during independent target generation.
+Functions, aggregates, JSON, regex, grouping, hints, and partition properties use
+the existing expression categories. Procedure calls, upserts, hierarchy queries,
+view parameters, and storage properties have dialect-neutral node names. Native
+data types retain `HanaDataType` because their domains and precision differ from
+otherwise similar SQL types. TypeScript guards and Python expression classes use
+these shared categories rather than HANA-specific counterparts.
+
+A known HANA function is not automatically treated
 as a compatible target function. Unverified mappings return an unsupported error,
 including at `Ignore` and `Warn`, rather than silently dropping a result-shaping
 clause or emitting a known incompatible operation. Checks run before target
@@ -124,11 +132,13 @@ Verified locally on 2026-09-22:
 
 - `make test-rust-verify`, including existing SQLGlot fixtures, the 132 native
   HANA fixtures, ClickHouse parser and round-trip suites, and FFI tests.
-- All 12 focused HANA regression tests in `dialect_matrix.rs`.
+- All 16 focused HANA regression tests in `dialect_matrix.rs`, including generic
+  identifier normalization, type annotation, traversal, and source metadata
+  preservation across optimization and standalone JSON AST generation.
 - Parse-only, generation, and transpilation builds with only `dialect-hana`,
   plus a HANA-only WASM discovery/native parsing test.
 - Rebuilt WASM and TypeScript SDK: 613 tests; TypeScript type checking.
-- Rebuilt Python extension: 321 tests passed, one skipped; Python type checking.
+- Rebuilt Python extension: 322 tests passed, one skipped; Python type checking.
 - Go tests against the rebuilt FFI library, with the test cache disabled.
 - Formatting, project consistency, and unchanged released changelog entries.
 

@@ -601,6 +601,8 @@ impl ClickHouseDialect {
             // STDDEV -> stddevSamp in ClickHouse (sample stddev)
             "STDDEV" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "stddevSamp".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -615,6 +617,8 @@ impl ClickHouseDialect {
             // STDDEV_POP -> stddevPop
             "STDDEV_POP" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "stddevPop".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -629,6 +633,8 @@ impl ClickHouseDialect {
             // VARIANCE -> varSamp in ClickHouse
             "VARIANCE" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "varSamp".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -643,6 +649,8 @@ impl ClickHouseDialect {
             // VAR_POP -> varPop
             "VAR_POP" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "varPop".to_string(),
                     args: f.args,
                     distinct: f.distinct,
@@ -657,6 +665,8 @@ impl ClickHouseDialect {
             // MEDIAN -> median
             "MEDIAN" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "median".to_string(),
                     args: f.args,
                     distinct: f.distinct,

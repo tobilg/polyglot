@@ -927,7 +927,7 @@ impl<'a> TypeAnnotator<'a> {
             }
 
             // Function
-            Expression::Function(f) | Expression::HanaFunction(f) => {
+            Expression::Function(f) => {
                 for arg in &mut f.args {
                     self.annotate_in_place(arg);
                 }

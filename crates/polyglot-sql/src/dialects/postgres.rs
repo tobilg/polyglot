@@ -268,6 +268,8 @@ impl DialectImpl for PostgresDialect {
             // LogicalAnd -> BOOL_AND
             Expression::LogicalAnd(f) => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "BOOL_AND".to_string(),
                     args: vec![f.this],
                     distinct: f.distinct,
@@ -282,6 +284,8 @@ impl DialectImpl for PostgresDialect {
             // LogicalOr -> BOOL_OR
             Expression::LogicalOr(f) => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "BOOL_OR".to_string(),
                     args: vec![f.this],
                     distinct: f.distinct,
@@ -806,6 +810,10 @@ impl DialectImpl for PostgresDialect {
             // ============================================
             // CurrentTimestamp -> CURRENT_TIMESTAMP (no parens)
             Expression::CurrentTimestamp(_) => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_TIMESTAMP".to_string(),
                 args: vec![],
                 distinct: false,
@@ -825,6 +833,10 @@ impl DialectImpl for PostgresDialect {
 
             // CurrentDate -> CURRENT_DATE (no parens)
             Expression::CurrentDate(_) => Ok(Expression::Function(Box::new(Function {
+                on_error: None,
+                qualified_name: Vec::new(),
+                source_dialect: None,
+
                 name: "CURRENT_DATE".to_string(),
                 args: vec![],
                 distinct: false,

@@ -178,23 +178,6 @@ export const isExists = isType('exists');
 /** Type guard for generic function calls */
 export const isFunction = isType('function');
 
-/** HANA source nodes retain dialect-specific semantics until generation. */
-export const isHanaFunction = isType('hana_function');
-export const isHanaAggregateFunction = isType('hana_aggregate_function');
-export const isHanaJson = isType('hana_json');
-export const isHanaHierarchy = isType('hana_hierarchy');
-export const isHanaUpsert = isType('hana_upsert');
-export const isHanaGrouping = isType('hana_grouping');
-export const isHanaTimezone = isType('hana_timezone');
-export const isHanaRegex = isType('hana_regex');
-export const isHanaJsonColumn = isType('hana_json_column');
-export const isHanaPartition = isType('hana_partition');
-export const isHanaStorageProperty = isType('hana_storage_property');
-export const isHanaPlaceholder = isType('hana_placeholder');
-export const isHanaTableFunction = isType('hana_table_function');
-export const isHanaCall = isType('hana_call');
-export const isHanaHint = isType('hana_hint');
-
 /** Type guard for aggregate function calls */
 export const isAggregateFunction = isType('aggregate_function');
 
@@ -318,7 +301,7 @@ export function isQuery(expr: Expression): boolean {
     t === 'insert' ||
     t === 'update' ||
     t === 'delete' ||
-    t === 'hana_upsert'
+    t === 'upsert'
   );
 }
 

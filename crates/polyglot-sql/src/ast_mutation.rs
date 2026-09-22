@@ -91,6 +91,8 @@ pub(crate) fn binary(kind: BinaryKind, left: Expression, right: Expression) -> E
             inferred_type: None,
         })),
         BinaryKind::RLike => Expression::RegexpLike(Box::new(RegexpFunc {
+            options: None,
+
             this: operation.left,
             pattern: operation.right,
             flags: None,
@@ -429,6 +431,8 @@ pub(crate) fn append_hint(expression: &mut Expression, text: String) -> Result<(
     select
         .hint
         .get_or_insert_with(|| Hint {
+            source_dialect: None,
+
             expressions: Vec::new(),
         })
         .expressions
@@ -454,7 +458,7 @@ pub(crate) fn create_table_as(
         temporary,
         or_replace: replace,
         table_modifier: None,
-        hana_storage: false,
+        source_dialect: None,
         as_select: Some(query),
         as_select_parenthesized: false,
         on_commit: None,

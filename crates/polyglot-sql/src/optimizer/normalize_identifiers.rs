@@ -248,6 +248,17 @@ fn normalize_expression(expression: Expression, strategy: NormalizationStrategy)
                 .into_iter()
                 .map(|e| normalize_expression(e, strategy))
                 .collect();
+            func.qualified_name = func
+                .qualified_name
+                .into_iter()
+                .map(|i| normalize_identifier(i, strategy))
+                .collect();
+            if let Some(behavior) = &mut func.on_error {
+                behavior.value = behavior
+                    .value
+                    .take()
+                    .map(|e| normalize_expression(e, strategy));
+            }
             Expression::Function(Box::new(func))
         }
         Expression::AggregateFunction(agg) => {

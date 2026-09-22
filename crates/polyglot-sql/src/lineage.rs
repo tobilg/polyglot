@@ -373,7 +373,7 @@ fn lineage_normalized_expression(sql: &Expression) -> Expression {
             .map(|query| attach_with_to_query(query.clone(), create.with_cte.clone()))
             .unwrap_or_else(|| sql.clone()),
         Expression::CreateView(create) => lineage_normalized_expression(&create.query),
-        Expression::HanaUpsert(upsert) => lineage_normalized_expression(&upsert.source),
+        Expression::Upsert(upsert) => lineage_normalized_expression(&upsert.source),
         Expression::Insert(insert) => insert
             .query
             .as_ref()

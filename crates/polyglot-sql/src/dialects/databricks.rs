@@ -828,6 +828,8 @@ impl DatabricksDialect {
             // APPROX_DISTINCT -> APPROX_COUNT_DISTINCT
             "APPROX_DISTINCT" if !f.args.is_empty() => {
                 Ok(Expression::AggregateFunction(Box::new(AggregateFunction {
+                    source_dialect: None,
+
                     name: "APPROX_COUNT_DISTINCT".to_string(),
                     args: f.args,
                     distinct: f.distinct,

@@ -480,15 +480,7 @@ pub fn is_literal(expr: &Expression) -> bool {
 pub fn is_function(expr: &Expression) -> bool {
     matches!(
         expr,
-        Expression::Function(_)
-            | Expression::HanaFunction(_)
-            | Expression::AggregateFunction(_)
-            | Expression::HanaAggregateFunction(_)
-            | Expression::HanaJson(_)
-            | Expression::HanaTableFunction(_)
-            | Expression::HanaHierarchy(_)
-            | Expression::HanaTimezone(_)
-            | Expression::HanaRegex(_)
+        Expression::Function(_) | Expression::AggregateFunction(_) | Expression::Hierarchy(_)
     )
 }
 
@@ -511,7 +503,6 @@ pub fn is_aggregate(expr: &Expression) -> bool {
     matches!(
         expr,
         Expression::AggregateFunction(_)
-            | Expression::HanaAggregateFunction(_)
             | Expression::Count(_)
             | Expression::Sum(_)
             | Expression::Avg(_)
