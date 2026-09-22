@@ -4,21 +4,6 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
-
-### Added
-
-- Initial SAP HANA Cloud and Platform dialect support, based on
-  [PR #276](https://github.com/tobilg/polyglot/pull/276): source-aware functions and
-  types, JSON operations and query serialization, UPSERT, range/hash partitioning,
-  hierarchy queries, calculation-view parameters, regex operations, hints, and
-  locking clauses. HANA is discoverable through Rust, WASM, Python, Go/FFI, and
-  the TypeScript SDK. The [coverage guide](docs/hana/README.md) records supported
-  forms and remaining reference gaps.
-- Verified HANA scalar translations and explicit errors for unverified conversions,
-  including preservation of decimal truncation, string positions, type domains,
-  UTC meaning, and timestamp precision.
-
 ## [0.12.1] - 2026-09-21
 
 ### Added
