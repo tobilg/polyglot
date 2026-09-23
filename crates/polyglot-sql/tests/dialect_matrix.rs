@@ -28,7 +28,7 @@ fn transpile_succeeds(sql: &str, from: DialectType, to: DialectType) -> bool {
 mod strict_unsupported_regressions {
     use super::*;
 
-    fn transpile_with_level(
+    pub(super) fn transpile_with_level(
         sql: &str,
         read: DialectType,
         write: DialectType,
@@ -484,7 +484,6 @@ mod strict_unsupported_regressions {
             "SELECT count(t.id) FROM t",
             "SELECT sum(t.amount) FROM t",
             "SELECT t.* FROM t",
-            "SELECT count(x) FILTER (WHERE EXISTS (SELECT t.* FROM t)) FROM u",
         ];
 
         for write in [DialectType::Fabric, DialectType::TSQL] {
@@ -517,6 +516,24 @@ mod strict_unsupported_regressions {
                 transpile_with_level(sql, DialectType::PostgreSQL, write, UnsupportedLevel::Raise)
                     .expect("strict TSQL/Fabric transpile should allow scalar aggregate arguments");
             }
+        }
+    }
+
+    #[test]
+    fn strict_tsql_targets_reject_filter_subqueries_lowered_into_aggregate_arguments() {
+        // FILTER becomes CASE inside COUNT. SQL Server/Fabric do not allow a
+        // subquery in that argument, even though the FILTER is valid PostgreSQL.
+        for target in [DialectType::TSQL, DialectType::Fabric] {
+            let error = transpile_with_level(
+                "SELECT count(x) FILTER (WHERE EXISTS (SELECT t.* FROM t)) FROM u",
+                DialectType::PostgreSQL,
+                target,
+                UnsupportedLevel::Raise,
+            )
+            .unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("aggregate arguments containing subqueries"));
         }
     }
 
@@ -4915,9 +4932,175 @@ mod secondary_dialects {
 
 #[cfg(feature = "dialect-hana")]
 mod hana_regressions {
+    use super::strict_unsupported_regressions::transpile_with_level;
     use super::*;
     use polyglot_sql::expressions::Expression;
     use polyglot_sql::ExpressionWalk;
+
+    #[test]
+    fn integer_casts_preserve_hana_truncation_and_reject_unverified_domains() {
+        let sql = "SELECT CAST(10.9 AS INTEGER), CAST(-10.9 AS BIGINT), CAST(10.9 AS TINYINT), CAST(-10.9 AS SMALLINT)";
+        assert_eq!(transpile(sql, DialectType::HANA, DialectType::DuckDB),
+            "SELECT CAST(TRUNC(10.9) AS INT), CAST(TRUNC(-10.9) AS BIGINT), CAST(TRUNC(10.9) AS UTINYINT), CAST(TRUNC(-10.9) AS SMALLINT)");
+        for target in [DialectType::PostgreSQL, DialectType::Trino] {
+            let sql = "SELECT CAST(-10.9 AS BIGINT)";
+            let output = transpile(sql, DialectType::HANA, target);
+            assert!(output.contains(if target == DialectType::Trino {
+                "TRUNCATE(-10.9)"
+            } else {
+                "TRUNC(-10.9)"
+            }));
+        }
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "SELECT CAST('10.9' AS INT)",
+            "SELECT CAST(x AS INT) FROM t",
+            "SELECT CAST(256 AS TINYINT)",
+        ] {
+            let ast = hana.parse(sql).unwrap();
+            let json = serde_json::to_string(&ast).unwrap();
+            let decoded: Vec<Expression> = serde_json::from_str(&json).unwrap();
+            assert!(hana.generate(&decoded[0]).is_ok(), "native {sql}");
+            for target in [DialectType::PostgreSQL, DialectType::Trino] {
+                assert!(
+                    Dialect::get(target).generate(&decoded[0]).is_err(),
+                    "{sql} -> {target:?}"
+                );
+                for level in [UnsupportedLevel::Ignore, UnsupportedLevel::Raise] {
+                    assert!(transpile_with_level(sql, DialectType::HANA, target, level).is_err());
+                }
+            }
+        }
+        for sql in [
+            "SELECT CAST(10.9 AS INT)",
+            "SELECT CAST(-10.9 AS BIGINT)",
+            "SELECT CAST('10.9' AS INT)",
+            "SELECT CAST(x AS SMALLINT) FROM t",
+        ] {
+            assert!(
+                transpile_with_level(
+                    sql,
+                    DialectType::PostgreSQL,
+                    DialectType::HANA,
+                    UnsupportedLevel::Raise
+                )
+                .is_err(),
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            transpile(
+                "SELECT CAST(42 AS INT)",
+                DialectType::PostgreSQL,
+                DialectType::HANA
+            ),
+            "SELECT CAST(42 AS INT) FROM DUMMY"
+        );
+        for sql in [
+            "SELECT CAST(-32768 AS SMALLINT)",
+            "SELECT CAST(2147483647 AS INTEGER)",
+            "SELECT CAST(-9223372036854775808 AS BIGINT)",
+        ] {
+            assert!(
+                transpile_with_level(
+                    sql,
+                    DialectType::HANA,
+                    DialectType::DuckDB,
+                    UnsupportedLevel::Raise
+                )
+                .is_ok(),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn incoming_string_aggregation_requires_verified_null_semantics() {
+        for sql in [
+            "SELECT STRING_AGG(x, ',' ORDER BY id) FROM t",
+            "SELECT STRING_AGG(NULL, ',') FROM t",
+            "SELECT STRING_AGG(x, ',') FROM t WHERE 1 = 0",
+            "SELECT STRING_AGG(x, ',') OVER (PARTITION BY grp) FROM t",
+            "SELECT STRING_AGG(x, ',') FILTER (WHERE keep), COUNT(*) FROM t",
+        ] {
+            for source in [DialectType::PostgreSQL, DialectType::DuckDB] {
+                let error =
+                    transpile_with_level(sql, source, DialectType::HANA, UnsupportedLevel::Raise)
+                        .unwrap_err();
+                assert!(error.to_string().contains("STRING_AGG"), "{sql}: {error}");
+            }
+        }
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile("SELECT STRING_AGG(x, ',') FROM t", DialectType::HANA)
+            .is_ok());
+    }
+
+    #[test]
+    fn dummy_relations_preserve_rows_columns_aliases_and_cte_scope() {
+        assert!(Dialect::get(DialectType::HANA)
+            .transpile("SELECT SYS.DUMMY.DUMMY FROM SYS.DUMMY", DialectType::DuckDB,)
+            .unwrap_err()
+            .to_string()
+            .contains("explicit table alias"));
+        for target in [
+            DialectType::DuckDB,
+            DialectType::PostgreSQL,
+            DialectType::Trino,
+        ] {
+            for sql in [
+                "SELECT 1 FROM SYS.DUMMY",
+                "SELECT * FROM DUMMY",
+                "SELECT d.DUMMY FROM SYS.DUMMY AS d",
+                "SELECT COUNT(*) FROM DUMMY WHERE 1 = 0",
+            ] {
+                let output = transpile(sql, DialectType::HANA, target);
+                assert!(output.contains("SELECT 'X' AS DUMMY"), "{output}");
+                assert!(!output.contains("FROM SYS.DUMMY"), "{output}");
+            }
+        }
+        for sql in [
+            "SELECT * FROM app.DUMMY",
+            "SELECT * FROM \"dummy\"",
+            "WITH DUMMY AS (SELECT 7 AS n) SELECT n FROM DUMMY",
+        ] {
+            let output = transpile(sql, DialectType::HANA, DialectType::DuckDB);
+            assert!(!output.contains("SELECT 'X'"), "{output}");
+        }
+        // The alias is not visible in its own non-recursive definition.
+        for sql in [
+            "WITH DUMMY AS (SELECT * FROM SYS.DUMMY) SELECT * FROM DUMMY",
+            "WITH DUMMY AS (SELECT * FROM DUMMY) SELECT * FROM DUMMY",
+            "WITH first_cte AS (SELECT * FROM DUMMY), DUMMY AS (SELECT 7 AS n), last_cte AS (SELECT n FROM DUMMY) SELECT * FROM first_cte",
+        ] {
+            let output = transpile(sql, DialectType::HANA, DialectType::DuckDB);
+            assert_eq!(output.matches("SELECT 'X'").count(), 1, "{output}");
+        }
+        // A nested WITH does not shadow a sibling or its enclosing query.
+        let output = transpile(
+            "SELECT (WITH DUMMY AS (SELECT 7 AS n) SELECT n FROM DUMMY) FROM DUMMY",
+            DialectType::HANA,
+            DialectType::DuckDB,
+        );
+        assert_eq!(output.matches("SELECT 'X'").count(), 1, "{output}");
+    }
+
+    #[test]
+    fn outer_statement_validation_still_rejects_nested_raw_fallbacks() {
+        let hana = Dialect::get(DialectType::HANA);
+        for sql in [
+            "UNSUPPORTED STATEMENT",
+            "SELECT (UNSUPPORTED STATEMENT)",
+            "CREATE TABLE t AS (UNSUPPORTED STATEMENT)",
+        ] {
+            assert!(hana.parse(sql).is_err(), "{sql}");
+        }
+        let mut sql = "SELECT 1".to_owned();
+        for _ in 0..80 {
+            sql = format!("SELECT ({sql})");
+        }
+        assert!(hana.parse(&sql).is_ok());
+        assert!(hana.parse("SELECT 1; UNSUPPORTED STATEMENT").is_err());
+    }
 
     #[test]
     fn shared_function_nodes_participate_in_generic_analysis() {

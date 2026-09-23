@@ -5145,7 +5145,7 @@ pub struct Function {
     pub qualified_name: Vec<Identifier>,
     /// Optional DEFAULT/NULL/ERROR behavior after the arguments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub on_error: Option<SqlBehavior>,
+    pub on_error: Option<Box<SqlBehavior>>,
     /// Dialect whose call semantics must be retained through independent generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ast(skip)]

@@ -38,6 +38,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 #[derive(Default)]
 struct ParserRecursion {
     depth: AtomicUsize,
+    statements: AtomicUsize,
     failure: OnceLock<(usize, usize, Span)>,
 }
 
@@ -1102,9 +1103,18 @@ impl Parser {
             return Err(self.end_of_input_error());
         }
         let start_pos = self.current;
-        match self.with_parser_depth(|parser| parser.parse_statement_inner()) {
+        let hana = self.config.dialect == Some(crate::dialects::DialectType::HANA);
+        let outer_hana_statement =
+            hana && self.recursion.statements.fetch_add(1, Ordering::Relaxed) == 0;
+        let result = self.with_parser_depth(|parser| parser.parse_statement_inner());
+        if hana {
+            self.recursion.statements.fetch_sub(1, Ordering::Relaxed);
+        }
+        match result {
             Ok(expr) => {
-                if self.config.dialect == Some(crate::dialects::DialectType::HANA)
+                // Nested statements are checked by their outer statement. Walking
+                // every completed subtree makes a chain of subqueries quadratic.
+                if outer_hana_statement
                     && expr
                         .dfs()
                         .any(|node| matches!(node, Expression::Raw(_) | Expression::Command(_)))
@@ -10188,7 +10198,7 @@ impl Parser {
         }
         let mut function = Function::new(name, arguments);
         function.source_dialect = self.config.dialect;
-        function.on_error = on_error;
+        function.on_error = on_error.map(Box::new);
         Ok(Expression::Function(Box::new(function)))
     }
 
@@ -44072,6 +44082,7 @@ impl Parser {
         let mut name = raw_name.to_ascii_uppercase();
         if self.config.dialect == Some(crate::dialects::DialectType::HANA) {
             name = match name.as_str() {
+                "INTEGER" => "INT".to_owned(),
                 "DEC" => "DECIMAL".to_owned(),
                 "LONGDATE" => "TIMESTAMP".to_owned(),
                 "DAYDATE" => "DATE".to_owned(),
@@ -44116,6 +44127,9 @@ impl Parser {
             && matches!(
                 name.as_str(),
                 "TINYINT"
+                    | "SMALLINT"
+                    | "INT"
+                    | "BIGINT"
                     | "FLOAT"
                     | "SMALLDECIMAL"
                     | "DECIMAL"
@@ -44159,8 +44173,8 @@ impl Parser {
                 ("SHORTTEXT", [] | [1..=5000]) => true,
                 ("REAL_VECTOR" | "HALF_VECTOR" | "ST_POINT" | "ST_GEOMETRY", [] | [_]) => true,
                 (
-                    "TINYINT" | "SMALLDECIMAL" | "SECONDDATE" | "TIMESTAMP" | "TIME" | "CLOB"
-                    | "NCLOB" | "TEXT" | "BINTEXT",
+                    "TINYINT" | "SMALLINT" | "INT" | "BIGINT" | "SMALLDECIMAL" | "SECONDDATE"
+                    | "TIMESTAMP" | "TIME" | "CLOB" | "NCLOB" | "TEXT" | "BINTEXT",
                     [],
                 ) => true,
                 _ => false,

@@ -269,11 +269,29 @@ fn bench_validation_and_analysis(c: &mut Criterion) {
     let _ = c;
 }
 
+fn bench_hana_nested_queries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("nested_query_dialects");
+    for depth in [10, 20, 40, 80] {
+        let mut sql = "SELECT 1".to_owned();
+        for _ in 0..depth {
+            sql = format!("SELECT ({sql})");
+        }
+        for kind in [DialectType::PostgreSQL, DialectType::HANA] {
+            let dialect = Dialect::get(kind);
+            group.bench_with_input(BenchmarkId::new(kind.to_string(), depth), &sql, |b, sql| {
+                b.iter(|| dialect.parse(black_box(sql)).unwrap());
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_dialect_construction,
     bench_fresh_vs_reused_dialect,
     bench_tokenize_and_parse,
-    bench_validation_and_analysis
+    bench_validation_and_analysis,
+    bench_hana_nested_queries
 );
 criterion_main!(benches);

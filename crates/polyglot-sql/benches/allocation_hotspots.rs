@@ -83,6 +83,13 @@ fn main() {
     let functions = nested_functions();
     let strings = large_strings();
     let numbers = many_numbers();
+    let generic_functions = format!(
+        "SELECT {} FROM t",
+        (0..1_000)
+            .map(|i| format!("my_udf(c{i}) AS v{i}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     let inputs = [
         ("short_ascii", SHORT_ASCII),
         ("unicode", UNICODE),
@@ -92,6 +99,7 @@ fn main() {
         ("nested_functions", functions.as_str()),
         ("large_strings", strings.as_str()),
         ("many_numbers", numbers.as_str()),
+        ("generic_functions", generic_functions.as_str()),
     ];
 
     black_box(dialect.tokenize(SHORT_ASCII).unwrap());
@@ -119,4 +127,21 @@ fn main() {
         0,
         measure(|| Dialect::get(DialectType::PostgreSQL)),
     );
+
+    for depth in [10, 20, 40, 80] {
+        let mut sql = "SELECT 1".to_owned();
+        for _ in 0..depth {
+            sql = format!("SELECT ({sql})");
+        }
+        for kind in [DialectType::PostgreSQL, DialectType::HANA] {
+            let dialect = Dialect::get(kind);
+            black_box(dialect.parse(&sql).unwrap());
+            print_stats(
+                &format!("nested_{depth}_{kind}"),
+                "parse",
+                sql.len(),
+                measure(|| dialect.parse(&sql).unwrap()),
+            );
+        }
+    }
 }

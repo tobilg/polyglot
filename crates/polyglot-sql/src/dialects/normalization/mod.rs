@@ -8,6 +8,7 @@ use super::*;
 
 mod aggregates;
 mod collections;
+mod hana;
 mod json;
 mod operators;
 mod postgres_interval;
@@ -83,6 +84,11 @@ pub(super) fn normalize(
         Scalar(scalar::Action),
     }
 
+    let expr = if source == DialectType::HANA && target != DialectType::HANA {
+        hana::lower_dummy(expr, target)?
+    } else {
+        expr
+    };
     let expr = statements::normalize_root(expr, &context);
 
     transform_recursive(expr, &|e| {

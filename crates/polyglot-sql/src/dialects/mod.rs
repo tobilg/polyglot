@@ -3523,17 +3523,26 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
-                // Validate source-bound semantics before normalization can erase them.
-                // Generating each outermost protected subtree checks its descendants too.
-                let mut pending = vec![&expr];
-                while let Some(node) = pending.pop() {
-                    if let Some(source) = node.source_dialect() {
-                        if source != target {
-                            target_dialect.generate_with_transpile_options(node, source, opts)?;
-                            continue;
+                // This API parses SQL itself: only the HANA parser currently
+                // produces source-bound nodes. Standalone AST generation checks
+                // those nodes independently in the generator. Other SQL sources
+                // need not pay for a speculative full-tree validation pass.
+                if self.dialect_type == DialectType::HANA {
+                    // Validate source-bound semantics before normalization can erase them.
+                    // Generating each outermost protected subtree checks its descendants too.
+                    let mut pending = vec![&expr];
+                    while let Some(node) = pending.pop() {
+                        if let Some(source) = node.source_dialect() {
+                            if source != target {
+                                target_dialect
+                                    .generate_with_transpile_options(node, source, opts)?;
+                                continue;
+                            }
                         }
+                        crate::ast_children::for_each_child_untracked(node, |child| {
+                            pending.push(child)
+                        });
                     }
-                    crate::ast_children::for_each_child(node, |_, child| pending.push(child));
                 }
 
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support

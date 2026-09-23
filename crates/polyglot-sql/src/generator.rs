@@ -2550,6 +2550,16 @@ impl Generator {
         if self.config.dialect == Some(DialectType::HANA)
             && matches!(
                 expr,
+                Expression::StringAgg(_) | Expression::ListAgg(_) | Expression::GroupConcat(_)
+            )
+        {
+            return Err(self.hana_unsupported(
+                "STRING_AGG/LISTAGG/GROUP_CONCAT to HANA requires a verified conversion of NULL input semantics",
+            ));
+        }
+        if self.config.dialect == Some(DialectType::HANA)
+            && matches!(
+                expr,
                 Expression::Raw(_)
                     | Expression::Command(_)
                     | Expression::ILike(_)
@@ -18240,8 +18250,30 @@ impl Generator {
     }
 
     fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
+        if self.config.dialect == Some(DialectType::HANA)
+            && matches!(
+                cast.to,
+                DataType::SmallInt { .. }
+                    | DataType::Int { .. }
+                    | DataType::BigInt { .. }
+                    | DataType::TinyInt { .. }
+            )
+            && (Self::hana_integer(&cast.this).is_none()
+                || matches!(cast.to, DataType::TinyInt { .. })
+                    && !Self::hana_integer(&cast.this).is_some_and(|n| (0..=127).contains(&n)))
+        {
+            return Err(self.hana_unsupported(
+                "Integer CAST to HANA requires a verified source conversion; numeric rounding and character conversion rules differ",
+            ));
+        }
         if self.config.dialect != Some(DialectType::HANA) {
             if let DataType::Hana { hana_type } = &cast.to {
+                if matches!(
+                    hana_type.name.as_str(),
+                    "TINYINT" | "SMALLINT" | "INT" | "BIGINT"
+                ) {
+                    return self.generate_hana_integer_cast(cast, &hana_type.name);
+                }
                 if hana_type.name == "DECIMAL" {
                     let mut args = vec![cast.this.clone()];
                     args.extend(
@@ -18254,19 +18286,6 @@ impl Generator {
                         args.push(Expression::number(0));
                     }
                     return self.generate_hana_function(&Function::new("TO_DECIMAL", args));
-                }
-                if hana_type.name == "TINYINT"
-                    && matches!(
-                        self.config.dialect,
-                        Some(DialectType::Trino | DialectType::Presto | DialectType::PostgreSQL)
-                    )
-                {
-                    if Self::hana_integer(&cast.this).is_some_and(|n| (0..=255).contains(&n)) {
-                        self.write("CAST(");
-                        self.generate_expression(&cast.this)?;
-                        self.write(" AS SMALLINT)");
-                        return Ok(());
-                    }
                 }
             }
         }
@@ -19172,6 +19191,66 @@ impl Generator {
         }
     }
 
+    fn generate_hana_integer_cast(&mut self, cast: &Cast, name: &str) -> Result<()> {
+        let target = self.config.dialect.unwrap_or_default();
+        let supported = matches!(
+            target,
+            DialectType::DuckDB
+                | DialectType::PostgreSQL
+                | DialectType::Trino
+                | DialectType::Presto
+                | DialectType::Athena
+                | DialectType::Dune
+                | DialectType::CockroachDB
+                | DialectType::Materialize
+                | DialectType::RisingWave
+        );
+        let integer = Self::hana_integer(&cast.this);
+        // TINYINT is unsigned in HANA. Wider signed targets are safe only when
+        // the value is proven to fit; otherwise their overflow behavior differs.
+        let tinyint_fits = name != "TINYINT"
+            || target == DialectType::DuckDB
+            || integer.is_some_and(|n| (0..=255).contains(&n));
+        if !supported
+            || !tinyint_fits
+            || !Self::hana_exact_numeric(&cast.this)
+            || cast.format.is_some()
+            || cast.default.is_some()
+        {
+            return Err(self.hana_unsupported(format!(
+                "HANA {name} CAST requires verified numeric input and matching overflow semantics"
+            )));
+        }
+        self.write("CAST(");
+        if integer.is_none() {
+            self.write(
+                if matches!(
+                    target,
+                    DialectType::Trino
+                        | DialectType::Presto
+                        | DialectType::Athena
+                        | DialectType::Dune
+                ) {
+                    "TRUNCATE("
+                } else {
+                    "TRUNC("
+                },
+            );
+        }
+        self.generate_expression(&cast.this)?;
+        if integer.is_none() {
+            self.write(")");
+        }
+        self.write(" AS ");
+        self.write(match name {
+            "TINYINT" if target == DialectType::DuckDB => "UTINYINT",
+            "TINYINT" => "SMALLINT",
+            name => name,
+        });
+        self.write(")");
+        Ok(())
+    }
+
     fn hana_exact_numeric(expr: &Expression) -> bool {
         match expr {
             Expression::Literal(l) => {
@@ -19463,6 +19542,10 @@ impl Generator {
         if self.config.dialect != Some(DialectType::HANA) {
             let target = self.config.dialect.unwrap_or_default();
             match (data_type.name.as_str(), data_type.parameters.as_slice()) {
+                ("SMALLINT" | "INT" | "BIGINT", []) => {
+                    self.write(&data_type.name);
+                    return Ok(());
+                }
                 ("TIMESTAMP", []) if target == DialectType::Trino => {
                     self.write("TIMESTAMP(7)");
                     return Ok(());

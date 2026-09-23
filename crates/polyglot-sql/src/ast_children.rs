@@ -24,6 +24,11 @@ pub(crate) enum ChildPathSegment {
 }
 
 pub(crate) trait AstNode {
+    /// Visit children without constructing paths when the caller only needs nodes.
+    fn visit_expressions_untracked<'ast, F>(&'ast self, visitor: &mut F)
+    where
+        F: FnMut(&'ast Expression);
+
     fn visit_expressions<'ast, F>(&'ast self, path: &mut Vec<ChildPathSegment>, visitor: &mut F)
     where
         F: FnMut(&[ChildPathSegment], &'ast Expression);
@@ -48,6 +53,13 @@ pub(crate) fn for_each_child_mut(
     expression.visit_expressions_mut(&mut visitor);
 }
 
+pub(crate) fn for_each_child_untracked<'ast>(
+    expression: &'ast Expression,
+    mut visitor: impl FnMut(&'ast Expression),
+) {
+    expression.visit_expressions_untracked(&mut visitor);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +75,19 @@ mod tests {
 
         let mut immutable_paths = Vec::new();
         for_each_child(&expression, |path, _| immutable_paths.push(path.to_vec()));
+
+        let mut tracked = Vec::new();
+        for_each_child(&expression, |_, child| {
+            tracked.push(child as *const Expression)
+        });
+        let mut untracked = Vec::new();
+        for_each_child_untracked(&expression, |child| {
+            untracked.push(child as *const Expression)
+        });
+        assert_eq!(
+            tracked, untracked,
+            "path-free traversal preserves child identity and order"
+        );
 
         let mut mutable_count = 0;
         for_each_child_mut(&mut expression, |_| mutable_count += 1);
