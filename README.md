@@ -37,7 +37,7 @@ Release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
 | MySQL | Oracle | PostgreSQL | Presto | Redshift |
 | RisingWave | SingleStore | Snowflake | Solr | Spark |
 | SQLite | StarRocks | Tableau | Teradata | TiDB |
-| Trino | TSQL | DataFusion | Generic SQL | [SAP HANA](docs/hana.md) |
+| Trino | TSQL | DataFusion | SAP HANA | Generic SQL |
 
 ## Quick Start
 
