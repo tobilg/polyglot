@@ -5,8 +5,7 @@
 
 use super::*;
 use crate::expressions::{
-    AggFunc, AtTimeZone, DateAddFunc, GroupConcatFunc, Interval, IntervalUnit, IntervalUnitSpec,
-    StringAggFunc, VarArgFunc,
+    AggFunc, AtTimeZone, DateAddFunc, Interval, IntervalUnit, IntervalUnitSpec, VarArgFunc,
 };
 
 /// Validate before source transforms erase parameters or failure semantics.
@@ -88,6 +87,25 @@ pub(in crate::dialects) fn validate_conversion(
             {
                 Some("Vertica function semantics without a verified target mapping")
             }
+            Expression::Function(f)
+                if source == DialectType::Vertica
+                    && target == DialectType::DuckDB
+                    && !f.quoted
+                    && f.args.is_empty()
+                    && matches!(
+                        f.name.to_ascii_uppercase().as_str(),
+                        "GETDATE" | "GETUTCDATE" | "SYSDATE"
+                    ) =>
+            {
+                Some("Vertica statement-start timestamps have no verified DuckDB equivalent")
+            }
+            Expression::CurrentTimestamp(ts)
+                if source == DialectType::Vertica
+                    && target == DialectType::DuckDB
+                    && ts.sysdate =>
+            {
+                Some("Vertica statement-start timestamps have no verified DuckDB equivalent")
+            }
             Expression::Raw(_) | Expression::Command(_) if source == DialectType::Vertica => {
                 Some("unstructured Vertica statement")
             }
@@ -147,6 +165,45 @@ pub(in crate::dialects) fn prepare_conversion(
     source: DialectType,
     target: DialectType,
 ) -> Result<Expression> {
+    // BigQuery's COUNTIF returns zero for an empty input/frame. Preserve that
+    // before the source transform converts it to a generic function call.
+    if source == DialectType::BigQuery && target == DialectType::Vertica {
+        return transform_recursive(expr, &|node| match node {
+            Expression::CountIf(mut count) => {
+                if !count.order_by.is_empty()
+                    || count.limit.is_some()
+                    || count.having_max.is_some()
+                    || count.ignore_nulls.is_some()
+                {
+                    return Err(crate::error::Error::unsupported(
+                        "COUNTIF modifiers",
+                        "vertica",
+                    ));
+                }
+                let mut predicate = count.this;
+                if let Some(filter) = count.filter.take() {
+                    predicate = Expression::And(Box::new(BinaryOp::new(predicate, filter)));
+                }
+                count.this = Expression::Case(Box::new(crate::expressions::Case {
+                    operand: None,
+                    whens: vec![(predicate, Expression::number(1))],
+                    else_: None,
+                    comments: Vec::new(),
+                    inferred_type: None,
+                }));
+                Ok(Expression::Count(Box::new(crate::expressions::CountFunc {
+                    this: Some(count.this),
+                    star: false,
+                    distinct: count.distinct,
+                    filter: None,
+                    ignore_nulls: None,
+                    original_name: None,
+                    inferred_type: count.inferred_type,
+                })))
+            }
+            other => Ok(other),
+        });
+    }
     if source != DialectType::Vertica || source == target {
         return Ok(expr);
     }
@@ -186,81 +243,192 @@ pub(in crate::dialects) fn prepare_conversion(
                     }
                 }
                 if let Some(order) = &mut select.order_by {
-                    for ordered in &mut order.expressions {
-                        if ordered.nulls_auto {
-                            return Err(crate::error::Error::unsupported(
-                                "Vertica top-level NULLS AUTO",
-                                target.to_string(),
-                            ));
-                        }
-                        if ordered.nulls_first.is_some() {
-                            continue;
-                        }
-                        let mut key = &ordered.this;
-                        if let Expression::Literal(lit) = key {
-                            if let Literal::Number(number) = lit.as_ref() {
-                                if let Ok(index) = number.parse::<usize>() {
-                                    if let Some(expression) =
-                                        index.checked_sub(1).and_then(|i| select.expressions.get(i))
-                                    {
-                                        key = expression;
-                                    }
-                                }
-                            }
-                        }
-                        if let Expression::Column(column) = key {
-                            if let Some(Expression::Alias(alias)) = select.expressions.iter().find(|e| matches!(e, Expression::Alias(a) if a.alias.name.eq_ignore_ascii_case(&column.name.name))) { key = &alias.this; }
-                        }
-                        if let Expression::Alias(alias) = key {
-                            key = &alias.this;
-                        }
-                        let data_type = match key {
-                            Expression::Cast(c) => Some(&c.to),
-                            _ => key.inferred_type(),
-                        };
-                        let low = match data_type {
-                            Some(
-                                DataType::Int { .. }
-                                | DataType::BigInt { .. }
-                                | DataType::SmallInt { .. }
-                                | DataType::TinyInt { .. }
-                                | DataType::Date
-                                | DataType::Time { .. }
-                                | DataType::Timestamp { .. },
-                            ) => true,
-                            Some(
-                                DataType::Float { .. }
-                                | DataType::Double { .. }
-                                | DataType::Boolean
-                                | DataType::Char { .. }
-                                | DataType::VarChar { .. }
-                                | DataType::Text
-                                | DataType::String { .. }
-                                | DataType::Array { .. },
-                            ) => false,
-                            _ if matches!(key, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::Number(n) if n.parse::<i64>().is_ok())) => {
-                                true
-                            }
-                            _ if matches!(key, Expression::Literal(lit) if matches!(lit.as_ref(), Literal::String(_) | Literal::Number(_)))
-                                || matches!(key, Expression::Boolean(_) | Expression::Array(_)) =>
-                            {
-                                false
-                            }
-                            _ => {
-                                return Err(crate::error::Error::unsupported(
-                                    "Vertica ORDER BY requires a known sort-key type",
-                                    target.to_string(),
-                                ))
-                            }
-                        };
-                        ordered.nulls_first = Some(low != ordered.desc);
-                    }
+                    prepare_select_order(order, &select.expressions, target)?;
+                }
+            }
+            Expression::Union(set) => {
+                prepare_set_order(&mut set.order_by, &set.left, &set.right, target)?
+            }
+            Expression::Intersect(set) => {
+                prepare_set_order(&mut set.order_by, &set.left, &set.right, target)?
+            }
+            Expression::Except(set) => {
+                prepare_set_order(&mut set.order_by, &set.left, &set.right, target)?
+            }
+            Expression::Subquery(sub) => {
+                if let Some(order) = &mut sub.order_by {
+                    prepare_query_order(order, &[&sub.this], target)?;
                 }
             }
             _ => {}
         }
         Ok(node)
     })
+}
+
+fn unknown_order(target: DialectType) -> crate::error::Error {
+    crate::error::Error::unsupported(
+        "Vertica ORDER BY requires a known, unambiguous sort-key type",
+        target.to_string(),
+    )
+}
+
+fn projection_index(key: &Expression, projections: &[Expression]) -> Option<usize> {
+    match key {
+        Expression::Literal(lit) => match lit.as_ref() {
+            Literal::Number(n) => n
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .filter(|&i| i < projections.len()),
+            _ => None,
+        },
+        Expression::Column(c) if c.table.is_none() => {
+            let mut matches = projections.iter().enumerate().filter(|(_, p)| {
+                crate::dialects::vertica_ast::output_name(p)
+                    .is_some_and(|n| n.name.eq_ignore_ascii_case(&c.name.name))
+            });
+            let first = matches.next()?.0;
+            matches.next().is_none().then_some(first)
+        }
+        _ => None,
+    }
+}
+
+fn nulls_low(mut key: &Expression) -> Option<bool> {
+    while let Expression::Alias(a) = key {
+        key = &a.this;
+    }
+    if let Expression::Paren(p) = key {
+        return nulls_low(&p.this);
+    }
+    let data_type = match key {
+        Expression::Cast(c) => Some(&c.to),
+        _ => key.inferred_type(),
+    };
+    match data_type {
+        Some(
+            DataType::Int { .. }
+            | DataType::BigInt { .. }
+            | DataType::SmallInt { .. }
+            | DataType::TinyInt { .. }
+            | DataType::Date
+            | DataType::Time { .. }
+            | DataType::Timestamp { .. },
+        ) => Some(true),
+        Some(
+            DataType::Float { .. }
+            | DataType::Double { .. }
+            | DataType::Boolean
+            | DataType::Char { .. }
+            | DataType::VarChar { .. }
+            | DataType::Text
+            | DataType::String { .. }
+            | DataType::Array { .. },
+        ) => Some(false),
+        _ => match key {
+            Expression::Literal(l) => match l.as_ref() {
+                Literal::Number(n) => Some(n.parse::<i64>().is_ok()),
+                Literal::String(_) => Some(false),
+                Literal::Date(_) | Literal::Timestamp(_) => Some(true),
+                _ => None,
+            },
+            Expression::Boolean(_) | Expression::Array(_) => Some(false),
+            _ => None,
+        },
+    }
+}
+
+fn prepare_select_order(
+    order: &mut crate::expressions::OrderBy,
+    projections: &[Expression],
+    target: DialectType,
+) -> Result<()> {
+    for ordered in &mut order.expressions {
+        if ordered.nulls_auto {
+            return Err(unknown_order(target));
+        }
+        if ordered.nulls_first.is_some() {
+            continue;
+        }
+        let key =
+            projection_index(&ordered.this, projections).map_or(&ordered.this, |i| &projections[i]);
+        let low = nulls_low(key).ok_or_else(|| unknown_order(target))?;
+        ordered.nulls_first = Some(low != ordered.desc);
+    }
+    Ok(())
+}
+
+fn query_nulls_low(query: &Expression, index: usize) -> Option<bool> {
+    let mut pending = vec![query];
+    let mut low = None;
+    while let Some(query) = pending.pop() {
+        let (left, right) = match query {
+            Expression::Select(s) => {
+                let current = nulls_low(s.expressions.get(index)?)?;
+                if low.is_some_and(|low| low != current) {
+                    return None;
+                }
+                low = Some(current);
+                continue;
+            }
+            Expression::Subquery(s) => {
+                pending.push(&s.this);
+                continue;
+            }
+            Expression::Paren(p) => {
+                pending.push(&p.this);
+                continue;
+            }
+            Expression::Union(s) if !s.by_name && !s.corresponding => (&s.left, &s.right),
+            Expression::Intersect(s) if !s.by_name && !s.corresponding => (&s.left, &s.right),
+            Expression::Except(s) if !s.by_name && !s.corresponding => (&s.left, &s.right),
+            _ => return None,
+        };
+        pending.extend([left, right]);
+    }
+    low
+}
+
+fn prepare_query_order(
+    order: &mut crate::expressions::OrderBy,
+    queries: &[&Expression],
+    target: DialectType,
+) -> Result<()> {
+    let projections = crate::dialects::vertica_ast::projections(queries[0])
+        .ok_or_else(|| unknown_order(target))?;
+    for ordered in &mut order.expressions {
+        if ordered.nulls_auto {
+            return Err(unknown_order(target));
+        }
+        if ordered.nulls_first.is_some() {
+            continue;
+        }
+        let index =
+            projection_index(&ordered.this, projections).ok_or_else(|| unknown_order(target))?;
+        let low = query_nulls_low(queries[0], index).ok_or_else(|| unknown_order(target))?;
+        if queries
+            .iter()
+            .skip(1)
+            .any(|q| query_nulls_low(q, index) != Some(low))
+        {
+            return Err(unknown_order(target));
+        }
+        ordered.nulls_first = Some(low != ordered.desc);
+    }
+    Ok(())
+}
+
+fn prepare_set_order(
+    order: &mut Option<crate::expressions::OrderBy>,
+    left: &Expression,
+    right: &Expression,
+    target: DialectType,
+) -> Result<()> {
+    if let Some(order) = order {
+        prepare_query_order(order, &[left, right], target)?;
+    }
+    Ok(())
 }
 
 /// Rewrite a single node parsed as Vertica for a non-Vertica target.
@@ -273,6 +441,14 @@ pub(super) fn normalize_from_vertica(e: Expression, target: DialectType) -> Resu
                 .is_some_and(|v| v.limit_over.is_some()) =>
         {
             lower_partitioned_limit(*select, target)
+        }
+        Expression::Subscript(sub)
+            if matches!(target, DialectType::PostgreSQL | DialectType::DuckDB) =>
+        {
+            Ok(crate::dialects::vertica_ast::array_access(
+                sub.this,
+                vec![sub.index],
+            ))
         }
         Expression::Subscript(sub) => {
             let mut this = sub.this;
@@ -415,27 +591,6 @@ pub(super) fn normalize_from_vertica(e: Expression, target: DialectType) -> Resu
                 _ => Ok(Expression::Function(f)),
             }
         }
-        Expression::ListAgg(f) => Ok(lower_listagg(*f, target)),
-        // LISTAGG(...) WITHIN GROUP (ORDER BY ...): fold the ordering into the aggregate
-        // when the target's native form carries it inline.
-        Expression::WithinGroup(wg) if matches!(wg.this, Expression::ListAgg(_)) => {
-            let crate::expressions::WithinGroup { this, order_by } = *wg;
-            let Expression::ListAgg(mut f) = this else {
-                unreachable!()
-            };
-            match lower_listagg(*f.clone(), target) {
-                Expression::ListAgg(lowered) => Ok(Expression::WithinGroup(Box::new(
-                    crate::expressions::WithinGroup {
-                        this: Expression::ListAgg(lowered),
-                        order_by,
-                    },
-                ))),
-                _ => {
-                    f.order_by = Some(order_by);
-                    Ok(lower_listagg(*f, target))
-                }
-            }
-        }
         other => Ok(other),
     }
 }
@@ -481,46 +636,6 @@ fn statement_timestamp(target: DialectType, utc: bool) -> Option<Expression> {
             },
         )))),
         _ => None,
-    }
-}
-
-/// LISTAGG defaults to a ',' separator in Vertica; spell it out and pick the
-/// target's native string-aggregation form.
-fn lower_listagg(mut f: crate::expressions::ListAggFunc, target: DialectType) -> Expression {
-    if f.separator.is_none() {
-        f.separator = Some(Expression::string(","));
-    }
-    match target {
-        DialectType::PostgreSQL
-        | DialectType::Materialize
-        | DialectType::RisingWave
-        | DialectType::CockroachDB
-        | DialectType::TSQL
-        | DialectType::Fabric
-        | DialectType::BigQuery => Expression::StringAgg(Box::new(StringAggFunc {
-            this: f.this,
-            separator: f.separator,
-            order_by: f.order_by,
-            distinct: f.distinct,
-            filter: f.filter,
-            limit: None,
-            inferred_type: None,
-        })),
-        DialectType::MySQL
-        | DialectType::TiDB
-        | DialectType::SingleStore
-        | DialectType::Doris
-        | DialectType::StarRocks
-        | DialectType::SQLite => Expression::GroupConcat(Box::new(GroupConcatFunc {
-            this: f.this,
-            separator: f.separator,
-            order_by: f.order_by,
-            distinct: f.distinct,
-            filter: f.filter,
-            limit: None,
-            inferred_type: None,
-        })),
-        _ => Expression::ListAgg(Box::new(f)),
     }
 }
 
@@ -579,7 +694,7 @@ fn lower_partitioned_limit(
     mut base: crate::expressions::Select,
     target: DialectType,
 ) -> Result<Expression> {
-    use crate::expressions::{Alias, From, Select, Subquery, Where, WindowFunction};
+    use crate::expressions::{Alias, From, Select, Where, WindowFunction};
     let unsupported = || {
         crate::error::Error::unsupported("Vertica partitioned LIMIT requires named outputs, resolvable ordering and no locking or event-series clauses", target.to_string())
     };
@@ -612,46 +727,80 @@ fn lower_partitioned_limit(
     let outer_with = base.with.take();
     let outer_comments = std::mem::take(&mut base.leading_comments);
     let original = base.expressions.clone();
-    let serialized = serde_json::to_string(&Expression::Select(Box::new(base.clone())))
-        .map_err(|_| unsupported())?;
-    let mut used = std::collections::HashSet::new();
-    let mut fresh = |stem: &str| {
-        let mut name = stem.to_string();
-        let mut n = 0;
-        while serialized.contains(&name) || used.contains(&name) {
-            n += 1;
-            name = format!("{stem}_{n}");
+    let mut names = crate::dialects::vertica_ast::Names::default();
+    // Collect identifiers directly, without cloning/serializing the complete AST.
+    let base_node = Expression::Select(Box::new(base));
+    names.collect(&base_node);
+    for key in &over.partition_by {
+        names.collect(key);
+    }
+    for key in &over.order_by {
+        names.collect(&key.this);
+    }
+    if let Some(order) = &outer_order {
+        for key in &order.expressions {
+            names.collect(&key.this);
         }
-        used.insert(name.clone());
-        name
+    }
+    let Expression::Select(base_box) = base_node else {
+        unreachable!()
     };
-    let source_alias = fresh("_vertica_source");
-    let ranked_alias = fresh("_vertica_ranked");
-    let rank_name = fresh("_vertica_row_number");
+    let mut base = *base_box;
+    let source_alias = names.fresh("_vertica_source");
+    let ranked_alias = names.fresh("_vertica_ranked");
+    let rank_name = names.fresh("_vertica_row_number");
     let mut output_names = Vec::new();
     let mut internal_names = Vec::new();
     let mut visible_names = std::collections::HashSet::new();
-    base.expressions.clear();
-    for (i, expression) in original.iter().enumerate() {
-        let (value, name) = match expression {
-            Expression::Alias(alias) if alias.column_aliases.is_empty() => {
-                (alias.this.clone(), alias.alias.clone())
-            }
-            Expression::Column(column) => (expression.clone(), column.name.clone()),
-            _ => return Err(unsupported()),
-        };
+    // Preserve the base query's aliases: GROUP BY, WHERE, HAVING and later
+    // projections may still refer to them in the original scope.
+    for expression in &original {
+        let name = crate::dialects::vertica_ast::output_name(expression)
+            .ok_or_else(unsupported)?
+            .clone();
         if !visible_names.insert(name.name.to_ascii_lowercase()) {
             return Err(unsupported());
         }
-        let internal = fresh(&format!("_vertica_output_{i}"));
-        base.expressions.push(value.alias(&internal));
-        output_names.push(name);
-        internal_names.push(internal);
+        output_names.push(name.clone());
+        internal_names.push(name);
+    }
+    let references_alias = |expression: &Expression| {
+        expression.dfs().any(|node| {
+            let Expression::Column(c) = node else {
+                return false;
+            };
+            c.table.is_none()
+                && original.iter().any(|p| {
+                    matches!(p, Expression::Alias(a) if a.alias.name.eq_ignore_ascii_case(&c.name.name))
+                })
+        })
+    };
+    // PostgreSQL does not accept SELECT aliases in predicates. Without schema
+    // information alias/input-name collisions cannot be resolved safely.
+    if target == DialectType::PostgreSQL
+        && (base
+            .where_clause
+            .as_ref()
+            .is_some_and(|w| references_alias(&w.this))
+            || base
+                .having
+                .as_ref()
+                .is_some_and(|h| references_alias(&h.this)))
+    {
+        return Err(unsupported());
     }
     let visible_count = internal_names.len();
-    let mut resolve = |key: &Expression, table: &str| -> Result<Expression> {
+    let mut resolve = |key: &Expression, table: &str, ordinal: bool| -> Result<Expression> {
+        if !ordinal
+            && matches!(
+                key,
+                Expression::Literal(_) | Expression::Boolean(_) | Expression::Null(_)
+            )
+        {
+            return Ok(key.clone());
+        }
         let projected = match key {
-            Expression::Literal(lit) => match lit.as_ref() {
+            Expression::Literal(lit) if ordinal => match lit.as_ref() {
                 Literal::Number(n) => n
                     .parse::<usize>()
                     .ok()
@@ -680,48 +829,36 @@ fn lower_partitioned_limit(
             if base.distinct || base.group_by.is_some() || base.having.is_some() {
                 return Err(unsupported());
             }
-            let name = fresh("_vertica_hidden");
+            if target == DialectType::PostgreSQL && references_alias(key) {
+                return Err(unsupported());
+            }
+            let name = names.fresh("_vertica_hidden");
             base.expressions.push(key.clone().alias(&name));
+            let name = Identifier::new(name);
             internal_names.push(name.clone());
             name
         };
-        Ok(Expression::qualified_column(table, name))
+        Ok(crate::dialects::vertica_ast::column(table, &name))
     };
     for key in &mut over.partition_by {
-        *key = resolve(key, &source_alias)?;
+        *key = resolve(key, &source_alias, false)?;
     }
     for key in &mut over.order_by {
-        key.this = resolve(&key.this, &source_alias)?;
+        key.this = resolve(&key.this, &source_alias, false)?;
         key.nulls_first.get_or_insert(key.desc);
     }
     if let Some(order) = &mut outer_order {
         for key in &mut order.expressions {
-            key.this = resolve(&key.this, &ranked_alias)?;
+            key.this = resolve(&key.this, &ranked_alias, true)?;
         }
     }
     let subquery = |select: Select, name: String| {
-        Expression::Subquery(Box::new(Subquery {
-            this: Expression::Select(Box::new(select)),
-            alias: Some(Identifier::new(name)),
-            column_aliases: Vec::new(),
-            alias_explicit_as: true,
-            alias_keyword: None,
-            order_by: None,
-            limit: None,
-            offset: None,
-            distribute_by: None,
-            sort_by: None,
-            cluster_by: None,
-            lateral: false,
-            modifiers_inside: true,
-            trailing_comments: Vec::new(),
-            inferred_type: None,
-        }))
+        crate::dialects::vertica_ast::subquery(Expression::Select(Box::new(select)), Some(name))
     };
     let mut ranked = Select::new();
     ranked.expressions = internal_names
         .iter()
-        .map(|name| Expression::qualified_column(&source_alias, name))
+        .map(|name| crate::dialects::vertica_ast::column(&source_alias, name))
         .collect();
     ranked.expressions.push(
         Expression::WindowFunction(Box::new(WindowFunction {
@@ -741,7 +878,7 @@ fn lower_partitioned_limit(
         .enumerate()
         .map(|(i, name)| {
             Expression::Alias(Box::new(Alias::new(
-                Expression::qualified_column(&ranked_alias, &internal_names[i]),
+                crate::dialects::vertica_ast::column(&ranked_alias, &internal_names[i]),
                 name,
             )))
         })

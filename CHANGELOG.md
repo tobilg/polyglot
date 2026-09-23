@@ -4,23 +4,6 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project adheres to Semantic Versioning.
 
-## [Unreleased]
-
-### Added
-
-- Vertica dialect (`vertica`) across Rust, FFI, Python, Go, WASM, and the
-  TypeScript SDK, including structured collection types and casts, function
-  parameters, historical queries, `TIMESERIES`, `MATCH`, `INTERPOLATE`,
-  partitioned `LIMIT`, projections, physical table clauses, FLEX TABLE,
-  COPY LOCAL/parser calls, and EXPORT TO PARQUET.
-  ([#467](https://github.com/tobilg/polyglot/pull/467))
-- Vertica translation preserves approximate-count filters, binary values,
-  zero-based array access, supported date-boundary differences, and analytic
-  null ordering. Unsafe conversions return errors at every diagnostic level.
-  Native locks, hints, interval precision, collection bounds, and nested
-  factorials are retained. See the [Vertica coverage matrix](docs/vertica.md)
-  for supported conversions and limits.
-
 ## [0.12.1] - 2026-09-21
 
 ### Added

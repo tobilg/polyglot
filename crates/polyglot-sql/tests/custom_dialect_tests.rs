@@ -721,3 +721,343 @@ fn vertica_direct_generation_preserves_filters_and_safe_cast_failures() {
     let ast = source.parse("SELECT TRY_CAST(x AS INT) FROM t").unwrap();
     assert!(target.generate(&ast[0]).is_err());
 }
+
+fn execute_vertica_target(setup: &str, sql: &str) -> Option<String> {
+    let engine = std::env::var("POLYGLOT_DUCKDB").ok()?;
+    let query = format!("{setup}; {sql}");
+    let result = std::process::Command::new(engine)
+        .args([
+            "-init",
+            "/dev/null",
+            "-noheader",
+            "-list",
+            "-nullvalue",
+            "NULL",
+            ":memory:",
+            &query,
+        ])
+        .output()
+        .expect("run DuckDB");
+    assert!(
+        result.status.success(),
+        "{query}\n{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Some(String::from_utf8_lossy(&result.stdout).trim().to_string())
+}
+
+fn vertica_translate(sql: &str, read: &str, write: &str) -> String {
+    polyglot_sql::transpile_with_by_name(
+        sql,
+        read,
+        write,
+        &polyglot_sql::TranspileOptions::strict(),
+    )
+    .unwrap_or_else(|e| panic!("{read} -> {write}: {sql}: {e}"))[0]
+        .clone()
+}
+
+#[test]
+fn vertica_array_access_uses_native_subscripts_without_name_capture() {
+    let setup = "CREATE TABLE t(a INT[], arr INT[], i0 BIGINT); INSERT INTO t VALUES ([10,20],[10,20],0),([10,20],[10,20],1),([10,20],[10,20],-1),([10,20],[10,20],NULL),([10,20],[10,20],9223372036854775807)";
+    for (sql, expected) in [
+        ("SELECT a[0] FROM t", "10\n10\n10\n10\n10"),
+        ("SELECT arr[i0] FROM t", "10\n20\nNULL\nNULL\nNULL"),
+        ("SELECT arr[i0 + 0] FROM t", "10\n20\nNULL\nNULL\nNULL"),
+        (
+            "SELECT arr[COALESCE(i0, NULL)] FROM t",
+            "10\n20\nNULL\nNULL\nNULL",
+        ),
+        (
+            "SELECT arr[2147483647] FROM t",
+            "NULL\nNULL\nNULL\nNULL\nNULL",
+        ),
+    ] {
+        for target in ["duckdb", "postgresql"] {
+            let output = vertica_translate(sql, "vertica", target);
+            assert!(!output.contains("(SELECT"), "{output}");
+            polyglot_sql::Dialect::get(target.parse().unwrap())
+                .parse(&output)
+                .unwrap();
+            if target == "duckdb" {
+                if let Some(actual) = execute_vertica_target(setup, &output) {
+                    assert_eq!(actual, expected, "{output}");
+                }
+            }
+        }
+    }
+    assert_eq!(
+        vertica_translate("SELECT SUM(arr[0]) FROM t", "vertica", "duckdb"),
+        "SELECT SUM(arr[1]) FROM t"
+    );
+    let bounds = "CREATE TABLE t(arr INT[], i BIGINT); INSERT INTO t VALUES ([10],-9223372036854775808),([10],2147483646),([10],2147483647),([10],NULL)";
+    for index in ["i", "i + 0", "COALESCE(i, NULL)", "-9223372036854775808"] {
+        let sql = vertica_translate(&format!("SELECT arr[{index}] FROM t"), "vertica", "duckdb");
+        if let Some(actual) = execute_vertica_target(bounds, &sql) {
+            assert_eq!(actual, "NULL\nNULL\nNULL\nNULL", "{sql}");
+        }
+    }
+    let sql = vertica_translate("SELECT arr[NEXTVAL('s')] FROM t", "vertica", "duckdb");
+    assert_eq!(sql.matches("NEXTVAL").count(), 1, "{sql}");
+    let setup = "CREATE SEQUENCE s MINVALUE 0 START 0; CREATE TABLE t(arr INT[]); INSERT INTO t VALUES ([10,20,30]),([10,20,30]),([10,20,30])";
+    if let Some(actual) = execute_vertica_target(setup, &sql) {
+        assert_eq!(actual, "10\n20\n30");
+    }
+    if let Some(plan) = execute_vertica_target(
+        "CREATE TABLE t(arr INT[])",
+        "EXPLAIN SELECT SUM(arr[1]) FROM t",
+    ) {
+        assert!(!plan.contains("JOIN"), "{plan}");
+    }
+}
+
+#[test]
+fn vertica_partitioned_limit_preserves_constants_and_base_aliases() {
+    let setup = "CREATE TABLE t(k INT, v INT); INSERT INTO t VALUES (1,1),(1,2),(2,3)";
+    for (sql, expected) in [
+        ("SELECT k, v FROM t LIMIT 1 OVER(PARTITION BY 1 ORDER BY v DESC)", "2|3"),
+        ("SELECT k AS d, SUM(v) AS s FROM t GROUP BY d LIMIT 1 OVER(PARTITION BY 1 ORDER BY d DESC)", "2|3"),
+        ("SELECT k AS d, v FROM t WHERE d > 1 LIMIT 1 OVER(PARTITION BY d ORDER BY v)", "2|3"),
+        ("SELECT k AS d, SUM(v) AS s FROM t GROUP BY k HAVING s > 1 LIMIT 1 OVER(PARTITION BY 1 ORDER BY d DESC)", "2|3"),
+        ("SELECT k AS \"odd name\", v FROM t LIMIT 1 OVER(PARTITION BY 1 ORDER BY v DESC)", "2|3"),
+    ] {
+        let output = vertica_translate(sql, "vertica", "duckdb");
+        if let Some(actual) = execute_vertica_target(setup, &output) { assert_eq!(actual, expected, "{sql}\n{output}"); }
+    }
+    let sql = vertica_translate(
+        "SELECT k AS d, SUM(v) AS s FROM t GROUP BY d LIMIT 1 OVER(PARTITION BY d ORDER BY s)",
+        "vertica",
+        "postgresql",
+    );
+    assert!(
+        sql.contains("k AS d") && sql.contains("GROUP BY d"),
+        "{sql}"
+    );
+    let sql = vertica_translate(
+        "SELECT k, v FROM t LIMIT 1 OVER(PARTITION BY k ORDER BY 1)",
+        "vertica",
+        "duckdb",
+    );
+    assert!(
+        sql.contains("ORDER BY 1"),
+        "window constants are not ordinals: {sql}"
+    );
+    let sql = vertica_translate(
+        "SELECT k, v FROM t ORDER BY 2 NULLS LAST LIMIT 1 OVER(PARTITION BY 1 ORDER BY v DESC)",
+        "vertica",
+        "duckdb",
+    );
+    if let Some(actual) = execute_vertica_target(setup, &sql) {
+        assert_eq!(actual, "2|3");
+    }
+    let sql = vertica_translate(
+        "SELECT k FROM t LIMIT 1 OVER(PARTITION BY 1 ORDER BY _vertica_hidden DESC)",
+        "vertica",
+        "duckdb",
+    );
+    if let Some(actual) = execute_vertica_target(
+        "CREATE TABLE t(k INT, _vertica_hidden INT); INSERT INTO t VALUES (1,1),(2,2)",
+        &sql,
+    ) {
+        assert_eq!(actual, "2", "{sql}");
+    }
+}
+
+#[test]
+fn vertica_set_operation_ordering_preserves_nulls_and_limits() {
+    for operation in ["UNION ALL", "INTERSECT", "EXCEPT"] {
+        let branches = if operation == "EXCEPT" {
+            "SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(NULL AS INT) AS x EXCEPT SELECT CAST(2 AS INT) AS x".to_string()
+        } else if operation == "INTERSECT" {
+            "(SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(NULL AS INT) AS x) INTERSECT (SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(NULL AS INT) AS x)".to_string()
+        } else {
+            "SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(NULL AS INT) AS x".to_string()
+        };
+        for key in ["x", "1"] {
+            let sql = format!("{branches} ORDER BY {key} LIMIT 1");
+            let output = vertica_translate(&sql, "vertica", "duckdb");
+            assert!(output.contains("NULLS FIRST"), "{output}");
+            if let Some(actual) = execute_vertica_target("", &output) {
+                assert_eq!(actual, "NULL", "{sql}");
+            }
+        }
+    }
+    for operation in ["UNION ALL", "INTERSECT", "EXCEPT"] {
+        let sql =
+            format!("SELECT x FROM t {operation} SELECT x FROM u ORDER BY x NULLS FIRST LIMIT 1");
+        let output = vertica_translate(&sql, "postgresql", "vertica");
+        assert!(
+            output.contains("CASE WHEN") && !output.contains("NULLS FIRST"),
+            "{output}"
+        );
+        assert!(output.ends_with("LIMIT 1"), "{output}");
+        polyglot_sql::Dialect::get(polyglot_sql::DialectType::Vertica)
+            .parse(&output)
+            .unwrap();
+        let setup = "CREATE TABLE t(x INT); INSERT INTO t VALUES (NULL),(1),(2); CREATE TABLE u(x INT); INSERT INTO u VALUES (NULL),(3)";
+        if let Some(actual) = execute_vertica_target(setup, &output) {
+            assert_eq!(
+                actual,
+                if operation == "EXCEPT" { "1" } else { "NULL" },
+                "{output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn vertica_unverified_ordering_and_clocks_fail_in_every_mode() {
+    use polyglot_sql::{transpile_with_by_name, TranspileOptions, UnsupportedLevel};
+    for (sql, target) in [
+        ("SELECT CAST(x AS VARCHAR) AS x FROM t ORDER BY t.x", "duckdb"),
+        ("SELECT x FROM t UNION ALL SELECT x FROM u ORDER BY x", "duckdb"),
+        ("SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(2 AS FLOAT) AS x ORDER BY x", "duckdb"),
+        ("SELECT GETDATE()", "duckdb"),
+        ("SELECT GETUTCDATE()", "duckdb"),
+        ("SELECT SYSDATE", "duckdb"),
+        ("SELECT k AS d, v FROM t WHERE d > 1 LIMIT 1 OVER(PARTITION BY d ORDER BY v)", "postgresql"),
+        ("SELECT k, SUM(v) AS s FROM t GROUP BY k HAVING s > 1 LIMIT 1 OVER(PARTITION BY k ORDER BY s)", "postgresql"),
+    ] {
+        for level in [UnsupportedLevel::Ignore, UnsupportedLevel::Warn, UnsupportedLevel::Raise, UnsupportedLevel::Immediate] {
+            let mut options = TranspileOptions::default();
+            options.unsupported_level = level;
+            assert!(transpile_with_by_name(sql, "vertica", target, &options).is_err(), "{sql}, {level:?}");
+        }
+    }
+    let output = vertica_translate("SELECT GETDATE(), GETUTCDATE()", "vertica", "postgresql");
+    assert!(output.contains("STATEMENT_TIMESTAMP()"));
+}
+
+#[test]
+fn vertica_bigquery_countif_preserves_empty_inputs_and_frames() {
+    let setup = "CREATE TABLE t(x INT); INSERT INTO t VALUES (1),(2)";
+    for (sql, expected) in [
+        ("SELECT COUNTIF(x > 0) FROM t WHERE FALSE", "0"),
+        ("SELECT COUNTIF(x > 10) FROM t", "0"),
+        ("SELECT COUNTIF(x > 0) FROM t", "2"),
+        ("SELECT COUNTIF(x > 0) OVER(ORDER BY x ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING) FROM t", "0\n1"),
+    ] {
+        let output = vertica_translate(sql, "bigquery", "vertica");
+        assert!(output.contains("COUNT(CASE"), "{output}");
+        if let Some(actual) = execute_vertica_target(setup, &output) { assert_eq!(actual, expected, "{output}"); }
+    }
+}
+
+#[test]
+fn vertica_distinct_ordering_sorts_outside_deduplication() {
+    for (sql, expected) in [
+        (
+            "SELECT DISTINCT x FROM t ORDER BY x NULLS FIRST LIMIT 2",
+            "NULL\n1",
+        ),
+        (
+            "SELECT DISTINCT x AS value FROM t ORDER BY 1 NULLS FIRST LIMIT 2",
+            "NULL\n1",
+        ),
+        (
+            "SELECT DISTINCT x AS \"odd name\" FROM t ORDER BY \"odd name\" NULLS FIRST LIMIT 2",
+            "NULL\n1",
+        ),
+        ("SELECT DISTINCT x FROM t ORDER BY x LIMIT 2", "1\n2"),
+    ] {
+        let output = vertica_translate(sql, "postgresql", "vertica");
+        let ast = polyglot_sql::Dialect::get(polyglot_sql::DialectType::Vertica)
+            .parse(&output)
+            .unwrap();
+        let polyglot_sql::expressions::Expression::Select(outer) = &ast[0] else {
+            panic!("expected SELECT")
+        };
+        assert!(!outer.distinct && outer.expressions.len() == 1, "{output}");
+        assert!(
+            output.contains("SELECT DISTINCT") && output.contains("CASE WHEN"),
+            "{output}"
+        );
+        let setup = "CREATE TABLE t(x INT); INSERT INTO t VALUES (1),(1),(NULL),(2)";
+        if let Some(actual) = execute_vertica_target(setup, &output) {
+            assert_eq!(actual, expected, "{output}");
+        }
+    }
+}
+
+#[test]
+fn vertica_parenthesized_query_ordering_preserves_nulls_and_aliases() {
+    for sql in [
+        "(SELECT x FROM t) ORDER BY x NULLS FIRST LIMIT 1",
+        "SELECT y FROM ((SELECT x FROM t UNION ALL SELECT x FROM t) ORDER BY x NULLS FIRST LIMIT 1) AS s(y)",
+    ] {
+        let output = vertica_translate(sql, "postgresql", "vertica");
+        assert!(output.contains("CASE WHEN") && !output.contains("NULLS FIRST"), "{output}");
+        if let Some(actual) = execute_vertica_target(
+            "CREATE TABLE t(x INT); INSERT INTO t VALUES (1),(NULL)",
+            &output,
+        ) {
+            assert_eq!(actual, "NULL", "{output}");
+        }
+    }
+    let sql =
+        "(SELECT CAST(1 AS INT) AS x UNION ALL SELECT CAST(NULL AS INT) AS x) ORDER BY x LIMIT 1";
+    let output = vertica_translate(sql, "vertica", "duckdb");
+    if let Some(actual) = execute_vertica_target("", &output) {
+        assert_eq!(actual, "NULL", "{output}");
+    }
+}
+
+#[test]
+#[ignore = "manual DuckDB execution benchmark; set POLYGLOT_DUCKDB and run with --ignored --nocapture"]
+fn vertica_array_execution_benchmark() {
+    std::env::var("POLYGLOT_DUCKDB").expect("POLYGLOT_DUCKDB must name a DuckDB CLI");
+    let previous = "SELECT SUM((SELECT _polyglot_v.a[CASE WHEN _polyglot_v.i0 < 0 OR _polyglot_v.i0 >= 2147483647 THEN NULL ELSE _polyglot_v.i0 + 1 END] FROM (SELECT arr AS a, 0 AS i0) AS _polyglot_v)) FROM t";
+    let setup = "SET threads=1; CREATE TABLE t AS SELECT [i,i+1] AS arr, i%2 AS idx FROM range(1000000) r(i); CREATE SEQUENCE s MINVALUE 0 START 0";
+    for (label, index) in [
+        ("constant", "0"),
+        ("column", "idx"),
+        ("computed", "idx + 0"),
+        ("volatile", "NEXTVAL('s') % 2"),
+    ] {
+        let generated = vertica_translate(
+            &format!("SELECT SUM(arr[{index}]) FROM t"),
+            "vertica",
+            "duckdb",
+        );
+        let native = if index == "0" {
+            let direct = "SELECT SUM(arr[1]) FROM t";
+            assert_eq!(generated, direct);
+            direct.to_string()
+        } else {
+            format!("SELECT SUM(arr[({index}) + 1]) FROM t")
+        };
+        let mut queries = vec![("native", native)];
+        if index == "0" {
+            queries.push(("previous", previous.to_string()));
+        }
+        queries.push(("generated", generated));
+        let mut sql = String::new();
+        for _ in 0..7 {
+            for (_, query) in &queries {
+                sql.push_str(&format!("EXPLAIN ANALYZE {query};\n"));
+            }
+        }
+        let output = execute_vertica_target(setup, &sql).unwrap();
+        let times = output
+            .lines()
+            .filter_map(|line| {
+                line.split_once("Total Time: ")
+                    .and_then(|(_, t)| t.split_once('s'))
+                    .and_then(|(t, _)| t.parse::<f64>().ok())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(times.len(), 7 * queries.len(), "{output}");
+        for (index, (name, query)) in queries.iter().enumerate() {
+            let mut warm = times
+                .iter()
+                .skip(queries.len() + index)
+                .step_by(queries.len())
+                .copied()
+                .collect::<Vec<_>>();
+            warm.sort_by(f64::total_cmp);
+            let median = (warm[2] + warm[3]) / 2.0;
+            println!("{label}/{name}: median={median:.6}s, warm_samples={warm:?}");
+            println!("SQL: {query}");
+        }
+    }
+}

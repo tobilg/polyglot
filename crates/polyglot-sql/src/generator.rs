@@ -4676,6 +4676,18 @@ impl Generator {
     }
 
     fn generate_select(&mut self, select: &Select) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && select.distinct
+            && select
+                .order_by
+                .as_ref()
+                .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
+        {
+            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Select(
+                Box::new(select.clone()),
+            ))?;
+            return self.generate_expression(&wrapped);
+        }
         if select.vertica.is_some() && self.config.dialect != Some(DialectType::Vertica) {
             return Err(crate::error::Error::unsupported(
                 "Vertica query extension",
@@ -7220,6 +7232,17 @@ impl Generator {
     }
 
     fn generate_union(&mut self, outermost: &Union) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && outermost
+                .order_by
+                .as_ref()
+                .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
+        {
+            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Union(
+                Box::new(outermost.clone()),
+            ))?;
+            return self.generate_expression(&wrapped);
+        }
         if self.should_wrap_set_operation_modifiers(
             &outermost.order_by,
             &outermost.limit,
@@ -7399,6 +7422,17 @@ impl Generator {
     }
 
     fn generate_intersect(&mut self, outermost: &Intersect) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && outermost
+                .order_by
+                .as_ref()
+                .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
+        {
+            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Intersect(
+                Box::new(outermost.clone()),
+            ))?;
+            return self.generate_expression(&wrapped);
+        }
         if self.should_wrap_set_operation_modifiers(
             &outermost.order_by,
             &outermost.limit,
@@ -7573,6 +7607,17 @@ impl Generator {
     }
 
     fn generate_except(&mut self, outermost: &Except) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && outermost
+                .order_by
+                .as_ref()
+                .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
+        {
+            let wrapped = crate::dialects::vertica_ast::wrap_ordered_query(Expression::Except(
+                Box::new(outermost.clone()),
+            ))?;
+            return self.generate_expression(&wrapped);
+        }
         if self.should_wrap_set_operation_modifiers(
             &outermost.order_by,
             &outermost.limit,
@@ -24850,6 +24895,15 @@ impl Generator {
     }
 
     fn generate_subquery(&mut self, subquery: &Subquery) -> Result<()> {
+        if self.config.dialect == Some(DialectType::Vertica)
+            && subquery
+                .order_by
+                .as_ref()
+                .is_some_and(|o| o.expressions.iter().any(|o| o.nulls_first.is_some()))
+        {
+            let wrapped = crate::dialects::vertica_ast::wrap_subquery_order(subquery.clone())?;
+            return self.generate_subquery(&wrapped);
+        }
         if subquery.lateral {
             self.write_keyword("LATERAL");
             self.write_space();
@@ -42305,20 +42359,9 @@ impl Generator {
         ) {
             match node {
                 V::ArrayAccess { this, indices } => {
-                    self.write("(SELECT _polyglot_v.a");
-                    for i in 0..indices.len() {
-                        self.write(&format!("[CASE WHEN _polyglot_v.i{i} < 0 OR _polyglot_v.i{i} >= 2147483647 THEN NULL ELSE _polyglot_v.i{i} + 1 END]"));
-                    }
-                    self.write(" FROM (SELECT ");
-                    self.generate_expression(this)?;
-                    self.write(" AS a");
-                    for (i, index) in indices.iter().enumerate() {
-                        self.write(", ");
-                        self.generate_expression(index)?;
-                        self.write(&format!(" AS i{i}"));
-                    }
-                    self.write(") AS _polyglot_v)");
-                    return Ok(());
+                    let lowered =
+                        crate::dialects::vertica_ast::array_access(this.clone(), indices.clone());
+                    return self.generate_expression(&lowered);
                 }
                 V::ArraySlice { this, start, end } => {
                     let bound = |e: &Expression| match e {

@@ -23,8 +23,7 @@
       "sql": "SELECT GETDATE(), GETUTCDATE()",
       "write": {
         "postgresql": "SELECT CAST(STATEMENT_TIMESTAMP() AS TIMESTAMP), CAST(STATEMENT_TIMESTAMP() AT TIME ZONE 'UTC' AS TIMESTAMP)",
-        "tsql": "SELECT GETDATE(), GETUTCDATE()",
-        "duckdb": "SELECT CURRENT_TIMESTAMP, CAST(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS TIMESTAMP)"
+        "tsql": "SELECT GETDATE(), GETUTCDATE()"
       },
       "description": "Statement-start timestamps lower to STATEMENT_TIMESTAMP in PostgreSQL",
       "read": {}

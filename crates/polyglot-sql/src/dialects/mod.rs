@@ -22,6 +22,8 @@
 mod generic; // Always compiled
 #[cfg(feature = "transpile")]
 mod normalization;
+#[cfg(feature = "generate")]
+pub(crate) mod vertica_ast;
 
 #[cfg(feature = "dialect-athena")]
 mod athena;
