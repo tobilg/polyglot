@@ -5567,6 +5567,7 @@ mod hana_regressions {
             "SELECT TO_VARCHAR(d, fmt) FROM t",
             "SELECT TO_TIMESTAMP(s, 'YYYY-MM-DD HH24:MI:SS.FF7') FROM t",
             "SELECT CAST(x AS SMALLDECIMAL) FROM t",
+            "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
             "SELECT ADD_MONTHS_LAST(d, 1) FROM t",
             "SELECT * FROM t WITH HINT (NO_INLINE)",
             "SELECT * FROM t FOR UPDATE IGNORE LOCKED",

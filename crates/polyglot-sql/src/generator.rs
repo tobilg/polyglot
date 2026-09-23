@@ -184,6 +184,39 @@ enum TsqlDatePart {
     Unsupported(String),
 }
 
+// Validated conversion decisions shared by rendering and source checks.
+enum HanaFunctionMapping {
+    Quoted,
+    Coalesce,
+    Locate {
+        start: i64,
+        occurrence: i64,
+    },
+    Substring {
+        start: i64,
+        length: Option<i64>,
+    },
+    Decimal {
+        precision: i64,
+        scale: i64,
+    },
+    Datetime {
+        mask: String,
+        formatting: bool,
+        date: bool,
+    },
+    Utc {
+        precision: i64,
+        date: bool,
+        time: bool,
+    },
+}
+
+enum HanaTypeMapping<'a> {
+    Name(&'a str),
+    Standard(DataType),
+}
+
 /// Identifier quote style (start/end characters)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IdentifierQuoteStyle {
@@ -2528,6 +2561,84 @@ impl Generator {
         Ok(sql)
     }
 
+    /// Check a source node using the same decisions as rendering, without emitting SQL.
+    /// Descendants are checked by the transpilation pipeline.
+    #[cfg(feature = "transpile")]
+    pub(crate) fn validate_hana_source_node(node: &Expression, target: DialectType) -> Result<()> {
+        let unsupported_feature = match node {
+            Expression::Function(f) => {
+                Self::hana_function_mapping(f, target)?;
+                return Ok(());
+            }
+            Expression::Cast(c) => {
+                if let DataType::Hana { hana_type } = &c.to {
+                    match hana_type.name.as_str() {
+                        "TINYINT" | "SMALLINT" | "INT" | "BIGINT" => {
+                            Self::hana_integer_cast(c, &hana_type.name, target)?;
+                        }
+                        "DECIMAL" => {
+                            Self::hana_decimal_cast(c, hana_type, target)?;
+                        }
+                        _ => {
+                            Self::hana_type_mapping(hana_type, target)?;
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            Expression::DataType(DataType::Hana { hana_type }) => {
+                Self::hana_type_mapping(hana_type, target)?;
+                return Ok(());
+            }
+            Expression::Select(s) => return Self::validate_hana_select(s, target),
+            Expression::CreateTable(t) => return Self::validate_hana_create_table(t, target),
+            Expression::AggregateFunction(f) => {
+                return Err(Self::hana_unsupported_for_target(
+                    target,
+                    format!("HANA aggregate {} has no verified target mapping", f.name),
+                ))
+            }
+            Expression::Upsert(_) => {
+                "HANA UPSERT requires target-specific key and update semantics"
+            }
+            Expression::Call(_) => "HANA CALL requires a verified target procedure signature",
+            Expression::Hierarchy(_) => "HANA hierarchy has no verified target mapping",
+            Expression::ViewParameter(_) => {
+                "HANA calculation-view PLACEHOLDER has no verified target mapping"
+            }
+            Expression::StorageProperty(_) => {
+                "HANA storage property has no verified target mapping"
+            }
+            Expression::Hint(_) => "Optimizer hint has no verified target mapping",
+            Expression::JSONValue(_)
+            | Expression::JSONTable(_)
+            | Expression::JSONColumnDef(_)
+            | Expression::JsonQuery(_)
+            | Expression::JsonExtract(_)
+            | Expression::JsonExtractScalar(_) => {
+                "SQL/JSON path and error semantics have no verified target mapping"
+            }
+            Expression::RegexpLike(_)
+            | Expression::RegexpReplace(_)
+            | Expression::RegexpExtract(_)
+            | Expression::RegexpInstr(_)
+            | Expression::RegexpCount(_) => {
+                "Regular-expression source semantics have no verified target mapping"
+            }
+            Expression::Cube(_) | Expression::Rollup(_) | Expression::GroupingSets(_) => {
+                "HANA grouping-set selection and result delivery options"
+            }
+            Expression::PartitionByProperty(_) => {
+                "HANA partitioning has no verified target mapping"
+            }
+            _ => "HANA source semantics have no verified target mapping",
+        };
+        Err(Self::hana_unsupported_for_target(
+            target,
+            unsupported_feature,
+        ))
+    }
+
     fn generate_expression(&mut self, expr: &Expression) -> Result<()> {
         #[cfg(feature = "stacker")]
         {
@@ -4742,19 +4853,24 @@ impl Generator {
         Some(outer)
     }
 
-    fn generate_select(&mut self, select: &Select) -> Result<()> {
-        if (select.result_serialization.is_some()
-            || select.query_collation.is_some()
-            || !select.query_hints.is_empty()
-            || select.total_rowcount
-            || select.locks.iter().any(|lock| lock.ignore_locked))
-            && self.config.dialect != Some(DialectType::HANA)
+    fn validate_hana_select(select: &Select, target: DialectType) -> Result<()> {
+        if target != DialectType::HANA
+            && (select.result_serialization.is_some()
+                || select.query_collation.is_some()
+                || !select.query_hints.is_empty()
+                || select.total_rowcount
+                || select.locks.iter().any(|lock| lock.ignore_locked))
         {
-            return Err(crate::error::Error::unsupported(
+            return Err(Self::hana_unsupported_for_target(
+                target,
                 "HANA SELECT serialization or hints have no verified target mapping",
-                self.config.dialect.unwrap_or_default().to_string(),
             ));
         }
+        Ok(())
+    }
+
+    fn generate_select(&mut self, select: &Select) -> Result<()> {
+        Self::validate_hana_select(select, self.config.dialect.unwrap_or_default())?;
 
         use crate::dialects::DialectType;
 
@@ -8614,18 +8730,27 @@ impl Generator {
 
     // ==================== DDL Generation ====================
 
-    fn generate_create_table(&mut self, ct: &CreateTable) -> Result<()> {
-        if ct.source_dialect == Some(DialectType::HANA)
-            && self.config.dialect != Some(DialectType::HANA)
-            && ct.table_modifier.as_ref().is_some_and(|m| {
-                m.split_whitespace()
-                    .any(|part| matches!(part, "COLUMN" | "ROW" | "LOCAL" | "GLOBAL"))
-            })
-        {
-            return Err(
-                self.hana_unsupported("HANA table storage/scope has no verified target mapping")
-            );
+    fn validate_hana_create_table(table: &CreateTable, target: DialectType) -> Result<()> {
+        if table.source_dialect != Some(DialectType::HANA) || target == DialectType::HANA {
+            return Ok(());
         }
+        if table.table_modifier.as_ref().is_some_and(|m| {
+            m.split_whitespace()
+                .any(|p| matches!(p, "COLUMN" | "ROW" | "LOCAL" | "GLOBAL"))
+        }) {
+            return Err(Self::hana_unsupported_for_target(
+                target,
+                "HANA table storage/scope has no verified target mapping",
+            ));
+        }
+        for column in table.columns.iter().chain(&table.with_partition_columns) {
+            Self::validate_hana_data_type(&column.data_type, target)?;
+        }
+        Ok(())
+    }
+
+    fn generate_create_table(&mut self, ct: &CreateTable) -> Result<()> {
+        Self::validate_hana_create_table(ct, self.config.dialect.unwrap_or_default())?;
 
         // Athena: Determine if this is Hive-style DDL or Trino-style DML
         // CREATE TABLE AS SELECT uses Trino (double quotes)
@@ -18275,17 +18400,12 @@ impl Generator {
                     return self.generate_hana_integer_cast(cast, &hana_type.name);
                 }
                 if hana_type.name == "DECIMAL" {
-                    let mut args = vec![cast.this.clone()];
-                    args.extend(
-                        hana_type
-                            .parameters
-                            .iter()
-                            .map(|n| Expression::number(i64::from(*n))),
-                    );
-                    if hana_type.parameters.len() == 1 {
-                        args.push(Expression::number(0));
-                    }
-                    return self.generate_hana_function(&Function::new("TO_DECIMAL", args));
+                    let (precision, scale) = Self::hana_decimal_cast(
+                        cast,
+                        hana_type,
+                        self.config.dialect.unwrap_or_default(),
+                    )?;
+                    return self.generate_hana_decimal(&cast.this, precision, scale);
                 }
             }
         }
@@ -19191,66 +19311,6 @@ impl Generator {
         }
     }
 
-    fn generate_hana_integer_cast(&mut self, cast: &Cast, name: &str) -> Result<()> {
-        let target = self.config.dialect.unwrap_or_default();
-        let supported = matches!(
-            target,
-            DialectType::DuckDB
-                | DialectType::PostgreSQL
-                | DialectType::Trino
-                | DialectType::Presto
-                | DialectType::Athena
-                | DialectType::Dune
-                | DialectType::CockroachDB
-                | DialectType::Materialize
-                | DialectType::RisingWave
-        );
-        let integer = Self::hana_integer(&cast.this);
-        // TINYINT is unsigned in HANA. Wider signed targets are safe only when
-        // the value is proven to fit; otherwise their overflow behavior differs.
-        let tinyint_fits = name != "TINYINT"
-            || target == DialectType::DuckDB
-            || integer.is_some_and(|n| (0..=255).contains(&n));
-        if !supported
-            || !tinyint_fits
-            || !Self::hana_exact_numeric(&cast.this)
-            || cast.format.is_some()
-            || cast.default.is_some()
-        {
-            return Err(self.hana_unsupported(format!(
-                "HANA {name} CAST requires verified numeric input and matching overflow semantics"
-            )));
-        }
-        self.write("CAST(");
-        if integer.is_none() {
-            self.write(
-                if matches!(
-                    target,
-                    DialectType::Trino
-                        | DialectType::Presto
-                        | DialectType::Athena
-                        | DialectType::Dune
-                ) {
-                    "TRUNCATE("
-                } else {
-                    "TRUNC("
-                },
-            );
-        }
-        self.generate_expression(&cast.this)?;
-        if integer.is_none() {
-            self.write(")");
-        }
-        self.write(" AS ");
-        self.write(match name {
-            "TINYINT" if target == DialectType::DuckDB => "UTINYINT",
-            "TINYINT" => "SMALLINT",
-            name => name,
-        });
-        self.write(")");
-        Ok(())
-    }
-
     fn hana_exact_numeric(expr: &Expression) -> bool {
         match expr {
             Expression::Literal(l) => {
@@ -19276,11 +19336,89 @@ impl Generator {
         matches!(expr, Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) | Literal::NationalString(s) if s.chars().all(|c| (c as u32) <= 0xffff)))
     }
 
-    fn hana_unsupported(&self, feature: impl Into<String>) -> crate::error::Error {
-        crate::error::Error::unsupported(
-            feature,
-            self.config.dialect.unwrap_or_default().to_string(),
+    fn hana_trino_target(target: DialectType) -> bool {
+        matches!(
+            target,
+            DialectType::Trino | DialectType::Presto | DialectType::Athena | DialectType::Dune
         )
+    }
+
+    fn hana_numeric_target(target: DialectType) -> bool {
+        Self::hana_trino_target(target)
+            || matches!(
+                target,
+                DialectType::DuckDB
+                    | DialectType::PostgreSQL
+                    | DialectType::CockroachDB
+                    | DialectType::Materialize
+                    | DialectType::RisingWave
+            )
+    }
+
+    /// Return whether truncation is needed before an integer conversion.
+    fn hana_integer_cast(cast: &Cast, name: &str, target: DialectType) -> Result<bool> {
+        let integer = Self::hana_integer(&cast.this);
+        let tinyint_fits = name != "TINYINT"
+            || target == DialectType::DuckDB
+            || integer.is_some_and(|n| (0..=255).contains(&n));
+        if !Self::hana_numeric_target(target)
+            || !tinyint_fits
+            || !Self::hana_exact_numeric(&cast.this)
+            || cast.format.is_some()
+            || cast.default.is_some()
+        {
+            return Err(Self::hana_unsupported_for_target(
+                target,
+                format!(
+                    "HANA {name} CAST requires verified numeric input and matching overflow semantics"
+                ),
+            ));
+        }
+        Ok(integer.is_none())
+    }
+
+    fn generate_hana_integer_cast(&mut self, cast: &Cast, name: &str) -> Result<()> {
+        let target = self.config.dialect.unwrap_or_default();
+        let truncate = Self::hana_integer_cast(cast, name, target)?;
+        self.write("CAST(");
+        if truncate {
+            self.write(
+                if matches!(
+                    target,
+                    DialectType::Trino
+                        | DialectType::Presto
+                        | DialectType::Athena
+                        | DialectType::Dune
+                ) {
+                    "TRUNCATE("
+                } else {
+                    "TRUNC("
+                },
+            );
+        }
+        self.generate_expression(&cast.this)?;
+        if truncate {
+            self.write(")");
+        }
+        self.write(" AS ");
+        self.write(match name {
+            "TINYINT" if target == DialectType::DuckDB => "UTINYINT",
+            "TINYINT" => "SMALLINT",
+            name => name,
+        });
+        self.write(")");
+        Ok(())
+    }
+
+    fn hana_unsupported_for_target(
+        target: DialectType,
+        feature: impl Into<String>,
+    ) -> crate::error::Error {
+        crate::error::Error::unsupported(feature, target.to_string())
+    }
+
+    fn hana_unsupported(&self, feature: impl Into<String>) -> crate::error::Error {
+        Self::hana_unsupported_for_target(self.config.dialect.unwrap_or_default(), feature)
     }
 
     fn generate_grouping_options(
@@ -19343,256 +19481,385 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_hana_function(&mut self, function: &Function) -> Result<()> {
+    fn hana_function_mapping(
+        function: &Function,
+        target: DialectType,
+    ) -> Result<HanaFunctionMapping> {
         if function.quoted {
-            let mut identifier = Identifier::new(&function.name);
-            identifier.quoted = true;
-            self.generate_identifier(&identifier)?;
-            self.write("(");
-            for (i, arg) in function.args.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.generate_expression(arg)?;
-            }
-            self.write(")");
-            return Ok(());
+            return Ok(HanaFunctionMapping::Quoted);
         }
-        if self.config.dialect == Some(DialectType::HANA) {
-            return self.generate_function(function);
-        }
-        let name = function.name.to_ascii_uppercase();
+        let name = if function.name.bytes().any(|c| c.is_ascii_lowercase()) {
+            Cow::Owned(function.name.to_ascii_uppercase())
+        } else {
+            Cow::Borrowed(function.name.as_str())
+        };
         let args = &function.args;
-        let target = self.config.dialect.unwrap_or_default();
-        let trino = matches!(
-            target,
-            DialectType::Trino | DialectType::Presto | DialectType::Athena | DialectType::Dune
-        );
-        let postgres = matches!(
-            target,
-            DialectType::PostgreSQL
-                | DialectType::CockroachDB
-                | DialectType::Materialize
-                | DialectType::RisingWave
-        );
-        let duckdb = target == DialectType::DuckDB;
-
-        // These calls are retained as source nodes until generation so parsing,
-        // JSON serialization, and native transpilation cannot lose HANA semantics.
-        if matches!(name.as_str(), "COALESCE" | "IFNULL") && args.len() >= 2 {
-            return self.generate_vararg_func("COALESCE", args);
+        if matches!(name.as_ref(), "COALESCE" | "IFNULL") && args.len() >= 2 {
+            return Ok(HanaFunctionMapping::Coalesce);
         }
-        if name == "LOCATE" && (2..=4).contains(&args.len()) && (trino || postgres || duckdb) {
-            let start = if args.len() >= 3 {
-                Self::hana_integer(&args[2])
-            } else {
-                Some(1)
-            };
-            let occurrence = if args.len() == 4 {
-                Self::hana_integer(&args[3])
-            } else {
-                Some(1)
-            };
+        if name == "LOCATE" && (2..=4).contains(&args.len()) && Self::hana_numeric_target(target) {
+            let start = args.get(2).map_or(Some(1), Self::hana_integer);
+            let occurrence = args.get(3).map_or(Some(1), Self::hana_integer);
             if let (Some(start), Some(occurrence)) = (start, occurrence) {
                 if start >= 0
                     && occurrence > 0
-                    && (trino || occurrence == 1)
+                    && (Self::hana_trino_target(target) || occurrence == 1)
                     && args[..2].iter().all(Self::hana_portable_string)
                     && (!matches!(&args[1], Expression::Literal(l) if matches!(l.as_ref(), Literal::String(s) | Literal::NationalString(s) if s.is_empty()))
                         || (start <= 1 && occurrence == 1))
                 {
-                    let haystack = self.generate_to_string(&args[0])?;
-                    let needle = self.generate_to_string(&args[1])?;
-                    let start = start.max(1);
-                    let searched = if start == 1 {
-                        haystack
-                    } else {
-                        format!("SUBSTR({haystack}, {start})")
-                    };
-                    let found = if trino && occurrence != 1 {
-                        format!("STRPOS({searched}, {needle}, {occurrence})")
-                    } else {
-                        format!("STRPOS({searched}, {needle})")
-                    };
-                    if start == 1 {
-                        self.write(&found);
-                    } else {
-                        self.write(&format!(
-                            "CASE WHEN {found} = 0 THEN 0 ELSE {found} + {} END",
-                            start - 1
-                        ));
-                    }
-                    return Ok(());
+                    return Ok(HanaFunctionMapping::Locate {
+                        start: start.max(1),
+                        occurrence,
+                    });
                 }
             }
         }
-        if matches!(name.as_str(), "SUBSTRING" | "SUBSTR")
+        if matches!(name.as_ref(), "SUBSTRING" | "SUBSTR")
             && (2..=3).contains(&args.len())
-            && (trino || postgres || duckdb)
+            && Self::hana_numeric_target(target)
             && Self::hana_portable_string(&args[0])
         {
-            // Constant bounds avoid changing NULL propagation or evaluating a
-            // volatile bound more than once. Dynamic/binary cases need a typed mapping.
             if let Some(start) = Self::hana_integer(&args[1]) {
                 let length = args.get(2).map(Self::hana_integer);
                 if !matches!(length, Some(None)) {
-                    let mut lowered = vec![args[0].clone(), Expression::number(start.max(1))];
-                    if let Some(Some(length)) = length {
-                        lowered.push(Expression::number(length.max(0)));
-                    }
-                    return self.generate_vararg_func("SUBSTRING", &lowered);
+                    return Ok(HanaFunctionMapping::Substring {
+                        start: start.max(1),
+                        length: length.flatten().map(|n| n.max(0)),
+                    });
                 }
             }
         }
-        if name == "TO_DECIMAL" && args.len() == 3 && (trino || postgres || duckdb) {
-            if let (Some(precision), Some(scale)) =
-                (Self::hana_integer(&args[1]), Self::hana_integer(&args[2]))
-            {
-                if (1..=38).contains(&precision) && (0..=precision).contains(&scale) {
-                    // Require numeric input evidence. Casting an unknown string
-                    // before truncation can round away digits or change format rules.
-                    let numeric = Self::hana_exact_numeric(&args[0]);
-                    if numeric {
-                        let value = self.generate_to_string(&args[0])?;
-                        let truncate = if trino { "TRUNCATE" } else { "TRUNC" };
-                        self.write(&format!(
-                            "CAST({truncate}({value}, {scale}) AS DECIMAL({precision}, {scale}))"
-                        ));
-                        return Ok(());
-                    }
-                }
-            }
+        if name == "TO_DECIMAL" && args.len() == 3 {
+            let (precision, scale) = Self::hana_decimal_mapping(
+                &args[0],
+                Self::hana_integer(&args[1]),
+                Self::hana_integer(&args[2]),
+                target,
+            )?;
+            return Ok(HanaFunctionMapping::Decimal { precision, scale });
         }
         if matches!(
-            name.as_str(),
+            name.as_ref(),
             "TO_DATE" | "TO_TIMESTAMP" | "TO_VARCHAR" | "TO_NVARCHAR"
         ) && args.len() == 2
-            && (trino || duckdb)
+            && (Self::hana_trino_target(target) || target == DialectType::DuckDB)
             && (name != "TO_TIMESTAMP" || target == DialectType::Trino)
         {
             if let Expression::Literal(literal) = &args[1] {
                 if let Literal::String(mask) = literal.as_ref() {
-                    if let Some(mask) = crate::format_tokens::hana_datetime_format(mask, trino) {
-                        let formatting = matches!(name.as_str(), "TO_VARCHAR" | "TO_NVARCHAR");
+                    if let Some(mask) = crate::format_tokens::hana_datetime_format(
+                        mask,
+                        Self::hana_trino_target(target),
+                    ) {
+                        let formatting = matches!(name.as_ref(), "TO_VARCHAR" | "TO_NVARCHAR");
                         let known_datetime = matches!(&args[0], Expression::Cast(c) if matches!(c.to, DataType::Date | DataType::Timestamp { .. } | DataType::Time { .. }))
                             || matches!(&args[0], Expression::Cast(c) if matches!(&c.to, DataType::Hana { hana_type } if matches!(hana_type.name.as_str(), "TIMESTAMP" | "TIME" | "SECONDDATE")))
                             || matches!(&args[0], Expression::Literal(l) if matches!(l.as_ref(), Literal::Date(_) | Literal::Timestamp(_)));
                         if !formatting || known_datetime {
-                            let value = self.generate_to_string(&args[0])?;
-                            let mask = self.generate_to_string(&Expression::string(mask))?;
-                            if formatting {
-                                let function = if trino { "DATE_FORMAT" } else { "STRFTIME" };
-                                self.write(&format!("{function}({value}, {mask})"));
-                            } else {
-                                let function = if trino { "DATE_PARSE" } else { "STRPTIME" };
-                                let result_type = if name == "TO_DATE" {
-                                    "DATE"
-                                } else if trino {
-                                    "TIMESTAMP(7)"
-                                } else {
-                                    "TIMESTAMP"
-                                };
-                                self.write(&format!(
-                                    "CAST({function}({value}, {mask}) AS {result_type})"
-                                ));
-                            }
-                            return Ok(());
+                            return Ok(HanaFunctionMapping::Datetime {
+                                mask,
+                                formatting,
+                                date: name == "TO_DATE",
+                            });
                         }
                     }
                 }
             }
         }
         if matches!(
-            name.as_str(),
+            name.as_ref(),
             "CURRENT_UTCDATE" | "CURRENT_UTCTIME" | "CURRENT_UTCTIMESTAMP"
-        ) && (trino || postgres || duckdb)
+        ) && Self::hana_numeric_target(target)
         {
-            let precision = if args.is_empty() {
-                Some(3)
-            } else if args.len() == 1 {
-                Self::hana_integer(&args[0])
-            } else {
-                None
+            let precision = match args.as_slice() {
+                [] => Some(3),
+                [arg] => Self::hana_integer(arg),
+                _ => None,
             };
             if let Some(precision) = precision {
                 if (0..=7).contains(&precision)
                     && (target == DialectType::Trino || name == "CURRENT_UTCDATE")
                 {
-                    let utc = if trino && name == "CURRENT_UTCTIMESTAMP" {
-                        format!("CURRENT_TIMESTAMP({precision}) AT TIME ZONE 'UTC'")
-                    } else {
-                        "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'".to_owned()
-                    };
-                    let data_type = match name.as_str() {
-                        "CURRENT_UTCDATE" => "DATE".to_owned(),
-                        "CURRENT_UTCTIME" => "TIME(0)".to_owned(),
-                        _ => format!("TIMESTAMP({precision})"),
-                    };
-                    self.write(&format!("CAST({utc} AS {data_type})"));
-                    return Ok(());
+                    return Ok(HanaFunctionMapping::Utc {
+                        precision,
+                        date: name == "CURRENT_UTCDATE",
+                        time: name == "CURRENT_UTCTIME",
+                    });
                 }
             }
         }
-        Err(self.hana_unsupported(format!(
-            "HANA {name}: no verified mapping for these arguments"
-        )))
+        Err(Self::hana_unsupported_for_target(
+            target,
+            format!("HANA {name}: no verified mapping for these arguments"),
+        ))
+    }
+
+    fn generate_hana_function(&mut self, function: &Function) -> Result<()> {
+        if self.config.dialect == Some(DialectType::HANA) {
+            return self.generate_function(function);
+        }
+        let target = self.config.dialect.unwrap_or_default();
+        let args = &function.args;
+        let trino = matches!(
+            target,
+            DialectType::Trino | DialectType::Presto | DialectType::Athena | DialectType::Dune
+        );
+        match Self::hana_function_mapping(function, target)? {
+            HanaFunctionMapping::Quoted => {
+                let mut identifier = Identifier::new(&function.name);
+                identifier.quoted = true;
+                self.generate_identifier(&identifier)?;
+                self.write("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.generate_expression(arg)?;
+                }
+                self.write(")");
+            }
+            HanaFunctionMapping::Coalesce => return self.generate_vararg_func("COALESCE", args),
+            HanaFunctionMapping::Locate { start, occurrence } => {
+                let haystack = self.generate_to_string(&args[0])?;
+                let needle = self.generate_to_string(&args[1])?;
+                let searched = if start == 1 {
+                    haystack
+                } else {
+                    format!("SUBSTR({haystack}, {start})")
+                };
+                let found = if trino && occurrence != 1 {
+                    format!("STRPOS({searched}, {needle}, {occurrence})")
+                } else {
+                    format!("STRPOS({searched}, {needle})")
+                };
+                if start == 1 {
+                    self.write(&found);
+                } else {
+                    self.write(&format!(
+                        "CASE WHEN {found} = 0 THEN 0 ELSE {found} + {} END",
+                        start - 1
+                    ));
+                }
+            }
+            HanaFunctionMapping::Substring { start, length } => {
+                self.write_func_name("SUBSTRING");
+                self.write("(");
+                self.generate_expression(&args[0])?;
+                self.write(&format!(", {start}"));
+                if let Some(length) = length {
+                    self.write(&format!(", {length}"));
+                }
+                self.write(")");
+            }
+            HanaFunctionMapping::Decimal { precision, scale } => {
+                return self.generate_hana_decimal(&args[0], precision, scale)
+            }
+            HanaFunctionMapping::Datetime {
+                mask,
+                formatting,
+                date,
+            } => {
+                let value = self.generate_to_string(&args[0])?;
+                let mask = self.generate_to_string(&Expression::string(mask))?;
+                if formatting {
+                    let function = if trino { "DATE_FORMAT" } else { "STRFTIME" };
+                    self.write(&format!("{function}({value}, {mask})"));
+                } else {
+                    let function = if trino { "DATE_PARSE" } else { "STRPTIME" };
+                    let result_type = if date {
+                        "DATE"
+                    } else if trino {
+                        "TIMESTAMP(7)"
+                    } else {
+                        "TIMESTAMP"
+                    };
+                    self.write(&format!(
+                        "CAST({function}({value}, {mask}) AS {result_type})"
+                    ));
+                }
+            }
+            HanaFunctionMapping::Utc {
+                precision,
+                date,
+                time,
+            } => {
+                let utc = if trino && !date && !time {
+                    format!("CURRENT_TIMESTAMP({precision}) AT TIME ZONE 'UTC'")
+                } else {
+                    "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'".to_owned()
+                };
+                let data_type = if date {
+                    "DATE".to_owned()
+                } else if time {
+                    "TIME(0)".to_owned()
+                } else {
+                    format!("TIMESTAMP({precision})")
+                };
+                self.write(&format!("CAST({utc} AS {data_type})"));
+            }
+        }
+        Ok(())
+    }
+
+    fn hana_decimal_mapping(
+        input: &Expression,
+        precision: Option<i64>,
+        scale: Option<i64>,
+        target: DialectType,
+    ) -> Result<(i64, i64)> {
+        if let (Some(precision), Some(scale)) = (precision, scale) {
+            if Self::hana_numeric_target(target)
+                && (1..=38).contains(&precision)
+                && (0..=precision).contains(&scale)
+                && Self::hana_exact_numeric(input)
+            {
+                return Ok((precision, scale));
+            }
+        }
+        Err(Self::hana_unsupported_for_target(
+            target,
+            "HANA TO_DECIMAL: no verified mapping for these arguments",
+        ))
+    }
+
+    fn hana_decimal_cast(
+        cast: &Cast,
+        data_type: &HanaDataType,
+        target: DialectType,
+    ) -> Result<(i64, i64)> {
+        let (precision, scale) = match data_type.parameters.as_slice() {
+            [p] => (Some(i64::from(*p)), Some(0)),
+            [p, s] => (Some(i64::from(*p)), Some(i64::from(*s))),
+            _ => (None, None),
+        };
+        Self::hana_decimal_mapping(&cast.this, precision, scale, target)
+    }
+
+    fn generate_hana_decimal(
+        &mut self,
+        value: &Expression,
+        precision: i64,
+        scale: i64,
+    ) -> Result<()> {
+        let truncate = if matches!(
+            self.config.dialect,
+            Some(
+                DialectType::Trino | DialectType::Presto | DialectType::Athena | DialectType::Dune
+            )
+        ) {
+            "TRUNCATE"
+        } else {
+            "TRUNC"
+        };
+        self.write("CAST(");
+        self.write(truncate);
+        self.write("(");
+        self.generate_expression(value)?;
+        self.write(&format!(", {scale}) AS DECIMAL({precision}, {scale}))"));
+        Ok(())
+    }
+
+    fn hana_type_mapping(
+        data_type: &HanaDataType,
+        target: DialectType,
+    ) -> Result<HanaTypeMapping<'_>> {
+        let mapping = match (data_type.name.as_str(), data_type.parameters.as_slice()) {
+            ("SMALLINT" | "INT" | "BIGINT", []) => HanaTypeMapping::Name(&data_type.name),
+            ("TIMESTAMP", []) if target == DialectType::Trino => {
+                HanaTypeMapping::Name("TIMESTAMP(7)")
+            }
+            ("TIME", []) if target == DialectType::Trino => HanaTypeMapping::Name("TIME(0)"),
+            ("FLOAT", [] | [1..=53])
+                if matches!(
+                    target,
+                    DialectType::Trino
+                        | DialectType::Presto
+                        | DialectType::DuckDB
+                        | DialectType::PostgreSQL
+                ) =>
+            {
+                HanaTypeMapping::Name(if data_type.parameters.first().is_some_and(|p| *p <= 24) {
+                    "REAL"
+                } else if target == DialectType::PostgreSQL {
+                    "DOUBLE PRECISION"
+                } else {
+                    "DOUBLE"
+                })
+            }
+            ("TINYINT", []) if matches!(target, DialectType::DuckDB | DialectType::ClickHouse) => {
+                HanaTypeMapping::Standard(DataType::UInt8)
+            }
+            ("DECIMAL", [p, s]) if (1..=38).contains(p) && s <= p => {
+                HanaTypeMapping::Standard(DataType::Decimal {
+                    precision: Some(*p),
+                    scale: Some(*s),
+                })
+            }
+            _ => {
+                return Err(Self::hana_unsupported_for_target(
+                    target,
+                    format!(
+                        "HANA {} has no lossless type mapping for this target",
+                        data_type.name
+                    ),
+                ))
+            }
+        };
+        Ok(mapping)
+    }
+
+    fn validate_hana_data_type(data_type: &DataType, target: DialectType) -> Result<()> {
+        // Column types are embedded structs, not Expression children. In particular,
+        // the generic expression walk cannot see HANA types nested inside an ARRAY.
+        let mut pending = Vec::new();
+        let mut current = data_type;
+        loop {
+            match current {
+                DataType::Hana { hana_type } => {
+                    Self::hana_type_mapping(hana_type, target)?;
+                }
+                DataType::Array { element_type, .. }
+                | DataType::List { element_type }
+                | DataType::Nullable {
+                    inner: element_type,
+                }
+                | DataType::Vector {
+                    element_type: Some(element_type),
+                    ..
+                } => {
+                    current = element_type;
+                    continue;
+                }
+                DataType::Map {
+                    key_type,
+                    value_type,
+                } => {
+                    pending.push(value_type.as_ref());
+                    current = key_type;
+                    continue;
+                }
+                DataType::Struct { fields, .. } => {
+                    pending.extend(fields.iter().map(|f| &f.data_type))
+                }
+                DataType::Union { fields } => pending.extend(fields.iter().map(|(_, t)| t)),
+                DataType::Object { fields, .. } => pending.extend(fields.iter().map(|(_, t, _)| t)),
+                _ => {}
+            }
+            match pending.pop() {
+                Some(next) => current = next,
+                None => return Ok(()),
+            }
+        }
     }
 
     fn generate_hana_data_type(&mut self, data_type: &HanaDataType) -> Result<()> {
         if self.config.dialect != Some(DialectType::HANA) {
-            let target = self.config.dialect.unwrap_or_default();
-            match (data_type.name.as_str(), data_type.parameters.as_slice()) {
-                ("SMALLINT" | "INT" | "BIGINT", []) => {
-                    self.write(&data_type.name);
-                    return Ok(());
-                }
-                ("TIMESTAMP", []) if target == DialectType::Trino => {
-                    self.write("TIMESTAMP(7)");
-                    return Ok(());
-                }
-                ("TIME", []) if target == DialectType::Trino => {
-                    self.write("TIME(0)");
-                    return Ok(());
-                }
-                ("FLOAT", [] | [1..=53])
-                    if matches!(
-                        target,
-                        DialectType::Trino
-                            | DialectType::Presto
-                            | DialectType::DuckDB
-                            | DialectType::PostgreSQL
-                    ) =>
-                {
-                    let real = data_type.parameters.first().is_some_and(|p| *p <= 24);
-                    self.write(if real {
-                        "REAL"
-                    } else if target == DialectType::PostgreSQL {
-                        "DOUBLE PRECISION"
-                    } else {
-                        "DOUBLE"
-                    });
-                    return Ok(());
-                }
-                ("TINYINT", [])
-                    if matches!(target, DialectType::DuckDB | DialectType::ClickHouse) =>
-                {
-                    return self.generate_data_type(&DataType::UInt8);
-                }
-                ("DECIMAL", [p, s]) if (1..=38).contains(p) && s <= p => {
-                    return self.generate_data_type(&DataType::Decimal {
-                        precision: Some(*p),
-                        scale: Some(*s),
-                    });
-                }
-                _ => {}
+            match Self::hana_type_mapping(data_type, self.config.dialect.unwrap_or_default())? {
+                HanaTypeMapping::Name(name) => self.write(name),
+                HanaTypeMapping::Standard(data_type) => return self.generate_data_type(&data_type),
             }
-            return Err(crate::error::Error::unsupported(
-                format!(
-                    "HANA {} has no lossless type mapping for this target",
-                    data_type.name
-                ),
-                self.config.dialect.unwrap_or_default().to_string(),
-            ));
+            return Ok(());
         }
         self.write(&data_type.name);
         if !data_type.parameters.is_empty() {
@@ -43027,6 +43294,25 @@ impl Default for Generator {
 mod tests {
     use super::*;
     use crate::parser::Parser;
+
+    #[cfg(all(
+        feature = "transpile",
+        feature = "dialect-hana",
+        feature = "dialect-duckdb"
+    ))]
+    #[test]
+    fn hana_substring_mapping_preserves_function_name_configuration() {
+        let ast = crate::Dialect::get(DialectType::HANA)
+            .parse("SELECT SUBSTRING('abc', -1, 2)")
+            .unwrap()
+            .remove(0);
+        let sql = crate::Dialect::get(DialectType::DuckDB)
+            .generate_with_overrides(&ast, |config| {
+                config.normalize_functions = crate::generator::NormalizeFunctions::Lower;
+            })
+            .unwrap();
+        assert_eq!(sql, "SELECT substring('abc', 1, 2)");
+    }
 
     fn roundtrip(sql: &str) -> String {
         let ast = Parser::parse_sql(sql).unwrap();

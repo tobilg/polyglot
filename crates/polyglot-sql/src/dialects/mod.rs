@@ -3523,27 +3523,14 @@ impl Dialect {
         expressions
             .into_iter()
             .map(|expr| {
-                // This API parses SQL itself: only the HANA parser currently
-                // produces source-bound nodes. Standalone AST generation checks
-                // those nodes independently in the generator. Other SQL sources
-                // need not pay for a speculative full-tree validation pass.
-                if self.dialect_type == DialectType::HANA {
-                    // Validate source-bound semantics before normalization can erase them.
-                    // Generating each outermost protected subtree checks its descendants too.
-                    let mut pending = vec![&expr];
-                    while let Some(node) = pending.pop() {
-                        if let Some(source) = node.source_dialect() {
-                            if source != target {
-                                target_dialect
-                                    .generate_with_transpile_options(node, source, opts)?;
-                                continue;
-                            }
-                        }
-                        crate::ast_children::for_each_child_untracked(node, |child| {
-                            pending.push(child)
-                        });
-                    }
-                }
+                // Reject unsupported source semantics before normalization can
+                // erase them. This AST-only pass shares conversion decisions with
+                // the generator and never renders throwaway SQL.
+                Self::reject_hana_source_semantics(
+                    &expr,
+                    self.dialect_type,
+                    target_dialect.generator_config.dialect.unwrap_or_default(),
+                )?;
 
                 // DuckDB source: normalize VARCHAR/CHAR to TEXT (DuckDB doesn't support
                 // VARCHAR length constraints). This emulates Python sqlglot's DuckDB parser
@@ -4365,6 +4352,25 @@ impl Dialect {
             && select.fetch.is_none()
             && select.for_xml.is_empty()
             && select.for_json.is_empty()
+    }
+
+    fn reject_hana_source_semantics(
+        expression: &Expression,
+        source: DialectType,
+        target: DialectType,
+    ) -> Result<()> {
+        if source != DialectType::HANA || target == DialectType::HANA {
+            return Ok(());
+        }
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            if node.source_dialect() == Some(DialectType::HANA) {
+                Generator::validate_hana_source_node(node, target)?;
+            }
+            // A supported outer call does not establish support for its arguments.
+            crate::ast_children::for_each_child_untracked(node, |child| pending.push(child));
+        }
+        Ok(())
     }
 
     fn reject_clickhouse_session_semantics(
@@ -10149,6 +10155,152 @@ impl Dialect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(
+        feature = "transpile",
+        feature = "dialect-hana",
+        feature = "dialect-duckdb",
+        feature = "dialect-trino"
+    ))]
+    #[test]
+    fn hana_validation_and_generation_agree_after_ast_serialization() {
+        let hana = Dialect::get(DialectType::HANA);
+        for (sql, duckdb, trino) in [
+            ("SELECT COALESCE(IFNULL(x, 0), 1) FROM t", true, true),
+            ("SELECT LOCATE('abcabc', 'bc', 2)", true, true),
+            ("SELECT LOCATE('abcabc', 'bc', 1, 2)", false, true),
+            ("SELECT SUBSTRING('abc', -1, -2)", true, true),
+            ("SELECT TO_DECIMAL(12.345, 5, 2)", true, true),
+            (
+                "SELECT CAST(12.345 AS DECIMAL(5)), CAST(-12.9 AS INT)",
+                true,
+                true,
+            ),
+            ("SELECT TO_DATE('2024-01-15', 'YYYY-MM-DD')", true, true),
+            (
+                "SELECT TO_TIMESTAMP('2024-01-15', 'YYYY-MM-DD')",
+                false,
+                true,
+            ),
+            (
+                "SELECT TO_VARCHAR(DATE '2024-01-15', 'YYYY-MM-DD')",
+                true,
+                true,
+            ),
+            ("SELECT CURRENT_UTCDATE", true, true),
+            (
+                "SELECT CURRENT_UTCTIMESTAMP(7), CURRENT_UTCTIME",
+                false,
+                true,
+            ),
+            ("CREATE TABLE t (n INT, xs INT ARRAY)", true, true),
+            ("CREATE TABLE t (n SMALLDECIMAL ARRAY)", false, false),
+            ("SELECT COALESCE(ADD_DAYS(d, 1), d) FROM t", false, false),
+            ("SELECT COALESCE(CAST(x AS INT), 0) FROM t", false, false),
+            (
+                "SELECT COALESCE(JSON_VALUE(j, '$.a'), 'x') FROM t",
+                false,
+                false,
+            ),
+            (
+                "SELECT COALESCE(SUBSTR_REGEXPR('a' IN s), 'x') FROM t",
+                false,
+                false,
+            ),
+            (
+                "SELECT COALESCE(STRING_AGG(x, ','), '') FROM t",
+                false,
+                false,
+            ),
+            (
+                "CREATE TABLE t (n INT DEFAULT ADD_DAYS(d, 1))",
+                false,
+                false,
+            ),
+            ("SELECT * FROM t FOR JSON", false, false),
+            ("CREATE COLUMN TABLE t (n INT)", false, false),
+            ("SELECT * FROM t WITH HINT (NO_INLINE)", false, false),
+        ] {
+            let ast = hana.parse(sql).unwrap().remove(0);
+            let json = serde_json::to_string(&ast).unwrap();
+            let ast: Expression = serde_json::from_str(&json).unwrap();
+            for (target, supported) in [(DialectType::DuckDB, duckdb), (DialectType::Trino, trino)]
+            {
+                assert_eq!(
+                    Dialect::reject_hana_source_semantics(&ast, DialectType::HANA, target).is_ok(),
+                    supported,
+                    "validation: {sql} -> {target}"
+                );
+                assert_eq!(
+                    Dialect::get(target).generate(&ast).is_ok(),
+                    supported,
+                    "generation: {sql} -> {target}"
+                );
+            }
+            assert!(Dialect::reject_hana_source_semantics(
+                &ast,
+                DialectType::HANA,
+                DialectType::HANA
+            )
+            .is_ok());
+        }
+    }
+
+    #[cfg(all(
+        feature = "transpile",
+        feature = "dialect-hana",
+        feature = "dialect-duckdb"
+    ))]
+    #[test]
+    fn hana_rejects_source_semantics_before_preprocessing_can_erase_them() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let called = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&called);
+        let mut hana = Dialect::get(DialectType::HANA);
+        hana.custom_preprocess = Some(Box::new(move |_| {
+            seen.store(true, Ordering::Relaxed);
+            Ok(Expression::number(1))
+        }));
+        for level in [
+            UnsupportedLevel::Ignore,
+            UnsupportedLevel::Warn,
+            UnsupportedLevel::Raise,
+            UnsupportedLevel::Immediate,
+        ] {
+            for sql in [
+                "SELECT COALESCE(ADD_DAYS(d, 1), d) FROM t",
+                "SELECT COALESCE(CAST(x AS INT), 0) FROM t",
+                "SELECT COALESCE(JSON_VALUE(j, '$.a'), 'x') FROM t",
+                "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
+                "SELECT * FROM t FOR JSON",
+                "SELECT * FROM t WITH HINT (NO_INLINE)",
+            ] {
+                assert!(
+                    hana.transpile_with(
+                        sql,
+                        DialectType::DuckDB,
+                        TranspileOptions::default().with_unsupported_level(level)
+                    )
+                    .is_err(),
+                    "{sql}"
+                );
+                assert!(
+                    !called.load(Ordering::Relaxed),
+                    "preprocessing must not erase unsupported input: {sql}"
+                );
+            }
+        }
+        let mut target = Dialect::get(DialectType::DuckDB);
+        Arc::make_mut(&mut target.generator_config).dialect = Some(DialectType::Generic);
+        assert!(hana
+            .transpile("SELECT LOCATE('abc', 'b')", &target)
+            .is_err());
+        assert!(!called.load(Ordering::Relaxed));
+        assert!(hana
+            .transpile("SELECT COALESCE(x, 0) FROM t", DialectType::DuckDB)
+            .is_ok());
+        assert!(called.load(Ordering::Relaxed));
+    }
 
     #[test]
     fn built_in_dialect_instances_share_tokenizer_config() {
