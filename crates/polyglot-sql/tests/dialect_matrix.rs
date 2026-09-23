@@ -4994,7 +4994,7 @@ mod hana_regressions {
                 DialectType::PostgreSQL,
                 DialectType::HANA
             ),
-            "SELECT CAST(42 AS INT) FROM DUMMY"
+            "SELECT CAST(42 AS INT) FROM SYS.DUMMY"
         );
         for sql in [
             "SELECT CAST(-32768 AS SMALLINT)",
@@ -5011,6 +5011,87 @@ mod hana_regressions {
                 .is_ok(),
                 "{sql}"
             );
+        }
+    }
+
+    #[test]
+    fn incoming_decimal_casts_require_verified_rounding_and_overflow_semantics() {
+        for source in [DialectType::PostgreSQL, DialectType::DuckDB] {
+            for sql in [
+                "SELECT CAST(12.349 AS DECIMAL(5, 2))",
+                "SELECT CAST(-12.349 AS DECIMAL(5, 2))",
+                "SELECT CAST(999.999 AS DECIMAL(5, 2))",
+                "SELECT CAST('12.349' AS DECIMAL(5, 2))",
+                "SELECT CAST(x AS DECIMAL(5, 2)) FROM t",
+                "SELECT CAST(12.349 AS DECIMAL)",
+                "SELECT TRY_CAST(12.349 AS DECIMAL(5, 2))",
+                "SELECT SAFE_CAST(12.349 AS DECIMAL(5, 2))",
+            ] {
+                let ast = Dialect::get(source).parse(sql).unwrap();
+                let error = Dialect::get(DialectType::HANA)
+                    .generate(&ast[0])
+                    .unwrap_err();
+                assert!(
+                    error.to_string().contains("Decimal CAST to HANA"),
+                    "{sql}: {error}"
+                );
+                for level in [
+                    UnsupportedLevel::Ignore,
+                    UnsupportedLevel::Warn,
+                    UnsupportedLevel::Raise,
+                    UnsupportedLevel::Immediate,
+                ] {
+                    let error =
+                        transpile_with_level(sql, source, DialectType::HANA, level).unwrap_err();
+                    assert!(
+                        error.to_string().contains("Decimal CAST to HANA"),
+                        "{sql}: {error}"
+                    );
+                }
+            }
+        }
+        for sql in [
+            "SELECT CAST(12.349 AS DECIMAL(5, 2)) FROM t",
+            "SELECT CAST(-12.349 AS DECIMAL(5, 2)) FROM t",
+            "SELECT CAST(x AS DECIMAL) FROM t",
+        ] {
+            assert_eq!(transpile(sql, DialectType::HANA, DialectType::HANA), sql);
+        }
+        assert_eq!(
+            transpile(
+                "CREATE TABLE t (x DECIMAL(5, 2))",
+                DialectType::PostgreSQL,
+                DialectType::HANA
+            ),
+            "CREATE TABLE t (x DECIMAL(5, 2))"
+        );
+    }
+
+    #[test]
+    fn synthetic_dummy_is_not_captured_by_ctes() {
+        for (sql, expected) in [
+            (
+                "WITH DUMMY AS (SELECT x FROM t) SELECT 42",
+                "WITH DUMMY AS (SELECT x FROM t) SELECT 42 FROM SYS.DUMMY",
+            ),
+            (
+                r#"WITH "DUMMY" AS (SELECT x FROM t) SELECT 42"#,
+                r#"WITH "DUMMY" AS (SELECT x FROM t) SELECT 42 FROM SYS.DUMMY"#,
+            ),
+            (
+                "WITH DUMMY AS (SELECT 7 AS x) SELECT (SELECT 42) FROM DUMMY",
+                "WITH DUMMY AS (SELECT 7 AS x FROM SYS.DUMMY) SELECT (SELECT 42 FROM SYS.DUMMY) FROM DUMMY",
+            ),
+            (
+                "WITH DUMMY AS (SELECT x FROM t) SELECT x FROM DUMMY",
+                "WITH DUMMY AS (SELECT x FROM t) SELECT x FROM DUMMY",
+            ),
+        ] {
+            assert_eq!(transpile(sql, DialectType::PostgreSQL, DialectType::HANA), expected);
+            let ast = Dialect::get(DialectType::PostgreSQL).parse(sql).unwrap();
+            assert_eq!(Dialect::get(DialectType::HANA).generate(&ast[0]).unwrap(), expected);
+            // Explicit relations, including the injected system relation, survive native generation.
+            assert_eq!(transpile(expected, DialectType::HANA, DialectType::HANA), expected);
         }
     }
 
@@ -5379,7 +5460,7 @@ mod hana_regressions {
     fn incoming_queries_generate_native_syntax_or_report_unsupported() {
         assert_eq!(
             transpile("SELECT 1", DialectType::Generic, DialectType::HANA),
-            "SELECT 1 FROM DUMMY"
+            "SELECT 1 FROM SYS.DUMMY"
         );
         for (sql, source) in [
             ("SELECT SUBSTRING('abcdef', -2, 2)", DialectType::DuckDB),
@@ -5399,7 +5480,7 @@ mod hana_regressions {
     fn source_casts_retain_conversion_semantics() {
         assert_eq!(
             transpile("SELECT UNKNOWN", DialectType::HANA, DialectType::HANA),
-            "SELECT NULL FROM DUMMY"
+            "SELECT NULL FROM SYS.DUMMY"
         );
         assert_eq!(
             transpile("SELECT UNKNOWN", DialectType::HANA, DialectType::DuckDB),
@@ -5568,6 +5649,11 @@ mod hana_regressions {
             "SELECT TO_TIMESTAMP(s, 'YYYY-MM-DD HH24:MI:SS.FF7') FROM t",
             "SELECT CAST(x AS SMALLDECIMAL) FROM t",
             "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
+            "ALTER TABLE t ADD (x SMALLDECIMAL ARRAY)",
+            "ALTER TABLE t ADD x SMALLDECIMAL ARRAY",
+            "ALTER TABLE t ALTER COLUMN x TYPE SMALLDECIMAL ARRAY",
+            "SELECT CAST(xs AS SMALLDECIMAL ARRAY) FROM t",
+            "CREATE FUNCTION f(x SMALLDECIMAL ARRAY) RETURNS INT AS 1",
             "SELECT ADD_MONTHS_LAST(d, 1) FROM t",
             "SELECT * FROM t WITH HINT (NO_INLINE)",
             "SELECT * FROM t FOR UPDATE IGNORE LOCKED",

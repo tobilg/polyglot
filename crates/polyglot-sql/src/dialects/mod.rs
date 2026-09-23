@@ -4368,7 +4368,24 @@ impl Dialect {
                 Generator::validate_hana_source_node(node, target)?;
             }
             // A supported outer call does not establish support for its arguments.
-            crate::ast_children::for_each_child_untracked(node, |child| pending.push(child));
+            // Types in column definitions, casts, routine signatures, etc. are
+            // embedded syntax, not Expression children. Validate each type once,
+            // before normalization can replace its enclosing ARRAY/STRUCT type.
+            // A scalar native CAST already uses a value-aware conversion check
+            // (e.g. a HANA TINYINT literal can fit a target signed integer).
+            let cast_type_validated = matches!(node, Expression::Cast(c)
+                if matches!(c.to, crate::expressions::DataType::Hana { .. }));
+            let mut type_result = Ok(());
+            crate::ast_children::for_each_child_and_type_untracked(
+                node,
+                |child| pending.push(child),
+                |data_type| {
+                    if !cast_type_validated && type_result.is_ok() {
+                        type_result = Generator::validate_hana_source_type(data_type, target);
+                    }
+                },
+            );
+            type_result?;
         }
         Ok(())
     }
@@ -10195,6 +10212,8 @@ mod tests {
             ),
             ("CREATE TABLE t (n INT, xs INT ARRAY)", true, true),
             ("CREATE TABLE t (n SMALLDECIMAL ARRAY)", false, false),
+            ("ALTER TABLE t ADD (n SMALLDECIMAL ARRAY)", false, false),
+            ("ALTER TABLE t ADD (n INT ARRAY)", true, true),
             ("SELECT COALESCE(ADD_DAYS(d, 1), d) FROM t", false, false),
             ("SELECT COALESCE(CAST(x AS INT), 0) FROM t", false, false),
             (
@@ -10272,6 +10291,9 @@ mod tests {
                 "SELECT COALESCE(CAST(x AS INT), 0) FROM t",
                 "SELECT COALESCE(JSON_VALUE(j, '$.a'), 'x') FROM t",
                 "CREATE TABLE t (x SMALLDECIMAL ARRAY)",
+                "ALTER TABLE t ADD (x SMALLDECIMAL ARRAY)",
+                "SELECT CAST(xs AS SMALLDECIMAL ARRAY) FROM t",
+                "CREATE FUNCTION f(x SMALLDECIMAL ARRAY) RETURNS INT AS 1",
                 "SELECT * FROM t FOR JSON",
                 "SELECT * FROM t WITH HINT (NO_INLINE)",
             ] {

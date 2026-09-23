@@ -58,8 +58,10 @@ fn expand_ast_node(input: &DeriveInput) -> proc_macro2::TokenStream {
                 #immutable
             }
 
-            fn visit_expressions_untracked<'ast, F>(&'ast self, visitor: &mut F)
-            where F: FnMut(&'ast crate::expressions::Expression),
+            fn visit_syntax_untracked<'ast, F, T>(&'ast self, visitor: &mut F, type_visitor: &mut T)
+            where
+                F: FnMut(&'ast crate::expressions::Expression),
+                T: FnMut(&'ast crate::expressions::DataType),
             {
                 #untracked
             }
@@ -307,7 +309,16 @@ fn immutable_visit(
     if paths {
         quote!(crate::ast_children::AstNode::visit_expressions(#access, path, visitor);)
     } else {
-        quote!(crate::ast_children::AstNode::visit_expressions_untracked(#access, visitor);)
+        let visit_type = if matches!(ty, Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "DataType"))
+        {
+            quote!(type_visitor(#access);)
+        } else {
+            quote!()
+        };
+        quote! {
+            #visit_type
+            crate::ast_children::AstNode::visit_syntax_untracked(#access, visitor, type_visitor);
+        }
     }
 }
 

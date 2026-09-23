@@ -767,7 +767,7 @@ fn data_type_family(data_type: &DataType) -> TypeFamily {
             TypeFamily::Numeric
         }
         DataType::Hana { hana_type } => match hana_type.name.as_str() {
-            "TINYINT" => TypeFamily::Integer,
+            "TINYINT" | "SMALLINT" | "INT" | "BIGINT" => TypeFamily::Integer,
             "TIMESTAMP" | "SECONDDATE" => TypeFamily::Timestamp,
             "TIME" => TypeFamily::Time,
             "FLOAT" | "DECIMAL" | "SMALLDECIMAL" => TypeFamily::Numeric,

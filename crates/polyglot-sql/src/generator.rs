@@ -5251,7 +5251,8 @@ impl Generator {
                 }
             }
         } else if self.config.dialect == Some(DialectType::HANA) {
-            self.write(" FROM DUMMY");
+            // A user CTE named DUMMY must not capture the synthetic one-row source.
+            self.write(" FROM SYS.DUMMY");
         }
 
         // JOINs - handle nested join structure for pretty printing
@@ -8742,9 +8743,6 @@ impl Generator {
                 target,
                 "HANA table storage/scope has no verified target mapping",
             ));
-        }
-        for column in table.columns.iter().chain(&table.with_partition_columns) {
-            Self::validate_hana_data_type(&column.data_type, target)?;
         }
         Ok(())
     }
@@ -18374,23 +18372,36 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
-        if self.config.dialect == Some(DialectType::HANA)
-            && matches!(
-                cast.to,
-                DataType::SmallInt { .. }
-                    | DataType::Int { .. }
-                    | DataType::BigInt { .. }
-                    | DataType::TinyInt { .. }
-            )
-            && (Self::hana_integer(&cast.this).is_none()
-                || matches!(cast.to, DataType::TinyInt { .. })
-                    && !Self::hana_integer(&cast.this).is_some_and(|n| (0..=127).contains(&n)))
+    fn validate_cast_to_hana(&self, cast: &Cast) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            return Ok(());
+        }
+        // Native HANA casts retain DataType::Hana. A generic DECIMAL does not
+        // establish source rounding/overflow semantics, including for TRY/SAFE_CAST.
+        if matches!(cast.to, DataType::Decimal { .. }) {
+            return Err(self.hana_unsupported(
+                "Decimal CAST to HANA requires a verified source conversion; numeric rounding and overflow rules differ",
+            ));
+        }
+        if matches!(
+            cast.to,
+            DataType::SmallInt { .. }
+                | DataType::Int { .. }
+                | DataType::BigInt { .. }
+                | DataType::TinyInt { .. }
+        ) && (Self::hana_integer(&cast.this).is_none()
+            || matches!(cast.to, DataType::TinyInt { .. })
+                && !Self::hana_integer(&cast.this).is_some_and(|n| (0..=127).contains(&n)))
         {
             return Err(self.hana_unsupported(
                 "Integer CAST to HANA requires a verified source conversion; numeric rounding and character conversion rules differ",
             ));
         }
+        Ok(())
+    }
+
+    fn generate_cast(&mut self, cast: &Cast) -> Result<()> {
+        self.validate_cast_to_hana(cast)?;
         if self.config.dialect != Some(DialectType::HANA) {
             if let DataType::Hana { hana_type } = &cast.to {
                 if matches!(
@@ -18408,6 +18419,12 @@ impl Generator {
                     return self.generate_hana_decimal(&cast.this, precision, scale);
                 }
             }
+        }
+
+        if self.config.dialect != Some(DialectType::HANA) {
+            // Some target CAST mappings replace an entire container type with
+            // CHAR/JSON; validate its leaves before those shortcuts can discard them.
+            Self::validate_hana_data_type(&cast.to, self.config.dialect.unwrap_or_default())?;
         }
 
         use crate::dialects::DialectType;
@@ -19809,9 +19826,20 @@ impl Generator {
         Ok(mapping)
     }
 
+    #[cfg(feature = "transpile")]
+    pub(crate) fn validate_hana_source_type(
+        data_type: &DataType,
+        target: DialectType,
+    ) -> Result<()> {
+        if let DataType::Hana { hana_type } = data_type {
+            Self::hana_type_mapping(hana_type, target)?;
+        }
+        Ok(())
+    }
+
     fn validate_hana_data_type(data_type: &DataType, target: DialectType) -> Result<()> {
-        // Column types are embedded structs, not Expression children. In particular,
-        // the generic expression walk cannot see HANA types nested inside an ARRAY.
+        // Validate one complete type before rendering can collapse a container
+        // to a target fallback such as JSON or NVARCHAR(MAX).
         let mut pending = Vec::new();
         let mut current = data_type;
         loop {
@@ -25064,6 +25092,7 @@ impl Generator {
     // Type conversion generators
 
     fn generate_try_cast(&mut self, cast: &Cast) -> Result<()> {
+        self.validate_cast_to_hana(cast)?;
         use crate::dialects::DialectType;
 
         // SingleStore uses !:> syntax for try cast
@@ -25126,6 +25155,7 @@ impl Generator {
     }
 
     fn generate_safe_cast(&mut self, cast: &Cast) -> Result<()> {
+        self.validate_cast_to_hana(cast)?;
         self.write_keyword("SAFE_CAST");
         self.write("(");
         self.generate_expression(&cast.this)?;
@@ -27314,6 +27344,14 @@ impl Generator {
     }
 
     fn generate_data_type(&mut self, dt: &DataType) -> Result<()> {
+        if self.config.dialect != Some(DialectType::HANA) {
+            Self::validate_hana_data_type(dt, self.config.dialect.unwrap_or_default())?;
+        }
+        self.generate_data_type_inner(dt)
+    }
+
+    // Recursive rendering uses this method so each type is validated only once.
+    fn generate_data_type_inner(&mut self, dt: &DataType) -> Result<()> {
         use crate::dialects::DialectType;
 
         match dt {
@@ -28176,14 +28214,14 @@ impl Generator {
                 // Dialect-specific array syntax
                 match self.config.dialect {
                     Some(DialectType::HANA) => {
-                        self.generate_data_type(element_type)?;
+                        self.generate_data_type_inner(element_type)?;
                         self.write(" ARRAY");
                     }
                     Some(DialectType::PostgreSQL)
                     | Some(DialectType::Redshift)
                     | Some(DialectType::DuckDB) => {
                         // PostgreSQL uses TYPE[] or TYPE[N] syntax
-                        self.generate_data_type(element_type)?;
+                        self.generate_data_type_inner(element_type)?;
                         if let Some(dim) = dimension {
                             self.write(&format!("[{}]", dim));
                         } else {
@@ -28192,7 +28230,7 @@ impl Generator {
                     }
                     Some(DialectType::BigQuery) => {
                         self.write_keyword("ARRAY<");
-                        self.generate_data_type(element_type)?;
+                        self.generate_data_type_inner(element_type)?;
                         self.write(">");
                     }
                     Some(DialectType::Snowflake)
@@ -28205,7 +28243,7 @@ impl Generator {
                         } else {
                             self.write_keyword("ARRAY(");
                         }
-                        self.generate_data_type(element_type)?;
+                        self.generate_data_type_inner(element_type)?;
                         self.write(")");
                     }
                     Some(DialectType::TSQL)
@@ -28222,14 +28260,14 @@ impl Generator {
                     _ => {
                         // Default: use angle bracket syntax (ARRAY<T>)
                         self.write_keyword("ARRAY<");
-                        self.generate_data_type(element_type)?;
+                        self.generate_data_type_inner(element_type)?;
                         self.write(">");
                     }
                 }
             }
             DataType::List { element_type } => {
                 // Materialize: element_type LIST (postfix syntax)
-                self.generate_data_type(element_type)?;
+                self.generate_data_type_inner(element_type)?;
                 self.write_keyword(" LIST");
             }
             DataType::Map {
@@ -28241,9 +28279,9 @@ impl Generator {
                     Some(DialectType::Materialize) => {
                         // Materialize: MAP[key_type => value_type]
                         self.write_keyword("MAP[");
-                        self.generate_data_type(key_type)?;
+                        self.generate_data_type_inner(key_type)?;
                         self.write(" => ");
-                        self.generate_data_type(value_type)?;
+                        self.generate_data_type_inner(value_type)?;
                         self.write("]");
                     }
                     Some(DialectType::Snowflake)
@@ -28253,9 +28291,9 @@ impl Generator {
                     | Some(DialectType::Trino)
                     | Some(DialectType::Athena) => {
                         self.write_keyword("MAP(");
-                        self.generate_data_type(key_type)?;
+                        self.generate_data_type_inner(key_type)?;
                         self.write(", ");
-                        self.generate_data_type(value_type)?;
+                        self.generate_data_type_inner(value_type)?;
                         self.write(")");
                     }
                     Some(DialectType::ClickHouse) => {
@@ -28264,17 +28302,17 @@ impl Generator {
                         self.write("Map(");
                         let saved_depth = self.clickhouse_nullable_depth;
                         self.clickhouse_nullable_depth = -1; // suppress Nullable for key
-                        self.generate_data_type(key_type)?;
+                        self.generate_data_type_inner(key_type)?;
                         self.clickhouse_nullable_depth = saved_depth;
                         self.write(", ");
-                        self.generate_data_type(value_type)?;
+                        self.generate_data_type_inner(value_type)?;
                         self.write(")");
                     }
                     _ => {
                         self.write_keyword("MAP<");
-                        self.generate_data_type(key_type)?;
+                        self.generate_data_type_inner(key_type)?;
                         self.write(", ");
-                        self.generate_data_type(value_type)?;
+                        self.generate_data_type_inner(value_type)?;
                         self.write(">");
                     }
                 }
@@ -28310,7 +28348,7 @@ impl Generator {
                     // Snowflake format: VECTOR(type, dimension)
                     self.write_keyword("VECTOR(");
                     if let Some(ref et) = element_type {
-                        self.generate_data_type(et)?;
+                        self.generate_data_type_inner(et)?;
                         if dimension.is_some() {
                             self.write(", ");
                         }
@@ -28329,7 +28367,7 @@ impl Generator {
                     }
                     self.generate_type_field_name(name);
                     self.write(" ");
-                    self.generate_data_type(dt)?;
+                    self.generate_data_type_inner(dt)?;
                     if *not_null {
                         self.write_keyword(" NOT NULL");
                     }
@@ -28354,7 +28392,7 @@ impl Generator {
                                 self.generate_type_field_name(&field.name);
                                 self.write(" ");
                             }
-                            self.generate_data_type(&field.data_type)?;
+                            self.generate_data_type_inner(&field.data_type)?;
                         }
                         self.write(")");
                     }
@@ -28369,7 +28407,7 @@ impl Generator {
                                 self.generate_type_field_name(&field.name);
                                 self.write(" ");
                             }
-                            self.generate_data_type(&field.data_type)?;
+                            self.generate_data_type_inner(&field.data_type)?;
                         }
                         self.write(")");
                     }
@@ -28384,7 +28422,7 @@ impl Generator {
                                 self.generate_type_field_name(&field.name);
                                 self.write(" ");
                             }
-                            self.generate_data_type(&field.data_type)?;
+                            self.generate_data_type_inner(&field.data_type)?;
                         }
                         self.write(")");
                     }
@@ -28399,7 +28437,7 @@ impl Generator {
                                 self.generate_type_field_name(&field.name);
                                 self.write(" ");
                             }
-                            self.generate_data_type(&field.data_type)?;
+                            self.generate_data_type_inner(&field.data_type)?;
                         }
                         self.write(")");
                     }
@@ -28414,7 +28452,7 @@ impl Generator {
                                 self.generate_type_field_name(&field.name);
                                 self.write(" ");
                             }
-                            self.generate_data_type(&field.data_type)?;
+                            self.generate_data_type_inner(&field.data_type)?;
                         }
                         self.write(")");
                     }
@@ -28438,7 +28476,7 @@ impl Generator {
                                     self.generate_type_field_name(&field.name);
                                     self.write(" ");
                                 }
-                                self.generate_data_type(&field.data_type)?;
+                                self.generate_data_type_inner(&field.data_type)?;
                             }
                             self.write(")");
                         } else {
@@ -28453,7 +28491,7 @@ impl Generator {
                                     self.write(self.config.struct_field_sep);
                                 }
                                 // For anonymous fields, just output the type
-                                self.generate_data_type(&field.data_type)?;
+                                self.generate_data_type_inner(&field.data_type)?;
                                 // Spark/Databricks: Output COMMENT clause if present
                                 if let Some(comment) = &field.comment {
                                     self.write(" COMMENT '");
@@ -28520,7 +28558,7 @@ impl Generator {
                         self.generate_type_field_name(name);
                         self.write(" ");
                     }
-                    self.generate_data_type(dt)?;
+                    self.generate_data_type_inner(dt)?;
                 }
                 self.write(")");
             }
@@ -28531,20 +28569,20 @@ impl Generator {
                     // Suppress inner Nullable wrapping to prevent Nullable(Nullable(...))
                     let saved_depth = self.clickhouse_nullable_depth;
                     self.clickhouse_nullable_depth = -1;
-                    self.generate_data_type(inner)?;
+                    self.generate_data_type_inner(inner)?;
                     self.clickhouse_nullable_depth = saved_depth;
                     self.write(")");
                 } else {
                     // Map ClickHouse-specific custom type names to standard types
                     match inner.as_ref() {
                         DataType::Custom { name } if name.eq_ignore_ascii_case("DATETIME") => {
-                            self.generate_data_type(&DataType::Timestamp {
+                            self.generate_data_type_inner(&DataType::Timestamp {
                                 precision: None,
                                 timezone: false,
                             })?;
                         }
                         _ => {
-                            self.generate_data_type(inner)?;
+                            self.generate_data_type_inner(inner)?;
                         }
                     }
                 }
